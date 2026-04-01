@@ -1,0 +1,8 @@
+bin/
+obj/
+*.user
+.vs/
+.DS_Store
+.worktrees/
+coverage*/
+TestResults/
