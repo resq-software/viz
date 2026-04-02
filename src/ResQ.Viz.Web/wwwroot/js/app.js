@@ -4,6 +4,7 @@
 import { Scene } from './scene.js';
 import { Terrain } from './terrain.js';
 import { DroneManager } from './drones.js';
+import { EffectsManager } from './effects.js';
 
 const container = document.getElementById('scene-container');
 const statusEl = document.getElementById('connection-status');
@@ -15,7 +16,9 @@ const simTimeEl = document.getElementById('sim-time');
 const viz = new Scene(container);
 const terrain = new Terrain(viz.scene);
 const droneManager = new DroneManager(viz.scene);
-viz.addTickCallback(() => droneManager.tick());
+const effectsManager = new EffectsManager(viz.scene);
+viz.addTickCallback((dt) => droneManager.tick());
+viz.addTickCallback((dt) => effectsManager.tick(dt));
 
 // SignalR connection
 const connection = new signalR.HubConnectionBuilder()
@@ -26,6 +29,7 @@ const connection = new signalR.HubConnectionBuilder()
 
 connection.on('ReceiveFrame', (frame) => {
     droneManager.update(frame.drones ?? []);
+    effectsManager.update(frame);
     droneCountEl.textContent = `Drones: ${droneManager.count}`;
     simTimeEl.textContent = `T: ${frame.time?.toFixed(1) ?? '0.0'}s`;
 });

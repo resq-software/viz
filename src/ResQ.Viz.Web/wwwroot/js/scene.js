@@ -73,7 +73,7 @@ export class Scene {
             if (this._frameCount % 30 === 0) {
                 this._fps = Math.round(1 / dt);
             }
-            for (const cb of this._tickCallbacks) cb();
+            for (const cb of this._tickCallbacks) cb(dt);
             this.controls.update();
             this.renderer.render(this.scene, this.camera);
         };
