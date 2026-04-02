@@ -55,11 +55,15 @@ public sealed class ScenarioService
         foreach (var (id, position) in drones)
         {
             sim.AddDrone(id, position);
-            _logger.LogDebug("Scenario '{Name}': spawned drone {Id} at {Position}.", name, id, position);
+            _logger.LogDebug("Scenario '{Name}': spawned drone {Id} at {Position}.", Sanitize(name), id, position);
         }
 
         return true;
     }
+
+    // Strips CR/LF from user-supplied strings before they reach log sinks to prevent log forging.
+    private static string Sanitize(string? s) => s?.Replace("\r", "", StringComparison.Ordinal)
+                                                    .Replace("\n", "", StringComparison.Ordinal) ?? string.Empty;
 
     private static Dictionary<string, List<(string, Vector3)>> BuildScenarios()
     {

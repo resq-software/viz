@@ -6,3 +6,13 @@ obj/
 .worktrees/
 coverage*/
 TestResults/
+node_modules/
+package-lock.json
+
+# Vite build outputs (generated from client/)
+src/ResQ.Viz.Web/wwwroot/index.html
+src/ResQ.Viz.Web/wwwroot/assets/
+src/ResQ.Viz.Web/wwwroot/.vite/
+
+# npm
+src/ResQ.Viz.Web/node_modules/

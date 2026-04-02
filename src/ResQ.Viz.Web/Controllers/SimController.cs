@@ -115,7 +115,7 @@ public sealed class SimController : ControllerBase
             return BadRequest(new { error = $"Unknown command type '{request.Type}'. Valid types: hover, goto, rtl, land." });
 
         _sim.SendCommand(id, command);
-        _logger.LogInformation("Sent command {Type} to drone {DroneId}.", request.Type, id);
+        _logger.LogInformation("Sent command {Type} to drone {DroneId}.", Sanitize(request.Type), Sanitize(id));
         return Ok(new { droneId = id, command = request.Type });
     }
 
@@ -126,7 +126,7 @@ public sealed class SimController : ControllerBase
     {
         _sim.SetWeather(request.Mode, request.WindSpeed, request.WindDirection);
         _logger.LogInformation("Weather updated: mode={Mode}, speed={Speed}, dir={Direction}.",
-            request.Mode, request.WindSpeed, request.WindDirection);
+            Sanitize(request.Mode), request.WindSpeed, request.WindDirection);
         return Ok(new { mode = request.Mode, windSpeed = request.WindSpeed, windDirection = request.WindDirection });
     }
 
@@ -136,9 +136,13 @@ public sealed class SimController : ControllerBase
     public IActionResult InjectFault([FromBody] FaultRequest request)
     {
         _logger.LogWarning("Fault injection requested: drone={DroneId}, type={FaultType}. (Phase 1: no-op)",
-            request.DroneId, request.Type);
+            Sanitize(request.DroneId), Sanitize(request.Type));
         return Ok(new { droneId = request.DroneId, faultType = request.Type, status = "logged" });
     }
+
+    // Strips CR/LF from user-supplied strings before they reach log sinks to prevent log forging.
+    private static string Sanitize(string? s) => s?.Replace("\r", "", StringComparison.Ordinal)
+                                                    .Replace("\n", "", StringComparison.Ordinal) ?? string.Empty;
 
     /// <summary>Returns the current simulation state as a list of drone snapshots.</summary>
     [HttpGet("state")]
@@ -163,7 +167,7 @@ public sealed class SimController : ControllerBase
         if (!_scenarios.TryRun(name, _sim))
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
-        _logger.LogInformation("Scenario '{Name}' started.", name);
+        _logger.LogInformation("Scenario '{Name}' started.", Sanitize(name));
         return Ok(new { scenario = name, status = "started" });
     }
 }

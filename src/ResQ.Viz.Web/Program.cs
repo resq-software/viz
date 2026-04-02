@@ -9,10 +9,21 @@ builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationService>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationService>());
+builder.Services.AddViteServices();
 
 var app = builder.Build();
+
+// In development, UseViteDevelopmentServer MUST come before UseStaticFiles.
+// It starts the Vite child process and proxies frontend requests to it, so
+// a previously built wwwroot/index.html cannot shadow the live dev server.
+if (app.Environment.IsDevelopment())
+    app.UseViteDevelopmentServer(waitForDevServer: true);
+
 app.UseStaticFiles();
 app.MapControllers();
 app.MapHub<ResQ.Viz.Web.Hubs.VizHub>("/viz");
-app.MapFallbackToFile("index.html");
+
+if (!app.Environment.IsDevelopment())
+    app.MapFallbackToFile("index.html");  // serves Vite-built wwwroot/index.html in production
+
 app.Run();

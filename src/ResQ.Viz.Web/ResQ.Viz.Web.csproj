@@ -14,4 +14,33 @@
     <ProjectReference Include="..\..\lib\dotnet-sdk\ResQ.Mavlink\ResQ.Mavlink.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Vite.AspNetCore" Version="1.*" />
+  </ItemGroup>
+
+  <!-- Glob all TypeScript source files for incremental input tracking. -->
+  <ItemGroup>
+    <ClientSource Include="client\**\*" />
+  </ItemGroup>
+
+  <!--
+    NpmInstall: reinstalls only when package.json changes (keyed on lockfile).
+    ViteBuild:  runs only in Release; skipped in Debug (dotnet run uses Vite dev server).
+  -->
+  <Target Name="NpmInstall"
+          BeforeTargets="Build"
+          Inputs="package.json"
+          Outputs="node_modules\.package-lock.json">
+    <Exec Command="npm install" />
+  </Target>
+
+  <Target Name="ViteBuild"
+          BeforeTargets="Build"
+          DependsOnTargets="NpmInstall"
+          Condition="'$(Configuration)' == 'Release'"
+          Inputs="@(ClientSource)"
+          Outputs="wwwroot\index.html">
+    <Exec Command="npm run build" />
+  </Target>
+
 </Project>

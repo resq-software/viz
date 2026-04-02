@@ -12,7 +12,6 @@
         <h2>🚁 ResQ Viz</h2>
         <p id="connection-status">Connecting...</p>
 
-        <!-- Simulation Controls -->
         <section class="panel-section">
             <h3>Simulation</h3>
             <div class="btn-row">
@@ -22,7 +21,6 @@
             </div>
         </section>
 
-        <!-- Scenarios -->
         <section class="panel-section">
             <h3>Scenarios</h3>
             <div class="input-row">
@@ -36,7 +34,6 @@
             </div>
         </section>
 
-        <!-- Spawn -->
         <section class="panel-section">
             <h3>Spawn Drone</h3>
             <div class="input-row">
@@ -47,7 +44,6 @@
             <button id="btn-spawn" class="btn btn-primary" style="width:100%;margin-top:6px">+ Spawn Drone</button>
         </section>
 
-        <!-- Commands -->
         <section class="panel-section">
             <h3>Commands</h3>
             <select id="drone-select" style="width:100%;margin-bottom:8px">
@@ -61,7 +57,6 @@
             </div>
         </section>
 
-        <!-- Weather -->
         <section class="panel-section">
             <h3>Weather</h3>
             <select id="weather-mode">
@@ -80,7 +75,6 @@
             <button id="btn-weather" class="btn" style="width:100%;margin-top:6px">Apply Weather</button>
         </section>
 
-        <!-- Faults -->
         <section class="panel-section">
             <h3>Fault Injection</h3>
             <select id="fault-drone-select" style="width:100%;margin-bottom:8px">
@@ -105,13 +99,6 @@
         <span id="sim-time">T: 0.0s</span>
     </div>
 
-    <!-- Three.js via CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- Three.js OrbitControls (needs to be loaded from unpkg for r128) -->
-    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <!-- SignalR JS client -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
-
-    <script type="module" src="/js/app.js"></script>
+    <script type="module" src="./app.ts"></script>
 </body>
 </html>
