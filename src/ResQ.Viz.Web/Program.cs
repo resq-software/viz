@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
 builder.Services.AddControllers();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationService>();
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationService>());
 
 var app = builder.Build();
