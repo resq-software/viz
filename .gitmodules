@@ -1,0 +1,3 @@
+[submodule "lib/dotnet-sdk"]
+	path = lib/dotnet-sdk
+	url = https://github.com/resq-software/dotnet-sdk.git
