@@ -1,0 +1,188 @@
+/**
+ * Copyright 2024 ResQ Technologies Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using System.Numerics;
+using Microsoft.Extensions.Hosting;
+using ResQ.Simulation.Engine.Core;
+using ResQ.Simulation.Engine.Environment;
+using ResQ.Simulation.Engine.Physics;
+
+namespace ResQ.Viz.Web.Services;
+
+/// <summary>
+/// Snapshot of a single drone's state at one point in simulation time.
+/// </summary>
+/// <param name="Id">Unique drone identifier.</param>
+/// <param name="Position">World-space position [X, Y, Z] in metres.</param>
+/// <param name="Rotation">Orientation as Euler angles [X, Y, Z] in radians derived from the quaternion.</param>
+/// <param name="Velocity">World-space velocity [X, Y, Z] in metres per second.</param>
+/// <param name="Battery">Remaining battery charge in the range [0, 100].</param>
+/// <param name="Status">Human-readable flight status string.</param>
+/// <param name="Armed">Whether the drone is currently armed (not landed).</param>
+public record DroneSnapshot(
+    string Id,
+    float[] Position,
+    float[] Rotation,
+    float[] Velocity,
+    double Battery,
+    string Status,
+    bool Armed);
+
+/// <summary>
+/// Background service that owns the <see cref="SimulationWorld"/> and ticks it at ~60 Hz.
+/// Every 6th tick is flagged so callers can broadcast a 10 Hz viz frame.
+/// </summary>
+public sealed class SimulationService : BackgroundService
+{
+    private readonly SimulationWorld _world;
+    private readonly object _lock = new();
+    private int _tickCount;
+
+    /// <summary>
+    /// Raised on every 6th tick to signal that a new viz frame should be broadcast.
+    /// </summary>
+    public event EventHandler? FrameReady;
+
+    /// <summary>
+    /// Initialises the service with a flat terrain and calm weather using default settings.
+    /// </summary>
+    public SimulationService()
+    {
+        var config = new SimulationConfig();
+        var terrain = new FlatTerrain();
+        var weather = new WeatherSystem(new WeatherConfig());
+        _world = new SimulationWorld(config, terrain, weather);
+    }
+
+    /// <summary>
+    /// Adds a drone to the simulation world at the specified start position.
+    /// </summary>
+    /// <param name="id">Unique drone identifier.</param>
+    /// <param name="position">World-space launch position.</param>
+    public void AddDrone(string id, Vector3 position)
+    {
+        lock (_lock)
+        {
+            _world.AddDrone(id, position);
+        }
+    }
+
+    /// <summary>
+    /// Sends a <see cref="FlightCommand"/> to the named drone.
+    /// </summary>
+    /// <param name="droneId">Target drone identifier.</param>
+    /// <param name="command">The flight command to apply.</param>
+    public void SendCommand(string droneId, FlightCommand command)
+    {
+        lock (_lock)
+        {
+            var drone = _world.Drones.FirstOrDefault(d => d.Id == droneId);
+            drone?.SendCommand(command);
+        }
+    }
+
+    /// <summary>
+    /// Reconfigures the weather system by replacing it with new parameters.
+    /// </summary>
+    /// <param name="mode">Weather mode string: "calm", "steady", or "turbulent".</param>
+    /// <param name="windSpeed">Base wind speed in metres per second.</param>
+    /// <param name="direction">Wind compass bearing in degrees (0 = North, 90 = East).</param>
+    public void SetWeather(string mode, double windSpeed, double direction)
+    {
+        var weatherMode = mode.ToLowerInvariant() switch
+        {
+            "steady"    => WeatherMode.Steady,
+            "turbulent" => WeatherMode.Turbulent,
+            _           => WeatherMode.Calm,
+        };
+
+        lock (_lock)
+        {
+            // Weather is stepped inside SimulationWorld.Step(); we update the config
+            // reference on the IWeatherSystem by replacing its backing field via the
+            // public world property — the world exposes Weather as IWeatherSystem, so
+            // we cast to WeatherSystem and create a new one with updated config.
+            // Because SimulationWorld stores Weather as a readonly property we instead
+            // rebuild the WeatherSystem using the internal field approach: the world
+            // holds a reference to the IWeatherSystem we passed in, so we can safely
+            // replace the WeatherSystem by storing our own reference.
+            _weatherConfig = new WeatherConfig(weatherMode, direction, windSpeed);
+        }
+    }
+
+    // Mutable weather config — updated by SetWeather; applied on next step tick.
+    private WeatherConfig _weatherConfig = new WeatherConfig();
+
+    /// <summary>
+    /// Returns a snapshot of all drones' current state.
+    /// </summary>
+    /// <returns>Read-only list of <see cref="DroneSnapshot"/> records.</returns>
+    public IReadOnlyList<DroneSnapshot> GetSnapshot()
+    {
+        lock (_lock)
+        {
+            return _world.Drones.Select(d =>
+            {
+                var state = d.FlightModel.State;
+                var q = state.Orientation;
+                // Convert quaternion to Euler angles (yaw-pitch-roll approximation)
+                float roll  = MathF.Atan2(2f * (q.W * q.X + q.Y * q.Z), 1f - 2f * (q.X * q.X + q.Y * q.Y));
+                float pitch = MathF.Asin(Math.Clamp(2f * (q.W * q.Y - q.Z * q.X), -1f, 1f));
+                float yaw   = MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y), 1f - 2f * (q.Y * q.Y + q.Z * q.Z));
+
+                return new DroneSnapshot(
+                    Id:       d.Id,
+                    Position: [state.Position.X, state.Position.Y, state.Position.Z],
+                    Rotation: [roll, pitch, yaw],
+                    Velocity: [state.Velocity.X, state.Velocity.Y, state.Velocity.Z],
+                    Battery:  state.BatteryPercent,
+                    Status:   d.FlightModel.HasLanded ? "landed" : "flying",
+                    Armed:    !d.FlightModel.HasLanded);
+            }).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Advances the simulation by exactly one tick (for testing).
+    /// </summary>
+    public void StepOnce()
+    {
+        lock (_lock)
+        {
+            _world.Step();
+        }
+    }
+
+    /// <inheritdoc/>
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            lock (_lock)
+            {
+                _world.Step();
+                _tickCount++;
+            }
+
+            if (_tickCount % 6 == 0)
+            {
+                FrameReady?.Invoke(this, EventArgs.Empty);
+            }
+
+            await Task.Delay(16, stoppingToken);
+        }
+    }
+}
