@@ -15,10 +15,12 @@
  */
 
 using System.Numerics;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
 using ResQ.Simulation.Engine.Core;
 using ResQ.Simulation.Engine.Environment;
 using ResQ.Simulation.Engine.Physics;
+using ResQ.Viz.Web.Hubs;
 
 namespace ResQ.Viz.Web.Services;
 
@@ -48,8 +50,11 @@ public record DroneSnapshot(
 public sealed class SimulationService : BackgroundService
 {
     private readonly SimulationWorld _world;
+    private readonly IHubContext<VizHub> _hubContext;
+    private readonly VizFrameBuilder _frameBuilder;
     private readonly object _lock = new();
     private int _tickCount;
+    private double _simTime;
 
     /// <summary>
     /// Raised on every 6th tick to signal that a new viz frame should be broadcast.
@@ -59,8 +64,12 @@ public sealed class SimulationService : BackgroundService
     /// <summary>
     /// Initialises the service with a flat terrain and calm weather using default settings.
     /// </summary>
-    public SimulationService()
+    /// <param name="hubContext">SignalR hub context used to push frames to connected clients.</param>
+    /// <param name="frameBuilder">Stateless service that converts drone snapshots into <see cref="ResQ.Viz.Web.Models.VizFrame"/> objects.</param>
+    public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder)
     {
+        _hubContext = hubContext;
+        _frameBuilder = frameBuilder;
         var config = new SimulationConfig();
         var terrain = new FlatTerrain();
         var weather = new WeatherSystem(new WeatherConfig());
@@ -180,8 +189,14 @@ public sealed class SimulationService : BackgroundService
             if (_tickCount % 6 == 0)
             {
                 FrameReady?.Invoke(this, EventArgs.Empty);
+
+                // Build and broadcast frame outside the lock to avoid holding it during async I/O.
+                var snapshot = GetSnapshot();
+                var frame = _frameBuilder.Build(snapshot, _simTime);
+                await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
             }
 
+            _simTime += 1.0 / 60.0;
             await Task.Delay(16, stoppingToken);
         }
     }
