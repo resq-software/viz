@@ -63,6 +63,7 @@ export class Scene {
         this._lastTime = performance.now();
         this._frameCount = 0;
         this._fps = 0;
+        this._tickCallbacks = [];
 
         const loop = (now) => {
             requestAnimationFrame(loop);
@@ -72,11 +73,18 @@ export class Scene {
             if (this._frameCount % 30 === 0) {
                 this._fps = Math.round(1 / dt);
             }
+            for (const cb of this._tickCallbacks) cb();
             this.controls.update();
             this.renderer.render(this.scene, this.camera);
         };
         requestAnimationFrame(loop);
     }
+
+    /**
+     * Register a callback to be invoked each render frame.
+     * @param {Function} fn - Callback with no arguments
+     */
+    addTickCallback(fn) { this._tickCallbacks.push(fn); }
 
     _onResize() {
         this.camera.aspect = window.innerWidth / window.innerHeight;

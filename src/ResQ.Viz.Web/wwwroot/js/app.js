@@ -3,6 +3,7 @@
 
 import { Scene } from './scene.js';
 import { Terrain } from './terrain.js';
+import { DroneManager } from './drones.js';
 
 const container = document.getElementById('scene-container');
 const statusEl = document.getElementById('connection-status');
@@ -13,6 +14,8 @@ const simTimeEl = document.getElementById('sim-time');
 // Init Three.js scene
 const viz = new Scene(container);
 const terrain = new Terrain(viz.scene);
+const droneManager = new DroneManager(viz.scene);
+viz.addTickCallback(() => droneManager.tick());
 
 // SignalR connection
 const connection = new signalR.HubConnectionBuilder()
@@ -22,7 +25,8 @@ const connection = new signalR.HubConnectionBuilder()
     .build();
 
 connection.on('ReceiveFrame', (frame) => {
-    droneCountEl.textContent = `Drones: ${frame.drones?.length ?? 0}`;
+    droneManager.update(frame.drones ?? []);
+    droneCountEl.textContent = `Drones: ${droneManager.count}`;
     simTimeEl.textContent = `T: ${frame.time?.toFixed(1) ?? '0.0'}s`;
 });
 
