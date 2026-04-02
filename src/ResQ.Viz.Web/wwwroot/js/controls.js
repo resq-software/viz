@@ -5,6 +5,7 @@ export class ControlPanel {
     constructor() {
         this._bindButtons();
         this._bindSliders();
+        this._bindKeyboard();
     }
 
     // Call each time a new frame arrives to keep drone select lists current
@@ -33,6 +34,33 @@ export class ControlPanel {
         }
         // Restore selection if still valid
         if (ids.includes(current)) sel.value = current;
+    }
+
+    _bindKeyboard() {
+        document.addEventListener('keydown', async (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+            switch (e.code) {
+                case 'Space':
+                    e.preventDefault();
+                    await this._post('/api/sim/stop');
+                    break;
+                case 'KeyR':
+                    await this._post('/api/sim/reset');
+                    break;
+                case 'Digit1':
+                    await this._post('/api/sim/scenario/single');
+                    break;
+                case 'Digit2':
+                    await this._post('/api/sim/scenario/swarm-5');
+                    break;
+                case 'Digit3':
+                    await this._post('/api/sim/scenario/swarm-20');
+                    break;
+                case 'Digit4':
+                    await this._post('/api/sim/scenario/sar');
+                    break;
+            }
+        });
     }
 
     _bindButtons() {

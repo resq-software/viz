@@ -157,3 +157,12 @@ select {
     color: #8b949e;
     margin-bottom: 2px;
 }
+
+#wind-indicator {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    text-align: center;
+}
+#wind-canvas { display: block; }
+#wind-label { font-size: 10px; color: #8b949e; margin-top: 2px; }
