@@ -9,9 +9,90 @@
 <body>
     <div id="scene-container"></div>
     <div id="controls">
-        <h2>ResQ Viz</h2>
-        <!-- Control panel added in Task 9 -->
+        <h2>🚁 ResQ Viz</h2>
         <p id="connection-status">Connecting...</p>
+
+        <!-- Simulation Controls -->
+        <section class="panel-section">
+            <h3>Simulation</h3>
+            <div class="btn-row">
+                <button id="btn-start" class="btn btn-primary">▶ Start</button>
+                <button id="btn-stop" class="btn">⏸ Stop</button>
+                <button id="btn-reset" class="btn btn-danger">↺ Reset</button>
+            </div>
+        </section>
+
+        <!-- Scenarios -->
+        <section class="panel-section">
+            <h3>Scenarios</h3>
+            <div class="input-row">
+                <select id="scenario-select">
+                    <option value="single">Single Drone</option>
+                    <option value="swarm-5">Swarm (5)</option>
+                    <option value="swarm-20">Swarm (20)</option>
+                    <option value="sar">SAR Mission</option>
+                </select>
+                <button id="btn-run-scenario" class="btn btn-primary">Run</button>
+            </div>
+        </section>
+
+        <!-- Spawn -->
+        <section class="panel-section">
+            <h3>Spawn Drone</h3>
+            <div class="input-row">
+                <input type="number" id="spawn-x" placeholder="X" value="0" class="input-sm">
+                <input type="number" id="spawn-z" placeholder="Z" value="0" class="input-sm">
+                <input type="number" id="spawn-y" placeholder="Alt" value="50" class="input-sm">
+            </div>
+            <button id="btn-spawn" class="btn btn-primary" style="width:100%;margin-top:6px">+ Spawn Drone</button>
+        </section>
+
+        <!-- Commands -->
+        <section class="panel-section">
+            <h3>Commands</h3>
+            <select id="drone-select" style="width:100%;margin-bottom:8px">
+                <option value="">— Select drone —</option>
+            </select>
+            <div class="btn-grid">
+                <button class="btn" onclick="sendCmd('hover')">Hover</button>
+                <button class="btn" onclick="sendCmd('rtl')">RTL</button>
+                <button class="btn" onclick="sendCmd('land')">Land</button>
+                <button class="btn btn-danger" onclick="sendCmd('goto')">GoTo...</button>
+            </div>
+        </section>
+
+        <!-- Weather -->
+        <section class="panel-section">
+            <h3>Weather</h3>
+            <select id="weather-mode">
+                <option value="calm">Calm</option>
+                <option value="steady">Steady Wind</option>
+                <option value="turbulent">Turbulent</option>
+            </select>
+            <div class="slider-row">
+                <label>Speed: <span id="wind-speed-val">5</span> m/s</label>
+                <input type="range" id="wind-speed" min="0" max="30" value="5" class="slider">
+            </div>
+            <div class="slider-row">
+                <label>Dir: <span id="wind-dir-val">0</span>°</label>
+                <input type="range" id="wind-dir" min="0" max="360" value="0" class="slider">
+            </div>
+            <button id="btn-weather" class="btn" style="width:100%;margin-top:6px">Apply Weather</button>
+        </section>
+
+        <!-- Faults -->
+        <section class="panel-section">
+            <h3>Fault Injection</h3>
+            <select id="fault-drone-select" style="width:100%;margin-bottom:8px">
+                <option value="">— Select drone —</option>
+            </select>
+            <div class="btn-grid">
+                <button class="btn btn-danger" onclick="injectFault('gps')">GPS</button>
+                <button class="btn btn-danger" onclick="injectFault('comms')">Comms</button>
+                <button class="btn btn-danger" onclick="injectFault('sensor')">Sensor</button>
+                <button class="btn btn-danger" onclick="injectFault('failure')">Failure</button>
+            </div>
+        </section>
     </div>
     <div id="stats">
         <span id="fps">FPS: --</span> |

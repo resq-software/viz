@@ -5,6 +5,7 @@ import { Scene } from './scene.js';
 import { Terrain } from './terrain.js';
 import { DroneManager } from './drones.js';
 import { EffectsManager } from './effects.js';
+import { ControlPanel } from './controls.js';
 
 const container = document.getElementById('scene-container');
 const statusEl = document.getElementById('connection-status');
@@ -17,6 +18,7 @@ const viz = new Scene(container);
 const terrain = new Terrain(viz.scene);
 const droneManager = new DroneManager(viz.scene);
 const effectsManager = new EffectsManager(viz.scene);
+const controlPanel = new ControlPanel();
 viz.addTickCallback((dt) => droneManager.tick());
 viz.addTickCallback((dt) => effectsManager.tick(dt));
 
@@ -30,6 +32,7 @@ const connection = new signalR.HubConnectionBuilder()
 connection.on('ReceiveFrame', (frame) => {
     droneManager.update(frame.drones ?? []);
     effectsManager.update(frame);
+    controlPanel.updateDroneList(frame.drones ?? []);
     droneCountEl.textContent = `Drones: ${droneManager.count}`;
     simTimeEl.textContent = `T: ${frame.time?.toFixed(1) ?? '0.0'}s`;
 });
