@@ -4,99 +4,185 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ResQ Viz</title>
-    <link rel="stylesheet" href="/css/viz.css">
 </head>
 <body>
-    <div id="scene-container"></div>
-    <div id="controls">
-        <h2>🚁 ResQ Viz</h2>
-        <p id="connection-status">Connecting...</p>
 
-        <section class="panel-section">
-            <h3>Simulation</h3>
+    <!-- 3D canvas -->
+    <div id="scene-container"></div>
+
+    <!-- Top HUD bar -->
+    <header id="hud-top">
+        <div id="hud-logo">RESQ<span>VIZ</span></div>
+        <div id="hud-conn">
+            <span class="conn-dot" id="conn-dot"></span>
+            <span id="conn-label">Connecting…</span>
+        </div>
+        <div id="hud-stats">
+            <div class="hud-stat">
+                <span class="hud-stat-label">Drones</span>
+                <span class="hud-stat-value" id="drone-count">0</span>
+            </div>
+            <span class="hud-sep">|</span>
+            <div class="hud-stat">
+                <span class="hud-stat-label">FPS</span>
+                <span class="hud-stat-value" id="fps">--</span>
+            </div>
+            <span class="hud-sep">|</span>
+            <div class="hud-stat">
+                <span class="hud-stat-label">Time</span>
+                <span class="hud-stat-value" id="sim-time">0.0s</span>
+            </div>
+        </div>
+        <div id="hud-battery">
+            <span class="bat-label">Fleet Bat</span>
+            <div id="battery-track"><div id="battery-fill"></div></div>
+            <span id="battery-pct">--%</span>
+        </div>
+        <button id="btn-sidebar-toggle" title="Toggle panel [Tab]">☰</button>
+    </header>
+
+    <!-- Left sidebar -->
+    <aside id="sidebar">
+
+        <div class="panel-section">
+            <div class="section-title">Simulation</div>
             <div class="btn-row">
-                <button id="btn-start" class="btn btn-primary">▶ Start</button>
-                <button id="btn-stop" class="btn">⏸ Stop</button>
+                <button id="btn-start" class="btn btn-success">▶ Start</button>
+                <button id="btn-stop"  class="btn">⏸ Stop</button>
                 <button id="btn-reset" class="btn btn-danger">↺ Reset</button>
             </div>
-        </section>
+        </div>
 
-        <section class="panel-section">
-            <h3>Scenarios</h3>
-            <div class="input-row">
-                <select id="scenario-select">
-                    <option value="single">Single Drone</option>
-                    <option value="swarm-5">Swarm (5)</option>
-                    <option value="swarm-20">Swarm (20)</option>
-                    <option value="sar">SAR Mission</option>
-                </select>
-                <button id="btn-run-scenario" class="btn btn-primary">Run</button>
+        <div class="panel-section">
+            <div class="section-title">Scenarios</div>
+            <div class="scenario-grid">
+                <div class="scenario-card" data-scenario="single">
+                    <div class="sc-name">Single</div>
+                    <div class="sc-desc">1 drone</div>
+                </div>
+                <div class="scenario-card" data-scenario="swarm-5">
+                    <div class="sc-name">Swarm 5</div>
+                    <div class="sc-desc">5 drones</div>
+                </div>
+                <div class="scenario-card" data-scenario="swarm-20">
+                    <div class="sc-name">Swarm 20</div>
+                    <div class="sc-desc">20 drones</div>
+                </div>
+                <div class="scenario-card" data-scenario="sar">
+                    <div class="sc-name">SAR</div>
+                    <div class="sc-desc">Search &amp; rescue</div>
+                </div>
             </div>
-        </section>
+        </div>
 
-        <section class="panel-section">
-            <h3>Spawn Drone</h3>
+        <div class="panel-section">
+            <div class="section-title">Spawn Drone</div>
             <div class="input-row">
-                <input type="number" id="spawn-x" placeholder="X" value="0" class="input-sm">
-                <input type="number" id="spawn-z" placeholder="Z" value="0" class="input-sm">
-                <input type="number" id="spawn-y" placeholder="Alt" value="50" class="input-sm">
+                <div class="field-group">
+                    <label class="field-label">X (East)</label>
+                    <input type="number" id="spawn-x" value="0">
+                </div>
+                <div class="field-group">
+                    <label class="field-label">Alt (m)</label>
+                    <input type="number" id="spawn-y" value="50">
+                </div>
+                <div class="field-group">
+                    <label class="field-label">Z (South)</label>
+                    <input type="number" id="spawn-z" value="0">
+                </div>
             </div>
-            <button id="btn-spawn" class="btn btn-primary" style="width:100%;margin-top:6px">+ Spawn Drone</button>
-        </section>
+            <button id="btn-spawn" class="btn btn-primary" style="width:100%">+ Spawn Drone</button>
+        </div>
 
-        <section class="panel-section">
-            <h3>Commands</h3>
-            <select id="drone-select" style="width:100%;margin-bottom:8px">
-                <option value="">— Select drone —</option>
+        <div class="panel-section">
+            <div class="section-title">Commands</div>
+            <label class="field-label">Target drone</label>
+            <select id="drone-select" style="margin-bottom:8px">
+                <option value="">— select —</option>
             </select>
             <div class="btn-grid">
-                <button class="btn" onclick="sendCmd('hover')">Hover</button>
-                <button class="btn" onclick="sendCmd('rtl')">RTL</button>
-                <button class="btn" onclick="sendCmd('land')">Land</button>
-                <button class="btn btn-danger" onclick="sendCmd('goto')">GoTo...</button>
+                <button class="btn cmd-btn" data-cmd="hover">Hover</button>
+                <button class="btn cmd-btn" data-cmd="rtl">RTL</button>
+                <button class="btn cmd-btn" data-cmd="land">Land</button>
+                <button class="btn btn-primary cmd-btn" data-cmd="goto">GoTo…</button>
             </div>
-        </section>
+        </div>
 
-        <section class="panel-section">
-            <h3>Weather</h3>
-            <select id="weather-mode">
+        <div class="panel-section">
+            <div class="section-title">Weather</div>
+            <label class="field-label">Mode</label>
+            <select id="weather-mode" style="margin-bottom:8px">
                 <option value="calm">Calm</option>
                 <option value="steady">Steady Wind</option>
                 <option value="turbulent">Turbulent</option>
             </select>
-            <div class="slider-row">
-                <label>Speed: <span id="wind-speed-val">5</span> m/s</label>
-                <input type="range" id="wind-speed" min="0" max="30" value="5" class="slider">
-            </div>
-            <div class="slider-row">
-                <label>Dir: <span id="wind-dir-val">0</span>°</label>
-                <input type="range" id="wind-dir" min="0" max="360" value="0" class="slider">
-            </div>
-            <button id="btn-weather" class="btn" style="width:100%;margin-top:6px">Apply Weather</button>
-        </section>
+            <label class="field-label">Speed: <span id="wind-speed-val">5</span> m/s</label>
+            <input type="range" id="wind-speed" min="0" max="30" value="5">
+            <label class="field-label" style="margin-top:4px">Direction: <span id="wind-dir-val">0</span>°</label>
+            <input type="range" id="wind-dir" min="0" max="359" value="0">
+            <button id="btn-weather" class="btn" style="width:100%;margin-top:8px">Apply Weather</button>
+        </div>
 
-        <section class="panel-section">
-            <h3>Fault Injection</h3>
-            <select id="fault-drone-select" style="width:100%;margin-bottom:8px">
-                <option value="">— Select drone —</option>
+        <div class="panel-section">
+            <div class="section-title">Fault Injection</div>
+            <label class="field-label">Target drone</label>
+            <select id="fault-drone-select" style="margin-bottom:8px">
+                <option value="">— select —</option>
             </select>
             <div class="btn-grid">
-                <button class="btn btn-danger" onclick="injectFault('gps')">GPS</button>
-                <button class="btn btn-danger" onclick="injectFault('comms')">Comms</button>
-                <button class="btn btn-danger" onclick="injectFault('sensor')">Sensor</button>
-                <button class="btn btn-danger" onclick="injectFault('failure')">Failure</button>
+                <button class="btn btn-danger fault-btn" data-fault="gps">GPS</button>
+                <button class="btn btn-danger fault-btn" data-fault="comms">Comms</button>
+                <button class="btn btn-danger fault-btn" data-fault="sensor">Sensor</button>
+                <button class="btn btn-danger fault-btn" data-fault="failure">Failure</button>
             </div>
-        </section>
+        </div>
+
+    </aside>
+
+    <!-- Drone detail panel (hidden until a drone is clicked) -->
+    <div id="drone-panel" class="hidden">
+        <button id="dp-close">×</button>
+        <div id="dp-info">
+            <div id="dp-id">—</div>
+            <div id="dp-status-row">
+                <span id="dp-badge" class="badge">—</span>
+            </div>
+            <div style="margin-top:6px">
+                <div class="dp-metric-label">Battery</div>
+                <div id="dp-bat-track"><div id="dp-bat-fill"></div></div>
+                <div class="dp-metric-value" id="dp-bat-pct">--%</div>
+            </div>
+        </div>
+        <div id="dp-metrics">
+            <div class="dp-metric">
+                <span class="dp-metric-label">Position (X · Y · Z)</span>
+                <span class="dp-metric-value" id="dp-pos">— · — · —</span>
+            </div>
+            <div class="dp-metric">
+                <span class="dp-metric-label">Velocity (X · Y · Z) m/s</span>
+                <span class="dp-metric-value" id="dp-vel">— · — · —</span>
+            </div>
+        </div>
+        <div id="dp-cmds">
+            <button class="btn btn-primary dp-cmd-btn" data-cmd="hover">Hover</button>
+            <button class="btn dp-cmd-btn" data-cmd="rtl">RTL</button>
+            <button class="btn dp-cmd-btn" data-cmd="land">Land</button>
+        </div>
     </div>
-    <div id="wind-indicator">
-        <canvas id="wind-canvas" width="60" height="60"></canvas>
-        <div id="wind-label">N</div>
+
+    <!-- Wind compass -->
+    <div id="wind-compass">
+        <canvas id="wind-canvas" width="80" height="80"></canvas>
+        <div id="wind-label">N · 0 m/s</div>
     </div>
-    <div id="stats">
-        <span id="avg-battery">Bat: --</span> |
-        <span id="fps">FPS: --</span> |
-        <span id="drone-count">Drones: 0</span> |
-        <span id="sim-time">T: 0.0s</span>
+
+    <!-- Keyboard hints (fades after 5 s) -->
+    <div id="key-hints">
+        <kbd>Tab</kbd> Panel &nbsp;·&nbsp;
+        <kbd>1–4</kbd> Scenarios &nbsp;·&nbsp;
+        <kbd>Space</kbd> Stop &nbsp;·&nbsp;
+        <kbd>R</kbd> Reset &nbsp;·&nbsp;
+        Click drone to inspect
     </div>
 
     <script type="module" src="./app.ts"></script>
