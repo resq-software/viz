@@ -26,7 +26,8 @@ export class ControlPanel {
         const sel = document.getElementById(selectId) as HTMLSelectElement | null;
         if (!sel) return;
         const current = sel.value;
-        Array.from(sel.options).forEach(o => { if (o.value && !ids.includes(o.value)) sel.remove(o.index); });
+        // Iterate in reverse so index-shifting from removal doesn't skip elements
+        Array.from(sel.options).reverse().forEach(o => { if (o.value && !ids.includes(o.value)) sel.remove(o.index); });
         for (const id of ids) {
             if (!Array.from(sel.options).some(o => o.value === id)) {
                 const opt = document.createElement('option');
