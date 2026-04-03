@@ -3,6 +3,8 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostFx } from './postfx';
 
 export class Scene {
@@ -18,6 +20,7 @@ export class Scene {
     private _followTarget: THREE.Object3D | null = null;
     private readonly _followOffset = new THREE.Vector3(0, 18, -28);
     private _postFx!: PostFx;
+    private _sky!: Sky;
 
     constructor(container: HTMLElement) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -47,6 +50,7 @@ export class Scene {
         this._controls.maxDistance    = 2000;
         this._controls.target.set(0, 20, 0);
 
+        this._initSky();
         this._initLights();
         this._initHelpers();
         this._postFx = new PostFx(
@@ -58,6 +62,44 @@ export class Scene {
         );
         this._startRenderLoop();
         window.addEventListener('resize', () => this._onResize());
+    }
+
+    private _initSky(): void {
+        const sky = new Sky();
+        sky.scale.setScalar(10000);
+        this.scene.add(sky);
+        this._sky = sky;
+
+        const sun = new THREE.Vector3();
+        const uniforms = sky.material.uniforms;
+        uniforms['turbidity']!.value          = 4;
+        uniforms['rayleigh']!.value           = 0.8;
+        uniforms['mieCoefficient']!.value     = 0.005;
+        uniforms['mieDirectionalG']!.value    = 0.92;
+
+        // Elevation ~30° → morning light angle
+        const phi   = THREE.MathUtils.degToRad(90 - 30);
+        const theta = THREE.MathUtils.degToRad(180);
+        sun.setFromSphericalCoords(1, phi, theta);
+        uniforms['sunPosition']!.value.copy(sun);
+
+        // Sync directional sun light direction to match sky
+        this.scene.traverse(obj => {
+            if (obj instanceof THREE.DirectionalLight && obj.castShadow) {
+                obj.position.set(
+                    sun.x * 500,
+                    sun.y * 500,
+                    sun.z * 500,
+                );
+            }
+        });
+
+        // Generate environment map from sky for PBR reflections
+        const pmrem = new THREE.PMREMGenerator(this.renderer);
+        pmrem.compileEquirectangularShader();
+        const envMap = pmrem.fromScene(new RoomEnvironment()).texture;
+        this.scene.environment = envMap;
+        pmrem.dispose();
     }
 
     private _initLights(): void {
