@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 
+/** Terrain is permanent for the lifetime of the app; no dispose() method is provided. */
 export class Terrain {
     constructor(scene: THREE.Scene) {
         this._buildGround(scene);

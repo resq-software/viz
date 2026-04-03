@@ -12,6 +12,7 @@ export class Scene {
     private _lastTime: number = 0;
     private _frameCount: number = 0;
     private _fps: number = 0;
+    private _fpsAccum: number = 0;
     private readonly _tickCallbacks: Array<(dt: number) => void> = [];
 
     constructor(container: HTMLElement) {
@@ -73,9 +74,11 @@ export class Scene {
             requestAnimationFrame(loop);
             const dt = Math.min((now - this._lastTime) / 1000, 0.1); // cap at 100 ms
             this._lastTime = now;
+            this._fpsAccum += dt;
             this._frameCount++;
             if (this._frameCount % 30 === 0) {
-                this._fps = Math.round(1 / dt);
+                this._fps = Math.round(30 / this._fpsAccum); // avg over 30-frame window
+                this._fpsAccum = 0;
             }
             for (const cb of this._tickCallbacks) cb(dt);
             this._controls.update();
