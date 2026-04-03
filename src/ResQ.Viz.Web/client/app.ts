@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import './styles/main.css';
+import * as THREE from 'three';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { Scene }          from './scene';
 import { Terrain }        from './terrain';
@@ -70,6 +71,8 @@ dronePanel.onClose(() => {
     droneManager.setSelected(null);
 });
 
+let _fittedToSwarm = false;
+
 // ─── SignalR ───────────────────────────────────────────────────────────────
 
 const connection = new HubConnectionBuilder()
@@ -86,6 +89,13 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
     dronePanel.update(drones);
     windCompass.updateFromWeatherSliders();
+    if (!_fittedToSwarm && drones.length > 0) {
+        _fittedToSwarm = true;
+        const positions = drones
+            .filter(d => d.pos != null)
+            .map(d => new THREE.Vector3(d.pos![0], d.pos![1], d.pos![2]));
+        viz.fitToPositions(positions);
+    }
 });
 
 connection.onreconnecting(() => hud.setStatus('reconnecting'));
@@ -95,17 +105,32 @@ connection.onclose(() => hud.setStatus('disconnected'));
 setInterval(() => hud.updateFps(viz.fps), 500);
 
 let _starting = false;
+
+async function _autoSpawnIfEmpty(): Promise<void> {
+    try {
+        const res = await fetch('/api/sim/state');
+        if (!res.ok) return;
+        const drones = await res.json() as unknown[];
+        if (drones.length === 0) {
+            await fetch('/api/sim/scenario/single', { method: 'POST' });
+        }
+    } catch {
+        // Non-critical — user can spawn manually via the sidebar
+    }
+}
+
 async function start(): Promise<void> {
     if (_starting) return;
     _starting = true;
     try {
         await connection.start();
         hud.setStatus('connected');
+        await _autoSpawnIfEmpty();
     } catch {
         hud.setStatus('disconnected');
-        setTimeout(() => { _starting = false; start(); }, 5000);
+        setTimeout(() => { _starting = false; void start(); }, 5000);
         return;
     }
     _starting = false;
 }
-start();
+void start();
