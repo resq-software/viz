@@ -11,8 +11,10 @@ export interface DroneState {
     id: string;
     pos?: Vec3;
     rot?: Quat;
+    vel?: Vec3;
     status?: string;
     battery?: number;
+    armed?: boolean;
 }
 
 export interface HazardState {

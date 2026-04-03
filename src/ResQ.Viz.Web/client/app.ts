@@ -1,66 +1,72 @@
 // ResQ Viz - Entry point
 // SPDX-License-Identifier: Apache-2.0
 
+import './styles/main.css';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { Scene }          from './scene';
 import { Terrain }        from './terrain';
 import { DroneManager }   from './drones';
 import { EffectsManager } from './effects';
 import { ControlPanel }   from './controls';
+import { Hud }            from './ui/hud';
+import { WindCompass }    from './ui/windCompass';
+import { DronePanel }     from './ui/dronePanel';
 import type { VizFrame }  from './types';
-
-// ─── Wind indicator ────────────────────────────────────────────────────────
-
-function drawWindArrow(degrees: number): void {
-    const canvas = document.getElementById('wind-canvas') as HTMLCanvasElement | null;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const cx = 30, cy = 30, r = 22;
-    ctx.clearRect(0, 0, 60, 60);
-
-    ctx.strokeStyle = 'rgba(139, 148, 158, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-
-    const rad = (degrees - 90) * Math.PI / 180;
-    ctx.strokeStyle = '#58a6ff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.cos(rad) * r * 0.8, cy + Math.sin(rad) * r * 0.8);
-    ctx.stroke();
-
-    ctx.fillStyle = '#8b949e';
-    ctx.font = '8px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('N', cx, cy - r - 4);
-}
-drawWindArrow(0);
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
 const container = document.getElementById('scene-container');
-if (!container) throw new Error('#scene-container not found — check index.html');
-
-const statusEl     = document.getElementById('connection-status');
-const fpsEl        = document.getElementById('fps');
-const droneCountEl = document.getElementById('drone-count');
-const simTimeEl    = document.getElementById('sim-time');
+if (!container) throw new Error('#scene-container not found');
 
 const viz          = new Scene(container);
 const terrain      = new Terrain(viz.scene);
 const droneManager = new DroneManager(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const controlPanel = new ControlPanel();
+const hud          = new Hud();
+const windCompass  = new WindCompass();
+const dronePanel   = new DronePanel();
 
-// Suppress "assigned but never read" for terrain (constructed for side effects).
 void terrain;
 
 viz.addTickCallback(() => droneManager.tick());
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
+
+// ─── Keyboard hints auto-fade ──────────────────────────────────────────────
+
+const keyHints = document.getElementById('key-hints');
+if (keyHints) {
+    setTimeout(() => keyHints.classList.add('fade-out'), 5000);
+    setTimeout(() => { keyHints.style.display = 'none'; }, 6500);
+}
+
+// ─── Drone click-to-select ─────────────────────────────────────────────────
+
+viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
+    const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
+    if (hit.length > 0) {
+        const droneId = droneManager.getDroneIdFromObject(hit[0]!.object);
+        if (droneId) {
+            droneManager.setSelected(droneId);
+            dronePanel.show(droneId);
+        }
+    } else {
+        droneManager.setSelected(null);
+        dronePanel.hide();
+    }
+});
+
+dronePanel.onCommand(async (droneId, cmd) => {
+    await fetch(`/api/sim/drone/${droneId}/cmd`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: cmd }),
+    });
+});
+
+dronePanel.onClose(() => {
+    droneManager.setSelected(null);
+});
 
 // ─── SignalR ───────────────────────────────────────────────────────────────
 
@@ -75,35 +81,24 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     droneManager.update(drones);
     effectsMgr.update(frame);
     controlPanel.updateDroneList(drones);
-    if (droneCountEl) droneCountEl.textContent = `Drones: ${droneManager.count}`;
-    if (simTimeEl)    simTimeEl.textContent    = `T: ${frame.time?.toFixed(1) ?? '0.0'}s`;
-
-    const avgBattery = drones.length > 0
-        ? (drones.reduce((s, d) => s + (d.battery ?? 100), 0) / drones.length).toFixed(0)
-        : '--';
-    const battEl = document.getElementById('avg-battery');
-    if (battEl) battEl.textContent = `Bat: ${avgBattery}%`;
+    hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
+    dronePanel.updateFrame(drones);
+    windCompass.updateFromWeatherSliders();
 });
 
-connection.onreconnecting(() => {
-    if (statusEl) { statusEl.textContent = 'Reconnecting...'; statusEl.className = ''; }
-});
-connection.onreconnected(() => {
-    if (statusEl) { statusEl.textContent = 'Connected'; statusEl.className = 'connected'; }
-});
-connection.onclose(() => {
-    if (statusEl) { statusEl.textContent = 'Disconnected'; statusEl.className = ''; }
-});
+connection.onreconnecting(() => hud.setStatus('reconnecting'));
+connection.onreconnected(() => hud.setStatus('connected'));
+connection.onclose(() => hud.setStatus('disconnected'));
+
+setInterval(() => hud.updateFps(viz.fps), 500);
 
 async function start(): Promise<void> {
     try {
         await connection.start();
-        if (statusEl) { statusEl.textContent = 'Connected'; statusEl.className = 'connected'; }
+        hud.setStatus('connected');
     } catch {
-        if (statusEl) statusEl.textContent = 'Connection failed — retrying...';
+        hud.setStatus('disconnected');
         setTimeout(start, 5000);
     }
 }
-
-setInterval(() => { if (fpsEl) fpsEl.textContent = `FPS: ${viz.fps}`; }, 500);
 start();
