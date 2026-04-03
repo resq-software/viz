@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0
 // (see https://www.apache.org/licenses/LICENSE-2.0)
 
+using Vite.AspNetCore.Extensions;
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
 builder.Services.AddControllers();
@@ -13,11 +15,11 @@ builder.Services.AddViteServices();
 
 var app = builder.Build();
 
-// In development, UseViteDevelopmentServer MUST come before UseStaticFiles.
+// In development, UseViteDevMiddleware MUST come before UseStaticFiles.
 // It starts the Vite child process and proxies frontend requests to it, so
 // a previously built wwwroot/index.html cannot shadow the live dev server.
 if (app.Environment.IsDevelopment())
-    app.UseViteDevelopmentServer(waitForDevServer: true);
+    app.UseViteDevelopmentServer();
 
 app.UseStaticFiles();
 app.MapControllers();
