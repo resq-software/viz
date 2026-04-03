@@ -35,10 +35,10 @@ export class Scene {
 
         this.scene = new THREE.Scene();
         // Fog density: tuned for 600-unit terrain; increase for denser atmosphere
-        this.scene.fog = new THREE.FogExp2(0x0d1117, 0.0006);
+        this.scene.fog = new THREE.FogExp2(0x0d1117, 0.00015);
 
         this._camera = new THREE.PerspectiveCamera(
-            55, window.innerWidth / window.innerHeight, 0.1, 5000,
+            55, window.innerWidth / window.innerHeight, 0.1, 20000,
         );
         this._camera.position.set(150, 120, 150);
         this._camera.lookAt(0, 0, 0);
@@ -101,6 +101,9 @@ export class Scene {
         const envMap = pmrem.fromScene(new RoomEnvironment()).texture;
         this.scene.environment = envMap;
         pmrem.dispose();
+
+        // Sky mesh handles background — ensure no solid color overwrites it
+        this.scene.background = null;
     }
 
     private _initLights(): void {

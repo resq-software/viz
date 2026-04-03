@@ -22,9 +22,9 @@ export class PostFx {
         this._composer.addPass(new RenderPass(scene, camera));
         const sao = new SAOPass(scene, camera);
         sao.params.saoBias          = 0.5;
-        sao.params.saoIntensity     = 0.015;
-        sao.params.saoScale         = 1.0;
-        sao.params.saoKernelRadius  = 40;
+        sao.params.saoIntensity     = 0.008;
+        sao.params.saoScale         = 0.8;
+        sao.params.saoKernelRadius  = 20;
         sao.params.saoMinResolution = 0;
         sao.params.saoBlur          = true;
         sao.params.saoBlurRadius    = 8;
@@ -32,9 +32,9 @@ export class PostFx {
         this._composer.addPass(sao);
         const bloom = new UnrealBloomPass(
             new THREE.Vector2(width, height),
-            0.35,   // strength
-            0.6,    // radius
-            0.85,   // threshold
+            0.18,   // strength
+            0.25,   // radius
+            0.92,   // threshold
         );
         this._composer.addPass(bloom);
         this._composer.addPass(new OutputPass());
