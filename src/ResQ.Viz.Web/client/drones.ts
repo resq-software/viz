@@ -16,8 +16,16 @@ const STATUS_COLORS: Record<string, number> = {
 };
 const DEFAULT_COLOR   = 0xaaaaaa;
 const SELECTION_COLOR = 0x58a6ff;
-/** Lerp factor per frame at 60 Hz — tune for responsiveness vs smoothness (0.0=frozen, 1.0=instant) */
-const LERP_SPEED      = 0.15;
+/** Target simulation frame rate for lerp normalisation. */
+const TARGET_FPS = 60;
+
+/** Base lerp factor at TARGET_FPS — tune for responsiveness vs smoothness. */
+const LERP_ALPHA = 0.15;
+
+/** Frame-rate-independent lerp factor. dt is elapsed seconds since last frame. */
+function lerpAlpha(dt: number): number {
+    return 1 - Math.pow(1 - LERP_ALPHA, dt * TARGET_FPS);
+}
 const BODY_COLOR      = 0x161b22;
 const ARM_COLOR       = 0x21262d;
 
@@ -62,11 +70,12 @@ export class DroneManager {
         }
     }
 
-    tick(): void {
+    tick(dt: number): void {
+        const alpha = lerpAlpha(dt);
         for (const entry of this._drones.values()) {
-            entry.group.position.lerp(entry.targetPos, LERP_SPEED);
+            entry.group.position.lerp(entry.targetPos, alpha);
             if (entry.targetRot) {
-                entry.group.quaternion.slerp(entry.targetRot, LERP_SPEED);
+                entry.group.quaternion.slerp(entry.targetRot, alpha);
             }
             entry.rotors.forEach((rotor, i) => {
                 rotor.rotation.y += i % 2 === 0 ? 0.18 : -0.18;

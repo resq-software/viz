@@ -151,8 +151,10 @@ export class Scene {
                 this._controls.enabled = false;
                 const targetPos = this._followTarget.position;
                 const desired = targetPos.clone().add(this._followOffset);
-                this._camera.position.lerp(desired, 0.06);
-                this._controls.target.lerp(targetPos, 0.08);
+                const followAlpha = 1 - Math.pow(0.94, dt * 60); // position
+                const lookAtAlpha = 1 - Math.pow(0.92, dt * 60); // look-at target
+                this._camera.position.lerp(desired, followAlpha);
+                this._controls.target.lerp(targetPos, lookAtAlpha);
             }
             this._controls.update();
             this._postFx.render();

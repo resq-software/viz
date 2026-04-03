@@ -62,9 +62,29 @@ export class OverlayManager {
     }
 
     dispose(): void {
-        for (const a of this._velArrows.values()) this._scene.remove(a);
-        for (const h of this._halos.values())     this._scene.remove(h);
-        this._scene.remove(this._formLines);
+        for (const arrow of this._velArrows.values()) {
+            this._scene.remove(arrow);
+            arrow.traverse(child => {
+                if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
+                const mat = (child as THREE.Mesh).material;
+                if (mat) {
+                    if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+                    else mat.dispose();
+                }
+            });
+        }
+        this._velArrows.clear();
+        for (const halo of this._halos.values()) {
+            this._scene.remove(halo);
+            halo.geometry.dispose();
+            (halo.material as THREE.Material).dispose();
+        }
+        this._halos.clear();
+        if (this._formLines) {
+            this._scene.remove(this._formLines);
+            this._formLines.geometry.dispose();
+            (this._formLines.material as THREE.Material).dispose();
+        }
     }
 
     // ── Velocity vectors ──────────────────────────────────────────────────
@@ -102,7 +122,18 @@ export class OverlayManager {
             }
         }
         for (const [id, arrow] of this._velArrows) {
-            if (!seen.has(id)) { this._scene.remove(arrow); this._velArrows.delete(id); }
+            if (!seen.has(id)) {
+                this._scene.remove(arrow);
+                arrow.traverse(child => {
+                    if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
+                    const mat = (child as THREE.Mesh).material;
+                    if (mat) {
+                        if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+                        else mat.dispose();
+                    }
+                });
+                this._velArrows.delete(id);
+            }
         }
     }
 
@@ -130,7 +161,12 @@ export class OverlayManager {
             }
         }
         for (const [id, halo] of this._halos) {
-            if (!seen.has(id)) { this._scene.remove(halo); this._halos.delete(id); }
+            if (!seen.has(id)) {
+                this._scene.remove(halo);
+                halo.geometry.dispose();
+                (halo.material as THREE.Material).dispose();
+                this._halos.delete(id);
+            }
         }
     }
 

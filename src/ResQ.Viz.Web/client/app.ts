@@ -33,7 +33,7 @@ const dronePanel   = new DronePanel();
 
 void terrain;
 
-viz.addTickCallback(() => droneManager.tick());
+viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
 
 // ─── Keyboard hints auto-fade ──────────────────────────────────────────────
@@ -185,7 +185,8 @@ connection.onreconnecting(() => hud.setStatus('reconnecting'));
 connection.onreconnected(() => hud.setStatus('connected'));
 connection.onclose(() => hud.setStatus('disconnected'));
 
-setInterval(() => hud.updateFps(viz.fps), 500);
+const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
+window.addEventListener('beforeunload', () => clearInterval(_fpsTick));
 
 let _starting = false;
 

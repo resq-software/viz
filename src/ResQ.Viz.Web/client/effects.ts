@@ -132,7 +132,7 @@ export class EffectsManager {
     private _updateHazards(hazards: HazardState[]): void {
         const seenKeys = new Set<string>();
         for (const h of hazards) {
-            const key = `${h.type}-${h.center?.join(',')}`;
+            const key = `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
             seenKeys.add(key);
             if (!this._hazards.has(key)) {
                 this._hazards.set(key, this._createHazardMesh(h));
