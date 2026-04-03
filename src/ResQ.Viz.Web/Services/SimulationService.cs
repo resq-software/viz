@@ -49,16 +49,16 @@ public record DroneSnapshot(
 /// </summary>
 public sealed class SimulationService : BackgroundService
 {
-    private readonly SimulationWorld _world;
+    private SimulationWorld _world;
+    private readonly UpdatableWeatherSystem _weather;
+    private readonly Func<FlatTerrain> _terrainFactory;
     private readonly IHubContext<VizHub> _hubContext;
     private readonly VizFrameBuilder _frameBuilder;
     private readonly object _lock = new();
     private int _tickCount;
     private double _simTime;
 
-    /// <summary>
-    /// Raised on every 6th tick to signal that a new viz frame should be broadcast.
-    /// </summary>
+    /// <summary>Raised on every 6th tick to signal that a new viz frame should be broadcast.</summary>
     public event EventHandler? FrameReady;
 
     /// <summary>
@@ -68,17 +68,14 @@ public sealed class SimulationService : BackgroundService
     /// <param name="frameBuilder">Stateless service that converts drone snapshots into <see cref="ResQ.Viz.Web.Models.VizFrame"/> objects.</param>
     public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder)
     {
-        _hubContext = hubContext;
-        _frameBuilder = frameBuilder;
-        var config = new SimulationConfig();
-        var terrain = new FlatTerrain();
-        var weather = new WeatherSystem(new WeatherConfig());
-        _world = new SimulationWorld(config, terrain, weather);
+        _hubContext     = hubContext;
+        _frameBuilder   = frameBuilder;
+        _terrainFactory = () => new FlatTerrain();
+        _weather        = new UpdatableWeatherSystem(new WeatherConfig());
+        _world          = new SimulationWorld(new SimulationConfig(), _terrainFactory(), _weather);
     }
 
-    /// <summary>
-    /// Adds a drone to the simulation world at the specified start position.
-    /// </summary>
+    /// <summary>Adds a drone to the simulation world at the specified start position.</summary>
     /// <param name="id">Unique drone identifier.</param>
     /// <param name="position">World-space launch position.</param>
     public void AddDrone(string id, Vector3 position)
@@ -89,9 +86,7 @@ public sealed class SimulationService : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Sends a <see cref="FlightCommand"/> to the named drone.
-    /// </summary>
+    /// <summary>Sends a <see cref="FlightCommand"/> to the named drone.</summary>
     /// <param name="droneId">Target drone identifier.</param>
     /// <param name="command">The flight command to apply.</param>
     public void SendCommand(string droneId, FlightCommand command)
@@ -103,9 +98,7 @@ public sealed class SimulationService : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Reconfigures the weather system by replacing it with new parameters.
-    /// </summary>
+    /// <summary>Reconfigures the weather system with new parameters, taking effect immediately.</summary>
     /// <param name="mode">Weather mode string: "calm", "steady", or "turbulent".</param>
     /// <param name="windSpeed">Base wind speed in metres per second.</param>
     /// <param name="direction">Wind compass bearing in degrees (0 = North, 90 = East).</param>
@@ -117,27 +110,24 @@ public sealed class SimulationService : BackgroundService
             "turbulent" => WeatherMode.Turbulent,
             _           => WeatherMode.Calm,
         };
+        _weather.Update(new WeatherConfig(weatherMode, direction, windSpeed));
+    }
 
+    /// <summary>
+    /// Resets the simulation by discarding all drones and restarting the world clock.
+    /// The current weather configuration is preserved.
+    /// </summary>
+    public void Reset()
+    {
         lock (_lock)
         {
-            // Weather is stepped inside SimulationWorld.Step(); we update the config
-            // reference on the IWeatherSystem by replacing its backing field via the
-            // public world property — the world exposes Weather as IWeatherSystem, so
-            // we cast to WeatherSystem and create a new one with updated config.
-            // Because SimulationWorld stores Weather as a readonly property we instead
-            // rebuild the WeatherSystem using the internal field approach: the world
-            // holds a reference to the IWeatherSystem we passed in, so we can safely
-            // replace the WeatherSystem by storing our own reference.
-            _weatherConfig = new WeatherConfig(weatherMode, direction, windSpeed);
+            _world     = new SimulationWorld(new SimulationConfig(), _terrainFactory(), _weather);
+            _simTime   = 0;
+            _tickCount = 0;
         }
     }
 
-    // Mutable weather config — updated by SetWeather; applied on next step tick.
-    private WeatherConfig _weatherConfig = new WeatherConfig();
-
-    /// <summary>
-    /// Returns a snapshot of all drones' current state.
-    /// </summary>
+    /// <summary>Returns a snapshot of all drones' current state.</summary>
     /// <returns>Read-only list of <see cref="DroneSnapshot"/> records.</returns>
     public IReadOnlyList<DroneSnapshot> GetSnapshot()
     {
@@ -164,9 +154,7 @@ public sealed class SimulationService : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Advances the simulation by exactly one tick (for testing).
-    /// </summary>
+    /// <summary>Advances the simulation by exactly one tick (for testing).</summary>
     public void StepOnce()
     {
         lock (_lock)
@@ -192,7 +180,7 @@ public sealed class SimulationService : BackgroundService
 
                 // Build and broadcast frame outside the lock to avoid holding it during async I/O.
                 var snapshot = GetSnapshot();
-                var frame = _frameBuilder.Build(snapshot, _simTime);
+                var frame    = _frameBuilder.Build(snapshot, _simTime);
                 await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
             }
 

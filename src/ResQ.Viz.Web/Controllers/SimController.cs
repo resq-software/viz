@@ -66,9 +66,9 @@ public sealed class SimController : ControllerBase
     [HttpPost("reset")]
     public IActionResult Reset()
     {
-        _logger.LogInformation("Simulation reset requested.");
-        // Phase 1: log only — full reset requires SimulationWorld.Reset() which is not yet exposed.
-        return Ok(new { status = "reset_requested" });
+        _sim.Reset();
+        _logger.LogInformation("Simulation reset.");
+        return Ok(new { status = "reset" });
     }
 
     /// <summary>Spawns a new drone at the specified position.</summary>
