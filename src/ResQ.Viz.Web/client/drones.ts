@@ -29,6 +29,22 @@ function lerpAlpha(dt: number): number {
 const BODY_COLOR      = 0x161b22;
 const ARM_COLOR       = 0x21262d;
 
+/** Detection range in world metres — matches appsettings DetectionRangeMeters. */
+const DETECTION_RANGE_M = 35;
+
+const _DETECT_RING_MAT = new THREE.MeshBasicMaterial({
+    color: 0x00ccff,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+});
+const _DETECT_RING_GEO = new THREE.RingGeometry(
+    DETECTION_RANGE_M - 0.6,
+    DETECTION_RANGE_M + 0.6,
+    64,
+);
+
 interface QuadrotorMesh {
     group:  THREE.Group;
     led:    THREE.MeshStandardMaterial;
@@ -38,15 +54,16 @@ interface QuadrotorMesh {
 }
 
 interface DroneEntry {
-    group:     THREE.Group;
-    targetPos: THREE.Vector3;
-    targetRot: THREE.Quaternion | null;
-    led:       THREE.MeshStandardMaterial;
-    ring:      THREE.Mesh;
-    rotors:    THREE.Mesh[];
-    label:     THREE.Sprite;
-    _q:        THREE.Quaternion;
-    _v:        THREE.Vector3;
+    group:       THREE.Group;
+    targetPos:   THREE.Vector3;
+    targetRot:   THREE.Quaternion | null;
+    led:         THREE.MeshStandardMaterial;
+    ring:        THREE.Mesh;
+    detectRing:  THREE.Mesh;   // ground-level detection range indicator
+    rotors:      THREE.Mesh[];
+    label:       THREE.Sprite;
+    _q:          THREE.Quaternion;
+    _v:          THREE.Vector3;
 }
 
 export class DroneManager {
@@ -85,6 +102,11 @@ export class DroneManager {
             entry.rotors.forEach((rotor, i) => {
                 rotor.rotation.y += i % 2 === 0 ? 0.18 : -0.18;
             });
+            // Keep detection ring centred under drone (XZ only — ring stays at Y=0.1)
+            if (entry.detectRing.visible) {
+                entry.detectRing.position.x = entry.group.position.x;
+                entry.detectRing.position.z = entry.group.position.z;
+            }
         }
     }
 
@@ -181,6 +203,9 @@ export class DroneManager {
 
     setDetectionRingVisible(v: boolean): void {
         this._detectionRingVisible = v;
+        for (const entry of this._drones.values()) {
+            entry.detectRing.visible = v;
+        }
     }
 
     setBatteryWarnThreshold(fraction: number): void {
@@ -200,6 +225,14 @@ export class DroneManager {
         // Also register all descendants
         group.traverse(child => { this._objToId.set(child, d.id); });
 
+        // Detection range ring — lives in the scene at Y=0.1, follows drone XZ
+        const detectRing = new THREE.Mesh(_DETECT_RING_GEO, _DETECT_RING_MAT);
+        detectRing.rotation.x = -Math.PI / 2;
+        detectRing.position.set(startPos.x, 0.1, startPos.z);
+        detectRing.renderOrder = 1;
+        detectRing.visible = this._detectionRingVisible;
+        this._threeScene.add(detectRing);
+
         const entry: DroneEntry = {
             group,
             targetPos: startPos.clone(),
@@ -208,6 +241,7 @@ export class DroneManager {
                 : null,
             led,
             ring,
+            detectRing,
             rotors,
             label,
             _q: new THREE.Quaternion(),
@@ -440,6 +474,8 @@ export class DroneManager {
             }
         });
         this._objToId.delete(entry.group);
+        // Detection ring uses shared geo/mat — only remove from scene, don't dispose
+        this._threeScene.remove(entry.detectRing);
         this._drones.delete(id);
         if (this._selectedId === id) this._selectedId = null;
         if (this._hoveredId === id) this._hoveredId = null;
