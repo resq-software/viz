@@ -43,14 +43,14 @@ internal sealed class UpdatableWeatherSystem : IWeatherSystem
         => _inner = new WeatherSystem(config);
 
     /// <inheritdoc/>
-    public double Visibility => _inner.Visibility;
+    public double Visibility { get { var inner = _inner; return inner.Visibility; } }
 
     /// <inheritdoc/>
-    public double Precipitation => _inner.Precipitation;
+    public double Precipitation { get { var inner = _inner; return inner.Precipitation; } }
 
     /// <inheritdoc/>
-    public Vector3 GetWind(double x, double y, double z) => _inner.GetWind(x, y, z);
+    public Vector3 GetWind(double x, double y, double z) { var inner = _inner; return inner.GetWind(x, y, z); }
 
     /// <inheritdoc/>
-    public void Step(double dt) => _inner.Step(dt);
+    public void Step(double dt) { var inner = _inner; inner.Step(dt); }
 }

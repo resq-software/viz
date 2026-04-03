@@ -168,13 +168,16 @@ public sealed class SimulationService : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            bool shouldBroadcast;
             lock (_lock)
             {
                 _world.Step();
                 _tickCount++;
+                _simTime += 1.0 / 60.0;
+                shouldBroadcast = _tickCount % 6 == 0;
             }
 
-            if (_tickCount % 6 == 0)
+            if (shouldBroadcast)
             {
                 FrameReady?.Invoke(this, EventArgs.Empty);
 
@@ -183,8 +186,6 @@ public sealed class SimulationService : BackgroundService
                 var frame    = _frameBuilder.Build(snapshot, _simTime);
                 await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
             }
-
-            _simTime += 1.0 / 60.0;
             await Task.Delay(16, stoppingToken);
         }
     }
