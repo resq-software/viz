@@ -8,7 +8,14 @@
 <body>
 
     <!-- 3D canvas -->
-    <div id="scene-container"></div>
+    <div id="scene-container">
+        <!-- Empty world hint — shown when no drones exist -->
+        <div id="empty-state" aria-live="polite">
+            <div class="es-icon">&#x2B21;</div>
+            <div class="es-title">No active drones</div>
+            <div class="es-sub">Click a scenario in the sidebar to begin, or spawn a drone manually.</div>
+        </div>
+    </div>
 
     <!-- Top HUD bar -->
     <header id="hud-top">
@@ -38,6 +45,11 @@
             <div id="battery-track"><div id="battery-fill"></div></div>
             <span id="battery-pct">--%</span>
         </div>
+        <div class="hud-sep"></div>
+        <button id="hud-vel-toggle"    class="hud-toggle active" title="Velocity vectors (V)">&#x21D2;</button>
+        <button id="hud-halo-toggle"   class="hud-toggle active" title="Altitude halos (H)">&#x25CB;</button>
+        <button id="hud-form-toggle"   class="hud-toggle active" title="Formation lines (G)">&#x22EF;</button>
+        <button id="hud-follow-toggle" class="hud-toggle"        title="Follow selected (F)">&#x25CE;</button>
         <button id="btn-sidebar-toggle" title="Toggle panel [Tab]">☰</button>
     </header>
 
@@ -177,12 +189,16 @@
     </div>
 
     <!-- Keyboard hints (fades after 5 s) -->
-    <div id="key-hints">
-        <kbd>Tab</kbd> Panel &nbsp;·&nbsp;
-        <kbd>1–4</kbd> Scenarios &nbsp;·&nbsp;
-        <kbd>Space</kbd> Stop &nbsp;·&nbsp;
-        <kbd>R</kbd> Reset &nbsp;·&nbsp;
-        Click drone to inspect
+    <div id="key-hints" class="key-hints">
+        <span><kbd>V</kbd> Velocity</span>
+        <span><kbd>H</kbd> Halos</span>
+        <span><kbd>G</kbd> Formation</span>
+        <span><kbd>F</kbd> Follow</span>
+        <span><kbd>Home</kbd> Fit</span>
+        <span><kbd>Space</kbd> Stop</span>
+        <span><kbd>R</kbd> Reset</span>
+        <span><kbd>Tab</kbd> Sidebar</span>
+        <span><kbd>1&#x2013;4</kbd> Scenarios</span>
     </div>
 
     <script type="module" src="./app.ts"></script>

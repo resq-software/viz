@@ -76,7 +76,39 @@ dronePanel.onClose(() => {
 let _fittedToSwarm = false;
 let _lastFrame: VizFrame | null = null;
 
-const followBtn = document.getElementById('hud-follow-toggle');
+const followBtn    = document.getElementById('hud-follow-toggle');
+const emptyStateEl = document.getElementById('empty-state');
+
+// ─── HUD overlay toggle helpers ────────────────────────────────────────────
+
+function _bindHudToggle(id: string, getter: () => boolean, setter: (v: boolean) => void): void {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        setter(!getter());
+        btn.classList.toggle('active', getter());
+    });
+}
+
+_bindHudToggle('hud-vel-toggle',  () => overlayMgr.showVelocity,
+                                   v  => { overlayMgr.showVelocity  = v; });
+_bindHudToggle('hud-halo-toggle', () => overlayMgr.showHalos,
+                                   v  => { overlayMgr.showHalos     = v; });
+_bindHudToggle('hud-form-toggle', () => overlayMgr.showFormation,
+                                   v  => { overlayMgr.showFormation = v; });
+
+followBtn?.addEventListener('click', () => {
+    if (viz.isFollowing) {
+        viz.followObject(null);
+        followBtn.classList.remove('active');
+    } else {
+        const group = droneManager.selectedGroup;
+        if (group) {
+            viz.followObject(group);
+            followBtn.classList.add('active');
+        }
+    }
+});
 
 // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -123,6 +155,10 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
     dronePanel.update(drones);
     windCompass.updateFromWeatherSliders();
+    if (emptyStateEl) {
+        if (drones.length > 0) emptyStateEl.classList.add('hidden');
+        else                   emptyStateEl.classList.remove('hidden');
+    }
     if (!_fittedToSwarm && drones.length > 0) {
         _fittedToSwarm = true;
         const positions = drones
