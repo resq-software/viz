@@ -136,6 +136,15 @@ detRing?.addEventListener('change', () => {
     droneManager.setDetectionRingVisible(v);
 });
 
+// Velocity vectors
+const velVectors = document.getElementById('set-show-velocity') as HTMLInputElement | null;
+if (velVectors) velVectors.checked = settings.get('showVelocity');
+velVectors?.addEventListener('change', () => {
+    const v = velVectors.checked;
+    settings.set('showVelocity', v);
+    overlayMgr.showVelocity = v;
+});
+
 // Battery warn threshold
 const batWarn = document.getElementById('set-battery-warn') as HTMLInputElement | null;
 const batVal  = document.getElementById('set-battery-warn-val');
@@ -174,6 +183,7 @@ droneManager.setLabelMode(settings.get('labelMode'));
 droneManager.setDetectionRingVisible(settings.get('detectionRingShow'));
 droneManager.setBatteryWarnThreshold(settings.get('batteryWarnPct') / 100);
 effectsMgr.setTrailLength(settings.get('trailLength'));
+overlayMgr.showVelocity = settings.get('showVelocity');
 
 void terrain;
 

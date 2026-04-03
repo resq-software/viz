@@ -5,25 +5,36 @@ import * as THREE from 'three';
 import type { DroneState } from './types';
 import { isDroneReady } from './types';
 
-const VEL_COLOR_SLOW   = 0x44ff88;  // green  ≤ 5 m/s
-const VEL_COLOR_MEDIUM = 0xffcc00;  // yellow ≤ 15 m/s
-const VEL_COLOR_FAST   = 0xff4444;  // red    > 15 m/s
-const HALO_COLOR       = 0x58a6ff;
+// ── Axis direction constants — reused every frame, never reallocated ──────────
+const _X_POS = Object.freeze(new THREE.Vector3( 1,  0,  0));
+const _X_NEG = Object.freeze(new THREE.Vector3(-1,  0,  0));
+const _Y_POS = Object.freeze(new THREE.Vector3( 0,  1,  0));
+const _Y_NEG = Object.freeze(new THREE.Vector3( 0, -1,  0));
+const _Z_POS = Object.freeze(new THREE.Vector3( 0,  0,  1));
+const _Z_NEG = Object.freeze(new THREE.Vector3( 0,  0, -1));
 
-function velColor(speed: number): number {
-    if (speed <= 5)  return VEL_COLOR_SLOW;
-    if (speed <= 15) return VEL_COLOR_MEDIUM;
-    return VEL_COLOR_FAST;
+/** World units per m/s. */
+const VEL_SCALE     = 3.0;
+/** Maximum arrow length in world units. */
+const VEL_MAX       = 50;
+/** Minimum component magnitude (m/s) to show the arrow. */
+const VEL_THRESHOLD = 0.3;
+
+const HALO_COLOR = 0x58a6ff;
+
+interface VelAxes {
+    x: THREE.ArrowHelper;   // red   — X component
+    y: THREE.ArrowHelper;   // green — Y component (altitude rate)
+    z: THREE.ArrowHelper;   // blue  — Z component
 }
 
-type ArrowLine = THREE.ArrowHelper;
-type HaloRing  = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+type HaloRing = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
 
 export class OverlayManager {
     private readonly _scene: THREE.Scene;
 
     // ── Velocity vectors ─────────────────────────────────────────────────
-    private readonly _velArrows = new Map<string, ArrowLine>();
+    private readonly _velArrows = new Map<string, VelAxes>();
     showVelocity = true;
 
     // ── Altitude halos ────────────────────────────────────────────────────
@@ -62,24 +73,18 @@ export class OverlayManager {
     }
 
     dispose(): void {
-        for (const arrow of this._velArrows.values()) {
-            this._scene.remove(arrow);
-            arrow.traverse(child => {
-                if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
-                const mat = (child as THREE.Mesh).material;
-                if (mat) {
-                    if (Array.isArray(mat)) mat.forEach(m => m.dispose());
-                    else mat.dispose();
-                }
-            });
+        for (const axes of this._velArrows.values()) {
+            this._disposeVelAxes(axes);
         }
         this._velArrows.clear();
+
         for (const halo of this._halos.values()) {
             this._scene.remove(halo);
             halo.geometry.dispose();
             (halo.material as THREE.Material).dispose();
         }
         this._halos.clear();
+
         if (this._formLines) {
             this._scene.remove(this._formLines);
             this._formLines.geometry.dispose();
@@ -87,53 +92,77 @@ export class OverlayManager {
         }
     }
 
-    // ── Velocity vectors ──────────────────────────────────────────────────
+    // ── Velocity component arrows (X/Y/Z) ─────────────────────────────────
 
     private _updateVelocityVectors(drones: DroneState[]): void {
         const seen = new Set<string>();
+
         for (const d of drones) {
             seen.add(d.id);
             if (!isDroneReady(d)) continue;
-            const vel   = new THREE.Vector3(d.vel[0], d.vel[1], d.vel[2]);
-            const speed = vel.length();
-            const color = velColor(speed);
-            const len   = Math.min(speed * 2.5, 40);
 
             if (!this._velArrows.has(d.id)) {
-                const arrow = new THREE.ArrowHelper(
-                    new THREE.Vector3(0, 1, 0),
-                    new THREE.Vector3(),
-                    1,
-                    color,
-                    3,
-                    1.5,
-                );
-                this._scene.add(arrow);
-                this._velArrows.set(d.id, arrow);
+                const axes: VelAxes = {
+                    x: new THREE.ArrowHelper(_X_POS, new THREE.Vector3(), 1, 0xff4444, 4, 2),
+                    y: new THREE.ArrowHelper(_Y_POS, new THREE.Vector3(), 1, 0x44ff44, 4, 2),
+                    z: new THREE.ArrowHelper(_Z_POS, new THREE.Vector3(), 1, 0x4488ff, 4, 2),
+                };
+                this._scene.add(axes.x, axes.y, axes.z);
+                this._velArrows.set(d.id, axes);
             }
-            const arrow = this._velArrows.get(d.id)!;
-            arrow.position.set(d.pos[0], d.pos[1], d.pos[2]);
-            arrow.visible = this.showVelocity && speed > 0.3;
-            if (speed > 0.3) {
-                arrow.setDirection(vel.clone().normalize());
-                arrow.setLength(len, Math.min(3, len * 0.25), Math.min(1.5, len * 0.12));
-                (arrow.line.material as THREE.LineBasicMaterial).color.setHex(color);
-                (arrow.cone.material as THREE.MeshBasicMaterial).color.setHex(color);
+
+            const axes        = this._velArrows.get(d.id)!;
+            const [vx, vy, vz] = d.vel;
+            const [px, py, pz] = d.pos;
+
+            axes.x.visible = this.showVelocity && Math.abs(vx) > VEL_THRESHOLD;
+            axes.y.visible = this.showVelocity && Math.abs(vy) > VEL_THRESHOLD;
+            axes.z.visible = this.showVelocity && Math.abs(vz) > VEL_THRESHOLD;
+
+            if (axes.x.visible) {
+                axes.x.position.set(px, py, pz);
+                axes.x.setDirection(vx >= 0 ? _X_POS : _X_NEG);
+                this._applyLength(axes.x, Math.abs(vx));
+            }
+            if (axes.y.visible) {
+                axes.y.position.set(px, py, pz);
+                axes.y.setDirection(vy >= 0 ? _Y_POS : _Y_NEG);
+                this._applyLength(axes.y, Math.abs(vy));
+            }
+            if (axes.z.visible) {
+                axes.z.position.set(px, py, pz);
+                axes.z.setDirection(vz >= 0 ? _Z_POS : _Z_NEG);
+                this._applyLength(axes.z, Math.abs(vz));
             }
         }
-        for (const [id, arrow] of this._velArrows) {
+
+        for (const [id, axes] of this._velArrows) {
             if (!seen.has(id)) {
-                this._scene.remove(arrow);
-                arrow.traverse(child => {
-                    if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
-                    const mat = (child as THREE.Mesh).material;
-                    if (mat) {
-                        if (Array.isArray(mat)) mat.forEach(m => m.dispose());
-                        else mat.dispose();
-                    }
-                });
+                this._disposeVelAxes(axes);
                 this._velArrows.delete(id);
             }
+        }
+    }
+
+    /** Apply scaled length to an ArrowHelper without letting headLength exceed shaft. */
+    private _applyLength(arrow: THREE.ArrowHelper, speed: number): void {
+        const len     = Math.min(speed * VEL_SCALE, VEL_MAX);
+        const headLen = Math.min(len * 0.3, 5);
+        const headW   = headLen * 0.5;
+        arrow.setLength(len, headLen, headW);
+    }
+
+    private _disposeVelAxes(axes: VelAxes): void {
+        for (const arrow of [axes.x, axes.y, axes.z]) {
+            this._scene.remove(arrow);
+            arrow.traverse(child => {
+                const mesh = child as THREE.Mesh;
+                if (mesh.geometry) mesh.geometry.dispose();
+                if (mesh.material) {
+                    if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
+                    else mesh.material.dispose();
+                }
+            });
         }
     }
 
@@ -144,7 +173,7 @@ export class OverlayManager {
         for (const d of drones) {
             seen.add(d.id);
             if (!isDroneReady(d)) continue;
-            const alt = d.pos[1]; // Y is altitude
+            const alt = d.pos[1];
 
             if (!this._halos.has(d.id)) {
                 const halo = this._createHaloRing();

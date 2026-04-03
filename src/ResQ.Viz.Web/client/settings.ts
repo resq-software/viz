@@ -12,6 +12,7 @@ export interface SettingsData {
     batteryWarnPct:     number;   // 5–40 %
     detectionRingShow:  boolean;
     shadowsEnabled:     boolean;
+    showVelocity:       boolean;
 }
 
 const DEFAULTS: SettingsData = {
@@ -25,6 +26,7 @@ const DEFAULTS: SettingsData = {
     batteryWarnPct:     20,
     detectionRingShow:  false,
     shadowsEnabled:     true,
+    showVelocity:       true,
 };
 
 const KEY = 'resq-viz-settings';
