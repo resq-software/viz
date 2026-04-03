@@ -159,6 +159,14 @@ export class DroneManager {
 
     get count(): number { return this._drones.size; }
 
+    get selectedId(): string | null { return this._selectedId ?? null; }
+
+    getSelectedAltitude(): number | null {
+        if (!this._selectedId) return null;
+        const entry = this._drones.get(this._selectedId);
+        return entry ? entry.group.position.y : null;
+    }
+
     private _add(d: DroneState): void {
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
         const { group, led, ring, rotors } = this._buildQuadrotor(color, d.id);

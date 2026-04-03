@@ -21,6 +21,13 @@ export class Scene {
     private readonly _followOffset = new THREE.Vector3(0, 18, -28);
     private _postFx!: PostFx;
     private _sky!: Sky;
+    private _freeFly = false;
+    private readonly _flyKeys: Record<string, boolean> = {};
+    private _flyYaw   = 0;  // radians, horizontal look
+    private _flyPitch = 0;  // radians, vertical look, clamped ±80°
+    private readonly _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    private _markerMesh: THREE.Mesh | null = null;
+    private _markerTimeout: ReturnType<typeof setTimeout> | null = null;
 
     constructor(container: HTMLElement) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -62,6 +69,7 @@ export class Scene {
             window.innerHeight,
         );
         this._startRenderLoop();
+        this._initFreeFly();
         window.addEventListener('resize', () => this._onResize());
     }
 
@@ -156,6 +164,29 @@ export class Scene {
                 this._camera.position.lerp(desired, followAlpha);
                 this._controls.target.lerp(targetPos, lookAtAlpha);
             }
+            if (this._freeFly) {
+                // Build look direction from yaw + pitch
+                const lookDir = new THREE.Vector3(
+                    Math.sin(this._flyYaw) * Math.cos(this._flyPitch),
+                    Math.sin(this._flyPitch),
+                    Math.cos(this._flyYaw)  * Math.cos(this._flyPitch),
+                ).normalize();
+                const right = new THREE.Vector3().crossVectors(lookDir, THREE.Object3D.DEFAULT_UP).normalize();
+
+                const speed = (this._flyKeys['ShiftLeft'] || this._flyKeys['ShiftRight']) ? 80 : 20;
+                const move  = speed * dt;
+
+                if (this._flyKeys['KeyW'])     this._camera.position.addScaledVector(lookDir,  move);
+                if (this._flyKeys['KeyS'])     this._camera.position.addScaledVector(lookDir, -move);
+                if (this._flyKeys['KeyA'])     this._camera.position.addScaledVector(right,   -move);
+                if (this._flyKeys['KeyD'])     this._camera.position.addScaledVector(right,    move);
+                if (this._flyKeys['KeyQ'] || this._flyKeys['Space'])
+                                               this._camera.position.y += move;
+                if (this._flyKeys['KeyE'])     this._camera.position.y -= move;
+
+                // Apply rotation: look in flyYaw + flyPitch direction
+                this._camera.quaternion.setFromEuler(new THREE.Euler(this._flyPitch, this._flyYaw, 0, 'YXZ'));
+            }
             this._controls.update();
             this._postFx.render();
         };
@@ -196,6 +227,75 @@ export class Scene {
     }
 
     get isFollowing(): boolean { return this._followTarget !== null; }
+
+    private _initFreeFly(): void {
+        // Pointer lock for mouse look
+        document.addEventListener('pointerlockchange', () => {
+            this._freeFly = document.pointerLockElement === this.renderer.domElement;
+            this._controls.enabled = !this._freeFly;
+            if (!this._freeFly) Object.keys(this._flyKeys).forEach(k => { this._flyKeys[k] = false; });
+        });
+
+        document.addEventListener('mousemove', (e: MouseEvent) => {
+            if (!this._freeFly) return;
+            const sens = 0.002;
+            this._flyYaw   -= e.movementX * sens;
+            this._flyPitch -= e.movementY * sens;
+            this._flyPitch  = Math.max(-Math.PI * 0.44, Math.min(Math.PI * 0.44, this._flyPitch));
+        });
+
+        document.addEventListener('keydown', (e: KeyboardEvent) => { this._flyKeys[e.code] = true; });
+        document.addEventListener('keyup',   (e: KeyboardEvent) => { this._flyKeys[e.code] = false; });
+    }
+
+    /** Toggle free-fly camera mode (Pointer Lock + WASD/QE). */
+    toggleFreeFly(): void {
+        if (this._freeFly) {
+            document.exitPointerLock();
+        } else {
+            // Initialise yaw/pitch from current camera orientation
+            const euler = new THREE.Euler().setFromQuaternion(this._camera.quaternion, 'YXZ');
+            this._flyYaw   = euler.y;
+            this._flyPitch = euler.x;
+            this.renderer.domElement.requestPointerLock();
+        }
+    }
+
+    get isFreeFly(): boolean { return this._freeFly; }
+
+    getTerrainIntersection(clientX: number, clientY: number): THREE.Vector3 | null {
+        const rect   = this.renderer.domElement.getBoundingClientRect();
+        const ndc    = new THREE.Vector2(
+            ((clientX - rect.left) / rect.width)  * 2 - 1,
+            -((clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(ndc, this._camera);
+        const target = new THREE.Vector3();
+        const hit    = ray.ray.intersectPlane(this._groundPlane, target);
+        return hit ? target : null;
+    }
+
+    showTargetMarker(pos: THREE.Vector3, alt: number): void {
+        void alt; // alt unused here — marker is always on ground plane
+        if (!this._markerMesh) {
+            const geo = new THREE.RingGeometry(1.5, 2.5, 32);
+            geo.rotateX(-Math.PI / 2);
+            const mat = new THREE.MeshBasicMaterial({
+                color: 0x21D4FD, transparent: true, opacity: 0.8, side: THREE.DoubleSide,
+            });
+            this._markerMesh = new THREE.Mesh(geo, mat);
+            this.scene.add(this._markerMesh);
+        }
+        this._markerMesh.position.set(pos.x, 0.1, pos.z);
+        this._markerMesh.visible = true;
+        (this._markerMesh.material as THREE.MeshBasicMaterial).opacity = 0.8;
+
+        if (this._markerTimeout) clearTimeout(this._markerTimeout);
+        this._markerTimeout = setTimeout(() => {
+            if (this._markerMesh) this._markerMesh.visible = false;
+        }, 2000);
+    }
 
     /** Smoothly orbit-target and zoom to frame all given world positions. */
     fitToPositions(positions: THREE.Vector3[]): void {

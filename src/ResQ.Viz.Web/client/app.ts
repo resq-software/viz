@@ -53,6 +53,8 @@ viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
 });
 
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
+    if (viz.isFreeFly) return; // ignore clicks in free-fly mode
+
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     const first = hit[0];
     if (first) {
@@ -62,8 +64,23 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             dronePanel.show(droneId);
         }
     } else {
-        droneManager.setSelected(null);
-        dronePanel.hide();
+        const selectedId = droneManager.selectedId;
+        if (selectedId) {
+            const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
+            if (terrainHit) {
+                const { x, y, z } = terrainHit;
+                const alt = droneManager.getSelectedAltitude() ?? 15;
+                void fetch(`/api/sim/drone/${selectedId}/cmd`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'goto', target: [x, alt, z] }),
+                }).then(r => { if (!r.ok) console.warn('GoTo failed:', r.status); });
+                viz.showTargetMarker(terrainHit, alt);
+            }
+        } else {
+            droneManager.setSelected(null);
+            dronePanel.hide();
+        }
     }
 });
 
@@ -124,6 +141,9 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
     const target = e.target as Element | null;
     if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
     switch (e.code) {
+        case 'KeyC':
+            viz.toggleFreeFly();
+            break;
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
