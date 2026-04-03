@@ -100,6 +100,12 @@ export class DroneManager {
         return Array.from(this._drones.values()).map(e => e.group);
     }
 
+    /** Returns the THREE.Group for the currently selected drone, or null. */
+    get selectedGroup(): THREE.Group | null {
+        if (!this._selectedId) return null;
+        return this._drones.get(this._selectedId)?.group ?? null;
+    }
+
     get count(): number { return this._drones.size; }
 
     private _add(d: DroneState): void {

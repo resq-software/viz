@@ -14,6 +14,8 @@ export class Scene {
     private _fps: number = 0;
     private _fpsAccum: number = 0;
     private readonly _tickCallbacks: Array<(dt: number) => void> = [];
+    private _followTarget: THREE.Object3D | null = null;
+    private readonly _followOffset = new THREE.Vector3(0, 18, -28);
 
     constructor(container: HTMLElement) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -81,6 +83,13 @@ export class Scene {
                 this._fpsAccum = 0;
             }
             for (const cb of this._tickCallbacks) cb(dt);
+            if (this._followTarget) {
+                this._controls.enabled = false;
+                const targetPos = this._followTarget.position;
+                const desired = targetPos.clone().add(this._followOffset);
+                this._camera.position.lerp(desired, 0.06);
+                this._controls.target.lerp(targetPos, 0.08);
+            }
             this._controls.update();
             this.renderer.render(this.scene, this._camera);
         };
@@ -110,6 +119,16 @@ export class Scene {
     }
 
     get fps(): number { return this._fps; }
+
+    /** Attach camera follow to a scene object (pass null to release). */
+    followObject(obj: THREE.Object3D | null): void {
+        this._followTarget = obj;
+        if (!obj) {
+            this._controls.enabled = true;
+        }
+    }
+
+    get isFollowing(): boolean { return this._followTarget !== null; }
 
     /** Smoothly orbit-target and zoom to frame all given world positions. */
     fitToPositions(positions: THREE.Vector3[]): void {
