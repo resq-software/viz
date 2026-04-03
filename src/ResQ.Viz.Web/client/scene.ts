@@ -22,6 +22,9 @@ export class Scene {
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+        this.renderer.toneMapping         = THREE.ACESFilmicToneMapping;
+        this.renderer.toneMappingExposure = 1.0;
         this.renderer.setClearColor(0x0d1117);
         container.appendChild(this.renderer.domElement);
 
@@ -52,11 +55,17 @@ export class Scene {
         const ambient = new THREE.AmbientLight(0x3a4a5a, 0.8);
         this.scene.add(ambient);
 
-        const sun = new THREE.DirectionalLight(0xfff8e7, 1.4);
+        const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
         sun.position.set(400, 600, 200);
         sun.castShadow = true;
-        sun.shadow.mapSize.set(2048, 2048);
-        sun.shadow.camera.far = 2000;
+        sun.shadow.mapSize.set(4096, 4096);
+        sun.shadow.camera.near   =   10;
+        sun.shadow.camera.far    = 2000;
+        sun.shadow.camera.left   = -600;
+        sun.shadow.camera.right  =  600;
+        sun.shadow.camera.top    =  600;
+        sun.shadow.camera.bottom = -600;
+        sun.shadow.bias          = -0.002;
         this.scene.add(sun);
 
         const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);
