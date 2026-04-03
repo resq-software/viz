@@ -13,9 +13,11 @@ export class Terrain {
 
     private _buildGround(scene: THREE.Scene): void {
         const geo = new THREE.PlaneGeometry(2000, 2000, 1, 1);
-        const mat = new THREE.MeshLambertMaterial({
-            color:  0x1a2d12,
-            side:   THREE.FrontSide,
+        const mat = new THREE.MeshStandardMaterial({
+            color:     0x1a2d12,
+            roughness: 0.92,
+            metalness: 0.0,
+            side:      THREE.FrontSide,
         });
         const ground = new THREE.Mesh(geo, mat);
         ground.rotation.x = -Math.PI / 2;

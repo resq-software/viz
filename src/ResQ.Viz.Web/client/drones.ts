@@ -22,7 +22,7 @@ const ARM_COLOR       = 0x21262d;
 
 interface QuadrotorMesh {
     group:  THREE.Group;
-    led:    THREE.MeshLambertMaterial;
+    led:    THREE.MeshStandardMaterial;
     ring:   THREE.Mesh;
     rotors: THREE.Mesh[];
 }
@@ -31,7 +31,7 @@ interface DroneEntry {
     group:     THREE.Group;
     targetPos: THREE.Vector3;
     targetRot: THREE.Quaternion | null;
-    led:       THREE.MeshLambertMaterial;
+    led:       THREE.MeshStandardMaterial;
     ring:      THREE.Mesh;
     rotors:    THREE.Mesh[];
 }
@@ -142,7 +142,7 @@ export class DroneManager {
         // ── Central body ──────────────────────────────────────────────────────
         const topPlate = new THREE.Mesh(
             new THREE.BoxGeometry(3.8, 0.35, 3.8),
-            new THREE.MeshLambertMaterial({ color: BODY_COLOR }),
+            new THREE.MeshStandardMaterial({ color: BODY_COLOR, metalness: 0.1, roughness: 0.75 }),
         );
         topPlate.position.y = 0.3;
         topPlate.castShadow = true;
@@ -150,24 +150,27 @@ export class DroneManager {
 
         const botPlate = new THREE.Mesh(
             new THREE.BoxGeometry(3.2, 0.25, 3.2),
-            new THREE.MeshLambertMaterial({ color: 0x0d1117 }),
+            new THREE.MeshStandardMaterial({ color: 0x0d1117, metalness: 0.1, roughness: 0.8 }),
         );
         botPlate.position.y = -0.2;
         group.add(botPlate);
+        botPlate.castShadow = true;
 
         const column = new THREE.Mesh(
             new THREE.CylinderGeometry(0.6, 0.6, 0.55, 8),
-            new THREE.MeshLambertMaterial({ color: ARM_COLOR }),
+            new THREE.MeshStandardMaterial({ color: ARM_COLOR, metalness: 0.55, roughness: 0.45 }),
         );
         column.position.y = 0.05;
         group.add(column);
+        column.castShadow = true;
 
         const cam = new THREE.Mesh(
             new THREE.CylinderGeometry(0.45, 0.35, 0.4, 8),
-            new THREE.MeshLambertMaterial({ color: 0x080c10 }),
+            new THREE.MeshStandardMaterial({ color: 0x080c10, metalness: 0.05, roughness: 0.9 }),
         );
         cam.position.set(0.8, -0.42, 0);
         group.add(cam);
+        cam.castShadow = true;
 
         // ── 4 diagonal arms ───────────────────────────────────────────────────
         const armDirs: { angle: number; tipPos: THREE.Vector3; navColor: number }[] = [
@@ -182,22 +185,26 @@ export class DroneManager {
         for (const { angle, tipPos, navColor } of armDirs) {
             const arm = new THREE.Mesh(
                 new THREE.BoxGeometry(6.5, 0.3, 0.5),
-                new THREE.MeshLambertMaterial({ color: ARM_COLOR }),
+                new THREE.MeshStandardMaterial({ color: ARM_COLOR, metalness: 0.55, roughness: 0.45 }),
             );
             arm.rotation.y = angle;
             group.add(arm);
+            arm.castShadow = true;
 
             const motor = new THREE.Mesh(
                 new THREE.CylinderGeometry(0.45, 0.45, 0.7, 10),
-                new THREE.MeshLambertMaterial({ color: 0x2a3038 }),
+                new THREE.MeshStandardMaterial({ color: 0x2a3038, metalness: 0.85, roughness: 0.25 }),
             );
             motor.position.copy(tipPos).setY(0.1);
             group.add(motor);
+            motor.castShadow = true;
 
-            const rotorMat = new THREE.MeshLambertMaterial({
+            const rotorMat = new THREE.MeshStandardMaterial({
                 color: ARM_COLOR,
                 transparent: true,
                 opacity: 0.7,
+                metalness: 0.15,
+                roughness: 0.65,
             });
             const rotor = new THREE.Mesh(
                 new THREE.CylinderGeometry(2.2, 2.2, 0.12, 14),
@@ -207,8 +214,12 @@ export class DroneManager {
             group.add(rotor);
             rotors.push(rotor);
 
-            const navMat = new THREE.MeshBasicMaterial({
+            const navMat = new THREE.MeshStandardMaterial({
                 color: navColor,
+                emissive: new THREE.Color(navColor),
+                emissiveIntensity: 2.5,
+                roughness: 0.15,
+                metalness: 0.0,
                 transparent: true,
                 opacity: 0.95,
             });
@@ -218,22 +229,26 @@ export class DroneManager {
         }
 
         // ── Landing gear ──────────────────────────────────────────────────────
-        const gearMat = new THREE.MeshLambertMaterial({ color: 0x1a1f26 });
+        const gearMat = new THREE.MeshStandardMaterial({ color: 0x1a1f26, metalness: 0.05, roughness: 0.9 });
         for (const [sx, sz] of [[1,1],[-1,1],[1,-1],[-1,-1]] as [number,number][]) {
             const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.2, 6), gearMat);
             leg.position.set(sx * 1.6, -0.85, sz * 1.6);
             group.add(leg);
+            leg.castShadow = true;
             const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.8, 6), gearMat);
             foot.rotation.x = Math.PI / 2;
             foot.position.set(sx * 1.6, -1.45, sz * 1.6);
             group.add(foot);
+            foot.castShadow = true;
         }
 
         // ── Status LED ────────────────────────────────────────────────────────
-        const ledMat = new THREE.MeshLambertMaterial({
+        const ledMat = new THREE.MeshStandardMaterial({
             color: statusColor,
             emissive: new THREE.Color(statusColor),
-            emissiveIntensity: 0.8,
+            emissiveIntensity: 4.0,
+            roughness: 0.1,
+            metalness: 0.0,
         });
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 8), ledMat);
         led.position.y = 0.62;
