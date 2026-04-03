@@ -36,6 +36,7 @@ public record DroneVizState(
 
 /// <summary>A hazard zone (fire, flood, etc.).</summary>
 public record HazardVizState(
+    string Id,
     string Type,
     float[] Center,
     float Radius,
@@ -43,8 +44,10 @@ public record HazardVizState(
 
 /// <summary>A detection event (fire detected, person found, etc.).</summary>
 public record DetectionVizState(
+    string Id,
     string Type,
     float[] Pos,
+    string DroneId,
     double Confidence);
 
 /// <summary>Mesh network state.</summary>

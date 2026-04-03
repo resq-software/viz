@@ -25,14 +25,18 @@ export function isDroneReady(d: DroneState | undefined): d is DroneState & { pos
 }
 
 export interface HazardState {
-    type: string;
+    id:      string;
+    type:    string;           // "fire" | "high-wind" | etc.
     center?: Vec3;
     radius?: number;
 }
 
 export interface DetectionState {
-    type: string;
-    pos?: Vec3;
+    id:         string;
+    type:       string;        // "survivor" | "object" | etc.
+    pos?:       Vec3;
+    droneId:    string;
+    confidence: number;        // 0–1
 }
 
 export interface MeshState {
@@ -41,9 +45,9 @@ export interface MeshState {
 }
 
 export interface VizFrame {
-    drones?: DroneState[];
-    hazards?: HazardState[];
-    detections?: DetectionState[];
-    mesh?: MeshState;
-    time?: number;
+    drones?:     DroneState[];
+    hazards:     HazardState[];
+    detections:  DetectionState[];
+    mesh?:       MeshState;
+    time?:       number;
 }

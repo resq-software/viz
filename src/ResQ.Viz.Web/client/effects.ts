@@ -5,10 +5,23 @@ import * as THREE from 'three';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
 
 const HAZARD_COLORS: Record<string, number> = {
-    'FIRE':    0xe74c3c,
-    'FLOOD':   0x3498db,
-    'WIND':    0xf1c40f,
-    'TOXIC':   0x9b59b6,
+    // Legacy uppercase keys
+    'FIRE':      0xe74c3c,
+    'FLOOD':     0x3498db,
+    'WIND':      0xf1c40f,
+    'TOXIC':     0x9b59b6,
+    // New lowercase keys from appsettings
+    'fire':      0xff3300,
+    'high-wind': 0x00aaff,
+    'flood':     0x3498db,
+    'toxic':     0x9b59b6,
+};
+
+const HAZARD_OPACITY: Record<string, number> = {
+    'fire':      0.3,
+    'FIRE':      0.3,
+    'high-wind': 0.2,
+    'WIND':      0.2,
 };
 
 
@@ -25,13 +38,14 @@ interface Trail {
 }
 
 interface DetectionEntry {
+    id:   string;
     mesh: THREE.Mesh;
-    born: number;
 }
 
 interface HazardAnimState {
     baseScale: number;
     phase: number;
+    baseOpacity: number;
 }
 
 export class EffectsManager {
@@ -40,19 +54,23 @@ export class EffectsManager {
     private readonly _hazards = new Map<string, HazardMesh>();
     private readonly _hazardAnim = new WeakMap<HazardMesh, HazardAnimState>();
     private readonly _detectionPool: THREE.Mesh[] = [];
-    private _detections: DetectionEntry[] = [];
+    private readonly _activeDetections = new Map<string, DetectionEntry>();
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
 
     constructor(scene: THREE.Scene) {
         this._scene = scene;
+        // Pool: green/gold survivor marker spheres
         const sphereGeo = new THREE.SphereGeometry(3, 8, 8);
-        const sphereMat = new THREE.MeshStandardMaterial({
-            color: 0xff6600, transparent: true, opacity: 0.5,
-            emissive: 0xff4400, emissiveIntensity: 0.8,
-        });
         for (let i = 0; i < 32; i++) {
-            const m = new THREE.Mesh(sphereGeo, sphereMat);
+            const mat = new THREE.MeshStandardMaterial({
+                color: 0x22ff66,
+                transparent: true,
+                opacity: 0.7,
+                emissive: new THREE.Color(0x22ff66),
+                emissiveIntensity: 1.5,
+            });
+            const m = new THREE.Mesh(sphereGeo, mat);
             m.visible = false;
             scene.add(m);
             this._detectionPool.push(m);
@@ -65,15 +83,15 @@ export class EffectsManager {
 
     update(frame: VizFrame): void {
         this._updateTrails(frame.drones ?? []);
-        this._updateHazards(frame.hazards ?? []);
-        this._updateDetections(frame.detections ?? []);
+        this._updateHazards(frame.hazards);
+        this._updateDetections(frame.detections);
         this._updateMeshLinks(frame.drones ?? [], frame.mesh);
     }
 
     tick(deltaTime: number): void {
         this._time += deltaTime;
         this._animateHazards();
-        this._animateDetections(deltaTime);
+        this._animateDetections();
     }
 
     // ─── Trails ────────────────────────────────────────────────────────────
@@ -132,7 +150,8 @@ export class EffectsManager {
     private _updateHazards(hazards: HazardState[]): void {
         const seenKeys = new Set<string>();
         for (const h of hazards) {
-            const key = `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
+            // Key by id when available, fall back to type+center for legacy data
+            const key = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
             seenKeys.add(key);
             if (!this._hazards.has(key)) {
                 this._hazards.set(key, this._createHazardMesh(h));
@@ -149,18 +168,19 @@ export class EffectsManager {
     }
 
     private _createHazardMesh(h: HazardState): HazardMesh {
-        const radius = h.radius ?? 30;
-        const geo = new THREE.CylinderGeometry(radius, radius, radius * 0.5, 32, 1, true);
-        const color = HAZARD_COLORS[h.type] ?? 0xff8800;
+        const radius      = h.radius ?? 30;
+        const geo         = new THREE.CylinderGeometry(radius, radius, radius * 0.5, 32, 1, true);
+        const color       = HAZARD_COLORS[h.type] ?? 0xff8800;
+        const baseOpacity = HAZARD_OPACITY[h.type] ?? 0.25;
         const mat = new THREE.MeshBasicMaterial({
-            color, transparent: true, opacity: 0.25, side: THREE.DoubleSide,
+            color, transparent: true, opacity: baseOpacity, side: THREE.DoubleSide,
         });
         const mesh = new THREE.Mesh(geo, mat);
         const cx = h.center?.[0] ?? 0;
         const cy = h.center?.[1] ?? 0;
         const cz = h.center?.[2] ?? 0;
         mesh.position.set(cx, cy + radius * 0.25, cz);
-        this._hazardAnim.set(mesh, { baseScale: 1, phase: Math.random() * Math.PI * 2 });
+        this._hazardAnim.set(mesh, { baseScale: 1, phase: Math.random() * Math.PI * 2, baseOpacity });
         this._scene.add(mesh);
         return mesh;
     }
@@ -171,38 +191,44 @@ export class EffectsManager {
             if (!anim) continue;
             const pulse = 1 + 0.05 * Math.sin((this._time + anim.phase) * 2);
             mesh.scale.set(pulse, pulse, pulse);
+            // Pulse opacity
+            (mesh.material as THREE.MeshBasicMaterial).opacity =
+                anim.baseOpacity + 0.1 * Math.sin((this._time + anim.phase) * 2);
         }
     }
 
     // ─── Detections ────────────────────────────────────────────────────────
 
     private _updateDetections(detections: DetectionState[]): void {
+        const seenIds = new Set<string>();
+
         for (const det of detections) {
-            const m = this._grabFromPool();
-            if (!m) continue;
-            const x = det.pos?.[0] ?? 0;
-            const y = det.pos?.[1] ?? 0;
-            const z = det.pos?.[2] ?? 0;
-            m.position.set(x, y + 2, z);
-            m.scale.setScalar(1);
-            (m.material as THREE.MeshStandardMaterial).opacity = 0.5;
-            m.visible = true;
-            this._detections.push({ mesh: m, born: this._time });
+            seenIds.add(det.id);
+            if (!this._activeDetections.has(det.id)) {
+                const m = this._grabFromPool();
+                if (!m) continue;
+                // Position at ground level, not drone altitude
+                const x = det.pos?.[0] ?? 0;
+                const z = det.pos?.[2] ?? 0;
+                m.position.set(x, 0.5, z);
+                m.visible = true;
+                this._activeDetections.set(det.id, { id: det.id, mesh: m });
+            }
+        }
+
+        // Hide markers for detections no longer in frame
+        for (const [id, entry] of this._activeDetections) {
+            if (!seenIds.has(id)) {
+                entry.mesh.visible = false;
+                this._activeDetections.delete(id);
+            }
         }
     }
 
-    private _animateDetections(deltaTime: number): void {
-        const toRemove: DetectionEntry[] = [];
-        for (const det of this._detections) {
-            const age = this._time - det.born;
-            det.mesh.scale.setScalar(1 + age * 3);
-            (det.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, 0.5 - age * 0.5);
-            det.mesh.position.y += 0.05;
-            if (age > 1) toRemove.push(det);
-        }
-        for (const det of toRemove) {
-            det.mesh.visible = false;
-            this._detections.splice(this._detections.indexOf(det), 1);
+    private _animateDetections(): void {
+        const pulse = 1 + 0.15 * Math.sin(this._time * 3);
+        for (const entry of this._activeDetections.values()) {
+            entry.mesh.scale.set(pulse, 1, pulse);
         }
     }
 

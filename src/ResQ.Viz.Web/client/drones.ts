@@ -360,9 +360,41 @@ export class DroneManager {
         entry._q.set(d.rot[0], d.rot[1], d.rot[2], d.rot[3]);
         if (!entry.targetRot) entry.targetRot = new THREE.Quaternion();
         entry.targetRot.copy(entry._q);
-        const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
-        entry.led.color.setHex(color);
-        entry.led.emissive.setHex(color);
+
+        // Battery + status visual feedback on the status LED
+        const battery = (d.battery ?? 100) / 100; // normalise to 0–1 (backend sends 0–100)
+        const status  = d.status ?? 'flying';
+        const ledMat  = entry.led;
+        const now     = Date.now();
+
+        if (battery < 0.15) {
+            // Critical battery: red, fast pulse
+            ledMat.emissive.setHex(0xff2200);
+            ledMat.emissiveIntensity = 2.5 + Math.sin(now * 0.01) * 1.5;
+            ledMat.color.setHex(0xff2200);
+        } else if (battery < 0.30) {
+            // Low battery: orange
+            ledMat.emissive.setHex(0xff8800);
+            ledMat.emissiveIntensity = 2.0;
+            ledMat.color.setHex(0xff8800);
+        } else if (status === 'emergency' || status === 'EMERGENCY') {
+            ledMat.emissive.setHex(0xff0000);
+            ledMat.emissiveIntensity = 3.0 + Math.sin(now * 0.008) * 2.0;
+            ledMat.color.setHex(0xff0000);
+        } else if (status === 'rtl' || status === 'landing' || status === 'RETURNING') {
+            ledMat.emissive.setHex(0xffaa00);
+            ledMat.emissiveIntensity = 1.8;
+            ledMat.color.setHex(0xffaa00);
+        } else if (status === 'hovering') {
+            ledMat.emissive.setHex(0x0088ff);
+            ledMat.emissiveIntensity = 1.5;
+            ledMat.color.setHex(0x0088ff);
+        } else {
+            // Normal flying: green
+            ledMat.emissive.setHex(0x00ff44);
+            ledMat.emissiveIntensity = 2.0;
+            ledMat.color.setHex(0x00ff44);
+        }
     }
 
     private _remove(id: string, entry: DroneEntry): void {
