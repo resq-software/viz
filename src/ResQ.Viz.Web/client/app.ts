@@ -82,7 +82,7 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     effectsMgr.update(frame);
     controlPanel.updateDroneList(drones);
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
-    dronePanel.updateFrame(drones);
+    dronePanel.update(drones);
     windCompass.updateFromWeatherSliders();
 });
 
