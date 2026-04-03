@@ -5,12 +5,16 @@ import * as THREE from 'three';
 import type { DroneState } from './types';
 
 const STATUS_COLORS: Record<string, number> = {
-    'IN_FLIGHT':  0x2ecc71, // green
-    'RETURNING':  0xf1c40f, // yellow
-    'EMERGENCY':  0xe74c3c, // red
-    'LANDED':     0x95a5a6, // gray
-    'IDLE':       0x95a5a6, // gray
-    'ARMED':      0x3498db, // blue
+    // Uppercase variants (future engine upgrades)
+    'IN_FLIGHT':  0x2ecc71,
+    'RETURNING':  0xf1c40f,
+    'EMERGENCY':  0xe74c3c,
+    'LANDED':     0x95a5a6,
+    'IDLE':       0x95a5a6,
+    'ARMED':      0x3498db,
+    // Lowercase variants sent by current SimulationService
+    'flying':     0x2ecc71, // green
+    'landed':     0x95a5a6, // gray
 };
 const DEFAULT_COLOR = 0xffffff;
 const LERP_SPEED = 0.15; // per frame at 60fps ≈ 100ms
