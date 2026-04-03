@@ -16,3 +16,6 @@ src/ResQ.Viz.Web/wwwroot/.vite/
 
 # npm
 src/ResQ.Viz.Web/node_modules/
+
+# Local docs (specs, plans — not committed)
+docs/
