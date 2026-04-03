@@ -39,7 +39,9 @@ export class DronePanel {
             btn.addEventListener('click', () => {
                 const cmd = btn.dataset['cmd'];
                 if (cmd && this._droneId && this._commandFn) {
-                    void this._commandFn(this._droneId, cmd);
+                    this._commandFn(this._droneId, cmd).catch(
+                        err => console.error('[DronePanel] command failed:', err),
+                    );
                 }
             });
         });
