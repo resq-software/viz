@@ -159,11 +159,12 @@ public sealed class SimController : ControllerBase
         return Ok(_scenarios.ScenarioNames);
     }
 
-    /// <summary>Runs a named scenario preset, spawning the predefined set of drones.</summary>
+    /// <summary>Runs a named scenario preset, replacing whatever was running.</summary>
     /// <param name="name">Scenario name (e.g. "single", "swarm-5", "swarm-20", "sar").</param>
     [HttpPost("scenario/{name}")]
     public IActionResult RunScenario(string name)
     {
+        _sim.Reset(); // clear existing drones so duplicate-ID errors can't occur
         if (!_scenarios.TryRun(name, _sim))
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 

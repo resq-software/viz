@@ -75,6 +75,7 @@ dronePanel.onClose(() => {
 
 let _fittedToSwarm = false;
 let _lastFrame: VizFrame | null = null;
+let _prevDroneCount = 0;
 
 const followBtn    = document.getElementById('hud-follow-toggle');
 const emptyStateEl = document.getElementById('empty-state');
@@ -113,6 +114,8 @@ followBtn?.addEventListener('click', () => {
 // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
 window.addEventListener('keydown', (e: KeyboardEvent) => {
+    const target = e.target as Element | null;
+    if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
     switch (e.code) {
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
@@ -159,6 +162,9 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
         if (drones.length > 0) emptyStateEl.classList.add('hidden');
         else                   emptyStateEl.classList.remove('hidden');
     }
+    // Allow refit whenever drones are cleared (reset or scenario switch)
+    if (_prevDroneCount > 0 && drones.length === 0) _fittedToSwarm = false;
+    _prevDroneCount = drones.length;
     if (!_fittedToSwarm && drones.length > 0) {
         _fittedToSwarm = true;
         const positions = drones
