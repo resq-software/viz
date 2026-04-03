@@ -44,8 +44,9 @@ if (keyHints) {
 
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
-    if (hit.length > 0) {
-        const droneId = droneManager.getDroneIdFromObject(hit[0]!.object);
+    const first = hit[0];
+    if (first) {
+        const droneId = droneManager.getDroneIdFromObject(first.object);
         if (droneId) {
             droneManager.setSelected(droneId);
             dronePanel.show(droneId);

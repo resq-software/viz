@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DroneState } from '../types';
+import { getEl } from '../dom';
 
 export class Hud {
-    private readonly _dot   = document.getElementById('conn-dot')!;
-    private readonly _label = document.getElementById('conn-label')!;
-    private readonly _count = document.getElementById('drone-count')!;
-    private readonly _fps   = document.getElementById('fps')!;
-    private readonly _time  = document.getElementById('sim-time')!;
-    private readonly _fill  = document.getElementById('battery-fill')!;
-    private readonly _pct   = document.getElementById('battery-pct')!;
+    private readonly _dot   = getEl('conn-dot');
+    private readonly _label = getEl('conn-label');
+    private readonly _count = getEl('drone-count');
+    private readonly _fps   = getEl('fps');
+    private readonly _time  = getEl('sim-time');
+    private readonly _fill  = getEl('battery-fill');
+    private readonly _pct   = getEl('battery-pct');
 
     setStatus(state: 'connected' | 'reconnecting' | 'disconnected'): void {
         this._dot.className = 'conn-dot';

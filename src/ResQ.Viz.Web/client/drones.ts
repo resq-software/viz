@@ -28,6 +28,12 @@ interface DroneEntry {
     ring:      THREE.Mesh;
 }
 
+interface QuadrotorMesh {
+    group: THREE.Group;
+    led:   THREE.MeshLambertMaterial;
+    ring:  THREE.Mesh;
+}
+
 export class DroneManager {
     private readonly _threeScene: THREE.Scene;
     private readonly _drones = new Map<string, DroneEntry>();
@@ -56,12 +62,10 @@ export class DroneManager {
             if (entry.targetRot) {
                 entry.group.quaternion.slerp(entry.targetRot, LERP_SPEED);
             }
-            // Spin rotors (animated via material doesn't work; rotate rotor children)
+            // Spin rotor discs (large-radius cylinders only)
             for (const child of entry.group.children) {
-                if ((child as THREE.Mesh).geometry instanceof THREE.CylinderGeometry) {
-                    // Only the flat rotor discs (radius ≈ 2, height ≈ 0.15)
-                    const geo = (child as THREE.Mesh).geometry as THREE.CylinderGeometry;
-                    if (geo.parameters.radiusTop > 1) {
+                if (child instanceof THREE.Mesh && child.geometry instanceof THREE.CylinderGeometry) {
+                    if (child.geometry.parameters.radiusTop > 1) {
                         child.rotation.y += 0.15;
                     }
                 }
@@ -103,7 +107,7 @@ export class DroneManager {
 
     private _add(d: DroneState): void {
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
-        const group = this._buildQuadrotor(color);
+        const { group, led, ring } = this._buildQuadrotor(color);
 
         const startPos = d.pos
             ? new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2])
@@ -122,13 +126,13 @@ export class DroneManager {
             targetRot: d.rot
                 ? new THREE.Quaternion(d.rot[0], d.rot[1], d.rot[2], d.rot[3])
                 : null,
-            led: group.userData['led'] as THREE.MeshLambertMaterial,
-            ring: group.userData['ring'] as THREE.Mesh,
+            led,
+            ring,
         };
         this._drones.set(d.id, entry);
     }
 
-    private _buildQuadrotor(statusColor: number): THREE.Group {
+    private _buildQuadrotor(statusColor: number): QuadrotorMesh {
         const group = new THREE.Group();
 
         // Central body
@@ -186,7 +190,6 @@ export class DroneManager {
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 10), ledMat);
         led.position.y = 0.9;
         group.add(led);
-        group.userData['led'] = ledMat;
 
         // Selection ring (below drone, initially hidden)
         const ringMat = new THREE.MeshBasicMaterial({
@@ -200,9 +203,8 @@ export class DroneManager {
         ring.position.y = -0.5;
         ring.visible = false;
         group.add(ring);
-        group.userData['ring'] = ring;
 
-        return group;
+        return { group, led: ledMat, ring };
     }
 
     private _updateDrone(d: DroneState): void {

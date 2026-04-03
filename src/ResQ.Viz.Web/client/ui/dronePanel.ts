@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DroneState } from '../types';
+import { getEl } from '../dom';
 
 type CommandFn = (droneId: string, cmd: string) => Promise<void>;
 type CloseFn = () => void;
@@ -17,13 +18,13 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
 };
 
 export class DronePanel {
-    private readonly _panel   = document.getElementById('drone-panel')!;
-    private readonly _idEl    = document.getElementById('dp-id')!;
-    private readonly _badge   = document.getElementById('dp-badge')!;
-    private readonly _batFill = document.getElementById('dp-bat-fill')!;
-    private readonly _batPct  = document.getElementById('dp-bat-pct')!;
-    private readonly _posEl   = document.getElementById('dp-pos')!;
-    private readonly _velEl   = document.getElementById('dp-vel')!;
+    private readonly _panel   = getEl('drone-panel');
+    private readonly _idEl    = getEl('dp-id');
+    private readonly _badge   = getEl('dp-badge');
+    private readonly _batFill = getEl('dp-bat-fill');
+    private readonly _batPct  = getEl('dp-bat-pct');
+    private readonly _posEl   = getEl('dp-pos');
+    private readonly _velEl   = getEl('dp-vel');
 
     private _droneId: string | null = null;
     private _commandFn: CommandFn | null = null;
@@ -40,7 +41,7 @@ export class DronePanel {
                 const cmd = btn.dataset['cmd'];
                 if (cmd && this._droneId && this._commandFn) {
                     this._commandFn(this._droneId, cmd).catch(
-                        err => console.error('[DronePanel] command failed:', err),
+                        (err: unknown) => console.error('[DronePanel] command failed:', err),
                     );
                 }
             });

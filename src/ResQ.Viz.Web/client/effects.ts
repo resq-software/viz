@@ -35,10 +35,16 @@ interface DetectionEntry {
     age: number;
 }
 
+interface HazardAnimState {
+    baseScale: number;
+    phase: number;
+}
+
 export class EffectsManager {
     private readonly _scene: THREE.Scene;
     private readonly _trails = new Map<string, Trail>();
     private readonly _hazards = new Map<string, HazardMesh>();
+    private readonly _hazardAnim = new WeakMap<HazardMesh, HazardAnimState>();
     private _detections: DetectionEntry[] = [];
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
@@ -144,16 +150,16 @@ export class EffectsManager {
         const cy = h.center?.[1] ?? 0;
         const cz = h.center?.[2] ?? 0;
         mesh.position.set(cx, cy + radius * 0.25, cz);
-        mesh.userData['baseScale'] = 1;
-        mesh.userData['time'] = Math.random() * Math.PI * 2; // phase offset, matches JS key name
+        this._hazardAnim.set(mesh, { baseScale: 1, phase: Math.random() * Math.PI * 2 });
         this._scene.add(mesh);
         return mesh;
     }
 
     private _animateHazards(): void {
         for (const mesh of this._hazards.values()) {
-            const t = this._time + (mesh.userData['time'] as number);
-            const pulse = 1 + 0.05 * Math.sin(t * 2);
+            const anim = this._hazardAnim.get(mesh);
+            if (!anim) continue;
+            const pulse = 1 + 0.05 * Math.sin((this._time + anim.phase) * 2);
             mesh.scale.set(pulse, pulse, pulse);
         }
     }

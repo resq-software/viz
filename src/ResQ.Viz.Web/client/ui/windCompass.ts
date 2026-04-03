@@ -1,6 +1,8 @@
 // ResQ Viz - Wind compass widget
 // SPDX-License-Identifier: Apache-2.0
 
+import { getEl } from '../dom';
+
 export class WindCompass {
     private readonly _canvas: HTMLCanvasElement;
     private readonly _label: HTMLElement;
@@ -9,8 +11,8 @@ export class WindCompass {
     private _speed = 0;
 
     constructor() {
-        this._canvas = document.getElementById('wind-canvas') as HTMLCanvasElement;
-        this._label  = document.getElementById('wind-label')!;
+        this._canvas = getEl<HTMLCanvasElement>('wind-canvas');
+        this._label  = getEl('wind-label');
         const ctx = this._canvas.getContext('2d');
         if (!ctx) throw new Error('No 2D context for wind canvas');
         this._ctx = ctx;
