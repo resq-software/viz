@@ -16,6 +16,7 @@ const STATUS_COLORS: Record<string, number> = {
 };
 const DEFAULT_COLOR   = 0xaaaaaa;
 const SELECTION_COLOR = 0x58a6ff;
+/** Lerp factor per frame at 60 Hz — tune for responsiveness vs smoothness (0.0=frozen, 1.0=instant) */
 const LERP_SPEED      = 0.15;
 const BODY_COLOR      = 0x161b22;
 const ARM_COLOR       = 0x21262d;
@@ -43,6 +44,7 @@ export class DroneManager {
     private readonly _drones = new Map<string, DroneEntry>();
     private readonly _objToId = new Map<THREE.Object3D, string>();
     private _selectedId: string | null = null;
+    private _hoveredId: string | null = null;
 
     constructor(scene: THREE.Scene) {
         this._threeScene = scene;
@@ -73,16 +75,54 @@ export class DroneManager {
     }
 
     setSelected(id: string | null): void {
-        // Deselect old
+        // Deselect old — hide ring unless it's also hovered
         if (this._selectedId) {
             const entry = this._drones.get(this._selectedId);
-            if (entry) entry.ring.visible = false;
+            if (entry) {
+                if (this._selectedId === this._hoveredId) {
+                    // Keep hover ring visible at hover opacity
+                    (entry.ring.material as THREE.MeshBasicMaterial).opacity = 0.4;
+                } else {
+                    entry.ring.visible = false;
+                }
+            }
         }
         this._selectedId = id;
-        // Select new
+        // Clear hoveredId for the newly selected drone — selection ring takes over
+        if (id && id === this._hoveredId) {
+            this._hoveredId = null;
+        }
+        // Select new at full opacity
         if (id) {
             const entry = this._drones.get(id);
-            if (entry) entry.ring.visible = true;
+            if (entry) {
+                (entry.ring.material as THREE.MeshBasicMaterial).opacity = 0.85;
+                entry.ring.visible = true;
+            }
+        }
+    }
+
+    setHovered(obj: THREE.Object3D | null): void {
+        const newId = obj ? this.getDroneIdFromObject(obj) : null;
+        if (newId === this._hoveredId) return;
+
+        // Dim old hover (unless it's the selected drone)
+        if (this._hoveredId && this._hoveredId !== this._selectedId) {
+            const old = this._drones.get(this._hoveredId);
+            if (old?.ring) {
+                old.ring.visible = false;
+                (old.ring.material as THREE.MeshBasicMaterial).opacity = 0.4;
+            }
+        }
+
+        // Highlight new hover (unless it's the selected drone — selected already has full ring)
+        this._hoveredId = newId;
+        if (newId && newId !== this._selectedId) {
+            const entry = this._drones.get(newId);
+            if (entry?.ring) {
+                (entry.ring.material as THREE.MeshBasicMaterial).opacity = 0.4;
+                entry.ring.visible = true;
+            }
         }
     }
 
@@ -324,5 +364,6 @@ export class DroneManager {
         this._objToId.delete(entry.group);
         this._drones.delete(id);
         if (this._selectedId === id) this._selectedId = null;
+        if (this._hoveredId === id) this._hoveredId = null;
     }
 }

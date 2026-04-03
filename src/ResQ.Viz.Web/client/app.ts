@@ -46,6 +46,12 @@ if (keyHints) {
 
 // ─── Drone click-to-select ─────────────────────────────────────────────────
 
+viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
+    const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
+    droneManager.setHovered(hit[0]?.object ?? null);
+    viz.renderer.domElement.style.cursor = hit.length > 0 ? 'pointer' : '';
+});
+
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     const first = hit[0];

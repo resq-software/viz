@@ -60,6 +60,9 @@ public sealed class SimulationService : BackgroundService
     private int _tickCount;
     private double _simTime;
 
+    /// <summary>Broadcast a viz frame every N simulation ticks (60 Hz / 6 = 10 Hz).</summary>
+    private const int BroadcastEveryNTicks = 6;
+
     /// <summary>Raised on every 6th tick to signal that a new viz frame should be broadcast.</summary>
     public event EventHandler? FrameReady;
 
@@ -184,7 +187,7 @@ public sealed class SimulationService : BackgroundService
                 _world.Step();
                 _tickCount++;
                 _simTime += 1.0 / 60.0;
-                shouldBroadcast = _tickCount % 6 == 0;
+                shouldBroadcast = _tickCount % BroadcastEveryNTicks == 0;
             }
 
             if (shouldBroadcast)

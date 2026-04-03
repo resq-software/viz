@@ -34,6 +34,7 @@ export class Scene {
         container.appendChild(this.renderer.domElement);
 
         this.scene = new THREE.Scene();
+        // Fog density: tuned for 600-unit terrain; increase for denser atmosphere
         this.scene.fog = new THREE.FogExp2(0x0d1117, 0.0006);
 
         this._camera = new THREE.PerspectiveCamera(
@@ -46,8 +47,8 @@ export class Scene {
         this._controls.enableDamping  = true;
         this._controls.dampingFactor  = 0.05;
         this._controls.maxPolarAngle  = Math.PI / 2.05;
-        this._controls.minDistance    = 5;
-        this._controls.maxDistance    = 2000;
+        this._controls.minDistance    = 5;    // metres — prevent clipping into drone body
+        this._controls.maxDistance    = 2000; // metres — keeps terrain visible at max zoom-out
         this._controls.target.set(0, 20, 0);
 
         this._initSky();
