@@ -86,4 +86,27 @@ public class SimulationServiceTests
         var snapshot = svc.GetSnapshot();
         snapshot.Should().HaveCount(1);
     }
+
+    [Fact]
+    public void SetWeather_Changes_Wind_Mode()
+    {
+        var svc = CreateService();
+        svc.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        svc.StepOnce();
+        svc.SetWeather("steady", 20.0, 90.0);
+        for (int i = 0; i < 10; i++) svc.StepOnce();
+        var after = svc.GetSnapshot()[0];
+        after.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Reset_ClearsAllDrones()
+    {
+        var svc = CreateService();
+        svc.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        svc.AddDrone("d2", new Vector3(20f, 50f, 0f));
+        svc.GetSnapshot().Should().HaveCount(2);
+        svc.Reset();
+        svc.GetSnapshot().Should().BeEmpty();
+    }
 }
