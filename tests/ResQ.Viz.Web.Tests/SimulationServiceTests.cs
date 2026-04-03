@@ -172,4 +172,24 @@ public class SimulationServiceTests
         var ids = svc.GetSnapshot().Select(d => d.Id).ToList();
         ids.Should().BeEquivalentTo(["alpha", "beta", "gamma"]);
     }
+
+    [Fact]
+    public void GetSnapshot_Rotation_Has_Four_Elements_For_Quaternion()
+    {
+        var svc = CreateService();
+        svc.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var snapshot = svc.GetSnapshot();
+        snapshot[0].Rotation.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public void GetSnapshot_Rotation_Is_Unit_Quaternion()
+    {
+        var svc = CreateService();
+        svc.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        svc.StepOnce();
+        var rot = svc.GetSnapshot()[0].Rotation;
+        var mag = Math.Sqrt(rot[0]*rot[0] + rot[1]*rot[1] + rot[2]*rot[2] + rot[3]*rot[3]);
+        mag.Should().BeApproximately(1.0, 0.001, "quaternion must be unit-length");
+    }
 }

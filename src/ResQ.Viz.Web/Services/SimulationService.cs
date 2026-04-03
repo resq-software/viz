@@ -30,7 +30,7 @@ namespace ResQ.Viz.Web.Services;
 /// </summary>
 /// <param name="Id">Unique drone identifier.</param>
 /// <param name="Position">World-space position [X, Y, Z] in metres.</param>
-/// <param name="Rotation">Orientation as Euler angles [X, Y, Z] in radians derived from the quaternion.</param>
+/// <param name="Rotation">Orientation as unit quaternion [X, Y, Z, W].</param>
 /// <param name="Velocity">World-space velocity [X, Y, Z] in metres per second.</param>
 /// <param name="Battery">Remaining battery charge in the range [0, 100].</param>
 /// <param name="Status">Human-readable flight status string.</param>
@@ -151,15 +151,11 @@ public sealed class SimulationService : BackgroundService
             {
                 var state = d.FlightModel.State;
                 var q = state.Orientation;
-                // Convert quaternion to Euler angles (yaw-pitch-roll approximation)
-                float roll  = MathF.Atan2(2f * (q.W * q.X + q.Y * q.Z), 1f - 2f * (q.X * q.X + q.Y * q.Y));
-                float pitch = MathF.Asin(Math.Clamp(2f * (q.W * q.Y - q.Z * q.X), -1f, 1f));
-                float yaw   = MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y), 1f - 2f * (q.Y * q.Y + q.Z * q.Z));
 
                 return new DroneSnapshot(
                     Id:       d.Id,
                     Position: [state.Position.X, state.Position.Y, state.Position.Z],
-                    Rotation: [roll, pitch, yaw],
+                    Rotation: [q.X, q.Y, q.Z, q.W],
                     Velocity: [state.Velocity.X, state.Velocity.Y, state.Velocity.Z],
                     Battery:  state.BatteryPercent,
                     Status:   d.FlightModel.HasLanded ? "landed" : "flying",
