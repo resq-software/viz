@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PostFx } from './postfx';
 
 export class Scene {
     readonly scene: THREE.Scene;
@@ -16,6 +17,7 @@ export class Scene {
     private readonly _tickCallbacks: Array<(dt: number) => void> = [];
     private _followTarget: THREE.Object3D | null = null;
     private readonly _followOffset = new THREE.Vector3(0, 18, -28);
+    private _postFx!: PostFx;
 
     constructor(container: HTMLElement) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -47,6 +49,13 @@ export class Scene {
 
         this._initLights();
         this._initHelpers();
+        this._postFx = new PostFx(
+            this.renderer,
+            this.scene,
+            this._camera,
+            window.innerWidth,
+            window.innerHeight,
+        );
         this._startRenderLoop();
         window.addEventListener('resize', () => this._onResize());
     }
@@ -100,7 +109,7 @@ export class Scene {
                 this._controls.target.lerp(targetPos, 0.08);
             }
             this._controls.update();
-            this.renderer.render(this.scene, this._camera);
+            this._postFx.render();
         };
         requestAnimationFrame(loop);
     }
@@ -125,6 +134,7 @@ export class Scene {
         this._camera.aspect = window.innerWidth / window.innerHeight;
         this._camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this._postFx.setSize(window.innerWidth, window.innerHeight);
     }
 
     get fps(): number { return this._fps; }
