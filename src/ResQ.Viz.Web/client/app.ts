@@ -57,11 +57,12 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
 });
 
 dronePanel.onCommand(async (droneId, cmd) => {
-    await fetch(`/api/sim/drone/${droneId}/cmd`, {
+    const res = await fetch(`/api/sim/drone/${droneId}/cmd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: cmd }),
     });
+    if (!res.ok) console.warn(`Command ${cmd} on ${droneId} failed: ${res.status}`);
 });
 
 dronePanel.onClose(() => {
@@ -92,13 +93,18 @@ connection.onclose(() => hud.setStatus('disconnected'));
 
 setInterval(() => hud.updateFps(viz.fps), 500);
 
+let _starting = false;
 async function start(): Promise<void> {
+    if (_starting) return;
+    _starting = true;
     try {
         await connection.start();
         hud.setStatus('connected');
     } catch {
         hud.setStatus('disconnected');
-        setTimeout(start, 5000);
+        setTimeout(() => { _starting = false; start(); }, 5000);
+        return;
     }
+    _starting = false;
 }
 start();

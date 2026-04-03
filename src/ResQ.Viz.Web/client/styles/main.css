@@ -284,7 +284,8 @@ input[type='number']:focus,
 input[type='text']:focus,
 select:focus {
   outline: none;
-  border-color: var(--border-hi);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
 }
 .input-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-bottom: 6px; }
 .input-row .field-group { display: flex; flex-direction: column; }
@@ -313,7 +314,7 @@ input[type='range'] {
 
 /* ── Drone detail panel ───────────────────────────────────────────────── */
 #drone-panel {
-  position: fixed;
+  position: fixed; /* also acts as containing block for #dp-close (position:absolute) */
   bottom: 14px;
   left: calc(var(--sidebar-w) + 20px);
   right: 110px;
