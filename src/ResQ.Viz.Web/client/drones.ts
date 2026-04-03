@@ -17,8 +17,15 @@ const STATUS_COLORS: Record<string, number> = {
 const DEFAULT_COLOR   = 0xaaaaaa;
 const SELECTION_COLOR = 0x58a6ff;
 const LERP_SPEED      = 0.15;
-const BODY_COLOR      = 0x21262d;
-const ARM_COLOR       = 0x161b22;
+const BODY_COLOR      = 0x161b22;
+const ARM_COLOR       = 0x21262d;
+
+interface QuadrotorMesh {
+    group:  THREE.Group;
+    led:    THREE.MeshLambertMaterial;
+    ring:   THREE.Mesh;
+    rotors: THREE.Mesh[];
+}
 
 interface DroneEntry {
     group:     THREE.Group;
@@ -26,12 +33,7 @@ interface DroneEntry {
     targetRot: THREE.Quaternion | null;
     led:       THREE.MeshLambertMaterial;
     ring:      THREE.Mesh;
-}
-
-interface QuadrotorMesh {
-    group: THREE.Group;
-    led:   THREE.MeshLambertMaterial;
-    ring:  THREE.Mesh;
+    rotors:    THREE.Mesh[];
 }
 
 export class DroneManager {
@@ -62,14 +64,9 @@ export class DroneManager {
             if (entry.targetRot) {
                 entry.group.quaternion.slerp(entry.targetRot, LERP_SPEED);
             }
-            // Spin rotor discs (large-radius cylinders only)
-            for (const child of entry.group.children) {
-                if (child instanceof THREE.Mesh && child.geometry instanceof THREE.CylinderGeometry) {
-                    if (child.geometry.parameters.radiusTop > 1) {
-                        child.rotation.y += 0.15;
-                    }
-                }
-            }
+            entry.rotors.forEach((rotor, i) => {
+                rotor.rotation.y += i % 2 === 0 ? 0.18 : -0.18;
+            });
         }
     }
 
@@ -107,7 +104,7 @@ export class DroneManager {
 
     private _add(d: DroneState): void {
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
-        const { group, led, ring } = this._buildQuadrotor(color);
+        const { group, led, ring, rotors } = this._buildQuadrotor(color, d.id);
 
         const startPos = d.pos
             ? new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2])
@@ -128,84 +125,152 @@ export class DroneManager {
                 : null,
             led,
             ring,
+            rotors,
         };
         this._drones.set(d.id, entry);
     }
 
-    private _buildQuadrotor(statusColor: number): QuadrotorMesh {
+    private _buildQuadrotor(statusColor: number, droneId: string): QuadrotorMesh {
         const group = new THREE.Group();
 
-        // Central body
-        const body = new THREE.Mesh(
-            new THREE.BoxGeometry(3.5, 0.9, 3.5),
+        // ── Central body ──────────────────────────────────────────────────────
+        const topPlate = new THREE.Mesh(
+            new THREE.BoxGeometry(3.8, 0.35, 3.8),
             new THREE.MeshLambertMaterial({ color: BODY_COLOR }),
         );
-        body.castShadow = true;
-        group.add(body);
+        topPlate.position.y = 0.3;
+        topPlate.castShadow = true;
+        group.add(topPlate);
 
-        // 4 diagonal arms (NE, SE, SW, NW)
-        const armDirs = [
-            { angle: Math.PI / 4,      pos: new THREE.Vector3( 2.1, 0,  2.1) },
-            { angle: -Math.PI / 4,     pos: new THREE.Vector3( 2.1, 0, -2.1) },
-            { angle: 3 * Math.PI / 4,  pos: new THREE.Vector3(-2.1, 0,  2.1) },
-            { angle: -3 * Math.PI / 4, pos: new THREE.Vector3(-2.1, 0, -2.1) },
+        const botPlate = new THREE.Mesh(
+            new THREE.BoxGeometry(3.2, 0.25, 3.2),
+            new THREE.MeshLambertMaterial({ color: 0x0d1117 }),
+        );
+        botPlate.position.y = -0.2;
+        group.add(botPlate);
+
+        const column = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.6, 0.6, 0.55, 8),
+            new THREE.MeshLambertMaterial({ color: ARM_COLOR }),
+        );
+        column.position.y = 0.05;
+        group.add(column);
+
+        const cam = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.45, 0.35, 0.4, 8),
+            new THREE.MeshLambertMaterial({ color: 0x080c10 }),
+        );
+        cam.position.set(0.8, -0.42, 0);
+        group.add(cam);
+
+        // ── 4 diagonal arms ───────────────────────────────────────────────────
+        const armDirs: { angle: number; tipPos: THREE.Vector3; navColor: number }[] = [
+            { angle:  Math.PI / 4,       tipPos: new THREE.Vector3( 3.5, 0,  3.5), navColor: 0xff3333 },
+            { angle: -Math.PI / 4,       tipPos: new THREE.Vector3( 3.5, 0, -3.5), navColor: 0x33ff33 },
+            { angle:  3 * Math.PI / 4,   tipPos: new THREE.Vector3(-3.5, 0,  3.5), navColor: 0x33ff33 },
+            { angle: -3 * Math.PI / 4,   tipPos: new THREE.Vector3(-3.5, 0, -3.5), navColor: 0xff3333 },
         ];
 
-        for (const { angle, pos } of armDirs) {
-            // Arm
+        const rotors: THREE.Mesh[] = [];
+
+        for (const { angle, tipPos, navColor } of armDirs) {
             const arm = new THREE.Mesh(
-                new THREE.BoxGeometry(5, 0.28, 0.45),
+                new THREE.BoxGeometry(6.5, 0.3, 0.5),
                 new THREE.MeshLambertMaterial({ color: ARM_COLOR }),
             );
-            arm.position.copy(pos);
             arm.rotation.y = angle;
             group.add(arm);
 
-            // Rotor disc at tip
-            const tipPos = pos.clone().normalize().multiplyScalar(5.0);
-            const rotor = new THREE.Mesh(
-                new THREE.CylinderGeometry(2.0, 2.0, 0.15, 12),
-                new THREE.MeshLambertMaterial({ color: ARM_COLOR, transparent: true, opacity: 0.75 }),
+            const motor = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.45, 0.45, 0.7, 10),
+                new THREE.MeshLambertMaterial({ color: 0x2a3038 }),
             );
-            rotor.position.copy(tipPos);
-            rotor.position.y = 0.3;
-            group.add(rotor);
+            motor.position.copy(tipPos).setY(0.1);
+            group.add(motor);
 
-            // Rotor hub (small cylinder)
-            const hub = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.35, 0.35, 0.5, 8),
-                new THREE.MeshLambertMaterial({ color: BODY_COLOR }),
+            const rotorMat = new THREE.MeshLambertMaterial({
+                color: ARM_COLOR,
+                transparent: true,
+                opacity: 0.7,
+            });
+            const rotor = new THREE.Mesh(
+                new THREE.CylinderGeometry(2.2, 2.2, 0.12, 14),
+                rotorMat,
             );
-            hub.position.copy(tipPos);
-            hub.position.y = 0.25;
-            group.add(hub);
+            rotor.position.copy(tipPos).setY(0.55);
+            group.add(rotor);
+            rotors.push(rotor);
+
+            const navMat = new THREE.MeshBasicMaterial({
+                color: navColor,
+                transparent: true,
+                opacity: 0.95,
+            });
+            const navLight = new THREE.Mesh(new THREE.SphereGeometry(0.22, 6, 6), navMat);
+            navLight.position.copy(tipPos).setY(0.12);
+            group.add(navLight);
         }
 
-        // Status LED on top (emissive sphere)
+        // ── Landing gear ──────────────────────────────────────────────────────
+        const gearMat = new THREE.MeshLambertMaterial({ color: 0x1a1f26 });
+        for (const [sx, sz] of [[1,1],[-1,1],[1,-1],[-1,-1]] as [number,number][]) {
+            const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.2, 6), gearMat);
+            leg.position.set(sx * 1.6, -0.85, sz * 1.6);
+            group.add(leg);
+            const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.8, 6), gearMat);
+            foot.rotation.x = Math.PI / 2;
+            foot.position.set(sx * 1.6, -1.45, sz * 1.6);
+            group.add(foot);
+        }
+
+        // ── Status LED ────────────────────────────────────────────────────────
         const ledMat = new THREE.MeshLambertMaterial({
             color: statusColor,
             emissive: new THREE.Color(statusColor),
-            emissiveIntensity: 0.6,
+            emissiveIntensity: 0.8,
         });
-        const led = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 10), ledMat);
-        led.position.y = 0.9;
+        const led = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 8), ledMat);
+        led.position.y = 0.62;
         group.add(led);
 
-        // Selection ring (below drone, initially hidden)
+        // ── Selection ring ────────────────────────────────────────────────────
         const ringMat = new THREE.MeshBasicMaterial({
             color: SELECTION_COLOR,
             transparent: true,
             opacity: 0.85,
             side: THREE.DoubleSide,
         });
-        const ring = new THREE.Mesh(new THREE.RingGeometry(4.5, 5.5, 32), ringMat);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(5.5, 6.5, 32), ringMat);
         ring.rotation.x = -Math.PI / 2;
-        ring.position.y = -0.5;
+        ring.position.y = -1.6;
         ring.visible = false;
         group.add(ring);
 
+        // ── Canvas ID label sprite ────────────────────────────────────────────
+        const labelCanvas = document.createElement('canvas');
+        labelCanvas.width  = 256;
+        labelCanvas.height = 48;
+        const lctx = labelCanvas.getContext('2d')!;
+        lctx.fillStyle = 'rgba(13,17,23,0.75)';
+        (lctx as any).roundRect(2, 2, 252, 44, 6);
+        lctx.fill();
+        lctx.fillStyle = '#58a6ff';
+        lctx.font = 'bold 20px "ui-monospace", monospace';
+        lctx.textAlign = 'center';
+        lctx.textBaseline = 'middle';
+        lctx.fillText(droneId.length > 14 ? droneId.slice(0, 14) + '\u2026' : droneId, 128, 24);
+        const labelTex    = new THREE.CanvasTexture(labelCanvas);
+        const labelSprite = new THREE.Sprite(
+            new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthTest: false }),
+        );
+        labelSprite.scale.set(9, 1.7, 1);
+        labelSprite.position.y = 4.5;
+        group.add(labelSprite);
+
+        // 2× overall scale — makes the drone clearly visible at the default camera distance
         group.scale.setScalar(2);
-        return { group, led: ledMat, ring };
+
+        return { group, led: ledMat, ring, rotors };
     }
 
     private _updateDrone(d: DroneState): void {
