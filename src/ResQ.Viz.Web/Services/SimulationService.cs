@@ -17,6 +17,7 @@
 using System.Numerics;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using ResQ.Simulation.Engine.Core;
 using ResQ.Simulation.Engine.Environment;
 using ResQ.Simulation.Engine.Physics;
@@ -54,6 +55,7 @@ public sealed class SimulationService : BackgroundService
     private readonly Func<FlatTerrain> _terrainFactory;
     private readonly IHubContext<VizHub> _hubContext;
     private readonly VizFrameBuilder _frameBuilder;
+    private readonly ILogger<SimulationService> _logger;
     private readonly object _lock = new();
     private int _tickCount;
     private double _simTime;
@@ -66,13 +68,16 @@ public sealed class SimulationService : BackgroundService
     /// </summary>
     /// <param name="hubContext">SignalR hub context used to push frames to connected clients.</param>
     /// <param name="frameBuilder">Stateless service that converts drone snapshots into <see cref="ResQ.Viz.Web.Models.VizFrame"/> objects.</param>
-    public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder)
+    /// <param name="logger">Logger instance.</param>
+    public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder, ILogger<SimulationService> logger)
     {
         _hubContext     = hubContext;
         _frameBuilder   = frameBuilder;
+        _logger         = logger;
         _terrainFactory = () => new FlatTerrain();
         _weather        = new UpdatableWeatherSystem(new WeatherConfig());
         _world          = new SimulationWorld(new SimulationConfig(), _terrainFactory(), _weather);
+        _logger.LogInformation("SimulationService initialised.");
     }
 
     /// <summary>Adds a drone to the simulation world at the specified start position.</summary>
@@ -83,6 +88,7 @@ public sealed class SimulationService : BackgroundService
         lock (_lock)
         {
             _world.AddDrone(id, position);
+            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}).", id, position.X, position.Y, position.Z);
         }
     }
 
@@ -94,7 +100,13 @@ public sealed class SimulationService : BackgroundService
         lock (_lock)
         {
             var drone = _world.Drones.FirstOrDefault(d => d.Id == droneId);
-            drone?.SendCommand(command);
+            if (drone is null)
+            {
+                _logger.LogWarning("SendCommand: drone {DroneId} not found.", droneId);
+                return;
+            }
+            drone.SendCommand(command);
+            _logger.LogDebug("Command {Command} sent to drone {DroneId}.", command, droneId);
         }
     }
 
@@ -111,6 +123,7 @@ public sealed class SimulationService : BackgroundService
             _           => WeatherMode.Calm,
         };
         _weather.Update(new WeatherConfig(weatherMode, direction, windSpeed));
+        _logger.LogInformation("Weather updated: mode={Mode}, speed={Speed} m/s, direction={Dir}°.", weatherMode, windSpeed, direction);
     }
 
     /// <summary>
@@ -124,6 +137,7 @@ public sealed class SimulationService : BackgroundService
             _world     = new SimulationWorld(new SimulationConfig(), _terrainFactory(), _weather);
             _simTime   = 0;
             _tickCount = 0;
+            _logger.LogInformation("Simulation reset.");
         }
     }
 
@@ -184,7 +198,14 @@ public sealed class SimulationService : BackgroundService
                 // Build and broadcast frame outside the lock to avoid holding it during async I/O.
                 var snapshot = GetSnapshot();
                 var frame    = _frameBuilder.Build(snapshot, _simTime);
-                await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
+                try
+                {
+                    await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Failed to broadcast viz frame at t={SimTime:F2}s.", _simTime);
+                }
             }
             await Task.Delay(16, stoppingToken);
         }

@@ -15,6 +15,7 @@
  */
 
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using ResQ.Viz.Web.Models;
 
 namespace ResQ.Viz.Web.Hubs;
@@ -29,8 +30,22 @@ namespace ResQ.Viz.Web.Hubs;
 ///   - Detection(object detection) — raised when a drone detects a target.
 ///   - HazardUpdate(object hazard) — raised when a hazard changes state.
 /// </summary>
-public sealed class VizHub : Hub
+public sealed class VizHub(ILogger<VizHub> logger) : Hub
 {
-    // No server-callable methods needed for Phase 1.
-    // Frames are pushed by SimulationService via IHubContext<VizHub>.
+    /// <inheritdoc/>
+    public override Task OnConnectedAsync()
+    {
+        logger.LogInformation("Client connected: {ConnectionId}.", Context.ConnectionId);
+        return base.OnConnectedAsync();
+    }
+
+    /// <inheritdoc/>
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (exception is null)
+            logger.LogInformation("Client disconnected: {ConnectionId}.", Context.ConnectionId);
+        else
+            logger.LogWarning(exception, "Client disconnected with error: {ConnectionId}.", Context.ConnectionId);
+        return base.OnDisconnectedAsync(exception);
+    }
 }
