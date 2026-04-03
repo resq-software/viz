@@ -18,7 +18,7 @@ const HAZARD_COLORS: Record<string, number> = {
 };
 
 
-const TRAIL_LENGTH = 300; // 30 seconds at 10 Hz
+const TRAIL_LENGTH_DEFAULT = 300; // 30 seconds at 10 Hz
 const MESH_LINK_COLOR = 0x00ff88;
 
 type TrailLine = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
@@ -47,6 +47,7 @@ export class EffectsManager {
     private readonly _activeDetections = new Map<string, DetectionEntry>();
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
+    private _trailMaxPositions: number = TRAIL_LENGTH_DEFAULT;
 
     constructor(scene: THREE.Scene) {
         this._scene = scene;
@@ -84,6 +85,16 @@ export class EffectsManager {
         this._animateDetections();
     }
 
+    setTrailLength(seconds: number): void {
+        // 0s=0 positions, 1s=10, 3s=30, 5s=50, 10s=100 (10 Hz frame rate)
+        this._trailMaxPositions = Math.round(seconds * 10);
+        // Trim existing trails to new length
+        for (const trail of this._trails.values()) {
+            while (trail.positions.length > this._trailMaxPositions) trail.positions.shift();
+            this._refreshTrailGeometry(trail);
+        }
+    }
+
     // ─── Trails ────────────────────────────────────────────────────────────
 
     private _updateTrails(drones: DroneState[]): void {
@@ -105,7 +116,7 @@ export class EffectsManager {
             }
             const trail = this._trails.get(d.id)!; // safe: just set above if absent
             trail.positions.push(new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
-            if (trail.positions.length > TRAIL_LENGTH) trail.positions.shift();
+            if (trail.positions.length > this._trailMaxPositions) trail.positions.shift();
             this._refreshTrailGeometry(trail);
         }
     }

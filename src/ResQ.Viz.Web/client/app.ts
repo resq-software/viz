@@ -15,6 +15,7 @@ import { WindCompass }    from './ui/windCompass';
 import { DronePanel }     from './ui/dronePanel';
 import type { VizFrame }  from './types';
 import { isDroneReady }   from './types';
+import { Settings }       from './settings';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -30,6 +31,149 @@ const controlPanel = new ControlPanel();
 const hud          = new Hud();
 const windCompass  = new WindCompass();
 const dronePanel   = new DronePanel();
+
+const settings = new Settings();
+
+// ─── Settings panel wiring ─────────────────────────────────────────────────
+
+const settingsPanel  = document.getElementById('settings-panel');
+const settingsToggle = document.getElementById('hud-settings-toggle');
+const settingsClose  = document.getElementById('settings-close');
+const settingsReset  = document.getElementById('settings-reset');
+
+settingsToggle?.addEventListener('click', () => {
+    settingsPanel?.classList.toggle('open');
+});
+settingsClose?.addEventListener('click', () => {
+    settingsPanel?.classList.remove('open');
+});
+
+// Bloom controls
+const bloomEnabled  = document.getElementById('set-bloom-enabled')  as HTMLInputElement | null;
+const bloomStrength = document.getElementById('set-bloom-strength') as HTMLInputElement | null;
+const bloomStrVal   = document.getElementById('set-bloom-strength-val');
+
+if (bloomEnabled)  bloomEnabled.checked  = settings.get('bloomEnabled');
+if (bloomStrength) bloomStrength.value   = String(settings.get('bloomStrength'));
+if (bloomStrVal)   bloomStrVal.textContent = settings.get('bloomStrength').toFixed(2);
+
+bloomEnabled?.addEventListener('change', () => {
+    const v = bloomEnabled.checked;
+    settings.set('bloomEnabled', v);
+    viz.setBloomEnabled(v);
+});
+bloomStrength?.addEventListener('input', () => {
+    const v = parseFloat(bloomStrength.value);
+    settings.set('bloomStrength', v);
+    if (bloomStrVal) bloomStrVal.textContent = v.toFixed(2);
+    viz.setBloomStrength(v);
+});
+
+// Fog density
+const fogSlider = document.getElementById('set-fog') as HTMLInputElement | null;
+const fogVal    = document.getElementById('set-fog-val');
+function fogSliderToDensity(v: number): number { return 0.00005 + (v / 100) * 0.00075; }
+function fogDensityToSlider(d: number): number { return Math.round((d - 0.00005) / 0.00075 * 100); }
+
+if (fogSlider) fogSlider.value = String(fogDensityToSlider(settings.get('fogDensity')));
+if (fogVal)    fogVal.textContent = String(fogDensityToSlider(settings.get('fogDensity')));
+
+fogSlider?.addEventListener('input', () => {
+    const v = parseFloat(fogSlider.value);
+    if (fogVal) fogVal.textContent = String(Math.round(v));
+    const density = fogSliderToDensity(v);
+    settings.set('fogDensity', density);
+    viz.setFogDensity(density);
+});
+
+// Camera settings
+const flySpeedSlider = document.getElementById('set-fly-speed') as HTMLInputElement | null;
+const flySpeedVal    = document.getElementById('set-fly-speed-val');
+if (flySpeedSlider) flySpeedSlider.value = String(settings.get('flySpeed'));
+if (flySpeedVal)    flySpeedVal.textContent = String(settings.get('flySpeed'));
+flySpeedSlider?.addEventListener('input', () => {
+    const v = parseFloat(flySpeedSlider.value);
+    if (flySpeedVal) flySpeedVal.textContent = String(v);
+    settings.set('flySpeed', v);
+    viz.flySpeed = v;
+});
+
+const fovSlider = document.getElementById('set-fov') as HTMLInputElement | null;
+const fovVal    = document.getElementById('set-fov-val');
+if (fovSlider) fovSlider.value = String(settings.get('fov'));
+if (fovVal)    fovVal.textContent = String(settings.get('fov')) + '°';
+fovSlider?.addEventListener('input', () => {
+    const v = parseFloat(fovSlider.value);
+    if (fovVal) fovVal.textContent = v + '°';
+    settings.set('fov', v);
+    viz.setFov(v);
+});
+
+// Drone label mode
+const labelMode = document.getElementById('set-label-mode') as HTMLSelectElement | null;
+if (labelMode) labelMode.value = settings.get('labelMode');
+labelMode?.addEventListener('change', () => {
+    const v = labelMode.value as 'always' | 'hover' | 'off';
+    settings.set('labelMode', v);
+    droneManager.setLabelMode(v);
+});
+
+// Trail length
+const trailSel = document.getElementById('set-trail-length') as HTMLSelectElement | null;
+if (trailSel) trailSel.value = String(settings.get('trailLength'));
+trailSel?.addEventListener('change', () => {
+    const v = parseFloat(trailSel.value);
+    settings.set('trailLength', v);
+    effectsMgr.setTrailLength(v);
+});
+
+// Detection ring
+const detRing = document.getElementById('set-detection-ring') as HTMLInputElement | null;
+if (detRing) detRing.checked = settings.get('detectionRingShow');
+detRing?.addEventListener('change', () => {
+    const v = detRing.checked;
+    settings.set('detectionRingShow', v);
+    droneManager.setDetectionRingVisible(v);
+});
+
+// Battery warn threshold
+const batWarn = document.getElementById('set-battery-warn') as HTMLInputElement | null;
+const batVal  = document.getElementById('set-battery-warn-val');
+if (batWarn) batWarn.value = String(settings.get('batteryWarnPct'));
+if (batVal)  batVal.textContent = settings.get('batteryWarnPct') + '%';
+batWarn?.addEventListener('input', () => {
+    const v = parseFloat(batWarn.value);
+    if (batVal) batVal.textContent = v + '%';
+    settings.set('batteryWarnPct', v);
+    droneManager.setBatteryWarnThreshold(v / 100);
+});
+
+// Shadows toggle
+const shadowsChk = document.getElementById('set-shadows') as HTMLInputElement | null;
+if (shadowsChk) shadowsChk.checked = settings.get('shadowsEnabled');
+shadowsChk?.addEventListener('change', () => {
+    const v = shadowsChk.checked;
+    settings.set('shadowsEnabled', v);
+    viz.setShadowsEnabled(v);
+});
+
+// Reset button
+settingsReset?.addEventListener('click', () => {
+    localStorage.removeItem('resq-viz-settings');
+    location.reload();
+});
+
+// Apply saved settings on startup
+viz.setBloomEnabled(settings.get('bloomEnabled'));
+viz.setBloomStrength(settings.get('bloomStrength'));
+viz.setFogDensity(settings.get('fogDensity'));
+viz.flySpeed = settings.get('flySpeed');
+viz.setFov(settings.get('fov'));
+viz.setShadowsEnabled(settings.get('shadowsEnabled'));
+droneManager.setLabelMode(settings.get('labelMode'));
+droneManager.setDetectionRingVisible(settings.get('detectionRingShow'));
+droneManager.setBatteryWarnThreshold(settings.get('batteryWarnPct') / 100);
+effectsMgr.setTrailLength(settings.get('trailLength'));
 
 void terrain;
 

@@ -38,6 +38,7 @@ export class PostFx {
     private readonly _bloomComposer: EffectComposer;
     private readonly _finalComposer: EffectComposer;
     private readonly _scene: THREE.Scene;
+    private _bloomPass: UnrealBloomPass;
     // Temp storage for swapped materials — reused each frame to avoid allocation
     private readonly _darkened = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
 
@@ -61,6 +62,7 @@ export class PostFx {
             0.6,    // radius   — glow spread
             0.0,    // threshold — 0 catches everything non-black (i.e. emissives after darken)
         );
+        this._bloomPass = bloom;
         this._bloomComposer.addPass(bloom);
 
         // ── Final composer ─────────────────────────────────────────────────
@@ -106,4 +108,7 @@ export class PostFx {
         this._bloomComposer.setSize(width, height);
         this._finalComposer.setSize(width, height);
     }
+
+    setBloomStrength(v: number): void { this._bloomPass.strength = v; }
+    setBloomEnabled(v: boolean): void { this._bloomPass.enabled = v; }
 }

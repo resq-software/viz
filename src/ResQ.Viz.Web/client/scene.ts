@@ -186,6 +186,24 @@ export class Scene {
     get flySpeed(): number { return this._cam.flySpeed; }
     set flySpeed(v: number) { this._cam.flySpeed = v; }
 
+    setBloomEnabled(v: boolean): void  { this._postFx.setBloomEnabled(v); }
+    setBloomStrength(v: number): void  { this._postFx.setBloomStrength(v); }
+    setFogDensity(v: number): void {
+        if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = v;
+    }
+    setFov(degrees: number): void {
+        this._camera.fov = degrees;
+        this._camera.updateProjectionMatrix();
+    }
+    setShadowsEnabled(v: boolean): void {
+        this.renderer.shadowMap.enabled = v;
+        // Force shadow map refresh
+        this.scene.traverse(obj => {
+            const m = obj as THREE.Mesh;
+            if (m.isMesh) m.castShadow = m.castShadow; // touch to trigger refresh
+        });
+    }
+
     getTerrainIntersection(clientX: number, clientY: number): THREE.Vector3 | null {
         const rect   = this.renderer.domElement.getBoundingClientRect();
         const ndc    = new THREE.Vector2(

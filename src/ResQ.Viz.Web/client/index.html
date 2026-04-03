@@ -53,6 +53,7 @@
         <button id="hud-form-toggle"   class="hud-toggle active" title="Formation lines (G)">&#x22EF;</button>
         <button id="hud-follow-toggle" class="hud-toggle"        title="Follow selected (F)">&#x25CE;</button>
         <button id="btn-sidebar-toggle" title="Toggle panel [Tab]">☰</button>
+        <button id="hud-settings-toggle" class="hud-toggle" title="Settings">⚙</button>
     </header>
 
     <!-- Left sidebar -->
@@ -204,6 +205,105 @@
         <span><kbd>C</kbd> Free-fly camera</span>
         <span><kbd>Shift</kbd> Fast move (free-fly)</span>
         <span><kbd>Click ground</kbd> Fly selected drone here</span>
+    </div>
+
+    <!-- ── Settings Panel ─────────────────────────────────────────────────────── -->
+    <div id="settings-panel" class="settings-panel" aria-hidden="true">
+      <div class="settings-header">
+        <span class="settings-title">Settings</span>
+        <button id="settings-close" class="settings-close" aria-label="Close settings">✕</button>
+      </div>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Rendering</h3>
+
+        <label class="settings-row">
+          <span>Bloom</span>
+          <input type="checkbox" id="set-bloom-enabled" checked>
+        </label>
+
+        <label class="settings-row">
+          <span>Bloom strength</span>
+          <div class="settings-slider-row">
+            <input type="range" id="set-bloom-strength" min="0.05" max="1.0" step="0.05" value="0.55">
+            <span class="settings-val" id="set-bloom-strength-val">0.55</span>
+          </div>
+        </label>
+
+        <label class="settings-row">
+          <span>Shadows</span>
+          <input type="checkbox" id="set-shadows" checked>
+        </label>
+
+        <label class="settings-row">
+          <span>Fog density</span>
+          <div class="settings-slider-row">
+            <input type="range" id="set-fog" min="0" max="100" step="1" value="25">
+            <span class="settings-val" id="set-fog-val">25</span>
+          </div>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Camera</h3>
+
+        <label class="settings-row">
+          <span>Fly speed</span>
+          <div class="settings-slider-row">
+            <input type="range" id="set-fly-speed" min="5" max="200" step="5" value="20">
+            <span class="settings-val" id="set-fly-speed-val">20</span>
+          </div>
+        </label>
+
+        <label class="settings-row">
+          <span>Field of view</span>
+          <div class="settings-slider-row">
+            <input type="range" id="set-fov" min="40" max="100" step="5" value="60">
+            <span class="settings-val" id="set-fov-val">60°</span>
+          </div>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Drones</h3>
+
+        <label class="settings-row">
+          <span>Labels</span>
+          <select id="set-label-mode">
+            <option value="always">Always</option>
+            <option value="hover">On hover</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+
+        <label class="settings-row">
+          <span>Trail length</span>
+          <select id="set-trail-length">
+            <option value="0">Off</option>
+            <option value="1">1 s</option>
+            <option value="3" selected>3 s</option>
+            <option value="5">5 s</option>
+            <option value="10">10 s</option>
+          </select>
+        </label>
+
+        <label class="settings-row">
+          <span>Detection rings</span>
+          <input type="checkbox" id="set-detection-ring">
+        </label>
+
+        <label class="settings-row">
+          <span>Battery warn at</span>
+          <div class="settings-slider-row">
+            <input type="range" id="set-battery-warn" min="5" max="40" step="5" value="20">
+            <span class="settings-val" id="set-battery-warn-val">20%</span>
+          </div>
+        </label>
+      </section>
+
+      <div class="settings-footer">
+        <button id="settings-reset" class="settings-reset-btn">Reset to defaults</button>
+      </div>
     </div>
 
     <script type="module" src="./app.ts"></script>

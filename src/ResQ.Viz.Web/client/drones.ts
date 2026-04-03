@@ -34,6 +34,7 @@ interface QuadrotorMesh {
     led:    THREE.MeshStandardMaterial;
     ring:   THREE.Mesh;
     rotors: THREE.Mesh[];
+    label:  THREE.Sprite;
 }
 
 interface DroneEntry {
@@ -43,6 +44,7 @@ interface DroneEntry {
     led:       THREE.MeshStandardMaterial;
     ring:      THREE.Mesh;
     rotors:    THREE.Mesh[];
+    label:     THREE.Sprite;
     _q:        THREE.Quaternion;
     _v:        THREE.Vector3;
 }
@@ -53,6 +55,9 @@ export class DroneManager {
     private readonly _objToId = new Map<THREE.Object3D, string>();
     private _selectedId: string | null = null;
     private _hoveredId: string | null = null;
+    private _labelMode: 'always' | 'hover' | 'off' = 'always';
+    private _detectionRingVisible = false;
+    private _batteryWarnThreshold = 0.20;
 
     constructor(scene: THREE.Scene) {
         this._threeScene = scene;
@@ -167,9 +172,24 @@ export class DroneManager {
         return entry ? entry.group.position.y : null;
     }
 
+    setLabelMode(mode: 'always' | 'hover' | 'off'): void {
+        this._labelMode = mode;
+        for (const entry of this._drones.values()) {
+            entry.label.visible = mode === 'always';
+        }
+    }
+
+    setDetectionRingVisible(v: boolean): void {
+        this._detectionRingVisible = v;
+    }
+
+    setBatteryWarnThreshold(fraction: number): void {
+        this._batteryWarnThreshold = fraction;
+    }
+
     private _add(d: DroneState): void {
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
-        const { group, led, ring, rotors } = this._buildQuadrotor(color, d.id);
+        const { group, led, ring, rotors, label } = this._buildQuadrotor(color, d.id);
 
         const startPos = new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]);
         group.position.copy(startPos);
@@ -189,6 +209,7 @@ export class DroneManager {
             led,
             ring,
             rotors,
+            label,
             _q: new THREE.Quaternion(),
             _v: new THREE.Vector3(),
         };
@@ -350,7 +371,7 @@ export class DroneManager {
         // 2× overall scale — makes the drone clearly visible at the default camera distance
         group.scale.setScalar(2);
 
-        return { group, led: ledMat, ring, rotors };
+        return { group, led: ledMat, ring, rotors, label: labelSprite };
     }
 
     private _updateDrone(d: DroneState): void {
@@ -367,12 +388,20 @@ export class DroneManager {
         const ledMat  = entry.led;
         const now     = Date.now();
 
-        if (battery < 0.15) {
+        // Update label visibility based on label mode
+        const labelVisible = this._labelMode === 'always'
+            ? true
+            : this._labelMode === 'hover'
+                ? d.id === this._hoveredId
+                : false;
+        entry.label.visible = labelVisible;
+
+        if (battery < this._batteryWarnThreshold * 0.75) {
             // Critical battery: red, fast pulse
             ledMat.emissive.setHex(0xff2200);
             ledMat.emissiveIntensity = 2.5 + Math.sin(now * 0.01) * 1.5;
             ledMat.color.setHex(0xff2200);
-        } else if (battery < 0.30) {
+        } else if (battery < this._batteryWarnThreshold) {
             // Low battery: orange
             ledMat.emissive.setHex(0xff8800);
             ledMat.emissiveIntensity = 2.0;
