@@ -11,18 +11,12 @@ const HAZARD_COLORS: Record<string, number> = {
     'TOXIC':   0x9b59b6,
 };
 
-const DETECTION_COLORS: Record<string, number> = {
-    'FIRE':    0xff4444,
-    'PERSON':  0x44ff44,
-    'VEHICLE': 0x4488ff,
-};
 
 const TRAIL_LENGTH = 300; // 30 seconds at 10 Hz
 const MESH_LINK_COLOR = 0x00ff88;
 
 type TrailLine = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
 type HazardMesh = THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
-type DetectionMesh = THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
 type MeshLink = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
 
 interface Trail {
@@ -31,8 +25,8 @@ interface Trail {
 }
 
 interface DetectionEntry {
-    mesh: DetectionMesh;
-    age: number;
+    mesh: THREE.Mesh;
+    born: number;
 }
 
 interface HazardAnimState {
@@ -45,12 +39,28 @@ export class EffectsManager {
     private readonly _trails = new Map<string, Trail>();
     private readonly _hazards = new Map<string, HazardMesh>();
     private readonly _hazardAnim = new WeakMap<HazardMesh, HazardAnimState>();
+    private readonly _detectionPool: THREE.Mesh[] = [];
     private _detections: DetectionEntry[] = [];
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
 
     constructor(scene: THREE.Scene) {
         this._scene = scene;
+        const sphereGeo = new THREE.SphereGeometry(3, 8, 8);
+        const sphereMat = new THREE.MeshStandardMaterial({
+            color: 0xff6600, transparent: true, opacity: 0.5,
+            emissive: 0xff4400, emissiveIntensity: 0.8,
+        });
+        for (let i = 0; i < 32; i++) {
+            const m = new THREE.Mesh(sphereGeo, sphereMat);
+            m.visible = false;
+            scene.add(m);
+            this._detectionPool.push(m);
+        }
+    }
+
+    private _grabFromPool(): THREE.Mesh | null {
+        return this._detectionPool.find(m => !m.visible) ?? null;
     }
 
     update(frame: VizFrame): void {
@@ -168,35 +178,30 @@ export class EffectsManager {
 
     private _updateDetections(detections: DetectionState[]): void {
         for (const det of detections) {
-            const color = DETECTION_COLORS[det.type] ?? 0xffffff;
-            const geo = new THREE.RingGeometry(2, 3, 16);
-            const mat = new THREE.MeshBasicMaterial({
-                color, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
-            });
-            const ring = new THREE.Mesh(geo, mat);
+            const m = this._grabFromPool();
+            if (!m) continue;
             const x = det.pos?.[0] ?? 0;
             const y = det.pos?.[1] ?? 0;
             const z = det.pos?.[2] ?? 0;
-            ring.position.set(x, y + 2, z);
-            ring.rotation.x = -Math.PI / 2;
-            this._scene.add(ring);
-            this._detections.push({ mesh: ring, age: 0 });
+            m.position.set(x, y + 2, z);
+            m.scale.setScalar(1);
+            (m.material as THREE.MeshStandardMaterial).opacity = 0.5;
+            m.visible = true;
+            this._detections.push({ mesh: m, born: this._time });
         }
     }
 
     private _animateDetections(deltaTime: number): void {
         const toRemove: DetectionEntry[] = [];
         for (const det of this._detections) {
-            det.age += deltaTime;
-            det.mesh.scale.setScalar(1 + det.age * 3);
-            det.mesh.material.opacity = Math.max(0, 0.9 - det.age * 0.9);
+            const age = this._time - det.born;
+            det.mesh.scale.setScalar(1 + age * 3);
+            (det.mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, 0.5 - age * 0.5);
             det.mesh.position.y += 0.05;
-            if (det.age > 1) toRemove.push(det);
+            if (age > 1) toRemove.push(det);
         }
         for (const det of toRemove) {
-            this._scene.remove(det.mesh);
-            det.mesh.geometry.dispose();
-            det.mesh.material.dispose();
+            det.mesh.visible = false;
             this._detections.splice(this._detections.indexOf(det), 1);
         }
     }

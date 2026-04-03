@@ -34,6 +34,8 @@ interface DroneEntry {
     led:       THREE.MeshStandardMaterial;
     ring:      THREE.Mesh;
     rotors:    THREE.Mesh[];
+    _q:        THREE.Quaternion;
+    _v:        THREE.Vector3;
 }
 
 export class DroneManager {
@@ -112,9 +114,7 @@ export class DroneManager {
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
         const { group, led, ring, rotors } = this._buildQuadrotor(color, d.id);
 
-        const startPos = d.pos
-            ? new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2])
-            : new THREE.Vector3();
+        const startPos = new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]);
         group.position.copy(startPos);
 
         this._threeScene.add(group);
@@ -132,6 +132,8 @@ export class DroneManager {
             led,
             ring,
             rotors,
+            _q: new THREE.Quaternion(),
+            _v: new THREE.Vector3(),
         };
         this._drones.set(d.id, entry);
     }
@@ -297,11 +299,10 @@ export class DroneManager {
     private _updateDrone(d: DroneState): void {
         const entry = this._drones.get(d.id);
         if (!entry) return;
-        if (d.pos) entry.targetPos.set(d.pos[0], d.pos[1], d.pos[2]);
-        if (d.rot) {
-            if (!entry.targetRot) entry.targetRot = new THREE.Quaternion();
-            entry.targetRot.set(d.rot[0], d.rot[1], d.rot[2], d.rot[3]);
-        }
+        entry.targetPos.set(d.pos[0], d.pos[1], d.pos[2]);
+        entry._q.set(d.rot[0], d.rot[1], d.rot[2], d.rot[3]);
+        if (!entry.targetRot) entry.targetRot = new THREE.Quaternion();
+        entry.targetRot.copy(entry._q);
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
         entry.led.color.setHex(color);
         entry.led.emissive.setHex(color);

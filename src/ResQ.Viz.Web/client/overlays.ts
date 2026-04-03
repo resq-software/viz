@@ -3,13 +3,12 @@
 
 import * as THREE from 'three';
 import type { DroneState } from './types';
+import { isDroneReady } from './types';
 
 const VEL_COLOR_SLOW   = 0x44ff88;  // green  ≤ 5 m/s
 const VEL_COLOR_MEDIUM = 0xffcc00;  // yellow ≤ 15 m/s
 const VEL_COLOR_FAST   = 0xff4444;  // red    > 15 m/s
 const HALO_COLOR       = 0x58a6ff;
-const FORMATION_COLOR  = 0x88ccff;
-const PROXIMITY_M      = 80;        // formation line threshold in metres
 
 function velColor(speed: number): number {
     if (speed <= 5)  return VEL_COLOR_SLOW;
@@ -32,11 +31,28 @@ export class OverlayManager {
     showHalos = true;
 
     // ── Formation lines ───────────────────────────────────────────────────
-    private _formationLines: THREE.Line[] = [];
-    showFormation = true;
+    private _formLines!: THREE.LineSegments;
+    private _formPositions!: Float32Array;
+    private readonly MAX_PAIRS = 256;
+    private _showFormation = true;
+    get showFormation(): boolean { return this._showFormation; }
+    set showFormation(v: boolean) { this._showFormation = v; if (this._formLines) this._formLines.visible = v; }
 
     constructor(scene: THREE.Scene) {
         this._scene = scene;
+        this._initFormationLines(scene);
+    }
+
+    private _initFormationLines(scene: THREE.Scene): void {
+        this._formPositions = new Float32Array(this.MAX_PAIRS * 6);
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(this._formPositions, 3));
+        geo.setDrawRange(0, 0);
+        const mat = new THREE.LineBasicMaterial({ color: 0x44aaff, transparent: true, opacity: 0.35 });
+        this._formLines = new THREE.LineSegments(geo, mat);
+        this._formLines.frustumCulled = false;
+        this._formLines.visible = this._showFormation;
+        scene.add(this._formLines);
     }
 
     update(drones: DroneState[]): void {
@@ -48,7 +64,7 @@ export class OverlayManager {
     dispose(): void {
         for (const a of this._velArrows.values()) this._scene.remove(a);
         for (const h of this._halos.values())     this._scene.remove(h);
-        this._clearFormationLines();
+        this._scene.remove(this._formLines);
     }
 
     // ── Velocity vectors ──────────────────────────────────────────────────
@@ -57,7 +73,7 @@ export class OverlayManager {
         const seen = new Set<string>();
         for (const d of drones) {
             seen.add(d.id);
-            if (!d.vel || !d.pos) continue;
+            if (!isDroneReady(d)) continue;
             const vel   = new THREE.Vector3(d.vel[0], d.vel[1], d.vel[2]);
             const speed = vel.length();
             const color = velColor(speed);
@@ -96,7 +112,7 @@ export class OverlayManager {
         const seen = new Set<string>();
         for (const d of drones) {
             seen.add(d.id);
-            if (!d.pos) continue;
+            if (!isDroneReady(d)) continue;
             const alt = d.pos[1]; // Y is altitude
 
             if (!this._halos.has(d.id)) {
@@ -146,45 +162,29 @@ export class OverlayManager {
     // ── Formation proximity lines ─────────────────────────────────────────
 
     private _updateFormationLines(drones: DroneState[]): void {
-        this._clearFormationLines();
-        if (!this.showFormation || drones.length < 2) return;
-
-        for (let i = 0; i < drones.length; i++) {
-            for (let j = i + 1; j < drones.length; j++) {
-                const a = drones[i];
+        let idx = 0;
+        const PROXIMITY = 80;
+        const pos = this._formPositions;
+        for (let i = 0; i < drones.length && idx < this.MAX_PAIRS; i++) {
+            const a = drones[i];
+            if (!isDroneReady(a)) continue;
+            for (let j = i + 1; j < drones.length && idx < this.MAX_PAIRS; j++) {
                 const b = drones[j];
-                if (!a?.pos || !b?.pos) continue;
-                const dist = new THREE.Vector3(
-                    a.pos[0] - b.pos[0],
-                    a.pos[1] - b.pos[1],
-                    a.pos[2] - b.pos[2],
-                ).length();
-                if (dist > PROXIMITY_M) continue;
-
-                const opacity = 0.5 * (1 - dist / PROXIMITY_M);
-                const pts = [
-                    new THREE.Vector3(a.pos[0], a.pos[1], a.pos[2]),
-                    new THREE.Vector3(b.pos[0], b.pos[1], b.pos[2]),
-                ];
-                const geo = new THREE.BufferGeometry().setFromPoints(pts);
-                const mat = new THREE.LineBasicMaterial({
-                    color: FORMATION_COLOR,
-                    transparent: true,
-                    opacity,
-                });
-                const line = new THREE.Line(geo, mat);
-                this._scene.add(line);
-                this._formationLines.push(line);
+                if (!isDroneReady(b)) continue;
+                const dx = a.pos[0] - b.pos[0];
+                const dy = a.pos[1] - b.pos[1];
+                const dz = a.pos[2] - b.pos[2];
+                if (dx*dx + dy*dy + dz*dz < PROXIMITY * PROXIMITY) {
+                    const base = idx * 6;
+                    pos[base]   = a.pos[0]; pos[base+1] = a.pos[1]; pos[base+2] = a.pos[2];
+                    pos[base+3] = b.pos[0]; pos[base+4] = b.pos[1]; pos[base+5] = b.pos[2];
+                    idx++;
+                }
             }
         }
-    }
-
-    private _clearFormationLines(): void {
-        for (const line of this._formationLines) {
-            this._scene.remove(line);
-            line.geometry.dispose();
-            (line.material as THREE.LineBasicMaterial).dispose();
-        }
-        this._formationLines = [];
+        const attr = this._formLines.geometry.getAttribute('position') as THREE.BufferAttribute;
+        attr.needsUpdate = true;
+        this._formLines.geometry.setDrawRange(0, idx * 2);
+        this._formLines.visible = this._showFormation && idx > 0;
     }
 }

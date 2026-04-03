@@ -9,12 +9,19 @@ export type Quat = [number, number, number, number];
 
 export interface DroneState {
     id: string;
-    pos?: Vec3;
-    rot?: Quat;
-    vel?: Vec3;
+    pos: Vec3;
+    rot: Quat;
+    vel: Vec3;
     status?: string;
     battery?: number;
     armed?: boolean;
+}
+
+export function isDroneReady(d: DroneState | undefined): d is DroneState & { pos: [number,number,number]; rot: [number,number,number,number]; vel: [number,number,number] } {
+    if (!d) return false;
+    return Array.isArray(d.pos) && d.pos.length === 3
+        && Array.isArray(d.rot) && d.rot.length === 4
+        && Array.isArray(d.vel) && d.vel.length === 3;
 }
 
 export interface HazardState {

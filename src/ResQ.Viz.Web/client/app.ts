@@ -14,6 +14,7 @@ import { Hud }            from './ui/hud';
 import { WindCompass }    from './ui/windCompass';
 import { DronePanel }     from './ui/dronePanel';
 import type { VizFrame }  from './types';
+import { isDroneReady }   from './types';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -132,8 +133,8 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         }
         case 'Home': {
             const positions = (_lastFrame?.drones ?? [])
-                .filter(d => d.pos)
-                .map(d => new THREE.Vector3(d.pos![0], d.pos![1], d.pos![2]));
+                .filter(d => isDroneReady(d))
+                .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
             viz.fitToPositions(positions);
             break;
         }
@@ -168,8 +169,8 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     if (!_fittedToSwarm && drones.length > 0) {
         _fittedToSwarm = true;
         const positions = drones
-            .filter(d => d.pos != null)
-            .map(d => new THREE.Vector3(d.pos![0], d.pos![1], d.pos![2]));
+            .filter(isDroneReady)
+            .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
         viz.fitToPositions(positions);
     }
 });
