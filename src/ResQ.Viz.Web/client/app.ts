@@ -53,8 +53,6 @@ viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
 });
 
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
-    if (viz.isFreeFly) return; // ignore clicks in free-fly mode
-
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     const first = hit[0];
     if (first) {
@@ -141,9 +139,6 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
     const target = e.target as Element | null;
     if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
     switch (e.code) {
-        case 'KeyC':
-            viz.toggleFreeFly();
-            break;
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
