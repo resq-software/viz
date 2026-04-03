@@ -110,4 +110,21 @@ export class Scene {
     }
 
     get fps(): number { return this._fps; }
+
+    /** Smoothly orbit-target and zoom to frame all given world positions. */
+    fitToPositions(positions: THREE.Vector3[]): void {
+        if (positions.length === 0) return;
+        const box = new THREE.Box3();
+        for (const p of positions) box.expandByPoint(p);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.8, 30);
+        this._controls.target.copy(center);
+        this._camera.position.set(
+            center.x + radius,
+            center.y + radius * 0.7,
+            center.z + radius,
+        );
+        this._camera.lookAt(center);
+    }
 }

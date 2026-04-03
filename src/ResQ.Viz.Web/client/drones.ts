@@ -204,6 +204,7 @@ export class DroneManager {
         ring.visible = false;
         group.add(ring);
 
+        group.scale.setScalar(2);
         return { group, led: ledMat, ring };
     }
 
