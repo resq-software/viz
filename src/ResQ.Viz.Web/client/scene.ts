@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export class Scene {
     readonly scene: THREE.Scene;
-    private readonly _renderer: THREE.WebGLRenderer;
+    readonly renderer: THREE.WebGLRenderer;
     private readonly _camera: THREE.PerspectiveCamera;
     private readonly _controls: OrbitControls;
     private _lastTime: number = 0;
@@ -15,28 +15,29 @@ export class Scene {
     private readonly _tickCallbacks: Array<(dt: number) => void> = [];
 
     constructor(container: HTMLElement) {
-        this._renderer = new THREE.WebGLRenderer({ antialias: true });
-        this._renderer.setPixelRatio(window.devicePixelRatio);
-        this._renderer.setSize(window.innerWidth, window.innerHeight);
-        this._renderer.shadowMap.enabled = true;
-        this._renderer.setClearColor(0x0d1117);
-        container.appendChild(this._renderer.domElement);
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.setClearColor(0x0d1117);
+        container.appendChild(this.renderer.domElement);
 
         this.scene = new THREE.Scene();
-        this.scene.fog = new THREE.Fog(0x0d1117, 800, 2000);
+        this.scene.fog = new THREE.FogExp2(0x0d1117, 0.0006);
 
         this._camera = new THREE.PerspectiveCamera(
-            60, window.innerWidth / window.innerHeight, 0.1, 5000,
+            55, window.innerWidth / window.innerHeight, 0.1, 5000,
         );
-        this._camera.position.set(200, 200, 200);
+        this._camera.position.set(150, 120, 150);
         this._camera.lookAt(0, 0, 0);
 
-        this._controls = new OrbitControls(this._camera, this._renderer.domElement);
-        this._controls.enableDamping = true;
-        this._controls.dampingFactor = 0.05;
-        this._controls.maxPolarAngle = Math.PI / 2.1;
-        this._controls.minDistance = 10;
-        this._controls.maxDistance = 2000;
+        this._controls = new OrbitControls(this._camera, this.renderer.domElement);
+        this._controls.enableDamping  = true;
+        this._controls.dampingFactor  = 0.05;
+        this._controls.maxPolarAngle  = Math.PI / 2.05;
+        this._controls.minDistance    = 5;
+        this._controls.maxDistance    = 2000;
+        this._controls.target.set(0, 20, 0);
 
         this._initLights();
         this._initHelpers();
@@ -45,21 +46,23 @@ export class Scene {
     }
 
     private _initLights(): void {
-        const ambient = new THREE.AmbientLight(0x404060, 0.6);
+        const ambient = new THREE.AmbientLight(0x3a4a5a, 0.8);
         this.scene.add(ambient);
 
-        const sun = new THREE.DirectionalLight(0xfff8e7, 1.2);
-        sun.position.set(300, 500, 200);
+        const sun = new THREE.DirectionalLight(0xfff8e7, 1.4);
+        sun.position.set(400, 600, 200);
         sun.castShadow = true;
         sun.shadow.mapSize.set(2048, 2048);
+        sun.shadow.camera.far = 2000;
         this.scene.add(sun);
 
-        const hemi = new THREE.HemisphereLight(0x87ceeb, 0x3d5a3e, 0.4);
+        const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);
         this.scene.add(hemi);
     }
 
     private _initHelpers(): void {
-        const grid = new THREE.GridHelper(1000, 50, 0x1c2128, 0x1c2128);
+        const grid = new THREE.GridHelper(2000, 100, 0x1c2128, 0x161b22);
+        grid.position.y = 0.05;
         this.scene.add(grid);
     }
 
@@ -68,7 +71,7 @@ export class Scene {
 
         const loop = (now: number): void => {
             requestAnimationFrame(loop);
-            const dt = (now - this._lastTime) / 1000;
+            const dt = Math.min((now - this._lastTime) / 1000, 0.1); // cap at 100 ms
             this._lastTime = now;
             this._frameCount++;
             if (this._frameCount % 30 === 0) {
@@ -76,7 +79,7 @@ export class Scene {
             }
             for (const cb of this._tickCallbacks) cb(dt);
             this._controls.update();
-            this._renderer.render(this.scene, this._camera);
+            this.renderer.render(this.scene, this._camera);
         };
         requestAnimationFrame(loop);
     }
@@ -85,10 +88,22 @@ export class Scene {
         this._tickCallbacks.push(fn);
     }
 
+    getIntersections(clientX: number, clientY: number, objects: THREE.Object3D[]): THREE.Intersection[] {
+        if (objects.length === 0) return [];
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+            ((clientX - rect.left)  / rect.width)  * 2 - 1,
+            -((clientY - rect.top)  / rect.height) * 2 + 1,
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(ndc, this._camera);
+        return raycaster.intersectObjects(objects, true);
+    }
+
     private _onResize(): void {
         this._camera.aspect = window.innerWidth / window.innerHeight;
         this._camera.updateProjectionMatrix();
-        this._renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
     get fps(): number { return this._fps; }
