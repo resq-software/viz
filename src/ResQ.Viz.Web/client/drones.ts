@@ -268,7 +268,7 @@ export class DroneManager {
             const navMat = new THREE.MeshStandardMaterial({
                 color: navColor,
                 emissive: new THREE.Color(navColor),
-                emissiveIntensity: 1.2,
+                emissiveIntensity: 1.8,
                 roughness: 0.15,
                 metalness: 0.0,
                 transparent: true,
@@ -297,7 +297,7 @@ export class DroneManager {
         const ledMat = new THREE.MeshStandardMaterial({
             color: statusColor,
             emissive: new THREE.Color(statusColor),
-            emissiveIntensity: 2.0,
+            emissiveIntensity: 2.5,
             roughness: 0.1,
             metalness: 0.0,
         });
