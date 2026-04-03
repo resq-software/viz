@@ -15,34 +15,47 @@
  */
 
 using System.Numerics;
+using Microsoft.Extensions.Configuration;
 
 namespace ResQ.Viz.Web.Services;
 
 /// <summary>
-/// Provides preset simulation scenarios that spawn predefined drone configurations.
+/// Loads and executes named scenario presets from application configuration.
 /// </summary>
 public sealed class ScenarioService
 {
-    private readonly ILogger<ScenarioService> _logger;
-
-    // Each scenario is a list of (id, position) pairs.
-    private readonly Dictionary<string, List<(string Id, Vector3 Position)>> _scenarios;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<(string Id, Vector3 Pos)>> _scenarios;
 
     /// <summary>
-    /// Initialises the service and registers all built-in scenario presets.
+    /// Initialises the service and loads scenario presets from <paramref name="configuration"/>.
     /// </summary>
-    /// <param name="logger">Logger instance.</param>
-    public ScenarioService(ILogger<ScenarioService> logger)
+    /// <param name="configuration">Application configuration containing the <c>Scenarios</c> section.</param>
+    public ScenarioService(IConfiguration configuration)
     {
-        _logger = logger;
-        _scenarios = BuildScenarios();
+        var dict = new Dictionary<string, IReadOnlyList<(string Id, Vector3 Pos)>>(StringComparer.OrdinalIgnoreCase);
+        var section = configuration.GetSection("Scenarios");
+        foreach (var child in section.GetChildren())
+        {
+            var entries = new List<(string Id, Vector3 Pos)>();
+            foreach (var entry in child.GetChildren())
+            {
+                var id  = entry["id"] ?? string.Empty;
+                var pos = entry.GetSection("pos").Get<float[]>() ?? Array.Empty<float>();
+                if (!string.IsNullOrEmpty(id) && pos.Length == 3)
+                    entries.Add((id, new Vector3(pos[0], pos[1], pos[2])));
+            }
+            if (entries.Count > 0)
+                dict[child.Key] = entries;
+        }
+        _scenarios = dict;
     }
 
-    /// <summary>Gets the names of all registered scenarios.</summary>
-    public IReadOnlyList<string> ScenarioNames => _scenarios.Keys.ToList();
+    /// <summary>Names of all available scenario presets.</summary>
+    public IEnumerable<string> ScenarioNames => _scenarios.Keys;
 
     /// <summary>
-    /// Attempts to run the named scenario by spawning its drones via <paramref name="sim"/>.
+    /// Runs a named scenario by spawning its drones into the simulation.
+    /// Returns <see langword="false"/> if the scenario name is not found.
     /// </summary>
     /// <param name="name">Scenario name.</param>
     /// <param name="sim">The simulation service to spawn drones into.</param>
@@ -52,43 +65,9 @@ public sealed class ScenarioService
         if (!_scenarios.TryGetValue(name, out var drones))
             return false;
 
-        foreach (var (id, position) in drones)
-        {
-            sim.AddDrone(id, position);
-            _logger.LogDebug("Scenario '{Name}': spawned drone {Id} at {Position}.", Sanitize(name), id, position);
-        }
+        foreach (var (id, pos) in drones)
+            sim.AddDrone(id, pos);
 
         return true;
-    }
-
-    // Strips CR/LF from user-supplied strings before they reach log sinks to prevent log forging.
-    private static string Sanitize(string? s) => s?.Replace("\r", "", StringComparison.Ordinal)
-                                                    .Replace("\n", "", StringComparison.Ordinal) ?? string.Empty;
-
-    private static Dictionary<string, List<(string, Vector3)>> BuildScenarios()
-    {
-        return new Dictionary<string, List<(string, Vector3)>>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["single"] = [
-                ("drone-1", new Vector3(0f, 0f, 50f)),
-            ],
-
-            ["swarm-5"] = Enumerable.Range(0, 5)
-                .Select(i => ($"drone-{i + 1}", new Vector3(i * 20f, 0f, 50f)))
-                .ToList(),
-
-            ["swarm-20"] = (
-                from i in Enumerable.Range(0, 4)
-                from j in Enumerable.Range(0, 5)
-                select ($"drone-{i * 5 + j + 1}", new Vector3(i * 20f, 0f, j * 20f))
-            ).ToList(),
-
-            ["sar"] = (
-                from idx in Enumerable.Range(0, 10)
-                let row = idx / 5
-                let col = idx % 5
-                select ($"sar-{idx + 1}", new Vector3(col * 25f, 0f, 50f + row * 30f))
-            ).ToList(),
-        };
     }
 }

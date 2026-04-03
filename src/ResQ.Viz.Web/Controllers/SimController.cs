@@ -79,6 +79,9 @@ public sealed class SimController : ControllerBase
         if (request.Position is not { Length: 3 })
             return BadRequest(new { error = "Position must be a 3-element array [X, Y, Z]." });
 
+        if (request.Position.Any(float.IsNaN))
+            return BadRequest(new { error = "Position contains NaN values." });
+
         var id = $"drone-{Guid.NewGuid():N}"[..12];
         var position = new Vector3(request.Position[0], request.Position[1], request.Position[2]);
         _sim.AddDrone(id, position);
@@ -141,8 +144,15 @@ public sealed class SimController : ControllerBase
     }
 
     // Strips CR/LF from user-supplied strings before they reach log sinks to prevent log forging.
-    private static string Sanitize(string? s) => s?.Replace("\r", "", StringComparison.Ordinal)
-                                                    .Replace("\n", "", StringComparison.Ordinal) ?? string.Empty;
+    // Truncates to 200 characters to prevent excessively long values in logs.
+    private static string Sanitize(string? s)
+    {
+        if (s is null) return string.Empty;
+        var truncated = s.Length > 200 ? s[..200] : s;
+        return truncated
+            .Replace("\r", "", StringComparison.Ordinal)
+            .Replace("\n", "", StringComparison.Ordinal);
+    }
 
     /// <summary>Returns the current simulation state as a list of drone snapshots.</summary>
     [HttpGet("state")]

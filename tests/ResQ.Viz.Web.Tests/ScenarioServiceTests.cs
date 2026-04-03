@@ -16,6 +16,7 @@
 
 using FluentAssertions;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using ResQ.Viz.Web.Hubs;
@@ -28,7 +29,77 @@ namespace ResQ.Viz.Web.Tests;
 public class ScenarioServiceTests
 {
     private static ScenarioService CreateScenarioService()
-        => new(Mock.Of<ILogger<ScenarioService>>());
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Scenarios:single:0:id"]       = "drone-1",
+                ["Scenarios:single:0:pos:0"]    = "0",
+                ["Scenarios:single:0:pos:1"]    = "15",
+                ["Scenarios:single:0:pos:2"]    = "0",
+
+                ["Scenarios:swarm-5:0:id"]      = "drone-1",
+                ["Scenarios:swarm-5:0:pos:0"]   = "-20", ["Scenarios:swarm-5:0:pos:1"] = "15", ["Scenarios:swarm-5:0:pos:2"] = "-20",
+                ["Scenarios:swarm-5:1:id"]      = "drone-2",
+                ["Scenarios:swarm-5:1:pos:0"]   = "20",  ["Scenarios:swarm-5:1:pos:1"] = "18", ["Scenarios:swarm-5:1:pos:2"] = "-20",
+                ["Scenarios:swarm-5:2:id"]      = "drone-3",
+                ["Scenarios:swarm-5:2:pos:0"]   = "0",   ["Scenarios:swarm-5:2:pos:1"] = "20", ["Scenarios:swarm-5:2:pos:2"] = "0",
+                ["Scenarios:swarm-5:3:id"]      = "drone-4",
+                ["Scenarios:swarm-5:3:pos:0"]   = "-20", ["Scenarios:swarm-5:3:pos:1"] = "18", ["Scenarios:swarm-5:3:pos:2"] = "20",
+                ["Scenarios:swarm-5:4:id"]      = "drone-5",
+                ["Scenarios:swarm-5:4:pos:0"]   = "20",  ["Scenarios:swarm-5:4:pos:1"] = "15", ["Scenarios:swarm-5:4:pos:2"] = "20",
+
+                ["Scenarios:swarm-20:0:id"]     = "drone-1",
+                ["Scenarios:swarm-20:0:pos:0"]  = "-60", ["Scenarios:swarm-20:0:pos:1"] = "15", ["Scenarios:swarm-20:0:pos:2"] = "-60",
+                ["Scenarios:swarm-20:1:id"]     = "drone-2",
+                ["Scenarios:swarm-20:1:pos:0"]  = "-20", ["Scenarios:swarm-20:1:pos:1"] = "18", ["Scenarios:swarm-20:1:pos:2"] = "-60",
+                ["Scenarios:swarm-20:2:id"]     = "drone-3",
+                ["Scenarios:swarm-20:2:pos:0"]  = "20",  ["Scenarios:swarm-20:2:pos:1"] = "20", ["Scenarios:swarm-20:2:pos:2"] = "-60",
+                ["Scenarios:swarm-20:3:id"]     = "drone-4",
+                ["Scenarios:swarm-20:3:pos:0"]  = "60",  ["Scenarios:swarm-20:3:pos:1"] = "15", ["Scenarios:swarm-20:3:pos:2"] = "-60",
+                ["Scenarios:swarm-20:4:id"]     = "drone-5",
+                ["Scenarios:swarm-20:4:pos:0"]  = "-60", ["Scenarios:swarm-20:4:pos:1"] = "22", ["Scenarios:swarm-20:4:pos:2"] = "-20",
+                ["Scenarios:swarm-20:5:id"]     = "drone-6",
+                ["Scenarios:swarm-20:5:pos:0"]  = "-20", ["Scenarios:swarm-20:5:pos:1"] = "18", ["Scenarios:swarm-20:5:pos:2"] = "-20",
+                ["Scenarios:swarm-20:6:id"]     = "drone-7",
+                ["Scenarios:swarm-20:6:pos:0"]  = "20",  ["Scenarios:swarm-20:6:pos:1"] = "25", ["Scenarios:swarm-20:6:pos:2"] = "-20",
+                ["Scenarios:swarm-20:7:id"]     = "drone-8",
+                ["Scenarios:swarm-20:7:pos:0"]  = "60",  ["Scenarios:swarm-20:7:pos:1"] = "20", ["Scenarios:swarm-20:7:pos:2"] = "-20",
+                ["Scenarios:swarm-20:8:id"]     = "drone-9",
+                ["Scenarios:swarm-20:8:pos:0"]  = "-60", ["Scenarios:swarm-20:8:pos:1"] = "15", ["Scenarios:swarm-20:8:pos:2"] = "20",
+                ["Scenarios:swarm-20:9:id"]     = "drone-10",
+                ["Scenarios:swarm-20:9:pos:0"]  = "-20", ["Scenarios:swarm-20:9:pos:1"] = "22", ["Scenarios:swarm-20:9:pos:2"] = "20",
+                ["Scenarios:swarm-20:10:id"]    = "drone-11",
+                ["Scenarios:swarm-20:10:pos:0"] = "20",  ["Scenarios:swarm-20:10:pos:1"] = "18", ["Scenarios:swarm-20:10:pos:2"] = "20",
+                ["Scenarios:swarm-20:11:id"]    = "drone-12",
+                ["Scenarios:swarm-20:11:pos:0"] = "60",  ["Scenarios:swarm-20:11:pos:1"] = "25", ["Scenarios:swarm-20:11:pos:2"] = "20",
+                ["Scenarios:swarm-20:12:id"]    = "drone-13",
+                ["Scenarios:swarm-20:12:pos:0"] = "-60", ["Scenarios:swarm-20:12:pos:1"] = "20", ["Scenarios:swarm-20:12:pos:2"] = "60",
+                ["Scenarios:swarm-20:13:id"]    = "drone-14",
+                ["Scenarios:swarm-20:13:pos:0"] = "-20", ["Scenarios:swarm-20:13:pos:1"] = "15", ["Scenarios:swarm-20:13:pos:2"] = "60",
+                ["Scenarios:swarm-20:14:id"]    = "drone-15",
+                ["Scenarios:swarm-20:14:pos:0"] = "20",  ["Scenarios:swarm-20:14:pos:1"] = "22", ["Scenarios:swarm-20:14:pos:2"] = "60",
+                ["Scenarios:swarm-20:15:id"]    = "drone-16",
+                ["Scenarios:swarm-20:15:pos:0"] = "60",  ["Scenarios:swarm-20:15:pos:1"] = "18", ["Scenarios:swarm-20:15:pos:2"] = "60",
+                ["Scenarios:swarm-20:16:id"]    = "drone-17",
+                ["Scenarios:swarm-20:16:pos:0"] = "0",   ["Scenarios:swarm-20:16:pos:1"] = "30", ["Scenarios:swarm-20:16:pos:2"] = "0",
+                ["Scenarios:swarm-20:17:id"]    = "drone-18",
+                ["Scenarios:swarm-20:17:pos:0"] = "-40", ["Scenarios:swarm-20:17:pos:1"] = "28", ["Scenarios:swarm-20:17:pos:2"] = "0",
+                ["Scenarios:swarm-20:18:id"]    = "drone-19",
+                ["Scenarios:swarm-20:18:pos:0"] = "40",  ["Scenarios:swarm-20:18:pos:1"] = "28", ["Scenarios:swarm-20:18:pos:2"] = "0",
+                ["Scenarios:swarm-20:19:id"]    = "drone-20",
+                ["Scenarios:swarm-20:19:pos:0"] = "0",   ["Scenarios:swarm-20:19:pos:1"] = "25", ["Scenarios:swarm-20:19:pos:2"] = "40",
+
+                ["Scenarios:sar:0:id"]          = "sar-lead",
+                ["Scenarios:sar:0:pos:0"]        = "0",   ["Scenarios:sar:0:pos:1"] = "20", ["Scenarios:sar:0:pos:2"] = "0",
+                ["Scenarios:sar:1:id"]          = "sar-scout",
+                ["Scenarios:sar:1:pos:0"]        = "30",  ["Scenarios:sar:1:pos:1"] = "25", ["Scenarios:sar:1:pos:2"] = "30",
+                ["Scenarios:sar:2:id"]          = "sar-relay",
+                ["Scenarios:sar:2:pos:0"]        = "-30", ["Scenarios:sar:2:pos:1"] = "18", ["Scenarios:sar:2:pos:2"] = "-30",
+            })
+            .Build();
+        return new ScenarioService(config);
+    }
 
     private static SimulationService CreateSimulationService()
     {
@@ -91,13 +162,13 @@ public class ScenarioServiceTests
     }
 
     [Fact]
-    public void TryRun_Sar_Spawns_Ten_Drones()
+    public void TryRun_Sar_Spawns_Three_Drones()
     {
         var svc = CreateScenarioService();
         var sim = CreateSimulationService();
 
         svc.TryRun("sar", sim).Should().BeTrue();
-        sim.GetSnapshot().Should().HaveCount(10);
+        sim.GetSnapshot().Should().HaveCount(3);
     }
 
     [Fact]
