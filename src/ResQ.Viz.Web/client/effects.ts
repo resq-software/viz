@@ -17,19 +17,11 @@ const HAZARD_COLORS: Record<string, number> = {
     'toxic':     0x9b59b6,
 };
 
-const HAZARD_OPACITY: Record<string, number> = {
-    'fire':      0.3,
-    'FIRE':      0.3,
-    'high-wind': 0.2,
-    'WIND':      0.2,
-};
-
 
 const TRAIL_LENGTH = 300; // 30 seconds at 10 Hz
 const MESH_LINK_COLOR = 0x00ff88;
 
 type TrailLine = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
-type HazardMesh = THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
 type MeshLink = THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
 
 interface Trail {
@@ -42,17 +34,15 @@ interface DetectionEntry {
     mesh: THREE.Mesh;
 }
 
-interface HazardAnimState {
-    baseScale: number;
-    phase: number;
-    baseOpacity: number;
+interface HazardEntry {
+    disc: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
+    ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
 }
 
 export class EffectsManager {
     private readonly _scene: THREE.Scene;
     private readonly _trails = new Map<string, Trail>();
-    private readonly _hazards = new Map<string, HazardMesh>();
-    private readonly _hazardAnim = new WeakMap<HazardMesh, HazardAnimState>();
+    private readonly _hazards = new Map<string, HazardEntry>();
     private readonly _detectionPool: THREE.Mesh[] = [];
     private readonly _activeDetections = new Map<string, DetectionEntry>();
     private _meshLines: MeshLink[] = [];
@@ -154,46 +144,62 @@ export class EffectsManager {
             const key = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
             seenKeys.add(key);
             if (!this._hazards.has(key)) {
-                this._hazards.set(key, this._createHazardMesh(h));
+                this._hazards.set(key, this._createHazardEntry(h));
             }
         }
-        for (const [key, mesh] of this._hazards) {
+        for (const [key, entry] of this._hazards) {
             if (!seenKeys.has(key)) {
-                this._scene.remove(mesh);
-                mesh.geometry.dispose();
-                mesh.material.dispose();
+                this._scene.remove(entry.disc);
+                this._scene.remove(entry.ring);
+                entry.disc.geometry.dispose();
+                entry.disc.material.dispose();
+                entry.ring.geometry.dispose();
+                entry.ring.material.dispose();
                 this._hazards.delete(key);
             }
         }
     }
 
-    private _createHazardMesh(h: HazardState): HazardMesh {
-        const radius      = h.radius ?? 30;
-        const geo         = new THREE.CylinderGeometry(radius, radius, radius * 0.5, 32, 1, true);
-        const color       = HAZARD_COLORS[h.type] ?? 0xff8800;
-        const baseOpacity = HAZARD_OPACITY[h.type] ?? 0.25;
-        const mat = new THREE.MeshBasicMaterial({
-            color, transparent: true, opacity: baseOpacity, side: THREE.DoubleSide,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
+    private _createHazardEntry(h: HazardState): HazardEntry {
+        const radius     = h.radius ?? 30;
+        const typeColor  = HAZARD_COLORS[h.type] ?? 0xff8800;
         const cx = h.center?.[0] ?? 0;
-        const cy = h.center?.[1] ?? 0;
         const cz = h.center?.[2] ?? 0;
-        mesh.position.set(cx, cy + radius * 0.25, cz);
-        this._hazardAnim.set(mesh, { baseScale: 1, phase: Math.random() * Math.PI * 2, baseOpacity });
-        this._scene.add(mesh);
-        return mesh;
+
+        // Flat disc — low height ground marker
+        const discGeo = new THREE.CylinderGeometry(radius, radius, 1.5, 64);
+        const discMat = new THREE.MeshStandardMaterial({
+            color:       typeColor,
+            transparent: true,
+            opacity:     0.18,
+            side:        THREE.DoubleSide,
+            depthWrite:  false,
+        });
+        const disc = new THREE.Mesh(discGeo, discMat);
+        disc.position.set(cx, 0.8, cz);
+        disc.renderOrder = 1;
+
+        // Border ring
+        const ringGeo = new THREE.RingGeometry(radius - 1.5, radius, 64);
+        ringGeo.rotateX(-Math.PI / 2);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color:       typeColor,
+            transparent: true,
+            opacity:     0.7,
+            side:        THREE.DoubleSide,
+            depthWrite:  false,
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.position.set(cx, 0.5, cz);
+        ring.renderOrder = 2;
+
+        this._scene.add(disc, ring);
+        return { disc, ring };
     }
 
     private _animateHazards(): void {
-        for (const mesh of this._hazards.values()) {
-            const anim = this._hazardAnim.get(mesh);
-            if (!anim) continue;
-            const pulse = 1 + 0.05 * Math.sin((this._time + anim.phase) * 2);
-            mesh.scale.set(pulse, pulse, pulse);
-            // Pulse opacity
-            (mesh.material as THREE.MeshBasicMaterial).opacity =
-                anim.baseOpacity + 0.1 * Math.sin((this._time + anim.phase) * 2);
+        for (const entry of this._hazards.values()) {
+            entry.disc.material.opacity = 0.10 + 0.08 * Math.sin(this._time * 2);
         }
     }
 

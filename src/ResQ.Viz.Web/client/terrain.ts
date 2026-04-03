@@ -3,12 +3,11 @@
 
 import * as THREE from 'three';
 
-/** Terrain height at world position (x, z). Max amplitude ≈ 9m. */
+/** Terrain height at world position (x, z). Max amplitude ≈ 7.3m — smooth rolling countryside. */
 export function terrainHeight(x: number, z: number): number {
-    return Math.sin(x * 0.018)          * Math.cos(z * 0.014)          * 5.0
-         + Math.sin(x * 0.041 + 1.7)   * Math.cos(z * 0.037 + 0.9)   * 2.5
-         + Math.sin(x * 0.089 + 3.2)   * Math.cos(z * 0.076 + 2.1)   * 1.2
-         + Math.sin(x * 0.162 + 0.4)   * Math.cos(z * 0.154 + 1.5)   * 0.5;
+    return Math.sin(x * 0.010) * Math.cos(z * 0.008) * 4.5   // wide gentle ridges
+         + Math.sin(x * 0.025 + 1.7) * Math.cos(z * 0.022 + 0.9) * 2.0   // medium undulations
+         + Math.sin(x * 0.055 + 3.2) * Math.cos(z * 0.048 + 2.1) * 0.8;  // subtle texture
 }
 
 /** Terrain is permanent for the lifetime of the app; no dispose() method is provided. */
@@ -45,8 +44,8 @@ export class Terrain {
         const tmp  = new THREE.Color();
         for (let i = 0; i < pos.count; i++) {
             const h = pos.getY(i);
-            // h range roughly -9 to +9, normalise 0–1
-            const t = THREE.MathUtils.clamp((h + 9) / 18, 0, 1);
+            // h range roughly -7.5 to +7.5, normalise 0–1
+            const t = THREE.MathUtils.clamp((h + 7.5) / 15, 0, 1);
             tmp.lerpColors(low, high, t);
             colors[i * 3]     = tmp.r;
             colors[i * 3 + 1] = tmp.g;
@@ -101,14 +100,16 @@ export class Terrain {
 
         // --- Buildings (6 instances) in a small settlement ---
         const buildingMat = new THREE.MeshStandardMaterial({
-            color:     0x8a8070,
-            roughness: 0.8,
-            metalness: 0.05,
+            color:            0x2e2b27,
+            roughness:        0.85,
+            metalness:        0.0,
+            envMapIntensity:  0.3,
         });
         const roofMat = new THREE.MeshStandardMaterial({
-            color:     0x6b3a2a,
-            roughness: 0.85,
-            metalness: 0,
+            color:            0x3d2018,
+            roughness:        0.85,
+            metalness:        0,
+            envMapIntensity:  0.3,
         });
 
         const settlement = { cx: 80, cz: 80 };

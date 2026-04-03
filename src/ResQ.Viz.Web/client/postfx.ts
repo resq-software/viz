@@ -6,7 +6,6 @@ import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
-import { SAOPass }         from 'three/addons/postprocessing/SAOPass.js';
 import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
 
 /** Reusable black material used to hide non-emissive objects during bloom pass. */
@@ -65,24 +64,13 @@ export class PostFx {
         this._bloomComposer.addPass(bloom);
 
         // ── Final composer ─────────────────────────────────────────────────
-        // Full scene + SAO + blend bloom + ACES output
-        const sao = new SAOPass(scene, camera);
-        sao.params.saoBias          = 0.5;
-        sao.params.saoIntensity     = 0.018;
-        sao.params.saoScale         = 0.8;
-        sao.params.saoKernelRadius  = 28;
-        sao.params.saoMinResolution = 0;
-        sao.params.saoBlur          = true;
-        sao.params.saoBlurRadius    = 8;
-        sao.params.saoBlurStdDev    = 4;
-
+        // Full scene + blend bloom + ACES output (SAOPass removed — halos on terrain)
         // ShaderPass: 'baseTexture' is auto-set to the previous pass's output
         const blendPass = new ShaderPass(_BlendShader, 'baseTexture');
         blendPass.uniforms['bloomTexture']!.value = this._bloomComposer.renderTarget2!.texture;
 
         this._finalComposer = new EffectComposer(renderer);
         this._finalComposer.addPass(new RenderPass(scene, camera));
-        this._finalComposer.addPass(sao);
         this._finalComposer.addPass(blendPass);
         this._finalComposer.addPass(new OutputPass());
     }
@@ -110,7 +98,7 @@ export class PostFx {
         for (const [mesh, mat] of this._darkened) mesh.material = mat;
         this._darkened.clear();
 
-        // 4. Render full scene with SAO + blend bloom additively + ACES tone map
+        // 4. Render full scene + blend bloom additively + ACES tone map
         this._finalComposer.render();
     }
 

@@ -136,9 +136,7 @@ export class Scene {
     }
 
     private _initHelpers(): void {
-        const grid = new THREE.GridHelper(2000, 100, 0x1c2128, 0x161b22);
-        grid.position.y = 0.05;
-        this.scene.add(grid);
+        // GridHelper removed — caused Z-fighting with displaced terrain vertices
     }
 
     private _startRenderLoop(): void {
