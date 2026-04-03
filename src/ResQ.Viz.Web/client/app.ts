@@ -7,8 +7,9 @@ import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { Scene }          from './scene';
 import { Terrain }        from './terrain';
 import { DroneManager }   from './drones';
-import { EffectsManager } from './effects';
-import { ControlPanel }   from './controls';
+import { EffectsManager }  from './effects';
+import { OverlayManager }  from './overlays';
+import { ControlPanel }    from './controls';
 import { Hud }            from './ui/hud';
 import { WindCompass }    from './ui/windCompass';
 import { DronePanel }     from './ui/dronePanel';
@@ -23,6 +24,7 @@ const viz          = new Scene(container);
 const terrain      = new Terrain(viz.scene);
 const droneManager = new DroneManager(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
+const overlayMgr   = new OverlayManager(viz.scene);
 const controlPanel = new ControlPanel();
 const hud          = new Hud();
 const windCompass  = new WindCompass();
@@ -72,6 +74,36 @@ dronePanel.onClose(() => {
 });
 
 let _fittedToSwarm = false;
+let _lastFrame: VizFrame | null = null;
+
+const followBtn = document.getElementById('hud-follow-toggle');
+
+// ─── Keyboard shortcuts ────────────────────────────────────────────────────
+
+window.addEventListener('keydown', (e: KeyboardEvent) => {
+    switch (e.code) {
+        case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
+        case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
+        case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
+        case 'KeyF': {
+            if (viz.isFollowing) {
+                viz.followObject(null);
+            } else {
+                const entry = droneManager.selectedGroup;
+                if (entry) viz.followObject(entry);
+            }
+            followBtn?.classList.toggle('active', viz.isFollowing);
+            break;
+        }
+        case 'Home': {
+            const positions = (_lastFrame?.drones ?? [])
+                .filter(d => d.pos)
+                .map(d => new THREE.Vector3(d.pos![0], d.pos![1], d.pos![2]));
+            viz.fitToPositions(positions);
+            break;
+        }
+    }
+});
 
 // ─── SignalR ───────────────────────────────────────────────────────────────
 
@@ -82,9 +114,11 @@ const connection = new HubConnectionBuilder()
     .build();
 
 connection.on('ReceiveFrame', (frame: VizFrame) => {
+    _lastFrame = frame;
     const drones = frame.drones ?? [];
     droneManager.update(drones);
     effectsMgr.update(frame);
+    overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
     dronePanel.update(drones);
