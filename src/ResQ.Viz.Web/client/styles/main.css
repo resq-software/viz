@@ -19,6 +19,16 @@
   --transition:   0.2s ease;
 }
 
+::selection {
+    background: rgba(33, 150, 243, 0.35);
+    color: #e6edf3;
+}
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
 /* ── Reset ────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -485,3 +495,22 @@ kbd {
 
 /* ── Keyboard hints layout ────────────────────────────────────────────── */
 .key-hints { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
+
+/* ─── Responsive — collapse sidebar on narrow viewports ──────────────────── */
+@media (max-width: 720px) {
+    #sidebar {
+        position: fixed;
+        left: -100%;
+        top: 0;
+        height: 100%;
+        z-index: 200;
+        transition: left 0.25s ease;
+    }
+    #sidebar.open {
+        left: 0;
+    }
+    #scene-container {
+        left: 0 !important;
+        width: 100% !important;
+    }
+}
