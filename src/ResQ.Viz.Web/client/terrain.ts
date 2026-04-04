@@ -399,11 +399,17 @@ export class Terrain {
         const dummy = new THREE.Object3D();
         let idx     = 0;
 
+        const minH = _activePreset.waterLevel + 0.5;
+
         for (const s of settlements) {
-            for (let i = 0; i < s.count && idx < COUNT; i++, idx++) {
+            let placed      = 0;
+            const maxTries  = s.count * 12;
+            for (let attempt = 0; attempt < maxTries && placed < s.count && idx < COUNT; attempt++) {
                 const bx  = s.cx + (rng() - 0.5) * s.r * 2;
                 const bz  = s.cz + (rng() - 0.5) * s.r * 2;
                 const bh  = terrainHeight(bx, bz);
+                if (bh < minH) continue;
+
                 const w   = 8  + rng() * 8;
                 const d   = 8  + rng() * 6;
                 const ht  = 5  + rng() * 9;
@@ -422,7 +428,18 @@ export class Terrain {
                 dummy.rotation.set(0, rot + Math.PI * 0.25, 0);
                 dummy.updateMatrix();
                 roofs.setMatrixAt(idx, dummy.matrix);
+
+                placed++;
+                idx++;
             }
+        }
+
+        // Zero-scale any unused instance slots so they don't render
+        dummy.scale.setScalar(0);
+        dummy.updateMatrix();
+        for (; idx < COUNT; idx++) {
+            walls.setMatrixAt(idx, dummy.matrix);
+            roofs.setMatrixAt(idx, dummy.matrix);
         }
 
         walls.instanceMatrix.needsUpdate = true;
