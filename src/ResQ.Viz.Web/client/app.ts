@@ -17,6 +17,7 @@ import type { VizFrame }  from './types';
 import { isDroneReady }   from './types';
 import { Settings }       from './settings';
 import { PRESETS, PresetKey } from './terrainPresets';
+import * as geoCache from './geoCache';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -216,6 +217,10 @@ document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
 // Mark the initial preset card as active
 document.querySelector<HTMLElement>('.terrain-card[data-preset="alpine"]')
     ?.classList.add('active');
+
+// Warm the geometry cache from sessionStorage in the background.
+// This makes repeat-switches to already-visited presets near-instant.
+void geoCache.init();
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));

@@ -109,14 +109,16 @@ export class Scene {
         const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
         sun.position.set(600, 1200, 350);
         sun.castShadow = true;
-        sun.shadow.mapSize.set(4096, 4096);
+        // 2048 × 2048 shadow map — 4× fewer shadow texels vs 4096, fits well
+        // within the ±1200 m frustum that covers the active drone area.
+        sun.shadow.mapSize.set(2048, 2048);
         sun.shadow.camera.near   =   10;
-        sun.shadow.camera.far    = 4500;
-        sun.shadow.camera.left   = -1800;
-        sun.shadow.camera.right  =  1800;
-        sun.shadow.camera.top    =  1800;
-        sun.shadow.camera.bottom = -1800;
-        sun.shadow.bias          = -0.0015;
+        sun.shadow.camera.far    = 4000;
+        sun.shadow.camera.left   = -1200;
+        sun.shadow.camera.right  =  1200;
+        sun.shadow.camera.top    =  1200;
+        sun.shadow.camera.bottom = -1200;
+        sun.shadow.bias          = -0.0018;   // slightly more to avoid shadow acne at 2048
         this.scene.add(sun);
 
         const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);

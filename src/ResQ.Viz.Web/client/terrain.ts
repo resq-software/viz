@@ -3,6 +3,13 @@
 
 import * as THREE from 'three';
 import { PRESETS, PresetKey, TerrainPreset, _noise } from './terrainPresets';
+import * as geoCache from './geoCache';
+import {
+    buildCrossGeo,
+    buildBillboardMaterial,
+    buildPineTexture,
+    buildDeciduousTexture,
+} from './treeSprites';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -16,7 +23,7 @@ export const TERRAIN_MIN_ABOVE = 2.5;
 
 let _activePreset: TerrainPreset = PRESETS['alpine'];
 
-/** Current water level — live binding updated by setActivePreset(). */
+/** Current water level — live binding updated whenever the preset changes. */
 export let WATER_LEVEL: number = _activePreset.waterLevel;
 
 export function setActivePreset(key: PresetKey): void {
@@ -33,26 +40,32 @@ export function terrainHeight(x: number, z: number): number {
     return _activePreset.heightFn(x, z);
 }
 
-// ── GLSL helpers (colour only — injected into MeshStandardMaterial) ──────────
-//   These are shader infrastructure shared by all presets.
-//   The per-preset colour logic lives in preset.glslBiome.
+// ── Shared sprite assets (lazy-initialised, shared across preset switches) ────
+
+let _pineTex:   THREE.CanvasTexture | null = null;
+let _decidTex:  THREE.CanvasTexture | null = null;
+let _crossGeo:  THREE.BufferGeometry | null = null;
+
+function _getPineTex():   THREE.CanvasTexture  { return (_pineTex  ??= buildPineTexture()); }
+function _getDecidTex():  THREE.CanvasTexture  { return (_decidTex ??= buildDeciduousTexture()); }
+function _getCrossGeo():  THREE.BufferGeometry { return (_crossGeo ??= buildCrossGeo()); }
+
+// ── GLSL helpers (shader infrastructure shared by all presets) ────────────────
 
 const GLSL_VARYING = `
 varying vec3 vTerrainWorld;
 varying vec3 vWorldNormal;
 `;
 
-// Injected after #include <beginnormal_vertex> to capture world-space normal
 const GLSL_VERT_NORMAL = `
 vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
 `;
 
-// Injected after #include <begin_vertex> to capture world position
 const GLSL_VERT_WORLDPOS = `
 vTerrainWorld = (modelMatrix * vec4(position, 1.0)).xyz;
 `;
 
-// Value noise + 4-octave FBM for biome colouring (independent from CPU noise)
+// Value noise + 4-octave FBM for biome colouring
 const GLSL_FRAG_NOISE = `
 float _ht(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
@@ -86,13 +99,12 @@ export class Terrain {
         this._addOriginMarker(scene);
     }
 
-    /** Track objects added to the scene so dispose() can clean them up. */
     private _sceneAdd(scene: THREE.Scene, ...objs: THREE.Object3D[]): void {
         scene.add(...objs);
         for (const o of objs) this._objects.push(o);
     }
 
-    /** Remove all terrain objects from the scene and dispose GPU resources. */
+    /** Remove all terrain objects and free GPU resources. */
     dispose(scene: THREE.Scene): void {
         for (const obj of this._objects) {
             scene.remove(obj);
@@ -114,15 +126,35 @@ export class Terrain {
     }
 
     // ── Ground ────────────────────────────────────────────────────────────────
+    //   Position buffer uses a two-level geometry cache:
+    //     L1 (in-memory Float32Array) — zero-latency on repeat preset switches
+    //     L2 (sessionStorage, deflate-raw compressed) — survives page refresh
+    //
+    //   Compression ratio measured at runtime and logged to the console.
 
     private _buildGround(scene: THREE.Scene): void {
         const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEGS, TERRAIN_SEGS);
         geo.rotateX(-Math.PI / 2);
 
-        const pos = geo.attributes['position'] as THREE.BufferAttribute;
-        for (let i = 0; i < pos.count; i++) {
-            pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
+        const pos    = geo.attributes['position'] as THREE.BufferAttribute;
+        const cacheK = _activePreset.cacheKey;
+
+        const cached = geoCache.tryGet(cacheK);
+        if (cached) {
+            // L1 cache hit: O(n) memcopy, no noise evaluations
+            for (let i = 0; i < pos.count; i++) pos.setY(i, cached[i]!);
+        } else {
+            // Cache miss: evaluate height function for each vertex, then store
+            const yValues = new Float32Array(pos.count);
+            for (let i = 0; i < pos.count; i++) {
+                const y = terrainHeight(pos.getX(i), pos.getZ(i));
+                pos.setY(i, y);
+                yValues[i] = y;
+            }
+            // store() puts yValues in L1 immediately and async-compresses to L2
+            geoCache.store(cacheK, yValues);
         }
+
         pos.needsUpdate = true;
         geo.computeVertexNormals();
 
@@ -133,7 +165,6 @@ export class Terrain {
         });
 
         const biomeGlsl = _activePreset.glslBiome;
-
         mat.onBeforeCompile = (shader) => {
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <common>',
@@ -179,14 +210,12 @@ export class Terrain {
 
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.y = _activePreset.waterLevel;
-        mesh.renderOrder = 0;
         this._sceneAdd(scene, mesh);
     }
 
     // ── Obstacles ─────────────────────────────────────────────────────────────
 
     private _buildObstacles(scene: THREE.Scene): void {
-        // Deterministic LCG — same layout on every load for the same preset
         let seed = 42;
         const rng = (): number => {
             seed = (seed * 1_664_525 + 1_013_904_223) & 0xffff_ffff;
@@ -197,149 +226,139 @@ export class Terrain {
         this._buildBuildings(scene, rng);
     }
 
-    // ── Trees ─────────────────────────────────────────────────────────────────
+    // ── Trees (cross-billboard sprites) ──────────────────────────────────────
+    //   Each tree is one instance of a cross-billboard geometry (two perpendicular
+    //   quads) textured with a canvas-drawn tree image.  This replaces the
+    //   primitive ConeGeometry / SphereGeometry approach:
+    //     • Dramatically better silhouette and shading
+    //     • Fewer triangles (8 vs ~54 per old tree)
+    //     • Two draw calls instead of four
 
     private _buildTrees(scene: THREE.Scene, rng: () => number): void {
         const { pineCount: PINE_N, decidCount: DECID_N, minTreeH, maxTreeH, waterLevel } = _activePreset;
         if (PINE_N + DECID_N === 0) return;
 
-        const trunkGeo = new THREE.CylinderGeometry(0.32, 0.55, 5.5, 7);
-        const pineGeo  = new THREE.ConeGeometry(3.0, 8.0, 8);
-        const decidGeo = new THREE.SphereGeometry(3.8, 8, 6);
+        const crossGeo  = _getCrossGeo();
+        const pineMesh  = PINE_N  > 0 ? new THREE.InstancedMesh(crossGeo, buildBillboardMaterial(_getPineTex()),  PINE_N)  : null;
+        const decidMesh = DECID_N > 0 ? new THREE.InstancedMesh(crossGeo, buildBillboardMaterial(_getDecidTex()), DECID_N) : null;
 
-        const trunkMatP = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.97, metalness: 0 });
-        const trunkMatD = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.95, metalness: 0 });
-        const pineMat   = new THREE.MeshStandardMaterial({ color: 0x1a4422, roughness: 0.92, metalness: 0 });
-        const decidMat  = new THREE.MeshStandardMaterial({ color: 0x2d5a1b, roughness: 0.90, metalness: 0 });
+        // Billboards don't cast correct shaped shadows — omit for perf
+        if (pineMesh)  { pineMesh.receiveShadow  = true; }
+        if (decidMesh) { decidMesh.receiveShadow = true; }
 
-        const pineTrunks  = new THREE.InstancedMesh(trunkGeo, trunkMatP, PINE_N);
-        const pineCan     = new THREE.InstancedMesh(pineGeo,  pineMat,   PINE_N);
-        const decidTrunks = DECID_N > 0 ? new THREE.InstancedMesh(trunkGeo, trunkMatD, DECID_N) : null;
-        const decidCan    = DECID_N > 0 ? new THREE.InstancedMesh(decidGeo, decidMat,  DECID_N) : null;
-
-        for (const m of [pineTrunks, pineCan, decidTrunks, decidCan]) {
-            if (m) { m.castShadow = true; m.receiveShadow = true; }
-        }
-
-        // Forest density noise — creates organic patches (~250 m across)
+        // Forest density noise — organic clustering (~250 m patch scale)
         const forestDensity = (x: number, z: number): number =>
             _noise(x * 0.0035 + 3.7, z * 0.0035 + 1.1) * 0.60 +
             _noise(x * 0.009  + 7.2, z * 0.009  + 4.3) * 0.40;
 
-        const dummy = new THREE.Object3D();
+        const dummy    = new THREE.Object3D();
         let pi = 0, di = 0;
         const attempts = Math.max(10_000, (PINE_N + DECID_N) * 40);
 
-        for (let attempt = 0; attempt < attempts && (pi < PINE_N || di < DECID_N); attempt++) {
+        for (let att = 0; att < attempts && (pi < PINE_N || di < DECID_N); att++) {
             const ox = (rng() - 0.5) * TERRAIN_SIZE * 0.93;
             const oz = (rng() - 0.5) * TERRAIN_SIZE * 0.93;
             const h  = terrainHeight(ox, oz);
 
-            if (h < waterLevel + 2.5) continue;
-            if (h < minTreeH || h > maxTreeH) continue;
+            if (h < waterLevel + 2.5)    continue;
+            if (h < minTreeH)            continue;
+            if (h > maxTreeH)            continue;
 
             const fd = forestDensity(ox, oz);
-            if (rng() > fd + 0.08) continue;
+            if (rng() > fd + 0.08)       continue;
 
             const wantPine  = (h > 30 || rng() < 0.25) && pi < PINE_N;
             const wantDecid = !wantPine && DECID_N > 0 && di < DECID_N;
             if (!wantPine && !wantDecid) continue;
 
-            const hs = 0.75 + rng() * 0.65;
-            const rs = 0.80 + rng() * 0.45;
+            const hScale = (wantPine ? (5.5 + rng() * 5.0) : (4.5 + rng() * 4.5));
+            const wScale = hScale * (wantPine ? 0.55 : 0.75);
 
-            dummy.position.set(ox, h + 2.75 * hs, oz);
-            dummy.scale.set(1, hs, 1);
+            // Cross-billboard centred at x,z with base at y=h
+            // Instance matrix: scale then translate so billboard sits on ground
+            dummy.position.set(ox, h, oz);
+            dummy.scale.set(wScale, hScale, wScale);
             dummy.rotation.set(0, rng() * Math.PI * 2, 0);
             dummy.updateMatrix();
 
-            if (wantPine) {
-                pineTrunks.setMatrixAt(pi, dummy.matrix);
-                dummy.position.set(ox, h + (8.0 + rng() * 2.0) * hs, oz);
-                dummy.scale.set(rs * 0.85, hs * 1.15, rs * 0.85);
-                dummy.updateMatrix();
-                pineCan.setMatrixAt(pi, dummy.matrix);
+            if (wantPine && pineMesh) {
+                pineMesh.setMatrixAt(pi, dummy.matrix);
                 pi++;
-            } else if (decidTrunks && decidCan) {
-                decidTrunks.setMatrixAt(di, dummy.matrix);
-                dummy.position.set(ox, h + (7.5 + rng() * 1.8) * hs, oz);
-                dummy.scale.set(rs, hs * 0.88, rs);
-                dummy.updateMatrix();
-                decidCan.setMatrixAt(di, dummy.matrix);
+            } else if (wantDecid && decidMesh) {
+                decidMesh.setMatrixAt(di, dummy.matrix);
                 di++;
             }
         }
 
+        // Zero-scale unused instances
         dummy.scale.setScalar(0); dummy.updateMatrix();
-        for (let i = pi; i < PINE_N; i++) {
-            pineTrunks.setMatrixAt(i, dummy.matrix);
-            pineCan.setMatrixAt(i, dummy.matrix);
-        }
-        if (decidTrunks && decidCan) {
-            for (let i = di; i < DECID_N; i++) {
-                decidTrunks.setMatrixAt(i, dummy.matrix);
-                decidCan.setMatrixAt(i, dummy.matrix);
-            }
-        }
+        if (pineMesh)  for (let i = pi;  i < PINE_N;  i++) pineMesh.setMatrixAt(i,  dummy.matrix);
+        if (decidMesh) for (let i = di;  i < DECID_N; i++) decidMesh.setMatrixAt(i, dummy.matrix);
 
-        pineTrunks.instanceMatrix.needsUpdate = true;
-        pineCan.instanceMatrix.needsUpdate    = true;
-        if (decidTrunks) decidTrunks.instanceMatrix.needsUpdate = true;
-        if (decidCan)    decidCan.instanceMatrix.needsUpdate    = true;
-
-        const toAdd: THREE.Object3D[] = [pineTrunks, pineCan];
-        if (decidTrunks) toAdd.push(decidTrunks);
-        if (decidCan)    toAdd.push(decidCan);
-        this._sceneAdd(scene, ...toAdd);
+        if (pineMesh)  { pineMesh.instanceMatrix.needsUpdate  = true; this._sceneAdd(scene, pineMesh); }
+        if (decidMesh) { decidMesh.instanceMatrix.needsUpdate = true; this._sceneAdd(scene, decidMesh); }
     }
 
     // ── Rocky outcrops ────────────────────────────────────────────────────────
+    //   Vertices of an IcosahedronGeometry(1,2) are procedurally displaced
+    //   using a per-vertex hash to create organic craggy boulder shapes.
+    //   All instances share this one displaced geometry; random scale/rotation
+    //   via instance matrices provides visual variety.
 
     private _buildRocks(scene: THREE.Scene, rng: () => number): void {
         const { rockCount: ROCK_N, waterLevel } = _activePreset;
         if (ROCK_N === 0) return;
 
-        const rockGeo = new THREE.IcosahedronGeometry(1, 1);
+        // Build displaced boulder geometry (done once per Terrain instantiation)
+        const baseGeo = new THREE.IcosahedronGeometry(1, 2);   // 320 faces vs 80
+        const bPos    = baseGeo.attributes['position'] as THREE.BufferAttribute;
+
+        for (let i = 0; i < bPos.count; i++) {
+            const x = bPos.getX(i), y = bPos.getY(i), z = bPos.getZ(i);
+            // Inexpensive per-vertex hash for displacement
+            const h  = _frac(Math.sin(x * 17.3 + y * 31.7 + z * 11.1) * 43758.5453);
+            // Stretch outward non-uniformly: less vertical to look like a slab
+            const dx = 0.10 + 0.22 * h;
+            bPos.setXYZ(i, x * (1 + dx), y * (1 + dx * 0.55), z * (1 + dx));
+        }
+        bPos.needsUpdate = true;
+        baseGeo.computeVertexNormals();
+
         const rockMat = new THREE.MeshStandardMaterial({
             color:     0x5c5650,
             roughness: 0.93,
             metalness: 0.02,
         });
 
-        const rocks = new THREE.InstancedMesh(rockGeo, rockMat, ROCK_N);
+        const rocks = new THREE.InstancedMesh(baseGeo, rockMat, ROCK_N);
         rocks.castShadow    = true;
         rocks.receiveShadow = true;
 
-        const dummy = new THREE.Object3D();
-        let idx = 0;
-        // Rocks prefer elevated terrain — threshold relative to this preset's water level
+        const dummy    = new THREE.Object3D();
+        let idx        = 0;
         const rockMinH = waterLevel + 15;
         const attempts = Math.max(4_000, ROCK_N * 20);
 
-        for (let attempt = 0; attempt < attempts && idx < ROCK_N; attempt++) {
+        for (let att = 0; att < attempts && idx < ROCK_N; att++) {
             const cx = (rng() - 0.5) * TERRAIN_SIZE * 0.88;
             const cz = (rng() - 0.5) * TERRAIN_SIZE * 0.88;
             const ch = terrainHeight(cx, cz);
-
             if (ch < rockMinH) continue;
 
-            // Cluster: 1–4 boulders per outcrop
             const clusterN = 1 + Math.floor(rng() * 4);
             for (let k = 0; k < clusterN && idx < ROCK_N; k++, idx++) {
                 const ox = cx + (rng() - 0.5) * 14;
                 const oz = cz + (rng() - 0.5) * 14;
                 const oh = terrainHeight(ox, oz);
-
                 const w  = 1.6 + rng() * 4.0;
                 const ht = 1.0 + rng() * 2.8;
                 const d  = 1.4 + rng() * 3.5;
-
-                dummy.position.set(ox, oh + ht * 0.45, oz);
+                dummy.position.set(ox, oh + ht * 0.42, oz);
                 dummy.scale.set(w, ht, d);
                 dummy.rotation.set(
-                    (rng() - 0.5) * 0.5,
+                    (rng() - 0.5) * 0.55,
                     rng() * Math.PI * 2,
-                    (rng() - 0.5) * 0.5,
+                    (rng() - 0.5) * 0.55,
                 );
                 dummy.updateMatrix();
                 rocks.setMatrixAt(idx, dummy.matrix);
@@ -365,7 +384,7 @@ export class Terrain {
             color: 0x2e2b27, roughness: 0.84, metalness: 0.0, envMapIntensity: 0.3,
         });
         const roofMat = new THREE.MeshStandardMaterial({
-            color: 0x3d1e14, roughness: 0.82, metalness: 0,   envMapIntensity: 0.3,
+            color: 0x3d1e14, roughness: 0.82, metalness: 0.0, envMapIntensity: 0.3,
         });
 
         const wallGeo = new THREE.BoxGeometry(1, 1, 1);
@@ -378,7 +397,7 @@ export class Terrain {
         roofs.castShadow    = true;
 
         const dummy = new THREE.Object3D();
-        let idx = 0;
+        let idx     = 0;
 
         for (const s of settlements) {
             for (let i = 0; i < s.count && idx < COUNT; i++, idx++) {
@@ -432,3 +451,7 @@ export class Terrain {
         );
     }
 }
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+
+function _frac(x: number): number { return x - Math.floor(x); }
