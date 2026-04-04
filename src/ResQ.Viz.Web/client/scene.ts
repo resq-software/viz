@@ -31,15 +31,16 @@ export class Scene {
         this.renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
         this.renderer.toneMapping         = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.0;
-        this.renderer.setClearColor(0x0d1117);
+        this.renderer.setClearColor(0x8ab8d4);
         container.appendChild(this.renderer.domElement);
 
         this.scene = new THREE.Scene();
-        // Fog density: tuned for 600-unit terrain; increase for denser atmosphere
-        this.scene.fog = new THREE.FogExp2(0x0d1117, 0.00015);
+        // Fog colour matches sky horizon so distant terrain dissolves into atmosphere
+        // rather than going dark — makes the 4 km terrain feel open.
+        this.scene.fog = new THREE.FogExp2(0x8ab8d4, 0.00010);
 
         this._camera = new THREE.PerspectiveCamera(
-            55, window.innerWidth / window.innerHeight, 0.1, 20000,
+            55, window.innerWidth / window.innerHeight, 0.5, 40000,
         );
         this._camera.position.set(150, 120, 150);
         this._camera.lookAt(0, 0, 0);
@@ -62,7 +63,7 @@ export class Scene {
 
     private _initSky(): void {
         const sky = new Sky();
-        sky.scale.setScalar(10000);
+        sky.scale.setScalar(40000);
         this.scene.add(sky);
         this._sky = sky;
 
@@ -110,11 +111,11 @@ export class Scene {
         sun.castShadow = true;
         sun.shadow.mapSize.set(4096, 4096);
         sun.shadow.camera.near   =   10;
-        sun.shadow.camera.far    = 2000;
-        sun.shadow.camera.left   = -600;
-        sun.shadow.camera.right  =  600;
-        sun.shadow.camera.top    =  600;
-        sun.shadow.camera.bottom = -600;
+        sun.shadow.camera.far    = 3000;
+        sun.shadow.camera.left   = -1200;
+        sun.shadow.camera.right  =  1200;
+        sun.shadow.camera.top    =  1200;
+        sun.shadow.camera.bottom = -1200;
         sun.shadow.bias          = -0.002;
         this.scene.add(sun);
 

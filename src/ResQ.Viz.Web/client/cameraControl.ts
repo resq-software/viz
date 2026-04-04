@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
+import { terrainHeight } from './terrain';
 
-const _PITCH_LIMIT = Math.PI * 0.44;    // ≈ 79° — prevents gimbal flip
-const _MIN_DIST    = 3;
-const _MAX_DIST    = 3000;
-const _DEFAULT_DIST = 120;
+const _PITCH_LIMIT   = Math.PI * 0.44;   // ≈ 79° — prevents gimbal flip
+const _MIN_DIST      = 3;
+const _MAX_DIST      = 8000;             // enough to orbit a 4 km terrain
+const _DEFAULT_DIST  = 120;
+/** Minimum metres the camera stays above the terrain surface. */
+const _MIN_ABOVE_GND = 2.5;
 
 export class UnityCamera {
     /** The camera this controller drives. */
@@ -78,19 +81,35 @@ export class UnityCamera {
 
     get isFollowing(): boolean { return this._followTarget !== null; }
 
-    /** Whether the RMB-fly mode is currently active (cursor should be hidden). */
+    /** Whether the RMB-fly mode is currently active. */
     get isFlying(): boolean { return this._rmbDown; }
 
     /** Per-frame update — call from render loop with elapsed seconds. */
     update(dt: number): void {
         if (this._followTarget) {
             this._updateFollow(dt);
-            return;
-        }
-        if (this._rmbDown) {
+        } else if (this._rmbDown) {
             this._updateFly(dt);
         } else {
             this._syncCameraFromOrbit();
+        }
+        // Always enforce terrain clearance, regardless of mode
+        this._clampAboveTerrain();
+    }
+
+    // ── Private: ground clamp ─────────────────────────────────────────────
+
+    /** Lifts the camera if it has sunk into the terrain. */
+    private _clampAboveTerrain(): void {
+        const { x, z } = this.camera.position;
+        const gnd = terrainHeight(x, z);
+        const minY = gnd + _MIN_ABOVE_GND;
+        if (this.camera.position.y < minY) {
+            this.camera.position.y = minY;
+            // Re-sync orbit distance so LMB orbit doesn't snap when RMB released
+            if (!this._rmbDown) {
+                this._distance = Math.max(_MIN_DIST, this.camera.position.distanceTo(this._target));
+            }
         }
     }
 
@@ -123,17 +142,17 @@ export class UnityCamera {
         const fast  = this._keys.has('ShiftLeft') || this._keys.has('ShiftRight');
         const speed = this.flySpeed * (fast ? 4 : 1) * dt;
 
-        if (this._keys.has('KeyW'))                                     this.camera.position.addScaledVector(fwd,   speed);
-        if (this._keys.has('KeyS'))                                     this.camera.position.addScaledVector(fwd,  -speed);
-        if (this._keys.has('KeyA'))                                     this.camera.position.addScaledVector(right,-speed);
-        if (this._keys.has('KeyD'))                                     this.camera.position.addScaledVector(right, speed);
-        if (this._keys.has('KeyQ') || this._keys.has('Space'))         this.camera.position.y += speed;
-        if (this._keys.has('KeyE'))                                     this.camera.position.y -= speed;
+        if (this._keys.has('KeyW'))                             this.camera.position.addScaledVector(fwd,   speed);
+        if (this._keys.has('KeyS'))                             this.camera.position.addScaledVector(fwd,  -speed);
+        if (this._keys.has('KeyA'))                             this.camera.position.addScaledVector(right,-speed);
+        if (this._keys.has('KeyD'))                             this.camera.position.addScaledVector(right, speed);
+        if (this._keys.has('KeyQ') || this._keys.has('Space')) this.camera.position.y += speed;
+        if (this._keys.has('KeyE'))                             this.camera.position.y -= speed;
 
         // Keep target in front so orbit resumes at correct focus when RMB released
-        this.camera.position.addScaledVector(fwd, this._distance); // temp
+        this.camera.position.addScaledVector(fwd,  this._distance);
         this._target.copy(this.camera.position);
-        this.camera.position.addScaledVector(fwd, -this._distance); // undo
+        this.camera.position.addScaledVector(fwd, -this._distance);
     }
 
     // ── Private: orbit ─────────────────────────────────────────────────────
@@ -148,13 +167,10 @@ export class UnityCamera {
     }
 
     private _syncOrbitFromCamera(): void {
-        // Derive yaw/pitch from current camera orientation
         this._eu.setFromQuaternion(this.camera.quaternion, 'YXZ');
-        this._yaw   = this._eu.y;
-        this._pitch = this._eu.x;
-        // Estimate distance: default
+        this._yaw      = this._eu.y;
+        this._pitch    = this._eu.x;
         this._distance = _DEFAULT_DIST;
-        // Target is in front of camera at _distance
         this._v0.set(
             -Math.sin(this._yaw) * Math.cos(this._pitch),
              Math.sin(this._pitch) * -1,
@@ -171,7 +187,6 @@ export class UnityCamera {
         if (e.button === 1) { this._mmbDown = true; e.preventDefault(); }
         if (e.button === 2) {
             this._rmbDown = true;
-            // Sync yaw/pitch from current camera orientation when entering fly
             this._eu.setFromQuaternion(this.camera.quaternion, 'YXZ');
             this._yaw   = this._eu.y;
             this._pitch = this._eu.x;
@@ -182,7 +197,6 @@ export class UnityCamera {
         if (e.button === 1) this._mmbDown = false;
         if (e.button === 2) {
             this._rmbDown = false;
-            // Sync orbit state from camera position so LMB orbit resumes correctly
             this._distance = this.camera.position.distanceTo(this._target);
             if (this._distance < _MIN_DIST) this._distance = _MIN_DIST;
         }
@@ -195,23 +209,20 @@ export class UnityCamera {
         this._prevY = e.clientY;
 
         if (this._rmbDown) {
-            // RMB drag: look around (used during fly AND when stationary)
             const sens = 0.004;
             this._yaw   -= dx * sens;
             this._pitch -= dy * sens;
             this._pitch  = Math.max(-_PITCH_LIMIT, Math.min(_PITCH_LIMIT, this._pitch));
         } else if (e.buttons === 1) {
-            // LMB drag: orbit around target
             const sens = 0.005;
             this._yaw   -= dx * sens;
             this._pitch -= dy * sens;
             this._pitch  = Math.max(-_PITCH_LIMIT, Math.min(_PITCH_LIMIT, this._pitch));
         } else if (this._mmbDown || e.buttons === 4) {
-            // MMB drag: pan (truck + pedestal)
             const panFactor = this._distance * 0.0008;
             const right = new THREE.Vector3(Math.cos(this._yaw), 0, -Math.sin(this._yaw));
-            this._target.addScaledVector(right,                  -dx * panFactor);
-            this._target.addScaledVector(new THREE.Vector3(0,1,0), dy * panFactor);
+            this._target.addScaledVector(right,                   -dx * panFactor);
+            this._target.addScaledVector(new THREE.Vector3(0,1,0),  dy * panFactor);
         }
     };
 
