@@ -16,6 +16,7 @@ import { DronePanel }     from './ui/dronePanel';
 import type { VizFrame }  from './types';
 import { isDroneReady }   from './types';
 import { Settings }       from './settings';
+import { PRESETS, PresetKey } from './terrainPresets';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ const container = document.getElementById('scene-container');
 if (!container) throw new Error('#scene-container not found');
 
 const viz          = new Scene(container);
-const terrain      = new Terrain(viz.scene);
+let   terrain      = new Terrain(viz.scene, 'alpine');
 const droneManager = new DroneManager(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
@@ -46,6 +47,13 @@ settingsToggle?.addEventListener('click', () => {
 });
 settingsClose?.addEventListener('click', () => {
     settingsPanel?.classList.remove('open');
+});
+
+document.addEventListener('click', (e: MouseEvent) => {
+    if (!settingsPanel?.classList.contains('open')) return;
+    if (settingsPanel.contains(e.target as Node)) return;
+    if (settingsToggle?.contains(e.target as Node)) return;
+    settingsPanel.classList.remove('open');
 });
 
 // Bloom controls
@@ -185,7 +193,29 @@ droneManager.setBatteryWarnThreshold(settings.get('batteryWarnPct') / 100);
 effectsMgr.setTrailLength(settings.get('trailLength'));
 overlayMgr.showVelocity = settings.get('showVelocity');
 
-void terrain;
+// ─── Terrain preset switching ──────────────────────────────────────────────
+
+function _switchPreset(key: PresetKey): void {
+    terrain.dispose(viz.scene);
+    terrain = new Terrain(viz.scene, key);
+    const p = PRESETS[key];
+    viz.setAtmosphere(p.fogColor, p.fogDensity);
+    // Update active card highlight
+    document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
+        el.classList.toggle('active', el.dataset['preset'] === key);
+    });
+}
+
+document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
+    el.addEventListener('click', () => {
+        const key = el.dataset['preset'] as PresetKey | undefined;
+        if (key && key in PRESETS) _switchPreset(key);
+    });
+});
+
+// Mark the initial preset card as active
+document.querySelector<HTMLElement>('.terrain-card[data-preset="alpine"]')
+    ?.classList.add('active');
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
@@ -216,35 +246,59 @@ hintsClose?.addEventListener('click',  () => _setHintsVisible(false));
 viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     droneManager.setHovered(hit[0]?.object ?? null);
-    viz.renderer.domElement.style.cursor = hit.length > 0 ? 'pointer' : '';
+    const hasDroneSelected = droneManager.selectedId !== null;
+    const overDrone = hit.length > 0;
+    if (overDrone) {
+        viz.renderer.domElement.style.cursor = 'pointer';
+    } else if (hasDroneSelected) {
+        viz.renderer.domElement.style.cursor = 'crosshair';
+    } else {
+        viz.renderer.domElement.style.cursor = '';
+    }
 });
 
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     const first = hit[0];
+    const selectedId = droneManager.selectedId;
+
     if (first) {
         const droneId = droneManager.getDroneIdFromObject(first.object);
         if (droneId) {
-            droneManager.setSelected(droneId);
-            dronePanel.show(droneId);
+            if (droneId === selectedId) {
+                // Clicking selected drone again → treat as terrain GoTo (pass-through)
+                const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
+                if (terrainHit && selectedId) {
+                    const alt = droneManager.getSelectedAltitude() ?? 15;
+                    void fetch(`/api/sim/drone/${selectedId}/cmd`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'goto', target: [terrainHit.x, alt, terrainHit.z] }),
+                    }).then(r => { if (!r.ok) console.warn('GoTo failed:', r.status); });
+                    viz.showTargetMarker(terrainHit, alt);
+                }
+            } else {
+                droneManager.setSelected(droneId);
+                dronePanel.show(droneId);
+                hud.setSelectedDrone(droneId);
+            }
         }
     } else {
-        const selectedId = droneManager.selectedId;
         if (selectedId) {
             const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
             if (terrainHit) {
-                const { x, y, z } = terrainHit;
                 const alt = droneManager.getSelectedAltitude() ?? 15;
                 void fetch(`/api/sim/drone/${selectedId}/cmd`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'goto', target: [x, alt, z] }),
+                    body: JSON.stringify({ type: 'goto', target: [terrainHit.x, alt, terrainHit.z] }),
                 }).then(r => { if (!r.ok) console.warn('GoTo failed:', r.status); });
                 viz.showTargetMarker(terrainHit, alt);
             }
         } else {
             droneManager.setSelected(null);
             dronePanel.hide();
+            hud.setSelectedDrone(null);
         }
     }
 });
@@ -260,6 +314,7 @@ dronePanel.onCommand(async (droneId, cmd) => {
 
 dronePanel.onClose(() => {
     droneManager.setSelected(null);
+    hud.setSelectedDrone(null);
 });
 
 let _fittedToSwarm = false;
@@ -324,6 +379,31 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
                 .filter(d => isDroneReady(d))
                 .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
             viz.fitToPositions(positions);
+            break;
+        }
+        // Drone nudge — only when a drone is selected and camera is NOT in free-fly mode
+        case 'KeyW': case 'KeyS': case 'KeyA': case 'KeyD':
+        case 'KeyQ': case 'KeyE': {
+            const nudgeId = droneManager.selectedId;
+            if (nudgeId && !viz.isFlying) {
+                e.preventDefault();
+                const pos = droneManager.getSelectedPosition();
+                if (pos) {
+                    const step = e.shiftKey ? 50 : 10;
+                    if (e.code === 'KeyW') pos.z -= step;
+                    if (e.code === 'KeyS') pos.z += step;
+                    if (e.code === 'KeyA') pos.x -= step;
+                    if (e.code === 'KeyD') pos.x += step;
+                    if (e.code === 'KeyQ') pos.y += step;
+                    if (e.code === 'KeyE') pos.y -= step;
+                    void fetch(`/api/sim/drone/${nudgeId}/cmd`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'goto', target: [pos.x, pos.y, pos.z] }),
+                    }).then(r => { if (!r.ok) console.warn('Nudge failed:', r.status); });
+                    viz.showTargetMarker(pos, pos.y);
+                }
+            }
             break;
         }
     }

@@ -47,6 +47,7 @@
             <div id="battery-track"><div id="battery-fill"></div></div>
             <span id="battery-pct">--%</span>
         </div>
+        <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
         <div class="hud-sep"></div>
         <button id="hud-vel-toggle"    class="hud-toggle active" title="Velocity vectors (V)">&#x21D2;</button>
         <button id="hud-halo-toggle"   class="hud-toggle active" title="Altitude halos (H)">&#x25CB;</button>
@@ -66,6 +67,32 @@
                 <button id="btn-start" class="btn btn-success">▶ Start</button>
                 <button id="btn-stop"  class="btn">⏸ Stop</button>
                 <button id="btn-reset" class="btn btn-danger">↺ Reset</button>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-title">Terrain</div>
+            <div class="terrain-grid">
+                <div class="terrain-card" data-preset="alpine">
+                    <div class="tc-icon">🏔</div>
+                    <div class="tc-name">Alpine</div>
+                </div>
+                <div class="terrain-card" data-preset="ridgeline">
+                    <div class="tc-icon">⛰</div>
+                    <div class="tc-name">Ridgeline</div>
+                </div>
+                <div class="terrain-card" data-preset="coastal">
+                    <div class="tc-icon">🏝</div>
+                    <div class="tc-name">Coastal</div>
+                </div>
+                <div class="terrain-card" data-preset="canyon">
+                    <div class="tc-icon">🏜</div>
+                    <div class="tc-name">Canyon</div>
+                </div>
+                <div class="terrain-card" data-preset="dunes">
+                    <div class="tc-icon">🌵</div>
+                    <div class="tc-name">Dunes</div>
+                </div>
             </div>
         </div>
 
@@ -203,9 +230,9 @@
         <span><kbd>RMB hold</kbd> Free-fly</span>
         <span><kbd>MMB drag</kbd> Pan</span>
         <span><kbd>Scroll</kbd> Zoom</span>
-        <span><kbd>WASD</kbd> Fly move</span>
-        <span><kbd>Q / E</kbd> Fly up / down</span>
-        <span><kbd>Shift</kbd> Fast move</span>
+        <span><kbd>WASD</kbd> Fly / Nudge drone</span>
+        <span><kbd>Q / E</kbd> Fly up / Nudge alt</span>
+        <span><kbd>Shift</kbd> Fast × 5</span>
         <span><kbd>F</kbd> Follow drone</span>
         <span><kbd>Home</kbd> Fit view</span>
         <span><kbd>V</kbd> Velocity vectors</span>

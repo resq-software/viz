@@ -479,6 +479,26 @@ kbd {
   color: var(--text);
 }
 
+/* ── Terrain preset cards ────────────────────────────────────────────── */
+.terrain-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+.terrain-card {
+  background: rgba(13, 17, 23, 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 2px;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  text-align: center;
+}
+.terrain-card:hover { background: rgba(88,166,255,0.08); border-color: var(--border-hi); }
+.terrain-card.active { background: rgba(88,166,255,0.12); border-color: var(--accent); }
+.terrain-card .tc-icon { font-size: 16px; line-height: 1.2; }
+.terrain-card .tc-name { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+
 /* ── Scenario cards ───────────────────────────────────────────────────── */
 .scenario-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .scenario-card {
@@ -516,6 +536,22 @@ kbd {
 .es-icon  { font-size: 3rem; opacity: 0.2; }
 .es-title { font-size: 1.1rem; font-weight: 600; color: var(--text-muted); }
 .es-sub   { font-size: 0.8rem; color: var(--text-muted); max-width: 280px; text-align: center; opacity: 0.7; }
+
+/* ── HUD selected drone chip ──────────────────────────────────────────── */
+#hud-selected-drone {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+    color: var(--accent);
+    background: rgba(88, 166, 255, 0.12);
+    border: 1px solid rgba(88, 166, 255, 0.35);
+    border-radius: 4px;
+    padding: 2px 8px;
+    white-space: nowrap;
+    cursor: default;
+    transition: opacity var(--transition);
+}
+#hud-selected-drone.hidden { display: none; }
 
 /* ── HUD overlay toggle buttons ───────────────────────────────────────── */
 #hud-top div.hud-sep { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }

@@ -5,13 +5,14 @@ import type { DroneState } from '../types';
 import { getEl } from '../dom';
 
 export class Hud {
-    private readonly _dot   = getEl('conn-dot');
-    private readonly _label = getEl('conn-label');
-    private readonly _count = getEl('drone-count');
-    private readonly _fps   = getEl('fps');
-    private readonly _time  = getEl('sim-time');
-    private readonly _fill  = getEl('battery-fill');
-    private readonly _pct   = getEl('battery-pct');
+    private readonly _dot      = getEl('conn-dot');
+    private readonly _label    = getEl('conn-label');
+    private readonly _count    = getEl('drone-count');
+    private readonly _fps      = getEl('fps');
+    private readonly _time     = getEl('sim-time');
+    private readonly _fill     = getEl('battery-fill');
+    private readonly _pct      = getEl('battery-pct');
+    private readonly _selChip  = document.getElementById('hud-selected-drone');
 
     setStatus(state: 'connected' | 'reconnecting' | 'disconnected'): void {
         this._dot.className = 'conn-dot';
@@ -38,6 +39,16 @@ export class Hud {
         this._count.textContent = String(count);
         this._time.textContent  = `${time.toFixed(1)}s`;
         this._updateBattery(drones);
+    }
+
+    setSelectedDrone(id: string | null): void {
+        if (!this._selChip) return;
+        if (id) {
+            this._selChip.textContent = `◎ ${id}`;
+            this._selChip.classList.remove('hidden');
+        } else {
+            this._selChip.classList.add('hidden');
+        }
     }
 
     private _updateBattery(drones: DroneState[]): void {

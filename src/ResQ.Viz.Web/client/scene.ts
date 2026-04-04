@@ -107,16 +107,16 @@ export class Scene {
         this.scene.add(ambient);
 
         const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
-        sun.position.set(400, 600, 200);
+        sun.position.set(600, 1200, 350);
         sun.castShadow = true;
         sun.shadow.mapSize.set(4096, 4096);
         sun.shadow.camera.near   =   10;
-        sun.shadow.camera.far    = 3000;
-        sun.shadow.camera.left   = -1200;
-        sun.shadow.camera.right  =  1200;
-        sun.shadow.camera.top    =  1200;
-        sun.shadow.camera.bottom = -1200;
-        sun.shadow.bias          = -0.002;
+        sun.shadow.camera.far    = 4500;
+        sun.shadow.camera.left   = -1800;
+        sun.shadow.camera.right  =  1800;
+        sun.shadow.camera.top    =  1800;
+        sun.shadow.camera.bottom = -1800;
+        sun.shadow.bias          = -0.0015;
         this.scene.add(sun);
 
         const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);
@@ -178,6 +178,7 @@ export class Scene {
     }
 
     get isFollowing(): boolean { return this._cam.isFollowing; }
+    get isFlying(): boolean    { return this._cam.isFlying; }
 
     /** Smoothly orbit-target and zoom to frame all given world positions. */
     fitToPositions(positions: THREE.Vector3[]): void {
@@ -191,6 +192,13 @@ export class Scene {
     setBloomStrength(v: number): void  { this._postFx.setBloomStrength(v); }
     setFogDensity(v: number): void {
         if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = v;
+    }
+    setAtmosphere(fogColor: number, density: number): void {
+        if (this.scene.fog instanceof THREE.FogExp2) {
+            this.scene.fog.color.set(fogColor);
+            this.scene.fog.density = density;
+        }
+        this.renderer.setClearColor(fogColor);
     }
     setFov(degrees: number): void {
         this._camera.fov = degrees;

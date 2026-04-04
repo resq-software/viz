@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import type { DroneState } from './types';
+import { terrainHeight } from './terrain';
 
 const STATUS_COLORS: Record<string, number> = {
     'IN_FLIGHT':  0x2ecc71,
@@ -102,10 +103,11 @@ export class DroneManager {
             entry.rotors.forEach((rotor, i) => {
                 rotor.rotation.y += i % 2 === 0 ? 0.18 : -0.18;
             });
-            // Keep detection ring centred under drone (XZ only — ring stays at Y=0.1)
+            // Keep detection ring centred under drone, hugging actual terrain surface
             if (entry.detectRing.visible) {
-                entry.detectRing.position.x = entry.group.position.x;
-                entry.detectRing.position.z = entry.group.position.z;
+                const dx = entry.group.position.x;
+                const dz = entry.group.position.z;
+                entry.detectRing.position.set(dx, terrainHeight(dx, dz) + 0.15, dz);
             }
         }
     }
@@ -194,6 +196,12 @@ export class DroneManager {
         return entry ? entry.group.position.y : null;
     }
 
+    getSelectedPosition(): THREE.Vector3 | null {
+        if (!this._selectedId) return null;
+        const entry = this._drones.get(this._selectedId);
+        return entry ? entry.group.position.clone() : null;
+    }
+
     setLabelMode(mode: 'always' | 'hover' | 'off'): void {
         this._labelMode = mode;
         for (const entry of this._drones.values()) {
@@ -228,7 +236,7 @@ export class DroneManager {
         // Detection range ring — lives in the scene at Y=0.1, follows drone XZ
         const detectRing = new THREE.Mesh(_DETECT_RING_GEO, _DETECT_RING_MAT);
         detectRing.rotation.x = -Math.PI / 2;
-        detectRing.position.set(startPos.x, 0.1, startPos.z);
+        detectRing.position.set(startPos.x, terrainHeight(startPos.x, startPos.z) + 0.15, startPos.z);
         detectRing.renderOrder = 1;
         detectRing.visible = this._detectionRingVisible;
         this._threeScene.add(detectRing);
