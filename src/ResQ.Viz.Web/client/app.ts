@@ -190,13 +190,26 @@ void terrain;
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
 
-// ─── Keyboard hints auto-fade ──────────────────────────────────────────────
+// ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 
-const keyHints = document.getElementById('key-hints');
-if (keyHints) {
-    setTimeout(() => keyHints.classList.add('fade-out'), 5000);
-    setTimeout(() => { keyHints.style.display = 'none'; }, 6500);
+const keyHints      = document.getElementById('key-hints');
+const hintsToggle   = document.getElementById('hud-hints-toggle');
+const hintsClose    = document.getElementById('key-hints-close');
+
+const HINTS_KEY = 'resq-viz-hints-visible';
+let hintsVisible = localStorage.getItem(HINTS_KEY) !== 'false';  // default: shown
+
+function _setHintsVisible(v: boolean): void {
+    hintsVisible = v;
+    localStorage.setItem(HINTS_KEY, String(v));
+    keyHints?.classList.toggle('hidden', !v);
+    hintsToggle?.classList.toggle('active', v);
 }
+
+_setHintsVisible(hintsVisible);  // restore persisted state
+
+hintsToggle?.addEventListener('click', () => _setHintsVisible(!hintsVisible));
+hintsClose?.addEventListener('click',  () => _setHintsVisible(false));
 
 // ─── Drone click-to-select ─────────────────────────────────────────────────
 
@@ -314,6 +327,8 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             break;
         }
     }
+    // '?' key (Shift+/) — toggle hints panel
+    if (e.key === '?') _setHintsVisible(!hintsVisible);
 });
 
 // ─── SignalR ───────────────────────────────────────────────────────────────

@@ -53,6 +53,7 @@
         <button id="hud-form-toggle"   class="hud-toggle active" title="Formation lines (G)">&#x22EF;</button>
         <button id="hud-follow-toggle" class="hud-toggle"        title="Follow selected (F)">&#x25CE;</button>
         <button id="btn-sidebar-toggle" title="Toggle panel [Tab]">☰</button>
+        <button id="hud-hints-toggle"  class="hud-toggle active" title="Keyboard shortcuts (?)">?</button>
         <button id="hud-settings-toggle" class="hud-toggle" title="Settings">⚙</button>
     </header>
 
@@ -191,20 +192,33 @@
         <div id="wind-label">N · 0 m/s</div>
     </div>
 
-    <!-- Keyboard hints (fades after 5 s) -->
+    <!-- Keyboard shortcuts panel — toggleable via ? button or ? key -->
     <div id="key-hints" class="key-hints">
-        <span><kbd>V</kbd> Velocity</span>
-        <span><kbd>H</kbd> Halos</span>
-        <span><kbd>G</kbd> Formation</span>
-        <span><kbd>F</kbd> Follow</span>
-        <span><kbd>Home</kbd> Fit</span>
-        <span><kbd>Space</kbd> Stop</span>
-        <span><kbd>R</kbd> Reset</span>
+      <div class="key-hints-header">
+        <span class="key-hints-title">Keyboard Shortcuts</span>
+        <button id="key-hints-close" class="key-hints-close" title="Close (?)">✕</button>
+      </div>
+      <div class="key-hints-grid">
+        <span><kbd>LMB drag</kbd> Orbit</span>
+        <span><kbd>RMB hold</kbd> Free-fly</span>
+        <span><kbd>MMB drag</kbd> Pan</span>
+        <span><kbd>Scroll</kbd> Zoom</span>
+        <span><kbd>WASD</kbd> Fly move</span>
+        <span><kbd>Q / E</kbd> Fly up / down</span>
+        <span><kbd>Shift</kbd> Fast move</span>
+        <span><kbd>F</kbd> Follow drone</span>
+        <span><kbd>Home</kbd> Fit view</span>
+        <span><kbd>V</kbd> Velocity vectors</span>
+        <span><kbd>H</kbd> Altitude halos</span>
+        <span><kbd>G</kbd> Formation lines</span>
+        <span><kbd>Space</kbd> Stop sim</span>
+        <span><kbd>R</kbd> Reset sim</span>
         <span><kbd>Tab</kbd> Sidebar</span>
         <span><kbd>1&#x2013;4</kbd> Scenarios</span>
-        <span><kbd>C</kbd> Free-fly camera</span>
-        <span><kbd>Shift</kbd> Fast move (free-fly)</span>
-        <span><kbd>Click ground</kbd> Fly selected drone here</span>
+        <span><kbd>Click drone</kbd> Select</span>
+        <span><kbd>Click ground</kbd> Send drone here</span>
+        <span><kbd>?</kbd> This panel</span>
+      </div>
     </div>
 
     <!-- ── Settings Panel ─────────────────────────────────────────────────────── -->
