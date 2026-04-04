@@ -178,6 +178,7 @@ public sealed class SimController : ControllerBase
         if (!_scenarios.TryRun(name, _sim))
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
+        _sim.NotifyScenario(name);
         _logger.LogInformation("Scenario '{Name}' started.", Sanitize(name));
         return Ok(new { scenario = name, status = "started" });
     }

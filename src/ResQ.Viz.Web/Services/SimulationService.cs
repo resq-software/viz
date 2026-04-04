@@ -56,8 +56,10 @@ public sealed class SimulationService : BackgroundService
     private readonly IHubContext<VizHub> _hubContext;
     private readonly VizFrameBuilder _frameBuilder;
     private readonly ILogger<SimulationService> _logger;
+    private readonly SwarmController _swarm;
     private readonly object _lock = new();
     private int _tickCount;
+    private int _swarmTick;
     private double _simTime;
 
     /// <summary>Broadcast a viz frame every N simulation ticks (60 Hz / 6 = 10 Hz).</summary>
@@ -80,6 +82,7 @@ public sealed class SimulationService : BackgroundService
         _terrain      = new TerrainNoiseService();
         _weather      = new UpdatableWeatherSystem(new WeatherConfig());
         _world        = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
+        _swarm        = new SwarmController(_terrain);
         _logger.LogInformation("SimulationService initialised.");
     }
 
@@ -134,7 +137,20 @@ public sealed class SimulationService : BackgroundService
     public void SetTerrainPreset(string key)
     {
         _terrain.SetPreset(key);
+        lock (_lock)
+        {
+            _swarm.SetTerrainPreset(key, _terrain, _world.Drones.ToList());
+        }
         _logger.LogInformation("Terrain preset switched to '{Key}'.", key);
+    }
+
+    /// <summary>Notifies the swarm controller of the active scenario so it can assign flight patterns.</summary>
+    public void NotifyScenario(string name)
+    {
+        lock (_lock)
+        {
+            _swarm.SetScenario(name, _world.Drones.ToList());
+        }
     }
 
     /// <summary>
@@ -145,9 +161,10 @@ public sealed class SimulationService : BackgroundService
     {
         lock (_lock)
         {
-            _world     = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
-            _simTime   = 0;
-            _tickCount = 0;
+            _world      = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
+            _simTime    = 0;
+            _tickCount  = 0;
+            _swarmTick  = 0;
             _logger.LogInformation("Simulation reset.");
         }
     }
@@ -194,8 +211,11 @@ public sealed class SimulationService : BackgroundService
             {
                 _world.Step();
                 _tickCount++;
+                _swarmTick++;
                 _simTime += 1.0 / 60.0;
                 shouldBroadcast = _tickCount % BroadcastEveryNTicks == 0;
+                if (_swarmTick % 30 == 0)
+                    _swarm.Tick(_simTime, _world.Drones);
             }
 
             if (shouldBroadcast)
