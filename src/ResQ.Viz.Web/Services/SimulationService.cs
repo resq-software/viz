@@ -52,7 +52,7 @@ public sealed class SimulationService : BackgroundService
 {
     private SimulationWorld _world;
     private readonly UpdatableWeatherSystem _weather;
-    private readonly Func<FlatTerrain> _terrainFactory;
+    private readonly TerrainNoiseService _terrain;
     private readonly IHubContext<VizHub> _hubContext;
     private readonly VizFrameBuilder _frameBuilder;
     private readonly ILogger<SimulationService> _logger;
@@ -74,12 +74,12 @@ public sealed class SimulationService : BackgroundService
     /// <param name="logger">Logger instance.</param>
     public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder, ILogger<SimulationService> logger)
     {
-        _hubContext     = hubContext;
-        _frameBuilder   = frameBuilder;
-        _logger         = logger;
-        _terrainFactory = () => new FlatTerrain();
-        _weather        = new UpdatableWeatherSystem(new WeatherConfig());
-        _world          = new SimulationWorld(new SimulationConfig(), _terrainFactory(), _weather);
+        _hubContext   = hubContext;
+        _frameBuilder = frameBuilder;
+        _logger       = logger;
+        _terrain      = new TerrainNoiseService();
+        _weather      = new UpdatableWeatherSystem(new WeatherConfig());
+        _world        = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
         _logger.LogInformation("SimulationService initialised.");
     }
 
@@ -129,6 +129,14 @@ public sealed class SimulationService : BackgroundService
         _logger.LogInformation("Weather updated: mode={Mode}, speed={Speed} m/s, direction={Dir}°.", weatherMode, windSpeed, direction);
     }
 
+    /// <summary>Switches the terrain preset used for drone elevation clamping.</summary>
+    /// <param name="key">Preset key: "alpine", "ridgeline", "coastal", "canyon", or "dunes".</param>
+    public void SetTerrainPreset(string key)
+    {
+        _terrain.SetPreset(key);
+        _logger.LogInformation("Terrain preset switched to '{Key}'.", key);
+    }
+
     /// <summary>
     /// Resets the simulation by discarding all drones and restarting the world clock.
     /// The current weather configuration is preserved.
@@ -137,7 +145,7 @@ public sealed class SimulationService : BackgroundService
     {
         lock (_lock)
         {
-            _world     = new SimulationWorld(new SimulationConfig(), _terrainFactory(), _weather);
+            _world     = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
             _simTime   = 0;
             _tickCount = 0;
             _logger.LogInformation("Simulation reset.");

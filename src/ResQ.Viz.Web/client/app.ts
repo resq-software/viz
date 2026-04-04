@@ -205,6 +205,8 @@ function _switchPreset(key: PresetKey): void {
     document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
         el.classList.toggle('active', el.dataset['preset'] === key);
     });
+    // Notify backend so drone physics clamp to the correct terrain
+    void fetch(`/api/sim/preset/${key}`, { method: 'POST' });
 }
 
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
@@ -221,6 +223,9 @@ document.querySelector<HTMLElement>('.terrain-card[data-preset="alpine"]')
 // Warm the geometry cache from sessionStorage in the background.
 // This makes repeat-switches to already-visited presets near-instant.
 void geoCache.init();
+
+// Sync backend terrain preset to alpine on first load.
+void fetch('/api/sim/preset/alpine', { method: 'POST' });
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));

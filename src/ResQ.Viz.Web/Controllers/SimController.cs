@@ -181,4 +181,20 @@ public sealed class SimController : ControllerBase
         _logger.LogInformation("Scenario '{Name}' started.", Sanitize(name));
         return Ok(new { scenario = name, status = "started" });
     }
+
+    /// <summary>Switches the terrain preset used for drone altitude clamping.</summary>
+    /// <param name="key">Preset key: alpine, ridgeline, coastal, canyon, or dunes.</param>
+    [HttpPost("preset/{key}")]
+    public IActionResult SetTerrainPreset(string key)
+    {
+        var validKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "alpine", "ridgeline", "coastal", "canyon", "dunes" };
+
+        if (!validKeys.Contains(key))
+            return BadRequest(new { error = $"Unknown preset '{key}'. Valid presets: alpine, ridgeline, coastal, canyon, dunes." });
+
+        _sim.SetTerrainPreset(key);
+        _logger.LogInformation("Terrain preset set to '{Key}'.", Sanitize(key));
+        return Ok(new { preset = key });
+    }
 }
