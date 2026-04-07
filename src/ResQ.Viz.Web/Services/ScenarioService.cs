@@ -53,6 +53,9 @@ public sealed class ScenarioService
     /// <summary>Names of all available scenario presets.</summary>
     public IEnumerable<string> ScenarioNames => _scenarios.Keys;
 
+    /// <summary>Returns true if the named scenario exists.</summary>
+    public bool HasScenario(string name) => _scenarios.ContainsKey(name);
+
     /// <summary>
     /// Runs a named scenario by spawning its drones into the simulation.
     /// Returns <see langword="false"/> if the scenario name is not found.
