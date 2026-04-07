@@ -16,6 +16,7 @@
 
 using System.Numerics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using ResQ.Simulation.Engine.Physics;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
@@ -27,6 +28,7 @@ namespace ResQ.Viz.Web.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/sim")]
+[EnableRateLimiting("general")]
 public sealed class SimController : ControllerBase
 {
     private const int MaxDroneCount = 50;
@@ -66,6 +68,7 @@ public sealed class SimController : ControllerBase
 
     /// <summary>Resets the simulation world by clearing all drones.</summary>
     [HttpPost("reset")]
+    [EnableRateLimiting("destructive")]
     public IActionResult Reset()
     {
         _sim.Reset();
@@ -76,6 +79,7 @@ public sealed class SimController : ControllerBase
     /// <summary>Spawns a new drone at the specified position.</summary>
     /// <param name="request">Spawn parameters including position and optional model.</param>
     [HttpPost("drone")]
+    [EnableRateLimiting("destructive")]
     public IActionResult SpawnDrone([FromBody] SpawnDroneRequest request)
     {
         if (request.Position is not { Length: 3 })
@@ -151,6 +155,7 @@ public sealed class SimController : ControllerBase
     /// <summary>Injects a fault into a drone (Phase 1: logged only, no actual fault simulation).</summary>
     /// <param name="request">Fault specification.</param>
     [HttpPost("fault")]
+    [EnableRateLimiting("destructive")]
     public IActionResult InjectFault([FromBody] FaultRequest request)
     {
         var snapshot = _sim.GetSnapshot();
@@ -191,6 +196,7 @@ public sealed class SimController : ControllerBase
     /// <summary>Runs a named scenario preset, replacing whatever was running.</summary>
     /// <param name="name">Scenario name (e.g. "single", "swarm-5", "swarm-20", "sar").</param>
     [HttpPost("scenario/{name}")]
+    [EnableRateLimiting("destructive")]
     public IActionResult RunScenario(string name)
     {
         if (!_scenarios.HasScenario(name))

@@ -17,5 +17,17 @@ src/ResQ.Viz.Web/wwwroot/.vite/
 # npm
 src/ResQ.Viz.Web/node_modules/
 
+# Python
+__pycache__/
+
+# Playwright / browser automation logs
+.playwright-mcp/
+
+# Security assessment deliverables (contain internal IPs, exploitation evidence)
+deliverables/
+
+# Generated outputs
+outputs/
+
 # Local docs (specs, plans — not committed)
 docs/
