@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Repo-specific pre-push — runs alongside the canonical ResQ pre-push hook.
+# Mirrors the CI gates: format verification + Release build.
+set -euo pipefail
+
+if command -v dotnet >/dev/null 2>&1; then
+    echo "  .NET: dotnet format --verify-no-changes"
+    dotnet format --verify-no-changes --verbosity diagnostic || {
+        echo "❌ dotnet format would change files. Run 'dotnet format' and commit."
+        exit 1
+    }
+    echo "  .NET: dotnet build -c Release"
+    dotnet build --configuration Release --nologo --verbosity minimal
+fi
