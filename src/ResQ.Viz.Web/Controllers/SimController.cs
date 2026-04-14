@@ -16,6 +16,7 @@
 
 using System.Numerics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using ResQ.Simulation.Engine.Physics;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
@@ -27,8 +28,11 @@ namespace ResQ.Viz.Web.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/sim")]
+[EnableRateLimiting("general")]
 public sealed class SimController : ControllerBase
 {
+    private const int MaxDroneCount = 50;
+
     private readonly SimulationService _sim;
     private readonly ScenarioService _scenarios;
     private readonly ILogger<SimController> _logger;
@@ -64,6 +68,7 @@ public sealed class SimController : ControllerBase
 
     /// <summary>Resets the simulation world by clearing all drones.</summary>
     [HttpPost("reset")]
+    [EnableRateLimiting("destructive")]
     public IActionResult Reset()
     {
         _sim.Reset();
@@ -74,13 +79,17 @@ public sealed class SimController : ControllerBase
     /// <summary>Spawns a new drone at the specified position.</summary>
     /// <param name="request">Spawn parameters including position and optional model.</param>
     [HttpPost("drone")]
+    [EnableRateLimiting("destructive")]
     public IActionResult SpawnDrone([FromBody] SpawnDroneRequest request)
     {
         if (request.Position is not { Length: 3 })
             return BadRequest(new { error = "Position must be a 3-element array [X, Y, Z]." });
 
-        if (request.Position.Any(float.IsNaN))
-            return BadRequest(new { error = "Position contains NaN values." });
+        if (request.Position.Any(v => float.IsNaN(v) || float.IsInfinity(v)))
+            return BadRequest(new { error = "Position contains invalid values." });
+
+        if (_sim.GetSnapshot().Count >= MaxDroneCount)
+            return StatusCode(429, new { error = $"Maximum drone count ({MaxDroneCount}) reached." });
 
         var id = $"drone-{Guid.NewGuid():N}"[..12];
         var position = new Vector3(request.Position[0], request.Position[1], request.Position[2]);
@@ -114,6 +123,9 @@ public sealed class SimController : ControllerBase
         if (request.Type.ToLowerInvariant() == "goto" && request.Target is not { Length: 3 })
             return BadRequest(new { error = "Command 'goto' requires a 3-element Target array." });
 
+        if (request.Type.ToLowerInvariant() == "goto" && request.Target!.Any(v => float.IsNaN(v) || float.IsInfinity(v)))
+            return BadRequest(new { error = "Target contains invalid values." });
+
         if (request.Type.ToLowerInvariant() is not ("hover" or "rtl" or "land" or "goto"))
             return BadRequest(new { error = $"Unknown command type '{request.Type}'. Valid types: hover, goto, rtl, land." });
 
@@ -127,17 +139,29 @@ public sealed class SimController : ControllerBase
     [HttpPost("weather")]
     public IActionResult SetWeather([FromBody] WeatherRequest request)
     {
-        _sim.SetWeather(request.Mode, request.WindSpeed, request.WindDirection);
+        if (float.IsNaN(request.WindSpeed) || float.IsInfinity(request.WindSpeed) || request.WindSpeed < 0 || request.WindSpeed > 100)
+            return BadRequest(new { error = "WindSpeed must be between 0 and 100." });
+
+        if (float.IsNaN(request.WindDirection) || float.IsInfinity(request.WindDirection))
+            return BadRequest(new { error = "WindDirection contains invalid values." });
+
+        var direction = ((request.WindDirection % 360f) + 360f) % 360f;
+        _sim.SetWeather(request.Mode, request.WindSpeed, direction);
         _logger.LogInformation("Weather updated: mode={Mode}, speed={Speed}, dir={Direction}.",
-            Sanitize(request.Mode), request.WindSpeed, request.WindDirection);
-        return Ok(new { mode = request.Mode, windSpeed = request.WindSpeed, windDirection = request.WindDirection });
+            Sanitize(request.Mode), request.WindSpeed, direction);
+        return Ok(new { mode = request.Mode, windSpeed = request.WindSpeed, windDirection = direction });
     }
 
     /// <summary>Injects a fault into a drone (Phase 1: logged only, no actual fault simulation).</summary>
     /// <param name="request">Fault specification.</param>
     [HttpPost("fault")]
+    [EnableRateLimiting("destructive")]
     public IActionResult InjectFault([FromBody] FaultRequest request)
     {
+        var snapshot = _sim.GetSnapshot();
+        if (!snapshot.Any(d => d.Id == request.DroneId))
+            return NotFound(new { error = $"Drone '{request.DroneId}' not found." });
+
         _logger.LogWarning("Fault injection requested: drone={DroneId}, type={FaultType}. (Phase 1: no-op)",
             Sanitize(request.DroneId), Sanitize(request.Type));
         return Ok(new { droneId = request.DroneId, faultType = request.Type, status = "logged" });
@@ -172,12 +196,14 @@ public sealed class SimController : ControllerBase
     /// <summary>Runs a named scenario preset, replacing whatever was running.</summary>
     /// <param name="name">Scenario name (e.g. "single", "swarm-5", "swarm-20", "sar").</param>
     [HttpPost("scenario/{name}")]
+    [EnableRateLimiting("destructive")]
     public IActionResult RunScenario(string name)
     {
-        _sim.Reset(); // clear existing drones so duplicate-ID errors can't occur
-        if (!_scenarios.TryRun(name, _sim))
+        if (!_scenarios.HasScenario(name))
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
+        _sim.Reset();
+        _scenarios.TryRun(name, _sim);
         _sim.NotifyScenario(name);
         _logger.LogInformation("Scenario '{Name}' started.", Sanitize(name));
         return Ok(new { scenario = name, status = "started" });

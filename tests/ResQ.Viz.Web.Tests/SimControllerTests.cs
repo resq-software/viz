@@ -155,6 +155,26 @@ public class SimControllerTests
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    [Fact]
+    public void SpawnDrone_InfinityPosition_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SpawnDrone(new SpawnDroneRequest([float.PositiveInfinity, 0f, 0f]));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SpawnDrone_AtMaxCapacity_Returns_TooManyRequests()
+    {
+        var (ctrl, sim) = CreateController();
+        for (int i = 0; i < 50; i++)
+            sim.AddDrone($"drone-{i}", new Vector3(i, 50f, 0f));
+
+        var result = ctrl.SpawnDrone(new SpawnDroneRequest([0f, 50f, 0f]));
+        result.Should().BeOfType<ObjectResult>()
+              .Which.StatusCode.Should().Be(429);
+    }
+
     // ─── SendCommand ────────────────────────────────────────────────────────
 
     [Fact]
@@ -235,6 +255,16 @@ public class SimControllerTests
         result.Should().NotBeNull();
     }
 
+    [Fact]
+    public void SendCommand_Goto_InfinityTarget_Returns_BadRequest()
+    {
+        var (ctrl, sim) = CreateController();
+        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+
+        var result = ctrl.SendCommand("d1", new DroneCommandRequest("goto", [float.PositiveInfinity, 0f, 0f]));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
     // ─── SetWeather ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -245,12 +275,54 @@ public class SimControllerTests
         result.Should().NotBeNull();
     }
 
+    [Fact]
+    public void SetWeather_InfinityWindSpeed_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", float.PositiveInfinity, 90f));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetWeather_NegativeWindSpeed_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", -1f, 90f));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetWeather_WindSpeedAboveMax_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", 101f, 90f));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
     // ─── InjectFault ────────────────────────────────────────────────────────
 
     [Fact]
     public void InjectFault_Returns_Ok_With_Logged_Status()
     {
+        var (ctrl, sim) = CreateController();
+        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var result = ctrl.InjectFault(new FaultRequest("d1", "motor-failure")) as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void InjectFault_UnknownDrone_Returns_NotFound()
+    {
         var (ctrl, _) = CreateController();
+        var result = ctrl.InjectFault(new FaultRequest("ghost", "motor-failure"));
+        result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    [Fact]
+    public void InjectFault_KnownDrone_Returns_Ok()
+    {
+        var (ctrl, sim) = CreateController();
+        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
         var result = ctrl.InjectFault(new FaultRequest("d1", "motor-failure")) as OkObjectResult;
         result.Should().NotBeNull();
     }
@@ -305,6 +377,15 @@ public class SimControllerTests
         var (ctrl, _) = CreateController();
         var result = ctrl.RunScenario("does-not-exist");
         result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    [Fact]
+    public void RunScenario_Unknown_DoesNot_Reset_Existing_Drones()
+    {
+        var (ctrl, sim) = CreateController();
+        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        ctrl.RunScenario("does-not-exist");
+        sim.GetSnapshot().Should().HaveCount(1);
     }
 
     [Fact]
