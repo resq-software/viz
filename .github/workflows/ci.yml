@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   gates:
-    uses: resq-software/.github/.github/workflows/required.yml@6410acba18c9fc79949643abd48f0a2d43994c62
+    uses: resq-software/.github/.github/workflows/required.yml@f4b51a620aa1bf89c0bce4f434b36f92ff7d517d
     with:
       lang: dotnet
       dotnet-solution: ResQ.Viz.sln
