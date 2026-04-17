@@ -1,0 +1,47 @@
+# Copyright 2026 ResQ Software
+# SPDX-License-Identifier: Apache-2.0
+#
+# Thin CI wrapper. Dispatches to the org-wide reusable `required`
+# aggregator in resq-software/.github (which calls dotnet-ci +
+# security-scan). The top-level `required` job emits the status-
+# check context consumed by the org ruleset `default-branch-baseline`.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    uses: resq-software/.github/.github/workflows/required.yml@6410acba18c9fc79949643abd48f0a2d43994c62
+    with:
+      lang: dotnet
+      dotnet-solution: ResQ.Viz.sln
+      codeql-languages: '["csharp"]'
+    secrets: inherit
+
+  required:
+    name: required
+    runs-on: ubuntu-latest
+    needs: [gates]
+    if: always()
+    steps:
+      - env:
+          R: ${{ needs.gates.result }}
+        run: |
+          set -eu
+          case "$R" in
+            success|skipped|"") echo "ok: gates=$R" ;;
+            *) echo "::error::gates reusable returned: $R"; exit 1 ;;
+          esac
