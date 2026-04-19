@@ -4,7 +4,7 @@
 
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
-using Vite.AspNetCore.Extensions;
+using Vite.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();

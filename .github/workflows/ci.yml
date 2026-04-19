@@ -24,11 +24,12 @@ concurrency:
 
 jobs:
   gates:
-    uses: resq-software/.github/.github/workflows/required.yml@f4b51a620aa1bf89c0bce4f434b36f92ff7d517d
+    uses: resq-software/.github/.github/workflows/required.yml@109c36b59b6c94e235e4590598fd5f719d7d321a
     with:
       lang: dotnet
       dotnet-solution: ResQ.Viz.sln
       codeql-languages: '["csharp"]'
+      submodules: recursive
     secrets: inherit
 
   required:
