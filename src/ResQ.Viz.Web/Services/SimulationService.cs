@@ -76,13 +76,13 @@ public sealed class SimulationService : BackgroundService
     /// <param name="logger">Logger instance.</param>
     public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder, ILogger<SimulationService> logger)
     {
-        _hubContext   = hubContext;
+        _hubContext = hubContext;
         _frameBuilder = frameBuilder;
-        _logger       = logger;
-        _terrain      = new TerrainNoiseService();
-        _weather      = new UpdatableWeatherSystem(new WeatherConfig());
-        _world        = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
-        _swarm        = new SwarmController(_terrain);
+        _logger = logger;
+        _terrain = new TerrainNoiseService();
+        _weather = new UpdatableWeatherSystem(new WeatherConfig());
+        _world = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
+        _swarm = new SwarmController(_terrain);
         _logger.LogInformation("SimulationService initialised.");
     }
 
@@ -124,9 +124,9 @@ public sealed class SimulationService : BackgroundService
     {
         var weatherMode = mode.ToLowerInvariant() switch
         {
-            "steady"    => WeatherMode.Steady,
+            "steady" => WeatherMode.Steady,
             "turbulent" => WeatherMode.Turbulent,
-            _           => WeatherMode.Calm,
+            _ => WeatherMode.Calm,
         };
         _weather.Update(new WeatherConfig(weatherMode, direction, windSpeed));
         _logger.LogInformation("Weather updated: mode={Mode}, speed={Speed} m/s, direction={Dir}°.", weatherMode, windSpeed, direction);
@@ -161,10 +161,10 @@ public sealed class SimulationService : BackgroundService
     {
         lock (_lock)
         {
-            _world      = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
-            _simTime    = 0;
-            _tickCount  = 0;
-            _swarmTick  = 0;
+            _world = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
+            _simTime = 0;
+            _tickCount = 0;
+            _swarmTick = 0;
             _logger.LogInformation("Simulation reset.");
         }
     }
@@ -181,13 +181,13 @@ public sealed class SimulationService : BackgroundService
                 var q = state.Orientation;
 
                 return new DroneSnapshot(
-                    Id:       d.Id,
+                    Id: d.Id,
                     Position: [state.Position.X, state.Position.Y, state.Position.Z],
                     Rotation: [q.X, q.Y, q.Z, q.W],
                     Velocity: [state.Velocity.X, state.Velocity.Y, state.Velocity.Z],
-                    Battery:  state.BatteryPercent,
-                    Status:   d.FlightModel.HasLanded ? "landed" : "flying",
-                    Armed:    !d.FlightModel.HasLanded);
+                    Battery: state.BatteryPercent,
+                    Status: d.FlightModel.HasLanded ? "landed" : "flying",
+                    Armed: !d.FlightModel.HasLanded);
             }).ToList();
         }
     }
@@ -224,7 +224,7 @@ public sealed class SimulationService : BackgroundService
 
                 // Build and broadcast frame outside the lock to avoid holding it during async I/O.
                 var snapshot = GetSnapshot();
-                var frame    = _frameBuilder.Build(snapshot, _simTime);
+                var frame = _frameBuilder.Build(snapshot, _simTime);
                 try
                 {
                     await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);

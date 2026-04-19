@@ -112,12 +112,12 @@ public sealed class SimController : ControllerBase
         FlightCommand command = request.Type.ToLowerInvariant() switch
         {
             "hover" => FlightCommand.Hover(),
-            "rtl"   => FlightCommand.RTL(),
-            "land"  => FlightCommand.Land(),
+            "rtl" => FlightCommand.RTL(),
+            "land" => FlightCommand.Land(),
             "goto" when request.Target is { Length: 3 } =>
                 FlightCommand.GoTo(new Vector3(request.Target[0], request.Target[1], request.Target[2])),
             "goto" => default, // handled below
-            _      => default,
+            _ => default,
         };
 
         if (request.Type.ToLowerInvariant() == "goto" && request.Target is not { Length: 3 })
