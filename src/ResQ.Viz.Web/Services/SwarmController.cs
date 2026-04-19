@@ -77,14 +77,14 @@ public sealed class SwarmController
     public void SetTerrainPreset(string preset, TerrainNoiseService terrain, IReadOnlyList<SimulatedDrone> drones)
     {
         _terrain = terrain;
-        _preset  = preset.ToLowerInvariant();
-        _minAgl  = _preset switch
+        _preset = preset.ToLowerInvariant();
+        _minAgl = _preset switch
         {
             "ridgeline" => 20f,
-            "coastal"   => 15f,
-            "canyon"    => 12f,
-            "dunes"     =>  8f,
-            _           => 25f,  // alpine default
+            "coastal" => 15f,
+            "canyon" => 12f,
+            "dunes" => 8f,
+            _ => 25f,  // alpine default
         };
 
         // Rebuild routes for all current drones under the new terrain
@@ -214,9 +214,9 @@ public sealed class SwarmController
     {
         return _scenario switch
         {
-            "single"   => BuildLawnmowerRoute(0, 0, 500f, 200f),
-            "sar"      => BuildSarSectorRoute(droneIndex, totalDrones),
-            _          => BuildSectorPatrolRoute(droneIndex, totalDrones),
+            "single" => BuildLawnmowerRoute(0, 0, 500f, 200f),
+            "sar" => BuildSarSectorRoute(droneIndex, totalDrones),
+            _ => BuildSectorPatrolRoute(droneIndex, totalDrones),
         };
     }
 
@@ -256,11 +256,11 @@ public sealed class SwarmController
         // Terrain-specific route shape
         return _preset switch
         {
-            "coastal"   => BuildIslandPatrolRoute(cx, cz, Math.Min(cellW, cellH) * 0.38f),
-            "canyon"    => BuildCanyonCorridor(idx, total),
-            "dunes"     => BuildDuneSweep(cx, cz, cellW * 0.4f, cellH * 0.4f),
+            "coastal" => BuildIslandPatrolRoute(cx, cz, Math.Min(cellW, cellH) * 0.38f),
+            "canyon" => BuildCanyonCorridor(idx, total),
+            "dunes" => BuildDuneSweep(cx, cz, cellW * 0.4f, cellH * 0.4f),
             "ridgeline" => BuildRidgelineRoute(cx, cz, cellW * 0.45f),
-            _           => BuildOctagonRoute(cx, cz, Math.Min(cellW, cellH) * 0.40f),
+            _ => BuildOctagonRoute(cx, cz, Math.Min(cellW, cellH) * 0.40f),
         };
     }
 
@@ -271,7 +271,7 @@ public sealed class SwarmController
         total = Math.Max(total, 1);
         float stripW = 2000f / total;
         float stripCx = -1000f + (idx + 0.5f) * stripW;
-        float halfW   = stripW * 0.45f;
+        float halfW = stripW * 0.45f;
         return BuildLawnmowerRoute(stripCx, 0f, halfW, Math.Max(halfW * 0.4f, 60f));
     }
 

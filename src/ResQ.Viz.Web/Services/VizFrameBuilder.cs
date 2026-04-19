@@ -27,16 +27,16 @@ public sealed class VizFrameBuilder
 
     private sealed record SurvivorTargetConfig
     {
-        public string Id  { get; init; } = "";
+        public string Id { get; init; } = "";
         public float[] Pos { get; init; } = [];
     }
 
     private sealed record HazardZoneConfig
     {
-        public string Id     { get; init; } = "";
-        public string Type   { get; init; } = "";
+        public string Id { get; init; } = "";
+        public string Type { get; init; } = "";
         public float[] Center { get; init; } = [];
-        public float Radius  { get; init; }
+        public float Radius { get; init; }
     }
 
     private sealed record SurvivorTarget(string Id, Vector3 Position);
@@ -76,8 +76,8 @@ public sealed class VizFrameBuilder
     /// </summary>
     public VizFrameBuilder()
     {
-        _survivors      = [];
-        _hazards        = [];
+        _survivors = [];
+        _hazards = [];
         _detectionRange = 35f;
     }
 
@@ -94,11 +94,11 @@ public sealed class VizFrameBuilder
             .ToList();
 
         return new VizFrame(
-            Time:       simTime,
-            Drones:     droneStates,
+            Time: simTime,
+            Drones: droneStates,
             Detections: BuildDetections(drones),
-            Hazards:    BuildHazards(),
-            Mesh:       null);
+            Hazards: BuildHazards(),
+            Mesh: null);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
@@ -116,10 +116,10 @@ public sealed class VizFrameBuilder
                 if (dist <= _detectionRange)
                 {
                     detections.Add(new DetectionVizState(
-                        Id:         target.Id,
-                        Type:       "survivor",
-                        Pos:        [target.Position.X, target.Position.Y, target.Position.Z],
-                        DroneId:    drone.Id,
+                        Id: target.Id,
+                        Type: "survivor",
+                        Pos: [target.Position.X, target.Position.Y, target.Position.Z],
+                        DroneId: drone.Id,
                         Confidence: 1f - dist / _detectionRange));
                 }
             }
@@ -129,9 +129,9 @@ public sealed class VizFrameBuilder
 
     private IReadOnlyList<HazardVizState> BuildHazards() =>
         _hazards.Select(h => new HazardVizState(
-            Id:       h.Id,
-            Type:     h.Type,
-            Center:   h.Center.Length == 3 ? [h.Center[0], h.Center[1], h.Center[2]] : [0f, 0f, 0f],
-            Radius:   h.Radius,
+            Id: h.Id,
+            Type: h.Type,
+            Center: h.Center.Length == 3 ? [h.Center[0], h.Center[1], h.Center[2]] : [0f, 0f, 0f],
+            Radius: h.Radius,
             Severity: "medium")).ToList();
 }

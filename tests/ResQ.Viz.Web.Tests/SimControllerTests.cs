@@ -35,7 +35,7 @@ public class SimControllerTests
     private static SimulationService CreateSimService()
     {
         var mockClients = new Mock<IHubClients>();
-        var mockProxy   = new Mock<IClientProxy>();
+        var mockProxy = new Mock<IClientProxy>();
         mockClients.Setup(c => c.All).Returns(mockProxy.Object);
         mockProxy.Setup(c => c.SendCoreAsync(It.IsAny<string>(), It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
                  .Returns(Task.CompletedTask);
@@ -49,29 +49,49 @@ public class SimControllerTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Scenarios:single:0:id"]      = "drone-1",
-                ["Scenarios:single:0:pos:0"]   = "0", ["Scenarios:single:0:pos:1"] = "15", ["Scenarios:single:0:pos:2"] = "0",
+                ["Scenarios:single:0:id"] = "drone-1",
+                ["Scenarios:single:0:pos:0"] = "0",
+                ["Scenarios:single:0:pos:1"] = "15",
+                ["Scenarios:single:0:pos:2"] = "0",
 
-                ["Scenarios:swarm-5:0:id"]     = "drone-1",
-                ["Scenarios:swarm-5:0:pos:0"]  = "-20", ["Scenarios:swarm-5:0:pos:1"] = "15", ["Scenarios:swarm-5:0:pos:2"] = "-20",
-                ["Scenarios:swarm-5:1:id"]     = "drone-2",
-                ["Scenarios:swarm-5:1:pos:0"]  = "20",  ["Scenarios:swarm-5:1:pos:1"] = "18", ["Scenarios:swarm-5:1:pos:2"] = "-20",
-                ["Scenarios:swarm-5:2:id"]     = "drone-3",
-                ["Scenarios:swarm-5:2:pos:0"]  = "0",   ["Scenarios:swarm-5:2:pos:1"] = "20", ["Scenarios:swarm-5:2:pos:2"] = "0",
-                ["Scenarios:swarm-5:3:id"]     = "drone-4",
-                ["Scenarios:swarm-5:3:pos:0"]  = "-20", ["Scenarios:swarm-5:3:pos:1"] = "18", ["Scenarios:swarm-5:3:pos:2"] = "20",
-                ["Scenarios:swarm-5:4:id"]     = "drone-5",
-                ["Scenarios:swarm-5:4:pos:0"]  = "20",  ["Scenarios:swarm-5:4:pos:1"] = "15", ["Scenarios:swarm-5:4:pos:2"] = "20",
+                ["Scenarios:swarm-5:0:id"] = "drone-1",
+                ["Scenarios:swarm-5:0:pos:0"] = "-20",
+                ["Scenarios:swarm-5:0:pos:1"] = "15",
+                ["Scenarios:swarm-5:0:pos:2"] = "-20",
+                ["Scenarios:swarm-5:1:id"] = "drone-2",
+                ["Scenarios:swarm-5:1:pos:0"] = "20",
+                ["Scenarios:swarm-5:1:pos:1"] = "18",
+                ["Scenarios:swarm-5:1:pos:2"] = "-20",
+                ["Scenarios:swarm-5:2:id"] = "drone-3",
+                ["Scenarios:swarm-5:2:pos:0"] = "0",
+                ["Scenarios:swarm-5:2:pos:1"] = "20",
+                ["Scenarios:swarm-5:2:pos:2"] = "0",
+                ["Scenarios:swarm-5:3:id"] = "drone-4",
+                ["Scenarios:swarm-5:3:pos:0"] = "-20",
+                ["Scenarios:swarm-5:3:pos:1"] = "18",
+                ["Scenarios:swarm-5:3:pos:2"] = "20",
+                ["Scenarios:swarm-5:4:id"] = "drone-5",
+                ["Scenarios:swarm-5:4:pos:0"] = "20",
+                ["Scenarios:swarm-5:4:pos:1"] = "15",
+                ["Scenarios:swarm-5:4:pos:2"] = "20",
 
-                ["Scenarios:swarm-20:0:id"]    = "drone-1",
-                ["Scenarios:swarm-20:0:pos:0"] = "0", ["Scenarios:swarm-20:0:pos:1"] = "15", ["Scenarios:swarm-20:0:pos:2"] = "0",
+                ["Scenarios:swarm-20:0:id"] = "drone-1",
+                ["Scenarios:swarm-20:0:pos:0"] = "0",
+                ["Scenarios:swarm-20:0:pos:1"] = "15",
+                ["Scenarios:swarm-20:0:pos:2"] = "0",
 
-                ["Scenarios:sar:0:id"]         = "sar-lead",
-                ["Scenarios:sar:0:pos:0"]       = "0", ["Scenarios:sar:0:pos:1"] = "20", ["Scenarios:sar:0:pos:2"] = "0",
-                ["Scenarios:sar:1:id"]         = "sar-scout",
-                ["Scenarios:sar:1:pos:0"]       = "30", ["Scenarios:sar:1:pos:1"] = "25", ["Scenarios:sar:1:pos:2"] = "30",
-                ["Scenarios:sar:2:id"]         = "sar-relay",
-                ["Scenarios:sar:2:pos:0"]       = "-30", ["Scenarios:sar:2:pos:1"] = "18", ["Scenarios:sar:2:pos:2"] = "-30",
+                ["Scenarios:sar:0:id"] = "sar-lead",
+                ["Scenarios:sar:0:pos:0"] = "0",
+                ["Scenarios:sar:0:pos:1"] = "20",
+                ["Scenarios:sar:0:pos:2"] = "0",
+                ["Scenarios:sar:1:id"] = "sar-scout",
+                ["Scenarios:sar:1:pos:0"] = "30",
+                ["Scenarios:sar:1:pos:1"] = "25",
+                ["Scenarios:sar:1:pos:2"] = "30",
+                ["Scenarios:sar:2:id"] = "sar-relay",
+                ["Scenarios:sar:2:pos:0"] = "-30",
+                ["Scenarios:sar:2:pos:1"] = "18",
+                ["Scenarios:sar:2:pos:2"] = "-30",
             })
             .Build();
         return new ScenarioService(config);
@@ -79,9 +99,9 @@ public class SimControllerTests
 
     private static (SimController ctrl, SimulationService sim) CreateController()
     {
-        var sim       = CreateSimService();
+        var sim = CreateSimService();
         var scenarios = CreateScenarioService();
-        var ctrl      = new SimController(sim, scenarios, Mock.Of<ILogger<SimController>>());
+        var ctrl = new SimController(sim, scenarios, Mock.Of<ILogger<SimController>>());
         return (ctrl, sim);
     }
 

@@ -39,7 +39,7 @@ public sealed class ScenarioService
             var entries = new List<(string Id, Vector3 Pos)>();
             foreach (var entry in child.GetChildren())
             {
-                var id  = entry["id"] ?? string.Empty;
+                var id = entry["id"] ?? string.Empty;
                 var pos = entry.GetSection("pos").Get<float[]>() ?? Array.Empty<float>();
                 if (!string.IsNullOrEmpty(id) && pos.Length == 3)
                     entries.Add((id, new Vector3(pos[0], pos[1], pos[2])));

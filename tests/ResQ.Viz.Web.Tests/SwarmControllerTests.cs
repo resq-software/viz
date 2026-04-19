@@ -44,7 +44,7 @@ public sealed class SwarmControllerTests
     public void SetScenario_AssignsRoutes_ForAllDrones()
     {
         var terrain = FlatTerrain();
-        var ctrl  = new SwarmController(terrain);
+        var ctrl = new SwarmController(terrain);
         var world = MakeWorld(terrain);
 
         world.AddDrone("d1", new Vector3(0, 30, 0));
@@ -60,8 +60,8 @@ public sealed class SwarmControllerTests
     public void Tick_AppliesGoToCommand_OnFirstTick()
     {
         var terrain = FlatTerrain();
-        var ctrl    = new SwarmController(terrain);
-        var world   = MakeWorld(terrain);
+        var ctrl = new SwarmController(terrain);
+        var world = MakeWorld(terrain);
 
         world.AddDrone("d1", new Vector3(0, 30, 0));
         ctrl.SetScenario("swarm-5", world.Drones);
@@ -76,8 +76,8 @@ public sealed class SwarmControllerTests
     public void SetTerrainPreset_UpdatesMinAgl_AndDoesNotThrow()
     {
         var terrain = FlatTerrain();
-        var ctrl    = new SwarmController(terrain);
-        var world   = MakeWorld(terrain);
+        var ctrl = new SwarmController(terrain);
+        var world = MakeWorld(terrain);
 
         world.AddDrone("d1", new Vector3(0, 30, 0));
         ctrl.SetScenario("swarm-5", world.Drones);
@@ -95,8 +95,8 @@ public sealed class SwarmControllerTests
     public void SetScenario_AllScenarios_BuildRoutesWithoutThrowing(string scenario)
     {
         var terrain = FlatTerrain();
-        var ctrl    = new SwarmController(terrain);
-        var world   = MakeWorld(terrain);
+        var ctrl = new SwarmController(terrain);
+        var world = MakeWorld(terrain);
 
         for (int i = 0; i < 4; i++)
             world.AddDrone($"d{i}", new Vector3(i * 30, 30, 0));

@@ -166,7 +166,7 @@ public class SimulationServiceTests
     {
         var svc = CreateService();
         svc.AddDrone("alpha", new Vector3(0f, 50f, 0f));
-        svc.AddDrone("beta",  new Vector3(10f, 50f, 0f));
+        svc.AddDrone("beta", new Vector3(10f, 50f, 0f));
         svc.AddDrone("gamma", new Vector3(20f, 50f, 0f));
 
         var ids = svc.GetSnapshot().Select(d => d.Id).ToList();
@@ -189,7 +189,7 @@ public class SimulationServiceTests
         svc.AddDrone("d1", new Vector3(0f, 50f, 0f));
         svc.StepOnce();
         var rot = svc.GetSnapshot()[0].Rotation;
-        var mag = Math.Sqrt(rot[0]*rot[0] + rot[1]*rot[1] + rot[2]*rot[2] + rot[3]*rot[3]);
+        var mag = Math.Sqrt(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2] + rot[3] * rot[3]);
         mag.Should().BeApproximately(1.0, 0.001, "quaternion must be unit-length");
     }
 }
