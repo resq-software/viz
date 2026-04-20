@@ -23,6 +23,7 @@ import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
 import { tickWind } from './treeSprites';
+import { tickWater } from './terrain';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 
@@ -274,6 +275,9 @@ viz.addTickCallback((dt) => effectsMgr.tick(dt));
 // Foliage wind — advances the shared uTime uniform used by every billboard's
 // vertex displacement (see treeSprites.ts buildBillboardMaterial).
 viz.addTickCallback((dt) => tickWind(dt));
+// Water — advances the Water addon's time uniform so the reflective surface
+// ripples rather than sitting static (see terrain.ts _buildWater).
+viz.addTickCallback((dt) => tickWater(dt));
 
 // ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 

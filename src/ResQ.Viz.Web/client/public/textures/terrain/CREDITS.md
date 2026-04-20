@@ -10,6 +10,12 @@ by Lennart Demes. No attribution is required, but we include it as a courtesy.
 | snow  | [Snow006](https://ambientCG.com/view?id=Snow006)               | Alpine high band    |
 | sand  | [Ground054](https://ambientCG.com/view?id=Ground054)           | Dunes, coastal base |
 
+## Water normals (`../waternormals.jpg`)
+
+From Three.js's canonical examples — [mrdoob/three.js/examples/textures/waternormals.jpg](https://github.com/mrdoob/three.js/blob/master/examples/textures/waternormals.jpg).
+MIT License (bundled with Three.js distribution). 1024² tangent-space normal
+map used by the `Water` addon's animated reflection surface.
+
 Each tier ships three 1K JPGs:
 
 - `albedo.jpg` — diffuse / base color (sRGB)
