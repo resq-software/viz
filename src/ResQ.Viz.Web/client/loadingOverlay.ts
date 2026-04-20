@@ -80,29 +80,29 @@ export class LoadingOverlay {
         this._startPhaseCycle();
     }
 
-    /** Call on first successful `ReceiveFrame`. Dismisses the overlay for good. */
+    /**
+     * Call on every `ReceiveFrame`. The first call marks the session as
+     * having seen live data. Every call hides the overlay — so when a
+     * disconnected-card has been shown and frames resume, the card
+     * dismisses automatically without needing an `onreconnected` fire.
+     * The element stays in the DOM so later outages can re-use it.
+     */
     onFrame(): void {
-        if (this._firstFrameSeen) return;
         this._firstFrameSeen = true;
-        this._clearAllTimers();
-        this._el.classList.remove('connecting', 'disconnected');
-        this._el.classList.remove('visible');
-        // A little transition delay before DOM-removing the node keeps the
-        // fade-out from being interrupted by subsequent reconnect flicker.
-        window.setTimeout(() => {
-            this._el.remove();
-        }, FADE_OUT_MS);
+        this._hide();
     }
 
     /** Call on `connection.onclose`. Starts the 5s timer to the error state. */
     onDisconnected(): void {
-        if (this._firstFrameSeen && this._disconnectedTimer === null) {
-            this._disconnectedTimer = window.setTimeout(() => {
-                this._showDisconnectedCard();
-            }, DISCONNECTED_DELAY_MS);
-        } else if (!this._firstFrameSeen) {
-            // Still in cold-load; show phase-style feedback rather than error.
-            this._phaseEl.textContent = 'Reconnecting…';
+        if (this._firstFrameSeen) {
+            if (this._disconnectedTimer === null) {
+                this._disconnectedTimer = window.setTimeout(() => {
+                    this._showDisconnectedCard();
+                }, DISCONNECTED_DELAY_MS);
+            }
+        } else {
+            // Still in cold-load; swap the phase cycle for a persistent status.
+            this._setStatus('Reconnecting…');
         }
     }
 
@@ -113,7 +113,7 @@ export class LoadingOverlay {
             this._disconnectedTimer = null;
         }
         if (!this._firstFrameSeen) {
-            this._phaseEl.textContent = 'Reconnecting…';
+            this._setStatus('Reconnecting…');
         }
     }
 
@@ -123,9 +123,36 @@ export class LoadingOverlay {
             window.clearTimeout(this._disconnectedTimer);
             this._disconnectedTimer = null;
         }
-        this._el.classList.remove('disconnected');
-        // If frames were already flowing, the overlay is gone; no-op.
-        // Otherwise cold-load continues and `onFrame` eventually hides it.
+        // If frames had been flowing, the disconnected card is up — clear it.
+        // If still in cold-load, leave visible and let phase cycle resume.
+        if (this._firstFrameSeen) {
+            this._hide();
+        } else {
+            this._el.classList.remove('disconnected');
+            this._startPhaseCycle();
+        }
+    }
+
+    /** Hide the overlay (keep it mounted for future outages). */
+    private _hide(): void {
+        this._clearAllTimers();
+        this._el.classList.remove('visible', 'connecting', 'disconnected');
+        // Reset title/subtitle so if the overlay re-shows later, it comes
+        // back in a known good state.
+        this._titleEl.textContent    = 'ResQ Viz';
+        this._subtitleEl.textContent = 'Live coordination';
+    }
+
+    /**
+     * Pin a persistent status message during cold-load (e.g. "Reconnecting…")
+     * without it being overwritten by the phase-cycle timer.
+     */
+    private _setStatus(text: string): void {
+        if (this._phaseTimer !== null) {
+            window.clearInterval(this._phaseTimer);
+            this._phaseTimer = null;
+        }
+        this._phaseEl.textContent = text;
     }
 
     private _showDisconnectedCard(): void {
