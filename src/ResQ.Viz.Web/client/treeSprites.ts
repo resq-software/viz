@@ -40,6 +40,44 @@ export function buildCrossGeo(): THREE.BufferGeometry {
     return geo;
 }
 
+// ── Wind ──────────────────────────────────────────────────────────────────────
+// Shared uniforms across every billboard material. `tickWind(dt)` advances the
+// clock from the render-loop tick callback (wired in app.ts). Injected into
+// the existing MeshStandardMaterial via onBeforeCompile so the auto-generated
+// shadow depth pass still works — swapping to a custom ShaderMaterial would
+// break shadow reception.
+export const WIND_UNIFORMS = {
+    uTime:     { value: 0 },
+    // Horizontal sway amplitude in world units. Kept small so alpha-test
+    // seams don't crack between neighbouring instances.
+    uWindAmp:  { value: 0.15 },
+    // Spatial frequency of the sway wave (per world metre).
+    uWindFreq: { value: 0.08 },
+};
+
+/** Advance the wind clock from the render-loop tick callback. */
+export function tickWind(dt: number): void {
+    WIND_UNIFORMS.uTime.value += dt;
+}
+
+const WIND_VERT_DECL = `
+uniform float uTime;
+uniform float uWindAmp;
+uniform float uWindFreq;
+`;
+
+const WIND_VERT_BODY = `
+// Sway billboards horizontally. Scale by uv.y so the trunk (uv.y=0) stays
+// planted and the crown (uv.y=1) moves the most. A secondary higher-
+// frequency term adds inter-tree variation keyed on world x+z so a patch
+// of trees doesn't move in lockstep.
+float _resqWindT = uTime + dot(vec2(transformed.x, transformed.z), vec2(0.13, 0.17));
+float _resqWindSway = sin(_resqWindT * 1.3) * 0.65
+                   + sin(_resqWindT * 3.1 + transformed.z * uWindFreq) * 0.35;
+transformed.x += _resqWindSway * uWindAmp * uv.y;
+transformed.z += _resqWindSway * uWindAmp * 0.6 * uv.y;
+`;
+
 /** MeshStandardMaterial configured for alpha-cut billboard rendering. */
 export function buildBillboardMaterial(tex: THREE.CanvasTexture): THREE.MeshStandardMaterial {
     const mat = new THREE.MeshStandardMaterial({
@@ -51,6 +89,19 @@ export function buildBillboardMaterial(tex: THREE.CanvasTexture): THREE.MeshStan
         // Emissive tint compensates for billboard receiving less env light
         emissive:  new THREE.Color(0.04, 0.06, 0.02),
     });
+    mat.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, WIND_UNIFORMS);
+        shader.vertexShader = shader.vertexShader.replace(
+            '#include <common>',
+            `#include <common>\n${WIND_VERT_DECL}`,
+        );
+        shader.vertexShader = shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>\n${WIND_VERT_BODY}`,
+        );
+    };
+    // Fixed cache key so every billboard shares one compiled program.
+    mat.customProgramCacheKey = () => 'resq-billboard-wind-v1';
     return mat;
 }
 
