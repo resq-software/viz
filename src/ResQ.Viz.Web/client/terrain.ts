@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { PRESETS, PresetKey, TerrainPreset, _noise } from './terrainPresets';
 import * as geoCache from './geoCache';
+import { loadTexture } from './assetLoader';
 import {
     buildCrossGeo,
     buildBillboardMaterial,
@@ -22,13 +23,123 @@ export const TERRAIN_MIN_ABOVE = 2.5;
 // ── Active preset state ──────────────────────────────────────────────────────
 
 let _activePreset: TerrainPreset = PRESETS['alpine'];
+let _activePresetKey: PresetKey = 'alpine';
 
 /** Current water level — live binding updated whenever the preset changes. */
 export let WATER_LEVEL: number = _activePreset.waterLevel;
 
 export function setActivePreset(key: PresetKey): void {
+    _activePresetKey = key;
     _activePreset = PRESETS[key];
     WATER_LEVEL   = _activePreset.waterLevel;
+    _applyPresetTiers();
+}
+
+// ── PBR terrain texture state (PR 2 of the visual upgrade roadmap) ───────────
+// Four CC0 albedo tiers (grass / rock / snow / sand) are loaded once and
+// shared across preset switches. Each preset picks which tier fills the
+// low / mid / high slots; the shader triplanar-samples those three slots
+// and blends by height + slope. `uUsePbrTiles=false` path is the prior
+// constant-color fallback — the demo never blanks on a texture 404.
+
+type TierName = 'grass' | 'rock' | 'snow' | 'sand';
+
+interface PbrUniforms {
+    uTLow:        { value: THREE.Texture | null };
+    uTMid:        { value: THREE.Texture | null };
+    uTHigh:       { value: THREE.Texture | null };
+    uTileScale:   { value: number };
+    uUsePbrTiles: { value: boolean };
+    // Per-preset zone + slope mapping — non-alpine biomes have very
+    // different height ranges, so these are uniforms the preset sets.
+    uZoneOffset:   { value: number };
+    uZoneScale:    { value: number };
+    uZoneLowMid:   { value: THREE.Vector2 };   // smoothstep(x, y, zone) → low→mid
+    uZoneMidHigh:  { value: THREE.Vector2 };   // smoothstep(x, y, zone) → mid→high
+    uSlopeRocky:   { value: THREE.Vector2 };   // smoothstep(x, y, flatness) → rocky bias
+}
+
+const _pbrUniforms: PbrUniforms = {
+    uTLow:        { value: null },
+    uTMid:        { value: null },
+    uTHigh:       { value: null },
+    // ~20 m per texture tile feels correct for a 4 km terrain at
+    // mesh-altitude camera distance. Tune in settings if ever exposed.
+    uTileScale:   { value: 1 / 20 },
+    uUsePbrTiles: { value: false },
+    uZoneOffset:  { value: 15 },
+    uZoneScale:   { value: 230 },
+    uZoneLowMid:  { value: new THREE.Vector2(0.30, 0.60) },
+    uZoneMidHigh: { value: new THREE.Vector2(0.70, 0.95) },
+    uSlopeRocky:  { value: new THREE.Vector2(0.82, 0.46) },
+};
+
+const _tierTextures: Record<TierName, THREE.Texture | null> = {
+    grass: null, rock: null, snow: null, sand: null,
+};
+
+interface PresetPbrParams {
+    low: TierName; mid: TierName; high: TierName;
+    zoneOffset: number; zoneScale: number;
+    lowMid:  [number, number];
+    midHigh: [number, number];
+    rocky:   [number, number];
+}
+
+// Per-preset tier mapping + height/slope parameters. Zone bounds are
+// approximate — they match each preset's heightFn intent but aren't
+// measured from actual geometry; visually close is enough here.
+const PRESET_PBR: Record<PresetKey, PresetPbrParams> = {
+    alpine:    { low: 'grass', mid: 'rock',  high: 'snow', zoneOffset:  15, zoneScale: 230, lowMid: [0.30, 0.60], midHigh: [0.70, 0.95], rocky: [0.82, 0.46] },
+    ridgeline: { low: 'grass', mid: 'rock',  high: 'rock', zoneOffset:  10, zoneScale: 180, lowMid: [0.30, 0.60], midHigh: [0.70, 0.95], rocky: [0.82, 0.46] },
+    coastal:   { low: 'sand',  mid: 'grass', high: 'rock', zoneOffset:   5, zoneScale:  80, lowMid: [0.15, 0.45], midHigh: [0.70, 0.95], rocky: [0.90, 0.60] },
+    canyon:    { low: 'sand',  mid: 'rock',  high: 'rock', zoneOffset:  80, zoneScale: 200, lowMid: [0.25, 0.55], midHigh: [0.70, 0.95], rocky: [0.80, 0.40] },
+    dunes:     { low: 'sand',  mid: 'sand',  high: 'rock', zoneOffset:   5, zoneScale:  60, lowMid: [0.40, 0.80], midHigh: [0.90, 1.00], rocky: [0.95, 0.75] },
+};
+
+function _applyPresetTiers(): void {
+    const p = PRESET_PBR[_activePresetKey];
+    _pbrUniforms.uTLow.value  = _tierTextures[p.low];
+    _pbrUniforms.uTMid.value  = _tierTextures[p.mid];
+    _pbrUniforms.uTHigh.value = _tierTextures[p.high];
+    _pbrUniforms.uZoneOffset.value = p.zoneOffset;
+    _pbrUniforms.uZoneScale.value  = p.zoneScale;
+    _pbrUniforms.uZoneLowMid.value.set(p.lowMid[0],  p.lowMid[1]);
+    _pbrUniforms.uZoneMidHigh.value.set(p.midHigh[0], p.midHigh[1]);
+    _pbrUniforms.uSlopeRocky.value.set(p.rocky[0],   p.rocky[1]);
+}
+
+let _pbrLoadStarted = false;
+
+/**
+ * Lazy-load the 4 CC0 PBR albedo tiers from `/textures/terrain/*`.
+ * On success, remaps the active-preset tier slots and flips
+ * `uUsePbrTiles=true` so subsequent frames sample textures instead of
+ * the constant biome color. Failure is swallowed with a console warning;
+ * the terrain keeps rendering via the constant-color GLSL path.
+ */
+async function _loadPbrTextures(): Promise<void> {
+    if (_pbrLoadStarted) return;
+    _pbrLoadStarted = true;
+
+    const tiers: TierName[] = ['grass', 'rock', 'snow', 'sand'];
+    try {
+        const loaded = await Promise.all(
+            tiers.map(t => loadTexture(`/textures/terrain/${t}/albedo.jpg`)),
+        );
+        for (let i = 0; i < tiers.length; i++) {
+            const tex = loaded[i]!;
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.anisotropy = 4;
+            _tierTextures[tiers[i]!] = tex;
+        }
+        _applyPresetTiers();
+        _pbrUniforms.uUsePbrTiles.value = true;
+    } catch (err) {
+        console.warn('[terrain] PBR texture load failed, keeping constant-color path:', err);
+    }
 }
 
 /**
@@ -83,6 +194,68 @@ float _fbm(vec2 p) {
     for (int k=0;k<4;k++) { v+=a*_vn(p); p*=2.09; a*=0.47; }
     return v;
 }
+`;
+
+// PBR tier sampling — triplanar avoids UV seams on a 4 km heightfield
+// with no UV unwrap. `uTLow` / `uTMid` / `uTHigh` are swapped per preset
+// from the module-level `_pbrUniforms` object. Blend weights are computed
+// once per fragment and shared across tier fetches; zero-weight tiers
+// skip their three reads entirely (presets that duplicate a sampler
+// across slots naturally collapse to zero weight via the tier blend).
+const GLSL_FRAG_PBR = `
+uniform sampler2D uTLow;
+uniform sampler2D uTMid;
+uniform sampler2D uTHigh;
+uniform float uTileScale;
+uniform bool  uUsePbrTiles;
+uniform float uZoneOffset;
+uniform float uZoneScale;
+uniform vec2  uZoneLowMid;
+uniform vec2  uZoneMidHigh;
+uniform vec2  uSlopeRocky;
+
+vec3 _triplanar(sampler2D tex, vec3 wp, vec3 blend, float scale) {
+    vec3 x = texture2D(tex, wp.yz * scale).rgb;
+    vec3 y = texture2D(tex, wp.xz * scale).rgb;
+    vec3 z = texture2D(tex, wp.xy * scale).rgb;
+    return x * blend.x + y * blend.y + z * blend.z;
+}
+
+vec3 _pbrBiome(vec3 wp, vec3 wn, float tile) {
+    // Triplanar blend weights — computed once, shared across tier fetches.
+    vec3 blend = abs(wn);
+    blend = max(blend - 0.2, 0.0);
+    blend /= max(blend.x + blend.y + blend.z, 1e-4);
+
+    // Tier weights — presets that map the same sampler to multiple slots
+    // (e.g. dunes: sand/sand/rock) end up with zero weight on the dup
+    // branches, so we conditionally skip those texture fetches.
+    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale, 0.0, 1.0);
+    float flatness = clamp(wn.y, 0.0, 1.0);
+    float rocky    = smoothstep(uSlopeRocky.x, uSlopeRocky.y, flatness);
+
+    float midBlend  = smoothstep(uZoneLowMid.x,  uZoneLowMid.y,  zone);
+    float highBlend = smoothstep(uZoneMidHigh.x, uZoneMidHigh.y, zone);
+
+    float wHigh = highBlend * (1.0 - rocky);
+    float wMid  = ((1.0 - highBlend) * midBlend * (1.0 - rocky)) + rocky;
+    float wLow  = (1.0 - midBlend) * (1.0 - rocky);
+
+    vec3 c = vec3(0.0);
+    if (wLow  > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * wLow;
+    if (wMid  > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * wMid;
+    if (wHigh > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * wHigh;
+    return c;
+}
+`;
+
+// Runtime override: when uUsePbrTiles is true, overwrite whatever
+// constant-color value the preset's biome GLSL computed. Appended
+// inside each biome's closing brace so it sees `diffuseColor`.
+const GLSL_FRAG_PBR_OVERRIDE = `
+    if (uUsePbrTiles) {
+        diffuseColor.rgb = _pbrBiome(vTerrainWorld, vWorldNormal, uTileScale);
+    }
 `;
 
 // ── Terrain class ──────────────────────────────────────────────────────────────
@@ -164,8 +337,19 @@ export class Terrain {
             metalness: 0.0,
         });
 
-        const biomeGlsl = _activePreset.glslBiome;
+        // Wrap the biome GLSL so the PBR override fires inside its scope
+        // (it needs access to `diffuseColor`). We insert the override just
+        // before the biome block's closing brace.
+        const biomeGlsl = _activePreset.glslBiome.replace(
+            /}\s*$/,
+            `${GLSL_FRAG_PBR_OVERRIDE}\n}`,
+        );
+
         mat.onBeforeCompile = (shader) => {
+            // Share the module-level uniform objects so a later texture
+            // load or preset switch reflects without recompiling.
+            Object.assign(shader.uniforms, _pbrUniforms);
+
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <common>',
                 `#include <common>\n${GLSL_VARYING}`,
@@ -180,7 +364,7 @@ export class Terrain {
             );
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <common>',
-                `#include <common>\n${GLSL_VARYING}\n${GLSL_FRAG_NOISE}`,
+                `#include <common>\n${GLSL_VARYING}\n${GLSL_FRAG_NOISE}\n${GLSL_FRAG_PBR}`,
             );
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <color_fragment>',
@@ -192,6 +376,10 @@ export class Terrain {
         const mesh = new THREE.Mesh(geo, mat);
         mesh.receiveShadow = true;
         this._sceneAdd(scene, mesh);
+
+        // Fire-and-forget load on first ground build. Subsequent terrain
+        // rebuilds (preset switches) are no-ops inside the loader.
+        void _loadPbrTextures();
     }
 
     // ── Water ─────────────────────────────────────────────────────────────────
