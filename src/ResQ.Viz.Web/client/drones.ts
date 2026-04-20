@@ -44,11 +44,19 @@ void (async () => {
 })();
 
 function _cloneGltfBody(bodyColor: number): THREE.Object3D {
-    // Three's Object3D.clone(true) shares materials by default; tint needs a
-    // per-instance material, so we clone every material we touch.
+    // Three's Object3D.clone(true) shares geometries + materials by
+    // reference. We clone (and mark) resources so the per-drone `_remove`
+    // disposal path doesn't free geometry/materials still in use by
+    // sibling drones, and so vendor tint is independent per instance.
     const body = (_gltfTemplate as THREE.Object3D).clone(true);
     const tint = new THREE.Color(bodyColor);
+    // Cache clones keyed on source so a glb that reuses one material
+    // across many meshes produces one material per drone (not one per
+    // mesh × per drone) — preserves draw-call batching.
+    const matCache = new Map<THREE.Material, THREE.Material>();
     const tintOne = (src: THREE.Material): THREE.Material => {
+        const cached = matCache.get(src);
+        if (cached) return cached;
         const cloned = src.clone();
         const std = cloned as THREE.MeshStandardMaterial;
         if (std.color) {
@@ -56,6 +64,8 @@ function _cloneGltfBody(bodyColor: number): THREE.Object3D {
             // vendor tints read without flattening the model's detail.
             std.color.lerp(tint, 0.55);
         }
+        cloned.userData['gltfShared'] = true;
+        matCache.set(src, cloned);
         return cloned;
     };
     body.traverse(c => {
@@ -63,6 +73,9 @@ function _cloneGltfBody(bodyColor: number): THREE.Object3D {
         if (!m.isMesh) return;
         m.castShadow = true;
         m.material = Array.isArray(m.material) ? m.material.map(tintOne) : tintOne(m.material);
+        // Tag the geometry so `_remove` knows to skip disposal — the
+        // same geometry reference is live on N sibling drones.
+        m.geometry.userData['gltfShared'] = true;
     });
     return body;
 }
@@ -562,11 +575,19 @@ export class DroneManager {
         entry.group.traverse(child => {
             this._objToId.delete(child);
             if (child instanceof THREE.Mesh) {
-                child.geometry.dispose();
+                // Skip disposal on resources shared across drones (the
+                // glTF template's geometries + cached tinted materials).
+                // Freeing them here would nuke siblings still using them.
+                if (!child.geometry.userData['gltfShared']) {
+                    child.geometry.dispose();
+                }
+                const disposeMat = (m: THREE.Material): void => {
+                    if (!m.userData['gltfShared']) m.dispose();
+                };
                 if (Array.isArray(child.material)) {
-                    child.material.forEach(m => m.dispose());
+                    child.material.forEach(disposeMat);
                 } else {
-                    child.material.dispose();
+                    disposeMat(child.material);
                 }
             }
         });
