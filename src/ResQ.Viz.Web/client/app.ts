@@ -23,6 +23,7 @@ import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
 import { MissionChrome } from './missionChrome';
+import { EventLog } from './eventLog';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -56,6 +57,10 @@ const loadingOverlay = new LoadingOverlay();
 // Mission chrome — top-center scenario/time/phase strip. Self-wires via the
 // `resq:scenario-start` event; app.ts feeds it sim-time each frame.
 const missionChrome = new MissionChrome();
+
+// Event log — left-edge SIGINT-style ticker. Self-wires scenario-starts;
+// app.ts pushes partition transitions explicitly since it owns that state.
+const eventLog = new EventLog();
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -537,6 +542,7 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
         _backhaulKilled = partitioned;
         partitionBanner.textContent = partitioned ? PARTITION_BANNER_TEXT : '';
         partitionBanner.setAttribute('aria-hidden', String(!partitioned));
+        eventLog.pushPartition(!partitioned);
     }
     document.body.classList.toggle('partitioned', partitioned);
     if (emptyStateEl) {
