@@ -14,9 +14,15 @@
   limitations under the License.
 -->
 
-# ResQ Viz
+# ResQ Viz — Live Coordination
 
-Real-time 3D visualization for ResQ autonomous drone swarms. A tactical dark-theme dashboard that streams live telemetry, mesh topology, hazard zones, and detection events at 10 Hz over SignalR — rendered in Three.js with a post-processing pipeline, procedural terrain, and a Unity-style free-fly camera.
+**The common operating picture for autonomous disaster response.** Ten agencies show up to a hurricane with ten different drones; one shared air picture keeps them coordinated. ResQ Viz renders that picture in real time — mesh topology, hazard fusion, and decentralized consensus, streaming at 10 Hz into any browser.
+
+- **For emergency managers running multi-agency SAR** — HURRICANE MELISSA scenario, 12 drones across 3 vendors, visible backhaul-loss → mesh-only degradation.
+- **For integration partners** — vendor-tagged chassis per agency, MAVLink mesh simulation, SignalR streaming, REST control plane.
+- **Live:** [viz.resq.software](https://viz.resq.software/)
+
+Press `5` to load `multi-agency-sar`. Press `K` to kill the backhaul. Press `Ctrl+Shift+R` to enter investor-mode for a recorded demo.
 
 ---
 
