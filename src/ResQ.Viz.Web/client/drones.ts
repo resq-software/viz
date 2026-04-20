@@ -4,6 +4,81 @@
 import * as THREE from 'three';
 import type { DroneState } from './types';
 import { terrainHeight } from './terrain';
+import { loadGltf } from './assetLoader';
+
+// ── Optional glTF drone model ────────────────────────────────────────────────
+// Loaded once at module init. When available, each drone instance clones the
+// template and tints per-vendor. While the asset loads (or if it fails), the
+// programmatic build below serves as the fallback. No recompile or re-layout
+// cost when the template arrives — the dispatcher gates on `_gltfTemplate`.
+//
+// Vendor tint: material is cloned per instance; the base color is lerped
+// toward bodyColor at 0.55 weight so source luminance stays readable.
+
+let _gltfTemplate: THREE.Object3D | null = null;
+
+void (async () => {
+    try {
+        const gltf = await loadGltf('/models/quadrotor.glb');
+        const root = gltf.scene;
+        // Normalize asset size. Target ≈ 6 world units so the drone reads at
+        // mid-camera distance roughly the same as the programmatic chassis
+        // (`BoxGeometry(3.8)` top plate).
+        const bbox   = new THREE.Box3().setFromObject(root);
+        const size   = bbox.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.z, size.y, 1e-3);
+        root.scale.setScalar(6 / maxDim);
+        // Re-center on the chassis so follow-camera targets the drone body,
+        // not whatever origin the DCC tool exported.
+        bbox.setFromObject(root);
+        const center = bbox.getCenter(new THREE.Vector3());
+        root.position.sub(center);
+        root.traverse(c => {
+            const m = c as THREE.Mesh;
+            if (m.isMesh) m.castShadow = true;
+        });
+        _gltfTemplate = root;
+    } catch (err) {
+        console.warn('[drones] quadrotor.glb load failed, staying programmatic:', err);
+    }
+})();
+
+function _cloneGltfBody(bodyColor: number): THREE.Object3D {
+    // Three's Object3D.clone(true) shares geometries + materials by
+    // reference. We clone (and mark) resources so the per-drone `_remove`
+    // disposal path doesn't free geometry/materials still in use by
+    // sibling drones, and so vendor tint is independent per instance.
+    const body = (_gltfTemplate as THREE.Object3D).clone(true);
+    const tint = new THREE.Color(bodyColor);
+    // Cache clones keyed on source so a glb that reuses one material
+    // across many meshes produces one material per drone (not one per
+    // mesh × per drone) — preserves draw-call batching.
+    const matCache = new Map<THREE.Material, THREE.Material>();
+    const tintOne = (src: THREE.Material): THREE.Material => {
+        const cached = matCache.get(src);
+        if (cached) return cached;
+        const cloned = src.clone();
+        const std = cloned as THREE.MeshStandardMaterial;
+        if (std.color) {
+            // Retain source luminance; shift chroma toward bodyColor so
+            // vendor tints read without flattening the model's detail.
+            std.color.lerp(tint, 0.55);
+        }
+        cloned.userData['gltfShared'] = true;
+        matCache.set(src, cloned);
+        return cloned;
+    };
+    body.traverse(c => {
+        const m = c as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.castShadow = true;
+        m.material = Array.isArray(m.material) ? m.material.map(tintOne) : tintOne(m.material);
+        // Tag the geometry so `_remove` knows to skip disposal — the
+        // same geometry reference is live on N sibling drones.
+        m.geometry.userData['gltfShared'] = true;
+    });
+    return body;
+}
 
 const STATUS_COLORS: Record<string, number> = {
     'IN_FLIGHT':  0x2ecc71,
@@ -425,6 +500,21 @@ export class DroneManager {
         // 2× overall scale — makes the drone clearly visible at the default camera distance
         group.scale.setScalar(2);
 
+        // glTF overlay — when the template loaded, swap the programmatic
+        // body + arms + nav lights + landing legs for the richer model. We
+        // keep the status LED sphere, selection ring, and label sprite
+        // visible so the HUD signals and select/follow behaviour still
+        // work. Rotors hide (static model; spin animation is lost — swap
+        // back to programmatic via `?programmatic` URL param, TODO).
+        if (_gltfTemplate) {
+            const keep = new Set<THREE.Object3D>([led, ring, labelSprite]);
+            group.traverse(child => {
+                if (keep.has(child)) return;
+                if ((child as THREE.Mesh).isMesh) child.visible = false;
+            });
+            group.add(_cloneGltfBody(bodyColor));
+        }
+
         return { group, led: ledMat, ring, rotors, label: labelSprite };
     }
 
@@ -485,11 +575,19 @@ export class DroneManager {
         entry.group.traverse(child => {
             this._objToId.delete(child);
             if (child instanceof THREE.Mesh) {
-                child.geometry.dispose();
+                // Skip disposal on resources shared across drones (the
+                // glTF template's geometries + cached tinted materials).
+                // Freeing them here would nuke siblings still using them.
+                if (!child.geometry.userData['gltfShared']) {
+                    child.geometry.dispose();
+                }
+                const disposeMat = (m: THREE.Material): void => {
+                    if (!m.userData['gltfShared']) m.dispose();
+                };
                 if (Array.isArray(child.material)) {
-                    child.material.forEach(m => m.dispose());
+                    child.material.forEach(disposeMat);
                 } else {
-                    child.material.dispose();
+                    disposeMat(child.material);
                 }
             }
         });
