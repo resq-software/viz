@@ -22,6 +22,7 @@ import { InvestorMode } from './investorMode';
 import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
+import { MissionChrome } from './missionChrome';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -51,6 +52,10 @@ const cameraPresets = new CameraPresets({
 // first SignalR handshake completes; lifecycle is driven by connection events
 // and the first ReceiveFrame.
 const loadingOverlay = new LoadingOverlay();
+
+// Mission chrome — top-center scenario/time/phase strip. Self-wires via the
+// `resq:scenario-start` event; app.ts feeds it sim-time each frame.
+const missionChrome = new MissionChrome();
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -518,6 +523,7 @@ const connection = new HubConnectionBuilder()
 connection.on('ReceiveFrame', (frame: VizFrame) => {
     _lastFrame = frame;
     loadingOverlay.onFrame();
+    missionChrome.update(frame.time ?? 0);
     const drones = frame.drones ?? [];
     droneManager.update(drones);
     effectsMgr.update(frame);
