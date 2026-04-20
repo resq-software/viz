@@ -38,10 +38,15 @@ const investorMode = new InvestorMode(viz.cameraController);
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
+const PARTITION_BANNER_TEXT = 'Backhaul link down — operating mesh-only';
 const partitionBanner = document.createElement('div');
 partitionBanner.className = 'partition-banner';
-partitionBanner.textContent = 'Backhaul link down — operating mesh-only';
+partitionBanner.setAttribute('role', 'status');
 partitionBanner.setAttribute('aria-live', 'polite');
+partitionBanner.setAttribute('aria-atomic', 'true');
+partitionBanner.setAttribute('aria-hidden', 'true');
+// Text is populated on partition transitions so the live region announces
+// the state change (screen readers ignore text present at insertion time).
 document.body.appendChild(partitionBanner);
 
 const settings = new Settings();
@@ -340,6 +345,11 @@ dronePanel.onClose(() => {
 let _fittedToSwarm = false;
 let _lastFrame: VizFrame | null = null;
 let _prevDroneCount = 0;
+// Client-side mirror of the server backhaul state. Optimistically updated on
+// K-press, then reconciled by each incoming frame. The in-flight flag prevents
+// rapid presses from POSTing stale values before the first request lands.
+let _backhaulKilled = false;
+let _backhaulToggleInFlight = false;
 
 const followBtn    = document.getElementById('hud-follow-toggle');
 const emptyStateEl = document.getElementById('empty-state');
@@ -398,13 +408,22 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
 
     // K — toggle the simulated backhaul link. POSTs to the sim controller,
     // which flips the server-side state; the banner follows the next frame.
+    // Uses the in-flight guard + local state so rapid presses don't POST the
+    // same value twice before the first request's frame arrives.
     if (e.code === 'KeyK' && !e.ctrlKey && !e.metaKey) {
-        const currentlyKilled = document.body.classList.contains('partitioned');
-        void fetch('/api/sim/mesh/backhaul', {
+        if (_backhaulToggleInFlight) return;
+        _backhaulToggleInFlight = true;
+        const nextKilled = !_backhaulKilled;
+        fetch('/api/sim/mesh/backhaul', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ killed: !currentlyKilled }),
-        });
+            body: JSON.stringify({ killed: nextKilled }),
+        })
+            .then(r => {
+                if (!r.ok) console.warn(`Backhaul toggle failed: ${r.status}`);
+            })
+            .catch(err => { console.warn('Backhaul toggle failed:', err); })
+            .finally(() => { _backhaulToggleInFlight = false; });
         return;
     }
 
@@ -477,7 +496,13 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
     dronePanel.update(drones);
     windCompass.updateFromWeatherSliders();
-    document.body.classList.toggle('partitioned', frame.mesh?.partitioned === true);
+    const partitioned = frame.mesh?.partitioned === true;
+    if (partitioned !== _backhaulKilled) {
+        _backhaulKilled = partitioned;
+        partitionBanner.textContent = partitioned ? PARTITION_BANNER_TEXT : '';
+        partitionBanner.setAttribute('aria-hidden', String(!partitioned));
+    }
+    document.body.classList.toggle('partitioned', partitioned);
     if (emptyStateEl) {
         if (drones.length > 0) emptyStateEl.classList.add('hidden');
         else                   emptyStateEl.classList.remove('hidden');
