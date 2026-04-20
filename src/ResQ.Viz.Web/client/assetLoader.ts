@@ -11,8 +11,8 @@
 // needs them (bundle-cost discipline) — they pull wasm decoders that
 // want dedicated asset paths under client/public/.
 
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 
 let _gltf: GLTFLoader | null = null;
@@ -35,14 +35,7 @@ function textureLoader(): THREE.TextureLoader {
  * `wwwroot/` at build time.
  */
 export function loadGltf(path: string): Promise<GLTF> {
-    return new Promise((resolve, reject) => {
-        gltfLoader().load(
-            path,
-            gltf => resolve(gltf),
-            undefined,
-            err  => reject(err),
-        );
-    });
+    return gltfLoader().loadAsync(path);
 }
 
 /**
@@ -53,14 +46,7 @@ export function loadGltf(path: string): Promise<GLTF> {
  * on a fully-populated object.
  */
 export function loadTexture(path: string): Promise<THREE.Texture> {
-    return new Promise((resolve, reject) => {
-        textureLoader().load(
-            path,
-            tex => resolve(tex),
-            undefined,
-            err => reject(err),
-        );
-    });
+    return textureLoader().loadAsync(path);
 }
 
 /**
@@ -71,13 +57,13 @@ export function loadTexture(path: string): Promise<THREE.Texture> {
  */
 export async function withFallback<T>(
     loader:   () => Promise<T>,
-    fallback: () => T,
+    fallback: () => T | Promise<T>,
     label:    string,
 ): Promise<T> {
     try {
         return await loader();
     } catch (err) {
         console.warn(`[assetLoader] ${label} failed, using fallback:`, err);
-        return fallback();
+        return await fallback();
     }
 }
