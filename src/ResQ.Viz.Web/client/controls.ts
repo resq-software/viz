@@ -112,6 +112,9 @@ export class ControlPanel {
         document.addEventListener('keydown', async (e) => {
             const target = e.target as Element | null;
             if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
+            // Shift+Digit is reserved for camera presets (see app.ts). Skip so
+            // Shift+1 doesn't also run the `single` scenario.
+            if (e.shiftKey && e.code.startsWith('Digit')) return;
             switch (e.code) {
                 case 'Space':  e.preventDefault(); await this._post('/api/sim/stop'); break;
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
