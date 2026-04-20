@@ -22,6 +22,7 @@ import { InvestorMode } from './investorMode';
 import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
+import { tickWind } from './treeSprites';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 
@@ -270,6 +271,9 @@ void fetch('/api/sim/preset/alpine', { method: 'POST' });
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
+// Foliage wind — advances the shared uTime uniform used by every billboard's
+// vertex displacement (see treeSprites.ts buildBillboardMaterial).
+viz.addTickCallback((dt) => tickWind(dt));
 
 // ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 
