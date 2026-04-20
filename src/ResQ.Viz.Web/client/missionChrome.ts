@@ -90,8 +90,15 @@ export class MissionChrome {
             this._needsAnchor = false;
         }
         const elapsed = Math.max(0, simTime - this._scenarioStartTime);
-        this._timeEl.textContent  = `T+ ${formatElapsed(elapsed)}`;
-        this._phaseEl.textContent = phaseAt(elapsed);
+
+        // Called at ~10 Hz. The formatted time flips once per second and the
+        // phase flips even less often — guard the DOM writes so we don't
+        // churn layout on every frame.
+        const timeStr = `T+ ${formatElapsed(elapsed)}`;
+        if (this._timeEl.textContent !== timeStr) this._timeEl.textContent = timeStr;
+
+        const phase = phaseAt(elapsed);
+        if (this._phaseEl.textContent !== phase) this._phaseEl.textContent = phase;
     }
 
     private _onScenarioStart(name: string): void {
