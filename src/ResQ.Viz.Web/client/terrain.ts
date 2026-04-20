@@ -50,6 +50,13 @@ interface PbrUniforms {
     uTHigh:       { value: THREE.Texture | null };
     uTileScale:   { value: number };
     uUsePbrTiles: { value: boolean };
+    // Per-preset zone + slope mapping — non-alpine biomes have very
+    // different height ranges, so these are uniforms the preset sets.
+    uZoneOffset:   { value: number };
+    uZoneScale:    { value: number };
+    uZoneLowMid:   { value: THREE.Vector2 };   // smoothstep(x, y, zone) → low→mid
+    uZoneMidHigh:  { value: THREE.Vector2 };   // smoothstep(x, y, zone) → mid→high
+    uSlopeRocky:   { value: THREE.Vector2 };   // smoothstep(x, y, flatness) → rocky bias
 }
 
 const _pbrUniforms: PbrUniforms = {
@@ -60,25 +67,46 @@ const _pbrUniforms: PbrUniforms = {
     // mesh-altitude camera distance. Tune in settings if ever exposed.
     uTileScale:   { value: 1 / 20 },
     uUsePbrTiles: { value: false },
+    uZoneOffset:  { value: 15 },
+    uZoneScale:   { value: 230 },
+    uZoneLowMid:  { value: new THREE.Vector2(0.30, 0.60) },
+    uZoneMidHigh: { value: new THREE.Vector2(0.70, 0.95) },
+    uSlopeRocky:  { value: new THREE.Vector2(0.82, 0.46) },
 };
 
 const _tierTextures: Record<TierName, THREE.Texture | null> = {
     grass: null, rock: null, snow: null, sand: null,
 };
 
-const PRESET_TIERS: Record<PresetKey, { low: TierName; mid: TierName; high: TierName }> = {
-    alpine:    { low: 'grass', mid: 'rock', high: 'snow' },
-    ridgeline: { low: 'grass', mid: 'rock', high: 'rock' },
-    coastal:   { low: 'sand',  mid: 'grass', high: 'rock' },
-    canyon:    { low: 'sand',  mid: 'rock', high: 'rock' },
-    dunes:     { low: 'sand',  mid: 'sand', high: 'rock' },
+interface PresetPbrParams {
+    low: TierName; mid: TierName; high: TierName;
+    zoneOffset: number; zoneScale: number;
+    lowMid:  [number, number];
+    midHigh: [number, number];
+    rocky:   [number, number];
+}
+
+// Per-preset tier mapping + height/slope parameters. Zone bounds are
+// approximate — they match each preset's heightFn intent but aren't
+// measured from actual geometry; visually close is enough here.
+const PRESET_PBR: Record<PresetKey, PresetPbrParams> = {
+    alpine:    { low: 'grass', mid: 'rock',  high: 'snow', zoneOffset:  15, zoneScale: 230, lowMid: [0.30, 0.60], midHigh: [0.70, 0.95], rocky: [0.82, 0.46] },
+    ridgeline: { low: 'grass', mid: 'rock',  high: 'rock', zoneOffset:  10, zoneScale: 180, lowMid: [0.30, 0.60], midHigh: [0.70, 0.95], rocky: [0.82, 0.46] },
+    coastal:   { low: 'sand',  mid: 'grass', high: 'rock', zoneOffset:   5, zoneScale:  80, lowMid: [0.15, 0.45], midHigh: [0.70, 0.95], rocky: [0.90, 0.60] },
+    canyon:    { low: 'sand',  mid: 'rock',  high: 'rock', zoneOffset:  80, zoneScale: 200, lowMid: [0.25, 0.55], midHigh: [0.70, 0.95], rocky: [0.80, 0.40] },
+    dunes:     { low: 'sand',  mid: 'sand',  high: 'rock', zoneOffset:   5, zoneScale:  60, lowMid: [0.40, 0.80], midHigh: [0.90, 1.00], rocky: [0.95, 0.75] },
 };
 
 function _applyPresetTiers(): void {
-    const map = PRESET_TIERS[_activePresetKey];
-    _pbrUniforms.uTLow.value  = _tierTextures[map.low];
-    _pbrUniforms.uTMid.value  = _tierTextures[map.mid];
-    _pbrUniforms.uTHigh.value = _tierTextures[map.high];
+    const p = PRESET_PBR[_activePresetKey];
+    _pbrUniforms.uTLow.value  = _tierTextures[p.low];
+    _pbrUniforms.uTMid.value  = _tierTextures[p.mid];
+    _pbrUniforms.uTHigh.value = _tierTextures[p.high];
+    _pbrUniforms.uZoneOffset.value = p.zoneOffset;
+    _pbrUniforms.uZoneScale.value  = p.zoneScale;
+    _pbrUniforms.uZoneLowMid.value.set(p.lowMid[0],  p.lowMid[1]);
+    _pbrUniforms.uZoneMidHigh.value.set(p.midHigh[0], p.midHigh[1]);
+    _pbrUniforms.uSlopeRocky.value.set(p.rocky[0],   p.rocky[1]);
 }
 
 let _pbrLoadStarted = false;
@@ -170,19 +198,23 @@ float _fbm(vec2 p) {
 
 // PBR tier sampling — triplanar avoids UV seams on a 4 km heightfield
 // with no UV unwrap. `uTLow` / `uTMid` / `uTHigh` are swapped per preset
-// from the module-level `_pbrUniforms` object.
+// from the module-level `_pbrUniforms` object. Blend weights are computed
+// once per fragment and shared across tier fetches; zero-weight tiers
+// skip their three reads entirely (presets that duplicate a sampler
+// across slots naturally collapse to zero weight via the tier blend).
 const GLSL_FRAG_PBR = `
 uniform sampler2D uTLow;
 uniform sampler2D uTMid;
 uniform sampler2D uTHigh;
 uniform float uTileScale;
 uniform bool  uUsePbrTiles;
+uniform float uZoneOffset;
+uniform float uZoneScale;
+uniform vec2  uZoneLowMid;
+uniform vec2  uZoneMidHigh;
+uniform vec2  uSlopeRocky;
 
-vec3 _triplanar(sampler2D tex, vec3 wp, vec3 wn, float scale) {
-    vec3 blend = abs(wn);
-    blend = max(blend - 0.2, 0.0);
-    float s = blend.x + blend.y + blend.z;
-    blend /= max(s, 1e-4);
+vec3 _triplanar(sampler2D tex, vec3 wp, vec3 blend, float scale) {
     vec3 x = texture2D(tex, wp.yz * scale).rgb;
     vec3 y = texture2D(tex, wp.xz * scale).rgb;
     vec3 z = texture2D(tex, wp.xy * scale).rgb;
@@ -190,21 +222,29 @@ vec3 _triplanar(sampler2D tex, vec3 wp, vec3 wn, float scale) {
 }
 
 vec3 _pbrBiome(vec3 wp, vec3 wn, float tile) {
-    // Simple height + slope tier blend. Zone thresholds chosen to match
-    // the existing per-biome constant-color bands; biomes that pick the
-    // same sampler for multiple slots (e.g. dunes: sand/sand/rock) get
-    // a near-constant read.
-    float zone     = clamp((wp.y + 15.0) / 230.0, 0.0, 1.0);
+    // Triplanar blend weights — computed once, shared across tier fetches.
+    vec3 blend = abs(wn);
+    blend = max(blend - 0.2, 0.0);
+    blend /= max(blend.x + blend.y + blend.z, 1e-4);
+
+    // Tier weights — presets that map the same sampler to multiple slots
+    // (e.g. dunes: sand/sand/rock) end up with zero weight on the dup
+    // branches, so we conditionally skip those texture fetches.
+    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale, 0.0, 1.0);
     float flatness = clamp(wn.y, 0.0, 1.0);
-    float rocky    = smoothstep(0.82, 0.46, flatness);
+    float rocky    = smoothstep(uSlopeRocky.x, uSlopeRocky.y, flatness);
 
-    vec3 tLow  = _triplanar(uTLow,  wp, wn, tile);
-    vec3 tMid  = _triplanar(uTMid,  wp, wn, tile);
-    vec3 tHigh = _triplanar(uTHigh, wp, wn, tile);
+    float midBlend  = smoothstep(uZoneLowMid.x,  uZoneLowMid.y,  zone);
+    float highBlend = smoothstep(uZoneMidHigh.x, uZoneMidHigh.y, zone);
 
-    vec3 c = mix(tLow, tMid, smoothstep(0.30, 0.60, zone));
-    c = mix(c, tHigh, smoothstep(0.70, 0.95, zone));
-    c = mix(c, tMid, rocky);   // steep slopes bias to the mid (rock) tier
+    float wHigh = highBlend * (1.0 - rocky);
+    float wMid  = ((1.0 - highBlend) * midBlend * (1.0 - rocky)) + rocky;
+    float wLow  = (1.0 - midBlend) * (1.0 - rocky);
+
+    vec3 c = vec3(0.0);
+    if (wLow  > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * wLow;
+    if (wMid  > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * wMid;
+    if (wHigh > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * wHigh;
     return c;
 }
 `;
