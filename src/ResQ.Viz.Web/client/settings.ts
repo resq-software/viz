@@ -17,7 +17,7 @@ export interface SettingsData {
 
 const DEFAULTS: SettingsData = {
     bloomStrength:      0.55,
-    bloomEnabled:       true,
+    bloomEnabled:       false,
     fogDensity:         0.00010,
     flySpeed:           20,
     fov:                60,
