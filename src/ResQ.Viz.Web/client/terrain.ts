@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
+import { Water } from 'three/addons/objects/Water.js';
 import { PRESETS, PresetKey, TerrainPreset, _noise } from './terrainPresets';
 import * as geoCache from './geoCache';
 import { loadTexture } from './assetLoader';
@@ -139,6 +140,49 @@ async function _loadPbrTextures(): Promise<void> {
         _pbrUniforms.uUsePbrTiles.value = true;
     } catch (err) {
         console.warn('[terrain] PBR texture load failed, keeping constant-color path:', err);
+    }
+}
+
+// ── Reflective water state ────────────────────────────────────────────────────
+// The `Water` addon takes its normal map at construction time, so we seed it
+// with a blank 1×1 white texture and hot-swap in the real 1024² normals once
+// they finish loading. The swap is transparent — the Water uniform slot just
+// repoints to the new texture without material recompile.
+
+const _waterNormalsPlaceholder: THREE.Texture = (() => {
+    const data = new Uint8Array([255, 255, 255, 255]);
+    const tex = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
+    tex.needsUpdate = true;
+    return tex;
+})();
+
+let _waterInstance: Water | null = null;
+let _waterNormalsLoadStarted = false;
+
+async function _loadWaterNormals(): Promise<void> {
+    if (_waterNormalsLoadStarted) return;
+    _waterNormalsLoadStarted = true;
+    try {
+        const tex = await loadTexture('/textures/waternormals.jpg');
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        if (_waterInstance) {
+            const u = _waterInstance.material.uniforms['normalSampler'];
+            if (u) u.value = tex;
+        }
+    } catch (err) {
+        console.warn('[terrain] water normals load failed, keeping flat water:', err);
+    }
+}
+
+/**
+ * Advance the Water shader clock from the render-loop tick callback.
+ * Without this the reflective ripple is static.
+ */
+export function tickWater(dt: number): void {
+    if (_waterInstance) {
+        const u = _waterInstance.material.uniforms['time'];
+        if (u) u.value = (u.value as number) + dt;
     }
 }
 
@@ -388,17 +432,24 @@ export class Terrain {
         const geo = new THREE.PlaneGeometry(TERRAIN_SIZE + 600, TERRAIN_SIZE + 600, 1, 1);
         geo.rotateX(-Math.PI / 2);
 
-        const mat = new THREE.MeshStandardMaterial({
-            color:       0x1a5f8c,
-            roughness:   0.06,
-            metalness:   0.18,
-            transparent: true,
-            opacity:     0.80,
+        const water = new Water(geo, {
+            textureWidth:    256,   // keep the reflection render cheap (vs 512/1024)
+            textureHeight:   256,
+            waterNormals:    _waterNormalsPlaceholder,
+            sunDirection:    new THREE.Vector3(0.45, 0.88, 0.25),
+            sunColor:        0xfff8e7,   // match the directional sun in scene.ts
+            waterColor:      0x102838,   // cooler than the old MeshStandardMaterial hex
+            distortionScale: 2.2,
+            fog:             scene.fog !== null,
         });
+        water.position.y = _activePreset.waterLevel;
+        this._sceneAdd(scene, water);
+        _waterInstance = water;
 
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.y = _activePreset.waterLevel;
-        this._sceneAdd(scene, mesh);
+        // Swap in the real normals once they load; `_waterNormalsPlaceholder`
+        // is a blank white 1×1 so the flat-water fallback renders acceptably
+        // on a failed fetch.
+        void _loadWaterNormals();
     }
 
     // ── Obstacles ─────────────────────────────────────────────────────────────
