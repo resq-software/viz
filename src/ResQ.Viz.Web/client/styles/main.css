@@ -889,3 +889,139 @@ body.partitioned .partition-banner {
     opacity: 0.78;
 }
 
+/* ── Loading / connection-lost overlay ────────────────────────────────
+   Rendered over the canvas during cold-load and during SignalR outages
+   that persist past 5 s. Owns its own lifecycle via loadingOverlay.ts.
+*/
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at center,
+        rgba(13, 17, 23, 0.92) 0%,
+        rgba(13, 17, 23, 0.98) 60%,
+        rgba(13, 17, 23, 1.00) 100%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+.loading-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+.loading-overlay-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 40px;
+    text-align: center;
+}
+.loading-title {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-weight: 800;
+    font-size: 26px;
+    letter-spacing: 0.22em;
+    color: var(--text);
+    margin-top: 8px;
+}
+.loading-phase {
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--accent);
+    min-height: 1.2em;
+    transition: color 0.2s ease;
+}
+.loading-sub {
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+    max-width: 320px;
+}
+
+/* Retry button — hidden during normal connect, revealed in disconnected state. */
+.loading-retry {
+    margin-top: 14px;
+    padding: 8px 20px;
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, border-color 0.15s, color 0.15s;
+}
+.loading-retry:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.loading-overlay.disconnected .loading-retry {
+    opacity: 1;
+    pointer-events: auto;
+    border-color: var(--danger);
+    color: var(--danger);
+}
+.loading-overlay.disconnected .loading-retry:hover {
+    background: rgba(248, 81, 73, 0.08);
+}
+
+/* Disconnected state: danger-red border + phase text accent */
+.loading-overlay.disconnected .loading-overlay-inner {
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-lg);
+    background: rgba(20, 7, 7, 0.55);
+    box-shadow: 0 0 24px rgba(248, 81, 73, 0.25);
+}
+.loading-overlay.disconnected .loading-phase {
+    color: var(--danger);
+}
+.loading-overlay.disconnected .loading-title {
+    color: var(--danger);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+/* Concentric-ring spinner */
+.loading-spinner {
+    position: relative;
+    width: 68px;
+    height: 68px;
+    margin-bottom: 8px;
+}
+.loading-ring {
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid transparent;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: resq-ring-spin 1.6s linear infinite;
+}
+.loading-ring-outer { inset: 0;   }
+.loading-ring-mid   { inset: 10px; border-top-color: rgba(88, 166, 255, 0.55); animation-duration: 2.2s; animation-direction: reverse; }
+.loading-ring-inner { inset: 20px; border-top-color: rgba(88, 166, 255, 0.35); animation-duration: 1.0s; }
+
+.loading-overlay.disconnected .loading-ring {
+    border-top-color: var(--danger);
+    animation-play-state: paused;
+    opacity: 0.35;
+}
+
+@keyframes resq-ring-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
