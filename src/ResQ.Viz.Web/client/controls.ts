@@ -48,9 +48,22 @@ export class ControlPanel {
         document.querySelectorAll<HTMLElement>('.scenario-card').forEach(card => {
             card.addEventListener('click', () => {
                 const name = card.dataset['scenario'];
-                if (name) void this._post(`/api/sim/scenario/${name}`);
+                if (name) void this._runScenario(name);
             });
         });
+    }
+
+    /**
+     * POSTs a scenario start and, only on success, dispatches a
+     * `resq:scenario-start` CustomEvent on document. Subscribers
+     * (e.g. the intro overlay) pick up the name without needing a
+     * direct reference. Failed starts do not play the intro so the
+     * viewer never sees a title card for a scenario that didn't run.
+     */
+    private async _runScenario(name: string): Promise<void> {
+        const ok = await this._post(`/api/sim/scenario/${name}`);
+        if (!ok) return;
+        document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
     }
 
     private _bindSpawn(): void {
@@ -103,10 +116,11 @@ export class ControlPanel {
                 case 'Space':  e.preventDefault(); await this._post('/api/sim/stop'); break;
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
                 case 'Tab':    e.preventDefault(); document.getElementById('sidebar')?.classList.toggle('collapsed'); break;
-                case 'Digit1': await this._post('/api/sim/scenario/single');   break;
-                case 'Digit2': await this._post('/api/sim/scenario/swarm-5');  break;
-                case 'Digit3': await this._post('/api/sim/scenario/swarm-20'); break;
-                case 'Digit4': await this._post('/api/sim/scenario/sar');      break;
+                case 'Digit1': await this._runScenario('single');   break;
+                case 'Digit2': await this._runScenario('swarm-5');  break;
+                case 'Digit3': await this._runScenario('swarm-20'); break;
+                case 'Digit4': await this._runScenario('sar');      break;
+                case 'Digit5': await this._runScenario('multi-agency-sar'); break;
             }
         });
     }
@@ -143,15 +157,26 @@ export class ControlPanel {
         document.getElementById(id)?.addEventListener('click', fn);
     }
 
-    private async _post(url: string, body?: unknown): Promise<void> {
+    /**
+     * POSTs to the given URL. Returns <c>true</c> if the server replied 2xx;
+     * otherwise logs a warning (or error, for network failures) and returns
+     * <c>false</c>. Callers can branch on the boolean for side-effects that
+     * should only fire on success (e.g. scenario intro overlay).
+     */
+    private async _post(url: string, body?: unknown): Promise<boolean> {
         try {
             const opts: RequestInit = body
                 ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
                 : { method: 'POST' };
             const res = await fetch(url, opts);
-            if (!res.ok) console.warn(`[controls] ${url} → ${res.status}`);
+            if (!res.ok) {
+                console.warn(`[controls] ${url} → ${res.status}`);
+                return false;
+            }
+            return true;
         } catch (err) {
             console.error('[controls] fetch failed:', url, err);
+            return false;
         }
     }
 }
