@@ -46,7 +46,7 @@ public sealed class ScenarioService
                 var pos = entry.GetSection("pos").Get<float[]>() ?? Array.Empty<float>();
                 var vendor = entry["vendor"];
                 if (!string.IsNullOrEmpty(id) && pos.Length == 3)
-                    entries.Add(new Entry(id, new Vector3(pos[0], pos[1], pos[2]), string.IsNullOrEmpty(vendor) ? null : vendor));
+                    entries.Add(new Entry(id, new Vector3(pos[0], pos[1], pos[2]), string.IsNullOrWhiteSpace(vendor) ? null : vendor));
             }
             if (entries.Count > 0)
                 dict[child.Key] = entries;
