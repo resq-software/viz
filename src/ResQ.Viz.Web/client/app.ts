@@ -21,6 +21,7 @@ import * as geoCache from './geoCache';
 import { InvestorMode } from './investorMode';
 import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
+import { LoadingOverlay } from './loadingOverlay';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -45,6 +46,11 @@ const cameraPresets = new CameraPresets({
     investorMode,
     getDrones: () => _lastFrame?.drones ?? [],
 });
+
+// Cold-load + outage overlay. Created immediately so it's visible before the
+// first SignalR handshake completes; lifecycle is driven by connection events
+// and the first ReceiveFrame.
+const loadingOverlay = new LoadingOverlay();
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -511,6 +517,7 @@ const connection = new HubConnectionBuilder()
 
 connection.on('ReceiveFrame', (frame: VizFrame) => {
     _lastFrame = frame;
+    loadingOverlay.onFrame();
     const drones = frame.drones ?? [];
     droneManager.update(drones);
     effectsMgr.update(frame);
@@ -542,9 +549,9 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     }
 });
 
-connection.onreconnecting(() => hud.setStatus('reconnecting'));
-connection.onreconnected(() => hud.setStatus('connected'));
-connection.onclose(() => hud.setStatus('disconnected'));
+connection.onreconnecting(() => { hud.setStatus('reconnecting'); loadingOverlay.onReconnecting(); });
+connection.onreconnected(()  => { hud.setStatus('connected');    loadingOverlay.onReconnected();  });
+connection.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
 
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
 window.addEventListener('beforeunload', () => clearInterval(_fpsTick));
