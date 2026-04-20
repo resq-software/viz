@@ -65,6 +65,23 @@ export class UnityCamera {
 
     // ── Public API ─────────────────────────────────────────────────────────
 
+    /**
+     * Immediately snap the camera to a world pose. Orbit state is resynced
+     * so subsequent user input (mouse-look, wheel-zoom) continues smoothly
+     * from the new pose. Releases any scripted override.
+     */
+    setPose(position: THREE.Vector3, target: THREE.Vector3): void {
+        this._scripted = null;
+        this._followTarget = null;
+        this._target.copy(target);
+        this.camera.position.copy(position);
+        this.camera.lookAt(target);
+        this._distance = Math.max(_MIN_DIST, position.distanceTo(target));
+        this._eu.setFromQuaternion(this.camera.quaternion, 'YXZ');
+        this._yaw   = this._eu.y;
+        this._pitch = this._eu.x;
+    }
+
     /** Frame the given world positions (called on swarm spawn / Home key). */
     fitToPositions(positions: THREE.Vector3[]): void {
         if (positions.length === 0) return;

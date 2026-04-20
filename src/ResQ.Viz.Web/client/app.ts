@@ -20,6 +20,7 @@ import { PRESETS, PresetKey } from './terrainPresets';
 import * as geoCache from './geoCache';
 import { InvestorMode } from './investorMode';
 import { ScenarioIntro } from './scenarioIntro';
+import { CameraPresets } from './cameraPresets';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -38,6 +39,12 @@ const dronePanel   = new DronePanel();
 const investorMode = new InvestorMode(viz.cameraController);
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
+const cameraPresets = new CameraPresets({
+    viz,
+    droneManager,
+    investorMode,
+    getDrones: () => _lastFrame?.drones ?? [],
+});
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -407,6 +414,19 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             return c.divideScalar(ready.length);
         });
         return;
+    }
+
+    // Shift+1..5 — named camera presets for demo framing (see cameraPresets.ts).
+    // Shift is checked first so the unshifted `Digit1..4` in controls.ts
+    // continues to run scenarios — no collision.
+    if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        switch (e.code) {
+            case 'Digit1': e.preventDefault(); cameraPresets.overview(); return;
+            case 'Digit2': e.preventDefault(); cameraPresets.tactical(); return;
+            case 'Digit3': e.preventDefault(); cameraPresets.cockpit();  return;
+            case 'Digit4': e.preventDefault(); cameraPresets.ground();   return;
+            case 'Digit5': e.preventDefault(); cameraPresets.investor(); return;
+        }
     }
 
     // K — toggle the simulated backhaul link. POSTs to the sim controller,
