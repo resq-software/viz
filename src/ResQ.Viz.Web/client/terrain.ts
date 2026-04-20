@@ -49,6 +49,9 @@ interface PbrUniforms {
     uTLow:        { value: THREE.Texture | null };
     uTMid:        { value: THREE.Texture | null };
     uTHigh:       { value: THREE.Texture | null };
+    uRLow:        { value: THREE.Texture | null };  // roughness maps
+    uRMid:        { value: THREE.Texture | null };
+    uRHigh:       { value: THREE.Texture | null };
     uTileScale:   { value: number };
     uUsePbrTiles: { value: boolean };
     // Per-preset zone + slope mapping — non-alpine biomes have very
@@ -64,6 +67,9 @@ const _pbrUniforms: PbrUniforms = {
     uTLow:        { value: null },
     uTMid:        { value: null },
     uTHigh:       { value: null },
+    uRLow:        { value: null },
+    uRMid:        { value: null },
+    uRHigh:       { value: null },
     // ~20 m per texture tile feels correct for a 4 km terrain at
     // mesh-altitude camera distance. Tune in settings if ever exposed.
     uTileScale:   { value: 1 / 20 },
@@ -75,7 +81,10 @@ const _pbrUniforms: PbrUniforms = {
     uSlopeRocky:  { value: new THREE.Vector2(0.82, 0.46) },
 };
 
-const _tierTextures: Record<TierName, THREE.Texture | null> = {
+const _tierAlbedo: Record<TierName, THREE.Texture | null> = {
+    grass: null, rock: null, snow: null, sand: null,
+};
+const _tierRoughness: Record<TierName, THREE.Texture | null> = {
     grass: null, rock: null, snow: null, sand: null,
 };
 
@@ -100,9 +109,12 @@ const PRESET_PBR: Record<PresetKey, PresetPbrParams> = {
 
 function _applyPresetTiers(): void {
     const p = PRESET_PBR[_activePresetKey];
-    _pbrUniforms.uTLow.value  = _tierTextures[p.low];
-    _pbrUniforms.uTMid.value  = _tierTextures[p.mid];
-    _pbrUniforms.uTHigh.value = _tierTextures[p.high];
+    _pbrUniforms.uTLow.value  = _tierAlbedo[p.low];
+    _pbrUniforms.uTMid.value  = _tierAlbedo[p.mid];
+    _pbrUniforms.uTHigh.value = _tierAlbedo[p.high];
+    _pbrUniforms.uRLow.value  = _tierRoughness[p.low];
+    _pbrUniforms.uRMid.value  = _tierRoughness[p.mid];
+    _pbrUniforms.uRHigh.value = _tierRoughness[p.high];
     _pbrUniforms.uZoneOffset.value = p.zoneOffset;
     _pbrUniforms.uZoneScale.value  = p.zoneScale;
     _pbrUniforms.uZoneLowMid.value.set(p.lowMid[0],  p.lowMid[1]);
@@ -125,16 +137,32 @@ async function _loadPbrTextures(): Promise<void> {
 
     const tiers: TierName[] = ['grass', 'rock', 'snow', 'sand'];
     try {
-        const loaded = await Promise.all(
-            tiers.map(t => loadTexture(`/textures/terrain/${t}/albedo.jpg`)),
-        );
+        // Load albedo + roughness for each tier in parallel. Normal maps
+        // are shipped in the same directory but not yet consumed — reoriented-
+        // normal triplanar is its own PR.
+        const albedoLoads    = tiers.map(t => loadTexture(`/textures/terrain/${t}/albedo.jpg`));
+        const roughnessLoads = tiers.map(t => loadTexture(`/textures/terrain/${t}/roughness.jpg`));
+        const [albedo, roughness] = await Promise.all([
+            Promise.all(albedoLoads),
+            Promise.all(roughnessLoads),
+        ]);
         for (let i = 0; i < tiers.length; i++) {
-            const tex = loaded[i]!;
-            tex.wrapS = THREE.RepeatWrapping;
-            tex.wrapT = THREE.RepeatWrapping;
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.anisotropy = 4;
-            _tierTextures[tiers[i]!] = tex;
+            const tier = tiers[i]!;
+
+            const a = albedo[i]!;
+            a.wrapS = THREE.RepeatWrapping;
+            a.wrapT = THREE.RepeatWrapping;
+            a.colorSpace = THREE.SRGBColorSpace;
+            a.anisotropy = 4;
+            _tierAlbedo[tier] = a;
+
+            const r = roughness[i]!;
+            r.wrapS = THREE.RepeatWrapping;
+            r.wrapT = THREE.RepeatWrapping;
+            // Roughness is a linear data map — not sRGB.
+            r.colorSpace = THREE.NoColorSpace;
+            r.anisotropy = 4;
+            _tierRoughness[tier] = r;
         }
         _applyPresetTiers();
         _pbrUniforms.uUsePbrTiles.value = true;
@@ -250,6 +278,9 @@ const GLSL_FRAG_PBR = `
 uniform sampler2D uTLow;
 uniform sampler2D uTMid;
 uniform sampler2D uTHigh;
+uniform sampler2D uRLow;
+uniform sampler2D uRMid;
+uniform sampler2D uRHigh;
 uniform float uTileScale;
 uniform bool  uUsePbrTiles;
 uniform float uZoneOffset;
@@ -265,31 +296,65 @@ vec3 _triplanar(sampler2D tex, vec3 wp, vec3 blend, float scale) {
     return x * blend.x + y * blend.y + z * blend.z;
 }
 
-vec3 _pbrBiome(vec3 wp, vec3 wn, float tile) {
-    // Triplanar blend weights — computed once, shared across tier fetches.
-    vec3 blend = abs(wn);
+float _triplanarR(sampler2D tex, vec3 wp, vec3 blend, float scale) {
+    float x = texture2D(tex, wp.yz * scale).r;
+    float y = texture2D(tex, wp.xz * scale).r;
+    float z = texture2D(tex, wp.xy * scale).r;
+    return x * blend.x + y * blend.y + z * blend.z;
+}
+
+// Shared weight computation used by both _pbrBiome (albedo) and
+// _pbrRoughness. Returns (wLow, wMid, wHigh) packed into a vec3 plus
+// the triplanar blend weights via the out param. The six smoothsteps
+// are duplicated across the two consumers (one call per fragment shader
+// chunk — _pbrBiome in <color_fragment>, _pbrRoughness in
+// <roughnessmap_fragment>); they live in different GLSL scopes so
+// there's no easy way to share locals across chunks. Measured cost is
+// ~12M smoothstep evaluations per frame at 1080p — trivial for modern
+// GPUs.
+vec3 _pbrTierWeights(vec3 wp, vec3 wn, out vec3 blend) {
+    blend = abs(wn);
     blend = max(blend - 0.2, 0.0);
     blend /= max(blend.x + blend.y + blend.z, 1e-4);
 
-    // Tier weights — presets that map the same sampler to multiple slots
-    // (e.g. dunes: sand/sand/rock) end up with zero weight on the dup
-    // branches, so we conditionally skip those texture fetches.
-    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale, 0.0, 1.0);
+    // Noise-perturbed zone — matches the organic tier transitions in the
+    // constant-color _ALPINE_BIOME etc., avoids horizontal stripes
+    // at the grass/rock/snow interfaces.
+    float noise    = _fbm(wp.xz * 0.035) - 0.5;
+    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale + noise * 0.12, 0.0, 1.0);
     float flatness = clamp(wn.y, 0.0, 1.0);
     float rocky    = smoothstep(uSlopeRocky.x, uSlopeRocky.y, flatness);
 
     float midBlend  = smoothstep(uZoneLowMid.x,  uZoneLowMid.y,  zone);
     float highBlend = smoothstep(uZoneMidHigh.x, uZoneMidHigh.y, zone);
 
+    // Tier weights — (midBlend - highBlend) formulation guarantees
+    // wLow+wMid+wHigh = 1 even if lowMid/midHigh smoothstep ranges
+    // overlap. Rocky bias stays as an additive-mixed factor.
     float wHigh = highBlend * (1.0 - rocky);
-    float wMid  = ((1.0 - highBlend) * midBlend * (1.0 - rocky)) + rocky;
+    float wMid  = (midBlend - highBlend) * (1.0 - rocky) + rocky;
     float wLow  = (1.0 - midBlend) * (1.0 - rocky);
+    return vec3(wLow, wMid, wHigh);
+}
 
+vec3 _pbrBiome(vec3 wp, vec3 wn, float tile) {
+    vec3 blend;
+    vec3 w = _pbrTierWeights(wp, wn, blend);
     vec3 c = vec3(0.0);
-    if (wLow  > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * wLow;
-    if (wMid  > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * wMid;
-    if (wHigh > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * wHigh;
+    if (w.x > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * w.x;
+    if (w.y > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * w.y;
+    if (w.z > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * w.z;
     return c;
+}
+
+float _pbrRoughness(vec3 wp, vec3 wn, float tile) {
+    vec3 blend;
+    vec3 w = _pbrTierWeights(wp, wn, blend);
+    float r = 0.0;
+    if (w.x > 0.0) r += _triplanarR(uRLow,  wp, blend, tile) * w.x;
+    if (w.y > 0.0) r += _triplanarR(uRMid,  wp, blend, tile) * w.y;
+    if (w.z > 0.0) r += _triplanarR(uRHigh, wp, blend, tile) * w.z;
+    return r;
 }
 `;
 
@@ -413,6 +478,17 @@ export class Terrain {
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <color_fragment>',
                 biomeGlsl,
+            );
+            // Override roughness — when PBR tiles are active, sample the
+            // per-tier roughness maps instead of the material's scalar.
+            // The default chunk sets `roughnessFactor = roughness`; we
+            // overwrite after so specular falloff varies with the terrain.
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <roughnessmap_fragment>',
+                `#include <roughnessmap_fragment>
+                if (uUsePbrTiles) {
+                    roughnessFactor = _pbrRoughness(vTerrainWorld, vWorldNormal, uTileScale);
+                }`,
             );
         };
         mat.customProgramCacheKey = () => _activePreset.cacheKey;
