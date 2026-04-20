@@ -81,14 +81,27 @@ export class EventLog {
         row.append(time, tagEl, msg);
         this._el.appendChild(row);
 
-        // Transition in on next frame so the browser commits the initial
-        // `.el-enter` styles before swapping to the target opacity.
-        requestAnimationFrame(() => row.classList.remove('el-enter'));
+        // Force a reflow so the browser commits the initial `.el-enter`
+        // styles before we remove the class — rAF doesn't guarantee paint.
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        void row.offsetHeight;
+        row.classList.remove('el-enter');
 
-        // Cap the buffer. `children` is live; evict from the front so
-        // removal doesn't shift the target.
+        // Cap the buffer. `children` is live; evict from the front and
+        // fade the victim out before removing from the DOM so the exit
+        // mirrors the enter transition.
         while (this._el.children.length > MAX_ROWS) {
-            this._el.firstElementChild?.remove();
+            const victim = this._el.firstElementChild;
+            if (!victim) break;
+            // If it's already being removed, just drop it (avoids runaway
+            // children counts during bursts).
+            if (victim.classList.contains('el-exit')) {
+                victim.remove();
+                continue;
+            }
+            victim.classList.add('el-exit');
+            window.setTimeout(() => victim.remove(), FADE_MS);
+            break;
         }
     }
 

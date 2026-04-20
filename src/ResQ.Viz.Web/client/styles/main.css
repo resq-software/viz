@@ -1099,7 +1099,8 @@ body.partitioned .mc-phase { color: var(--danger); }
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.el-row.el-enter {
+.el-row.el-enter,
+.el-row.el-exit {
     opacity: 0;
     transform: translateX(-6px);
 }
