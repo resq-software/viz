@@ -18,6 +18,7 @@ import { isDroneReady }   from './types';
 import { Settings }       from './settings';
 import { PRESETS, PresetKey } from './terrainPresets';
 import * as geoCache from './geoCache';
+import { InvestorMode } from './investorMode';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ const controlPanel = new ControlPanel();
 const hud          = new Hud();
 const windCompass  = new WindCompass();
 const dronePanel   = new DronePanel();
+const investorMode = new InvestorMode(viz.cameraController);
 
 const settings = new Settings();
 
@@ -370,6 +372,22 @@ followBtn?.addEventListener('click', () => {
 window.addEventListener('keydown', (e: KeyboardEvent) => {
     const target = e.target as Element | null;
     if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
+
+    // Ctrl+Shift+R — investor-mode cinematic preset for screen recording.
+    // Modifier combo is checked before the switch so the raw `KeyR`
+    // slot stays free for future bindings.
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyR') {
+        e.preventDefault();
+        investorMode.toggle(() => {
+            const ready = (_lastFrame?.drones ?? []).filter(d => isDroneReady(d));
+            if (ready.length === 0) return null;
+            const c = new THREE.Vector3();
+            for (const d of ready) c.add(new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
+            return c.divideScalar(ready.length);
+        });
+        return;
+    }
+
     switch (e.code) {
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;

@@ -182,6 +182,9 @@ export class Scene {
     get isFollowing(): boolean { return this._cam.isFollowing; }
     get isFlying(): boolean    { return this._cam.isFlying; }
 
+    /** Underlying camera controller — exposed for scripted-playback clients. */
+    get cameraController(): UnityCamera { return this._cam; }
+
     /** Smoothly orbit-target and zoom to frame all given world positions. */
     fitToPositions(positions: THREE.Vector3[]): void {
         this._cam.fitToPositions(positions);
