@@ -90,7 +90,7 @@ public sealed class VizFrameBuilder
     public VizFrame Build(IReadOnlyList<DroneSnapshot> drones, double simTime)
     {
         var droneStates = drones
-            .Select(d => new DroneVizState(d.Id, d.Position, d.Rotation, d.Velocity, d.Battery, d.Status, d.Armed))
+            .Select(d => new DroneVizState(d.Id, d.Position, d.Rotation, d.Velocity, d.Battery, d.Status, d.Armed, d.Vendor))
             .ToList();
 
         return new VizFrame(

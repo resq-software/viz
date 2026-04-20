@@ -30,6 +30,17 @@ function lerpAlpha(dt: number): number {
 const BODY_COLOR      = 0x161b22;
 const ARM_COLOR       = 0x21262d;
 
+/**
+ * Chassis top-plate tint per integrating-agency vendor. Subtle — keeps the
+ * silhouette consistent while giving a visible agency signature in
+ * multi-agency scenarios. Unmapped/absent vendor falls back to BODY_COLOR.
+ */
+const VENDOR_COLORS: Record<string, number> = {
+    skydio: 0x2b3a55,  // cool steel-blue
+    autel:  0x5a2a30,  // deep oxblood
+    anzu:   0x2a4a36,  // dark forest
+};
+
 /** Detection range in world metres — matches appsettings DetectionRangeMeters. */
 const DETECTION_RANGE_M = 35;
 
@@ -222,7 +233,8 @@ export class DroneManager {
 
     private _add(d: DroneState): void {
         const color = STATUS_COLORS[d.status ?? ''] ?? DEFAULT_COLOR;
-        const { group, led, ring, rotors, label } = this._buildQuadrotor(color, d.id);
+        const bodyColor = d.vendor ? (VENDOR_COLORS[d.vendor] ?? BODY_COLOR) : BODY_COLOR;
+        const { group, led, ring, rotors, label } = this._buildQuadrotor(color, d.id, bodyColor);
 
         const startPos = new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]);
         group.position.copy(startPos);
@@ -258,13 +270,13 @@ export class DroneManager {
         this._drones.set(d.id, entry);
     }
 
-    private _buildQuadrotor(statusColor: number, droneId: string): QuadrotorMesh {
+    private _buildQuadrotor(statusColor: number, droneId: string, bodyColor: number = BODY_COLOR): QuadrotorMesh {
         const group = new THREE.Group();
 
         // ── Central body ──────────────────────────────────────────────────────
         const topPlate = new THREE.Mesh(
             new THREE.BoxGeometry(3.8, 0.35, 3.8),
-            new THREE.MeshStandardMaterial({ color: BODY_COLOR, metalness: 0.1, roughness: 0.75 }),
+            new THREE.MeshStandardMaterial({ color: bodyColor, metalness: 0.1, roughness: 0.75 }),
         );
         topPlate.position.y = 0.3;
         topPlate.castShadow = true;

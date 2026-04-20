@@ -25,6 +25,12 @@ public record VizFrame(
     MeshVizState? Mesh);
 
 /// <summary>Per-drone visual state in a VizFrame.</summary>
+/// <remarks>
+/// <paramref name="Vendor"/> tags the drone with an integrating agency's
+/// equipment maker (e.g. <c>skydio</c>, <c>autel</c>, <c>anzu</c>) so the
+/// client can render vendor-specific chassis tints in multi-agency scenarios.
+/// Null for scenarios that don't need vendor differentiation.
+/// </remarks>
 public record DroneVizState(
     string Id,
     float[] Pos,
@@ -32,7 +38,8 @@ public record DroneVizState(
     float[] Vel,
     double Battery,
     string Status,
-    bool Armed);
+    bool Armed,
+    string? Vendor = null);
 
 /// <summary>A hazard zone (fire, flood, etc.).</summary>
 public record HazardVizState(
