@@ -19,6 +19,7 @@ import { Settings }       from './settings';
 import { PRESETS, PresetKey } from './terrainPresets';
 import * as geoCache from './geoCache';
 import { InvestorMode } from './investorMode';
+import { ScenarioIntro } from './scenarioIntro';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ const hud          = new Hud();
 const windCompass  = new WindCompass();
 const dronePanel   = new DronePanel();
 const investorMode = new InvestorMode(viz.cameraController);
+// Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
+new ScenarioIntro();
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.

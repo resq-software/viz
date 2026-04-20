@@ -827,3 +827,65 @@ body.partitioned .partition-banner {
     font-size: 14px;
 }
 
+/* ── Scenario intro overlay ─────────────────────────────────────────────
+   Full-viewport fade-in title card shown briefly when a scenario starts.
+   Played by scenarioIntro.ts via the `resq:scenario-start` CustomEvent.
+   Non-interactive; `pointer-events: none` so clicks pass through to the
+   scene even if the fade-out is mid-flight.
+*/
+.scenario-intro {
+    position: fixed;
+    inset: 0;
+    z-index: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    background: linear-gradient(180deg,
+        rgba(13, 17, 23, 0.82) 0%,
+        rgba(13, 17, 23, 0.62) 45%,
+        rgba(13, 17, 23, 0.00) 100%);
+    opacity: 0;
+    transition: opacity 0.5s ease-out;
+}
+.scenario-intro.visible {
+    opacity: 1;
+}
+.scenario-intro-inner {
+    text-align: center;
+    padding: 0 32px;
+    transform: translateY(-4%);
+}
+.scenario-intro-kicker {
+    display: block;
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    opacity: 0.85;
+}
+.scenario-intro-title {
+    display: block;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-weight: 800;
+    font-size: clamp(42px, 7vw, 96px);
+    letter-spacing: 0.06em;
+    line-height: 1.02;
+    color: var(--text);
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+.scenario-intro-subtitle {
+    display: block;
+    margin-top: 16px;
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text);
+    opacity: 0.78;
+}
+

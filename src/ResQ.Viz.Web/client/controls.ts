@@ -48,9 +48,19 @@ export class ControlPanel {
         document.querySelectorAll<HTMLElement>('.scenario-card').forEach(card => {
             card.addEventListener('click', () => {
                 const name = card.dataset['scenario'];
-                if (name) void this._post(`/api/sim/scenario/${name}`);
+                if (name) void this._runScenario(name);
             });
         });
+    }
+
+    /**
+     * POSTs a scenario start and dispatches a `resq:scenario-start`
+     * CustomEvent on document. Subscribers (e.g. the intro overlay)
+     * pick up the name without needing a direct reference.
+     */
+    private async _runScenario(name: string): Promise<void> {
+        await this._post(`/api/sim/scenario/${name}`);
+        document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
     }
 
     private _bindSpawn(): void {
@@ -103,10 +113,11 @@ export class ControlPanel {
                 case 'Space':  e.preventDefault(); await this._post('/api/sim/stop'); break;
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
                 case 'Tab':    e.preventDefault(); document.getElementById('sidebar')?.classList.toggle('collapsed'); break;
-                case 'Digit1': await this._post('/api/sim/scenario/single');   break;
-                case 'Digit2': await this._post('/api/sim/scenario/swarm-5');  break;
-                case 'Digit3': await this._post('/api/sim/scenario/swarm-20'); break;
-                case 'Digit4': await this._post('/api/sim/scenario/sar');      break;
+                case 'Digit1': await this._runScenario('single');   break;
+                case 'Digit2': await this._runScenario('swarm-5');  break;
+                case 'Digit3': await this._runScenario('swarm-20'); break;
+                case 'Digit4': await this._runScenario('sar');      break;
+                case 'Digit5': await this._runScenario('multi-agency-sar'); break;
             }
         });
     }
