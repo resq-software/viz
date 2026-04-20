@@ -24,7 +24,10 @@ namespace ResQ.Viz.Web.Services;
 /// </summary>
 public sealed class ScenarioService
 {
-    private readonly IReadOnlyDictionary<string, IReadOnlyList<(string Id, Vector3 Pos)>> _scenarios;
+    /// <summary>Per-drone scenario entry: launch position and optional vendor tag.</summary>
+    public readonly record struct Entry(string Id, Vector3 Pos, string? Vendor);
+
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<Entry>> _scenarios;
 
     /// <summary>
     /// Initialises the service and loads scenario presets from <paramref name="configuration"/>.
@@ -32,17 +35,18 @@ public sealed class ScenarioService
     /// <param name="configuration">Application configuration containing the <c>Scenarios</c> section.</param>
     public ScenarioService(IConfiguration configuration)
     {
-        var dict = new Dictionary<string, IReadOnlyList<(string Id, Vector3 Pos)>>(StringComparer.OrdinalIgnoreCase);
+        var dict = new Dictionary<string, IReadOnlyList<Entry>>(StringComparer.OrdinalIgnoreCase);
         var section = configuration.GetSection("Scenarios");
         foreach (var child in section.GetChildren())
         {
-            var entries = new List<(string Id, Vector3 Pos)>();
+            var entries = new List<Entry>();
             foreach (var entry in child.GetChildren())
             {
                 var id = entry["id"] ?? string.Empty;
                 var pos = entry.GetSection("pos").Get<float[]>() ?? Array.Empty<float>();
+                var vendor = entry["vendor"];
                 if (!string.IsNullOrEmpty(id) && pos.Length == 3)
-                    entries.Add((id, new Vector3(pos[0], pos[1], pos[2])));
+                    entries.Add(new Entry(id, new Vector3(pos[0], pos[1], pos[2]), string.IsNullOrEmpty(vendor) ? null : vendor));
             }
             if (entries.Count > 0)
                 dict[child.Key] = entries;
@@ -68,8 +72,8 @@ public sealed class ScenarioService
         if (!_scenarios.TryGetValue(name, out var drones))
             return false;
 
-        foreach (var (id, pos) in drones)
-            sim.AddDrone(id, pos);
+        foreach (var entry in drones)
+            sim.AddDrone(entry.Id, entry.Pos, entry.Vendor);
 
         return true;
     }

@@ -42,7 +42,8 @@ public record DroneSnapshot(
     float[] Velocity,
     double Battery,
     string Status,
-    bool Armed);
+    bool Armed,
+    string? Vendor = null);
 
 /// <summary>
 /// Background service that owns the <see cref="SimulationWorld"/> and ticks it at ~60 Hz.
@@ -61,6 +62,9 @@ public sealed class SimulationService : BackgroundService
     private int _tickCount;
     private int _swarmTick;
     private double _simTime;
+
+    // Per-drone metadata that isn't in the SDK's SimulatedDrone. Keyed by drone id.
+    private readonly Dictionary<string, string> _droneVendors = new(StringComparer.Ordinal);
 
     /// <summary>Broadcast a viz frame every N simulation ticks (60 Hz / 6 = 10 Hz).</summary>
     private const int BroadcastEveryNTicks = 6;
@@ -89,12 +93,24 @@ public sealed class SimulationService : BackgroundService
     /// <summary>Adds a drone to the simulation world at the specified start position.</summary>
     /// <param name="id">Unique drone identifier.</param>
     /// <param name="position">World-space launch position.</param>
-    public void AddDrone(string id, Vector3 position)
+    public void AddDrone(string id, Vector3 position) => AddDrone(id, position, vendor: null);
+
+    /// <summary>
+    /// Adds a drone to the simulation world with an optional vendor tag.
+    /// </summary>
+    /// <param name="id">Unique drone identifier.</param>
+    /// <param name="position">World-space launch position.</param>
+    /// <param name="vendor">Optional integrating-agency vendor tag (e.g. <c>skydio</c>).</param>
+    public void AddDrone(string id, Vector3 position, string? vendor)
     {
         lock (_lock)
         {
             _world.AddDrone(id, position);
-            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}).", id, position.X, position.Y, position.Z);
+            if (!string.IsNullOrEmpty(vendor))
+            {
+                _droneVendors[id] = vendor;
+            }
+            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}) vendor={Vendor}.", id, position.X, position.Y, position.Z, vendor ?? "none");
         }
     }
 
@@ -165,6 +181,7 @@ public sealed class SimulationService : BackgroundService
             _simTime = 0;
             _tickCount = 0;
             _swarmTick = 0;
+            _droneVendors.Clear();
             _logger.LogInformation("Simulation reset.");
         }
     }
@@ -187,7 +204,8 @@ public sealed class SimulationService : BackgroundService
                     Velocity: [state.Velocity.X, state.Velocity.Y, state.Velocity.Z],
                     Battery: state.BatteryPercent,
                     Status: d.FlightModel.HasLanded ? "landed" : "flying",
-                    Armed: !d.FlightModel.HasLanded);
+                    Armed: !d.FlightModel.HasLanded,
+                    Vendor: _droneVendors.TryGetValue(d.Id, out var v) ? v : null);
             }).ToList();
         }
     }

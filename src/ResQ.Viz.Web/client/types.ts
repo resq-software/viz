@@ -15,6 +15,12 @@ export interface DroneState {
     status?: string;
     battery?: number;
     armed?: boolean;
+    /**
+     * Optional vendor tag identifying the integrating agency's equipment maker
+     * (e.g. "skydio", "autel", "anzu"). Used for chassis-tint differentiation
+     * in multi-agency scenarios.
+     */
+    vendor?: string;
 }
 
 export function isDroneReady(d: DroneState | undefined): d is DroneState & { pos: [number,number,number]; rot: [number,number,number,number]; vel: [number,number,number] } {
