@@ -748,3 +748,45 @@ kbd {
     transition: all 0.15s;
 }
 .settings-reset-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── Investor mode ───────────────────────────────────────────────────────
+   Screen-recording preset. Hides dev chrome, disables modal triggers,
+   and burns in a subtle ResQ wordmark for the capture. Toggle via
+   Ctrl+Shift+R (see investorMode.ts).
+*/
+body.investor-mode #hud-stats,
+body.investor-mode #hud-vel-toggle,
+body.investor-mode #hud-halo-toggle,
+body.investor-mode #hud-form-toggle,
+body.investor-mode #hud-follow-toggle,
+body.investor-mode #hud-hints-toggle,
+body.investor-mode #hud-settings-toggle,
+body.investor-mode .control-panel,
+body.investor-mode .settings-panel,
+body.investor-mode .shortcuts-panel,
+body.investor-mode .drone-panel,
+body.investor-mode .wind-compass {
+    display: none !important;
+}
+
+body.investor-mode,
+body.investor-mode canvas {
+    cursor: none;
+}
+
+.resq-wordmark {
+    position: fixed;
+    left: 24px;
+    bottom: 20px;
+    z-index: 9999;
+    pointer-events: none;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: 0.28em;
+    color: var(--text);
+    opacity: 0.40;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    user-select: none;
+}
+

@@ -35,6 +35,11 @@ export class UnityCamera {
     private _followTarget: THREE.Object3D | null = null;
     private _followOffset = new THREE.Vector3(0, 15, 40);
 
+    // ── Scripted playback (investor-mode cinematic path) ──────────────────
+    // When set, overrides all other camera modes: user input is ignored and
+    // the camera pose is entirely driven by this callback.
+    private _scripted: ((dt: number) => void) | null = null;
+
     // ── Reusable objects (avoid per-frame allocation) ──────────────────────
     private readonly _v0 = new THREE.Vector3();
     private readonly _v1 = new THREE.Vector3();
@@ -84,8 +89,24 @@ export class UnityCamera {
     /** Whether the RMB-fly mode is currently active. */
     get isFlying(): boolean { return this._rmbDown; }
 
+    /** Whether scripted playback (e.g. investor-mode) is driving the camera. */
+    get isScripted(): boolean { return this._scripted !== null; }
+
+    /**
+     * Install a scripted updater. While set, it fully drives camera pose
+     * each frame and user input is ignored. Pass `null` to release control
+     * back to the normal orbit/fly/follow modes.
+     */
+    setScripted(fn: ((dt: number) => void) | null): void {
+        this._scripted = fn;
+    }
+
     /** Per-frame update — call from render loop with elapsed seconds. */
     update(dt: number): void {
+        if (this._scripted) {
+            this._scripted(dt);
+            return;
+        }
         if (this._followTarget) {
             this._updateFollow(dt);
         } else if (this._rmbDown) {
