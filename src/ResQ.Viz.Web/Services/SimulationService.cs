@@ -66,6 +66,11 @@ public sealed class SimulationService : BackgroundService
     // Per-drone metadata that isn't in the SDK's SimulatedDrone. Keyed by drone id.
     private readonly Dictionary<string, string> _droneVendors = new(StringComparer.Ordinal);
 
+    // Simulated backhaul-link failure. When true, the swarm is considered
+    // "mesh-only" for demo/coordination-story purposes — frames report
+    // `Mesh.Partitioned = true` so the client can render a degradation banner.
+    private volatile bool _backhaulKilled;
+
     /// <summary>Broadcast a viz frame every N simulation ticks (60 Hz / 6 = 10 Hz).</summary>
     private const int BroadcastEveryNTicks = 6;
 
@@ -94,6 +99,23 @@ public sealed class SimulationService : BackgroundService
     /// <param name="id">Unique drone identifier.</param>
     /// <param name="position">World-space launch position.</param>
     public void AddDrone(string id, Vector3 position) => AddDrone(id, position, vendor: null);
+
+    /// <summary>
+    /// Current simulated backhaul-link state. When <c>true</c>, the swarm is
+    /// running mesh-only; the next viz frame will report
+    /// <see cref="ResQ.Viz.Web.Models.MeshVizState.Partitioned"/> as <c>true</c>.
+    /// </summary>
+    public bool IsBackhaulKilled => _backhaulKilled;
+
+    /// <summary>
+    /// Toggles the simulated backhaul link. No-op on the SDK physics — affects
+    /// only the mesh-partition signal broadcast in the viz frame.
+    /// </summary>
+    public void SetBackhaulKilled(bool killed)
+    {
+        _backhaulKilled = killed;
+        _logger.LogInformation("Backhaul link {State}.", killed ? "KILLED (mesh-only)" : "RESTORED");
+    }
 
     /// <summary>
     /// Adds a drone to the simulation world with an optional vendor tag.
@@ -182,6 +204,7 @@ public sealed class SimulationService : BackgroundService
             _tickCount = 0;
             _swarmTick = 0;
             _droneVendors.Clear();
+            _backhaulKilled = false;
             _logger.LogInformation("Simulation reset.");
         }
     }
@@ -242,7 +265,7 @@ public sealed class SimulationService : BackgroundService
 
                 // Build and broadcast frame outside the lock to avoid holding it during async I/O.
                 var snapshot = GetSnapshot();
-                var frame = _frameBuilder.Build(snapshot, _simTime);
+                var frame = _frameBuilder.Build(snapshot, _simTime, _backhaulKilled);
                 try
                 {
                     await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
