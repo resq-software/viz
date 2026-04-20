@@ -54,12 +54,15 @@ export class ControlPanel {
     }
 
     /**
-     * POSTs a scenario start and dispatches a `resq:scenario-start`
-     * CustomEvent on document. Subscribers (e.g. the intro overlay)
-     * pick up the name without needing a direct reference.
+     * POSTs a scenario start and, only on success, dispatches a
+     * `resq:scenario-start` CustomEvent on document. Subscribers
+     * (e.g. the intro overlay) pick up the name without needing a
+     * direct reference. Failed starts do not play the intro so the
+     * viewer never sees a title card for a scenario that didn't run.
      */
     private async _runScenario(name: string): Promise<void> {
-        await this._post(`/api/sim/scenario/${name}`);
+        const ok = await this._post(`/api/sim/scenario/${name}`);
+        if (!ok) return;
         document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
     }
 
@@ -154,15 +157,26 @@ export class ControlPanel {
         document.getElementById(id)?.addEventListener('click', fn);
     }
 
-    private async _post(url: string, body?: unknown): Promise<void> {
+    /**
+     * POSTs to the given URL. Returns <c>true</c> if the server replied 2xx;
+     * otherwise logs a warning (or error, for network failures) and returns
+     * <c>false</c>. Callers can branch on the boolean for side-effects that
+     * should only fire on success (e.g. scenario intro overlay).
+     */
+    private async _post(url: string, body?: unknown): Promise<boolean> {
         try {
             const opts: RequestInit = body
                 ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
                 : { method: 'POST' };
             const res = await fetch(url, opts);
-            if (!res.ok) console.warn(`[controls] ${url} → ${res.status}`);
+            if (!res.ok) {
+                console.warn(`[controls] ${url} → ${res.status}`);
+                return false;
+            }
+            return true;
         } catch (err) {
             console.error('[controls] fetch failed:', url, err);
+            return false;
         }
     }
 }

@@ -89,7 +89,10 @@ export class ScenarioIntro {
         if (this._holdTimer    !== null) window.clearTimeout(this._holdTimer);
         if (this._fadeOutTimer !== null) window.clearTimeout(this._fadeOutTimer);
 
+        // Hide the kicker element entirely when empty so its margin-bottom
+        // doesn't push the title off-center for scenarios that skip the kicker.
         this._kickerEl.textContent   = copy.kicker ?? '';
+        this._kickerEl.style.display = copy.kicker ? 'block' : 'none';
         this._titleEl.textContent    = copy.title;
         this._subtitleEl.textContent = copy.subtitle;
 
