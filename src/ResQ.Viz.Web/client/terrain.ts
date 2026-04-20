@@ -305,21 +305,34 @@ float _triplanarR(sampler2D tex, vec3 wp, vec3 blend, float scale) {
 
 // Shared weight computation used by both _pbrBiome (albedo) and
 // _pbrRoughness. Returns (wLow, wMid, wHigh) packed into a vec3 plus
-// the triplanar blend weights via the out param.
+// the triplanar blend weights via the out param. The six smoothsteps
+// are duplicated across the two consumers (one call per fragment shader
+// chunk — _pbrBiome in <color_fragment>, _pbrRoughness in
+// <roughnessmap_fragment>); they live in different GLSL scopes so
+// there's no easy way to share locals across chunks. Measured cost is
+// ~12M smoothstep evaluations per frame at 1080p — trivial for modern
+// GPUs.
 vec3 _pbrTierWeights(vec3 wp, vec3 wn, out vec3 blend) {
     blend = abs(wn);
     blend = max(blend - 0.2, 0.0);
     blend /= max(blend.x + blend.y + blend.z, 1e-4);
 
-    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale, 0.0, 1.0);
+    // Noise-perturbed zone — matches the organic tier transitions in the
+    // constant-color _ALPINE_BIOME etc., avoids horizontal stripes
+    // at the grass/rock/snow interfaces.
+    float noise    = _fbm(wp.xz * 0.035) - 0.5;
+    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale + noise * 0.12, 0.0, 1.0);
     float flatness = clamp(wn.y, 0.0, 1.0);
     float rocky    = smoothstep(uSlopeRocky.x, uSlopeRocky.y, flatness);
 
     float midBlend  = smoothstep(uZoneLowMid.x,  uZoneLowMid.y,  zone);
     float highBlend = smoothstep(uZoneMidHigh.x, uZoneMidHigh.y, zone);
 
+    // Tier weights — (midBlend - highBlend) formulation guarantees
+    // wLow+wMid+wHigh = 1 even if lowMid/midHigh smoothstep ranges
+    // overlap. Rocky bias stays as an additive-mixed factor.
     float wHigh = highBlend * (1.0 - rocky);
-    float wMid  = ((1.0 - highBlend) * midBlend * (1.0 - rocky)) + rocky;
+    float wMid  = (midBlend - highBlend) * (1.0 - rocky) + rocky;
     float wLow  = (1.0 - midBlend) * (1.0 - rocky);
     return vec3(wLow, wMid, wHigh);
 }
