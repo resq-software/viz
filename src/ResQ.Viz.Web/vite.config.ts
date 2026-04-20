@@ -18,9 +18,17 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: 'client',
+  // Treat large 3D assets as file references, not inlined base64. Vite's
+  // default 4 KB inline threshold already bumps anything bigger to
+  // wwwroot/assets/; `assetsInclude` adds glob coverage so these types
+  // are recognised when referenced via `new URL(..., import.meta.url)`.
+  assetsInclude: ['**/*.glb', '**/*.gltf', '**/*.ktx2', '**/*.hdr'],
   build: {
     outDir: '../wwwroot',
-    emptyOutDir: false,   // preserve wwwroot/css/ and other static files
+    // Clean the output dir on rebuild. Without this, Vite accumulates
+    // stale hash-renamed chunks across builds (9+ duplicates of the
+    // same 640 KB JS file at one point).
+    emptyOutDir: true,
   },
   server: {
     proxy: {

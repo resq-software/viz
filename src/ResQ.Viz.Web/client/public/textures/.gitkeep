@@ -1,0 +1,5 @@
+# Reserved for PBR texture tiles (albedo/normal/roughness) and environment
+# maps loaded via client/assetLoader.ts. Files here are copied verbatim
+# into wwwroot/ at build time by Vite.
+# Binary KTX2 compressed textures and HDR envs are LFS-tracked via the
+# root .gitattributes.

@@ -1,0 +1,4 @@
+# Reserved for glTF/glb drone + scenery models loaded via client/assetLoader.ts.
+# Files here are copied verbatim into wwwroot/ at build time by Vite.
+# Binary asset patterns (*.glb, *.ktx2, *.hdr) are LFS-tracked via
+# the root .gitattributes.
