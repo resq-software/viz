@@ -619,11 +619,13 @@ export class Terrain {
 
         const COUNT = settlements.reduce((s, x) => s + x.count, 0);
 
+        // Per-instance color is driven by `instanceColor`; the base `color`
+        // here is white so the instance colors come through unmultiplied.
         const wallMat = new THREE.MeshStandardMaterial({
-            color: 0x2e2b27, roughness: 0.84, metalness: 0.0, envMapIntensity: 0.3,
+            color: 0xffffff, roughness: 0.86, metalness: 0.02, envMapIntensity: 0.3,
         });
         const roofMat = new THREE.MeshStandardMaterial({
-            color: 0x3d1e14, roughness: 0.82, metalness: 0.0, envMapIntensity: 0.3,
+            color: 0xffffff, roughness: 0.80, metalness: 0.02, envMapIntensity: 0.3,
         });
 
         const wallGeo = new THREE.BoxGeometry(1, 1, 1);
@@ -635,10 +637,38 @@ export class Terrain {
         walls.receiveShadow = true;
         roofs.castShadow    = true;
 
+        // Lit-window band — a thin emissive instanced strip sitting on top
+        // of each wall at roughly eye level. Reads as "inhabited" even with
+        // bloom disabled; small enough not to dominate the silhouette.
+        const windowMat = new THREE.MeshStandardMaterial({
+            color: 0x1a1d25, roughness: 0.35, metalness: 0.0,
+            emissive: new THREE.Color(0xffb347),
+            emissiveIntensity: 1.4,
+        });
+        const windowGeo = new THREE.BoxGeometry(1, 1, 1);
+        const windows   = new THREE.InstancedMesh(windowGeo, windowMat, COUNT);
+
+        // Five muted wall tones — warm wood, dusty tan, cool stone, slate,
+        // off-white plaster. Roofs lean red/rust for the classic cabin look.
+        const WALL_PALETTE = [
+            new THREE.Color(0x4a3a2e),
+            new THREE.Color(0x5d5346),
+            new THREE.Color(0x6f6a5c),
+            new THREE.Color(0x3f4148),
+            new THREE.Color(0x8a8271),
+        ];
+        const ROOF_PALETTE = [
+            new THREE.Color(0x3d1e14),
+            new THREE.Color(0x5a2a20),
+            new THREE.Color(0x3a2628),
+            new THREE.Color(0x3e3128),
+        ];
+
         const dummy = new THREE.Object3D();
         let idx     = 0;
 
         const minH = _activePreset.waterLevel + 0.5;
+        const zeroColor = new THREE.Color(0, 0, 0);
 
         for (const s of settlements) {
             let placed      = 0;
@@ -659,6 +689,7 @@ export class Terrain {
                 dummy.rotation.set(0, rot, 0);
                 dummy.updateMatrix();
                 walls.setMatrixAt(idx, dummy.matrix);
+                walls.setColorAt(idx, WALL_PALETTE[Math.floor(rng() * WALL_PALETTE.length)]!);
 
                 const roofH = 2.5 + rng() * 2.0;
                 const hw    = Math.max(w, d) * 0.72;
@@ -667,6 +698,31 @@ export class Terrain {
                 dummy.rotation.set(0, rot + Math.PI * 0.25, 0);
                 dummy.updateMatrix();
                 roofs.setMatrixAt(idx, dummy.matrix);
+                roofs.setColorAt(idx, ROOF_PALETTE[Math.floor(rng() * ROOF_PALETTE.length)]!);
+
+                // ~55% of houses show lit windows. Band height fixed, width
+                // 70% of wall, floated at 55% of wall height (above furniture
+                // line). Dark houses get a zero-scale instance slot so the
+                // lit-window count varies naturally.
+                if (rng() < 0.55) {
+                    const cos = Math.cos(rot), sin = Math.sin(rot);
+                    const offset = d * 0.5;  // front face
+                    dummy.position.set(
+                        bx + cos * offset,
+                        bh + ht * 0.55,
+                        bz - sin * offset,
+                    );
+                    dummy.scale.set(w * 0.72, ht * 0.22, 0.25);
+                    dummy.rotation.set(0, rot, 0);
+                    dummy.updateMatrix();
+                    windows.setMatrixAt(idx, dummy.matrix);
+                    windows.setColorAt(idx, new THREE.Color(0xffffff));
+                } else {
+                    dummy.scale.setScalar(0);
+                    dummy.updateMatrix();
+                    windows.setMatrixAt(idx, dummy.matrix);
+                    windows.setColorAt(idx, zeroColor);
+                }
 
                 placed++;
                 idx++;
@@ -679,11 +735,16 @@ export class Terrain {
         for (; idx < COUNT; idx++) {
             walls.setMatrixAt(idx, dummy.matrix);
             roofs.setMatrixAt(idx, dummy.matrix);
+            windows.setMatrixAt(idx, dummy.matrix);
         }
 
         walls.instanceMatrix.needsUpdate = true;
         roofs.instanceMatrix.needsUpdate = true;
-        this._sceneAdd(scene, walls, roofs);
+        windows.instanceMatrix.needsUpdate = true;
+        if (walls.instanceColor)   walls.instanceColor.needsUpdate   = true;
+        if (roofs.instanceColor)   roofs.instanceColor.needsUpdate   = true;
+        if (windows.instanceColor) windows.instanceColor.needsUpdate = true;
+        this._sceneAdd(scene, walls, roofs, windows);
     }
 
     // ── Scene markers ──────────────────────────────────────────────────────────
