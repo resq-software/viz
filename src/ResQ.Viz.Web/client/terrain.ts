@@ -668,7 +668,8 @@ export class Terrain {
         let idx     = 0;
 
         const minH = _activePreset.waterLevel + 0.5;
-        const zeroColor = new THREE.Color(0, 0, 0);
+        const zeroColor  = new THREE.Color(0, 0, 0);
+        const whiteColor = new THREE.Color(0xffffff);
 
         for (const s of settlements) {
             let placed      = 0;
@@ -705,18 +706,22 @@ export class Terrain {
                 // line). Dark houses get a zero-scale instance slot so the
                 // lit-window count varies naturally.
                 if (rng() < 0.55) {
+                    // Offset along the building's local +Z ("front") — under
+                    // a Y-axis rotation that's world (sin, 0, cos) × depth.
+                    // +0.125 nudges flush with the outer wall instead of
+                    // sinking half the strip depth into the plaster.
                     const cos = Math.cos(rot), sin = Math.sin(rot);
-                    const offset = d * 0.5;  // front face
+                    const offset = d * 0.5 + 0.125;
                     dummy.position.set(
-                        bx + cos * offset,
+                        bx + sin * offset,
                         bh + ht * 0.55,
-                        bz - sin * offset,
+                        bz + cos * offset,
                     );
                     dummy.scale.set(w * 0.72, ht * 0.22, 0.25);
                     dummy.rotation.set(0, rot, 0);
                     dummy.updateMatrix();
                     windows.setMatrixAt(idx, dummy.matrix);
-                    windows.setColorAt(idx, new THREE.Color(0xffffff));
+                    windows.setColorAt(idx, whiteColor);
                 } else {
                     dummy.scale.setScalar(0);
                     dummy.updateMatrix();
