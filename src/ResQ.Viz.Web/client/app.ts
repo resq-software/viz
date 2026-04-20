@@ -36,6 +36,14 @@ const windCompass  = new WindCompass();
 const dronePanel   = new DronePanel();
 const investorMode = new InvestorMode(viz.cameraController);
 
+// Partition banner — shown when the server reports a degraded backhaul link.
+// Persists across investor-mode so the degradation shows in screen recordings.
+const partitionBanner = document.createElement('div');
+partitionBanner.className = 'partition-banner';
+partitionBanner.textContent = 'Backhaul link down — operating mesh-only';
+partitionBanner.setAttribute('aria-live', 'polite');
+document.body.appendChild(partitionBanner);
+
 const settings = new Settings();
 
 // ─── Settings panel wiring ─────────────────────────────────────────────────
@@ -388,6 +396,18 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         return;
     }
 
+    // K — toggle the simulated backhaul link. POSTs to the sim controller,
+    // which flips the server-side state; the banner follows the next frame.
+    if (e.code === 'KeyK' && !e.ctrlKey && !e.metaKey) {
+        const currentlyKilled = document.body.classList.contains('partitioned');
+        void fetch('/api/sim/mesh/backhaul', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ killed: !currentlyKilled }),
+        });
+        return;
+    }
+
     switch (e.code) {
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
@@ -457,6 +477,7 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
     dronePanel.update(drones);
     windCompass.updateFromWeatherSliders();
+    document.body.classList.toggle('partitioned', frame.mesh?.partitioned === true);
     if (emptyStateEl) {
         if (drones.length > 0) emptyStateEl.classList.add('hidden');
         else                   emptyStateEl.classList.remove('hidden');

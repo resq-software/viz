@@ -790,3 +790,40 @@ body.investor-mode canvas {
     user-select: none;
 }
 
+/* ── Partition banner ────────────────────────────────────────────────────
+   Shown when the server reports `frame.mesh.partitioned === true`
+   (backhaul link killed). Persists across investor-mode — the degradation
+   is the narrative payoff and must remain visible in screen recordings.
+*/
+.partition-banner {
+    position: fixed;
+    top: calc(var(--hud-h) + 12px);
+    left: 50%;
+    transform: translateX(-50%) translateY(-6px);
+    z-index: 500;
+    padding: 8px 18px;
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--danger);
+    background: rgba(20, 7, 7, 0.85);
+    backdrop-filter: blur(10px) saturate(1.4);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    box-shadow: 0 0 18px rgba(248, 81, 73, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+body.partitioned .partition-banner {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+.partition-banner::before {
+    content: '⚠';
+    margin-right: 8px;
+    font-size: 14px;
+}
+

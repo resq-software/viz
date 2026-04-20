@@ -36,3 +36,7 @@ public record WeatherRequest(string Mode, float WindSpeed, float WindDirection);
 /// <param name="DroneId">Target drone identifier.</param>
 /// <param name="Type">Fault type string (e.g. "motor-failure", "gps-loss").</param>
 public record FaultRequest(string DroneId, string Type);
+
+/// <summary>Request body for toggling the simulated backhaul link.</summary>
+/// <param name="Killed">Set to <see langword="true"/> to simulate backhaul failure (mesh-only mode).</param>
+public record BackhaulRequest(bool Killed);

@@ -167,6 +167,25 @@ public sealed class SimController : ControllerBase
         return Ok(new { droneId = request.DroneId, faultType = request.Type, status = "logged" });
     }
 
+    /// <summary>
+    /// Toggles the simulated backhaul link. When killed, the swarm is
+    /// reported as <see cref="ResQ.Viz.Web.Models.MeshVizState.Partitioned"/>
+    /// in subsequent viz frames. No effect on physics — this is a demo
+    /// signal for the coordination-degradation narrative.
+    /// </summary>
+    /// <param name="request">Backhaul state toggle.</param>
+    [HttpPost("mesh/backhaul")]
+    [EnableRateLimiting("destructive")]
+    public IActionResult SetBackhaul([FromBody] BackhaulRequest request)
+    {
+        _sim.SetBackhaulKilled(request.Killed);
+        return Ok(new { killed = request.Killed });
+    }
+
+    /// <summary>Returns the current simulated backhaul-link state.</summary>
+    [HttpGet("mesh/backhaul")]
+    public IActionResult GetBackhaul() => Ok(new { killed = _sim.IsBackhaulKilled });
+
     // Strips CR/LF from user-supplied strings before they reach log sinks to prevent log forging.
     // Truncates to 200 characters to prevent excessively long values in logs.
     private static string Sanitize(string? s)

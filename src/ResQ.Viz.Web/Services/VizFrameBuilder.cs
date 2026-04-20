@@ -86,19 +86,26 @@ public sealed class VizFrameBuilder
     /// <summary>Builds a frame from the current simulation snapshot.</summary>
     /// <param name="drones">Drone snapshots from <see cref="SimulationService.GetSnapshot"/>.</param>
     /// <param name="simTime">Current simulation time in seconds.</param>
+    /// <param name="partitioned">
+    /// When <c>true</c>, the emitted frame's <see cref="MeshVizState.Partitioned"/>
+    /// is set so the client can render a degraded-link banner. Used to
+    /// demonstrate mesh-only operation during the multi-agency-sar scenario.
+    /// </param>
     /// <returns>A <see cref="VizFrame"/> ready for broadcast.</returns>
-    public VizFrame Build(IReadOnlyList<DroneSnapshot> drones, double simTime)
+    public VizFrame Build(IReadOnlyList<DroneSnapshot> drones, double simTime, bool partitioned = false)
     {
         var droneStates = drones
             .Select(d => new DroneVizState(d.Id, d.Position, d.Rotation, d.Velocity, d.Battery, d.Status, d.Armed, d.Vendor))
             .ToList();
+
+        var mesh = partitioned ? new MeshVizState(Links: [], Partitioned: true) : null;
 
         return new VizFrame(
             Time: simTime,
             Drones: droneStates,
             Detections: BuildDetections(drones),
             Hazards: BuildHazards(),
-            Mesh: null);
+            Mesh: mesh);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
