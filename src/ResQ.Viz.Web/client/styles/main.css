@@ -1063,3 +1063,57 @@ body.partitioned .partition-banner {
 .mc-sep   { color: var(--text-muted); opacity: 0.55; padding: 0 2px; }
 body.partitioned .mc-phase { color: var(--danger); }
 
+/* ── Event log ───────────────────────────────────────────────────────────
+   Left-edge SIGINT-style ticker. Rolling buffer capped at 8 rows; newest
+   at bottom. Non-interactive; pointer-events pass through to the scene.
+*/
+.event-log {
+    position: fixed;
+    top: calc(var(--hud-h) + 60px);
+    left: 16px;
+    z-index: 420;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 360px;
+    pointer-events: none;
+    font-family: 'DM Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    line-height: 1.45;
+}
+.el-row {
+    display: flex;
+    gap: 8px;
+    padding: 3px 8px;
+    color: var(--text);
+    background: rgba(13, 17, 23, 0.55);
+    border-left: 2px solid var(--border);
+    border-radius: 2px;
+    backdrop-filter: blur(6px);
+    opacity: 1;
+    transform: translateX(0);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.el-row.el-enter {
+    opacity: 0;
+    transform: translateX(-6px);
+}
+.el-time  { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.el-tag   { color: var(--text-muted); letter-spacing: 0.10em; text-transform: uppercase; }
+.el-msg   { color: var(--text); }
+
+/* Level accents — set the left border and tint the tag. */
+.el-info  { border-left-color: var(--border); }
+.el-mesh  { border-left-color: var(--accent); }
+.el-mesh  .el-tag { color: var(--accent); }
+.el-sar   { border-left-color: var(--success); }
+.el-sar   .el-tag { color: var(--success); }
+.el-alert { border-left-color: var(--danger); }
+.el-alert .el-tag { color: var(--danger); }
+.el-alert .el-msg { color: var(--danger); }
+
