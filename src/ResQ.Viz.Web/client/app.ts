@@ -367,6 +367,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                 droneManager.setSelected(droneId);
                 dronePanel.show(droneId);
                 hud.setSelectedDrone(droneId);
+                telemetryStrip.setSelected(droneId);
             }
         }
     } else {
@@ -385,6 +386,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             droneManager.setSelected(null);
             dronePanel.hide();
             hud.setSelectedDrone(null);
+            telemetryStrip.setSelected(null);
         }
     }
 });
@@ -401,6 +403,17 @@ dronePanel.onCommand(async (droneId, cmd) => {
 dronePanel.onClose(() => {
     droneManager.setSelected(null);
     hud.setSelectedDrone(null);
+    telemetryStrip.setSelected(null);
+});
+
+// Telemetry strip row click → same selection path as the scene click-through,
+// so the DronePanel opens and the 3D ring highlights identically regardless
+// of which surface the operator used to pick a drone.
+telemetryStrip.onSelect((droneId) => {
+    droneManager.setSelected(droneId);
+    dronePanel.show(droneId);
+    hud.setSelectedDrone(droneId);
+    telemetryStrip.setSelected(droneId);
 });
 
 let _fittedToSwarm = false;

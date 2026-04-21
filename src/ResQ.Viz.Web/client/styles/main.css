@@ -765,7 +765,9 @@ body.investor-mode .control-panel,
 body.investor-mode .settings-panel,
 body.investor-mode .shortcuts-panel,
 body.investor-mode .drone-panel,
-body.investor-mode .wind-compass {
+body.investor-mode .wind-compass,
+body.investor-mode .telemetry-strip,
+body.investor-mode .event-log {
     display: none !important;
 }
 
@@ -1159,6 +1161,18 @@ body.partitioned .mc-phase { color: var(--danger); }
     backdrop-filter: blur(6px);
     white-space: nowrap;
     overflow: hidden;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: background 0.12s ease, transform 0.12s ease;
+}
+.ts-row:hover {
+    background: rgba(22, 27, 34, 0.82);
+    transform: translateX(-2px);
+}
+.ts-row.ts-row-selected {
+    background: rgba(88, 166, 255, 0.18);
+    border-left-color: var(--accent);
+    box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.28);
 }
 
 .ts-chip {
