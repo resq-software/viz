@@ -241,4 +241,11 @@ export class TelemetryStrip {
     setVisible(visible: boolean): void {
         this._el.classList.toggle('hidden', !visible);
     }
+
+    /** Snapshot of drone ids in current display order (severity-sorted).
+     *  Consumers use this to drive prev/next cycling keybinds so the
+     *  order matches what the operator sees on the strip. */
+    getOrderedIds(): readonly string[] {
+        return this._orderedIds;
+    }
 }
