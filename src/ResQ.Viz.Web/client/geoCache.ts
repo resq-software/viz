@@ -11,6 +11,10 @@
 // Terrain positions: 572 KB uncompressed → ~210 KB compressed (~63 % reduction)
 // Five presets cached = ~1.0 MB vs 2.8 MB uncompressed.
 
+import { getLogger } from './log';
+
+const log = getLogger('geoCache');
+
 const _STORAGE_PREFIX = 'resq-geo-v1-';
 
 /** L1: decompressed, immediately usable.  Populated by store() and init(). */
@@ -61,14 +65,14 @@ async function _compressToStorage(key: string, data: Float32Array): Promise<void
         sessionStorage.setItem(_STORAGE_PREFIX + key, b64);
 
         const ratio = ((1 - compressed.length / input.byteLength) * 100).toFixed(1);
-        console.debug(
-            `[geoCache] stored "${key}": ` +
-            `${(input.byteLength / 1024).toFixed(0)} KB → ` +
-            `${(compressed.length / 1024).toFixed(0)} KB (${ratio} % saved)`,
-        );
+        log.debug(`stored "${key}"`, {
+            rawKB:        (input.byteLength / 1024).toFixed(0),
+            compressedKB: (compressed.length / 1024).toFixed(0),
+            savedPct:     ratio,
+        });
     } catch (err) {
         // sessionStorage can be full or disabled — silently continue
-        console.debug('[geoCache] storage write failed:', err);
+        log.debug('storage write failed', { err });
     }
 }
 
@@ -80,9 +84,11 @@ async function _loadFromStorage(key: string): Promise<void> {
         const compressed   = _b64ToU8(b64);
         const decompressed = await _inflate(compressed);
         _l1.set(key, new Float32Array(decompressed.buffer));
-        console.debug(`[geoCache] loaded "${key}" from sessionStorage (${(decompressed.length / 1024).toFixed(0)} KB)`);
+        log.debug(`loaded "${key}" from sessionStorage`, {
+            sizeKB: (decompressed.length / 1024).toFixed(0),
+        });
     } catch (err) {
-        console.debug('[geoCache] storage read failed for', key, err);
+        log.debug(`storage read failed for "${key}"`, { err });
     }
 }
 

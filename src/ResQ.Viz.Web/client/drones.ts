@@ -6,6 +6,9 @@ import type { DroneState, DetectionState } from './types';
 import { terrainHeight } from './terrain';
 import { loadGltf } from './assetLoader';
 import { classifyLED, applyLED, DETECTION_FLASH_DURATION_SEC } from './dronesLed';
+import { getLogger } from './log';
+
+const log = getLogger('drones');
 
 // ── Optional glTF drone model ────────────────────────────────────────────────
 // Loaded once at module init. When available, each drone instance clones the
@@ -39,14 +42,14 @@ void (async () => {
             if (m.isMesh) m.castShadow = true;
         });
         _gltfTemplate = root;
-        console.log('[drones] quadrotor.glb loaded, retroactively upgrading existing drones');
+        log.info('quadrotor.glb loaded, retroactively upgrading existing drones');
         // DroneManager instances subscribe to this event so drones already
         // in the scene swap from programmatic → glTF. Without this any drone
         // spawned during the 1-3 s asset download window would stay
         // programmatic for the whole session.
         document.dispatchEvent(new CustomEvent('resq:drone-model-ready'));
     } catch (err) {
-        console.warn('[drones] quadrotor.glb load failed, staying programmatic:', err);
+        log.warn('quadrotor.glb load failed, staying programmatic', { err });
     }
 })();
 

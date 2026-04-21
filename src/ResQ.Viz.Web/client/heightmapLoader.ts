@@ -11,6 +11,10 @@
 // above or sink into the heightmap ground by the delta between the two. That
 // cosmetic mismatch is the cost of keeping this a viz-only, zero-backend PR.
 
+import { getLogger } from './log';
+
+const log = getLogger('heightmap');
+
 export interface HeightmapSampler {
     /** Sample elevation in metres at world (x, z). */
     sample(x: number, z: number): number;
@@ -130,7 +134,7 @@ export async function loadHeightmapFromLocation(): Promise<HeightmapSampler | nu
     try {
         return await loadHeightmapSampler(url, opts);
     } catch (err) {
-        console.warn('[heightmap] load failed, falling back to procedural terrain:', err);
+        log.warn('load failed, falling back to procedural terrain', { err });
         return null;
     }
 }

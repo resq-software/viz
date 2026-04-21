@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DroneState } from './types';
+import { getLogger } from './log';
+
+const log = getLogger('controls');
 
 export class ControlPanel {
     constructor() {
@@ -173,12 +176,12 @@ export class ControlPanel {
                 : { method: 'POST' };
             const res = await fetch(url, opts);
             if (!res.ok) {
-                console.warn(`[controls] ${url} → ${res.status}`);
+                log.warn(`${url} returned ${res.status}`);
                 return false;
             }
             return true;
         } catch (err) {
-            console.error('[controls] fetch failed:', url, err);
+            log.error('fetch failed', err, { url });
             return false;
         }
     }
