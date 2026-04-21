@@ -182,6 +182,28 @@ public sealed class SimulationService : BackgroundService
         _logger.LogInformation("Terrain preset switched to '{Key}'.", key);
     }
 
+    /// <summary>
+    /// Installs a client-uploaded heightmap as the authoritative terrain source.
+    /// Drone elevation clamping switches to the DEM immediately; the procedural
+    /// preset is preserved but shadowed until <see cref="ClearHeightmap"/> is called.
+    /// </summary>
+    /// <param name="heights">Row-major elevation grid in metres.</param>
+    /// <param name="width">World width the grid covers, in metres.</param>
+    /// <param name="depth">World depth the grid covers, in metres.</param>
+    public void SetHeightmap(float[,] heights, double width, double depth)
+    {
+        _terrain.SetHeightmap(heights, width, depth);
+        _logger.LogInformation("Heightmap installed: {Rows}×{Cols}, {W}×{D} m.",
+            heights.GetLength(0), heights.GetLength(1), width, depth);
+    }
+
+    /// <summary>Clears the heightmap override; procedural preset resumes.</summary>
+    public void ClearHeightmap()
+    {
+        _terrain.ClearHeightmap();
+        _logger.LogInformation("Heightmap cleared; procedural preset resumes.");
+    }
+
     /// <summary>Notifies the swarm controller of the active scenario so it can assign flight patterns.</summary>
     public void NotifyScenario(string name)
     {

@@ -19,6 +19,12 @@ export interface HeightmapSampler {
     readonly height: number;
     /** Cache key suffix so geoCache invalidates across heightmaps. */
     readonly key:    string;
+    /** Row-major elevation grid in metres (pre-multiplied by heightScale
+     *  and offset by baseOffset). Exposed so callers can ship the decoded
+     *  DEM to the backend for drone-physics clamping. */
+    readonly cells:     Float32Array;
+    /** World extent the grid covers (same as the `worldSize` option). */
+    readonly worldSize: number;
 }
 
 export interface HeightmapOptions {
@@ -57,13 +63,22 @@ export async function loadHeightmapSampler(
     const { data, width, height } = _decodePixels(img);
 
     // Store the red channel only — grayscale heightmaps use RGB = GGG, so
-    // red is canonical and RGB are equal.
-    const grid = new Float32Array(width * height);
-    for (let i = 0; i < grid.length; i++) grid[i] = data[i * 4]! / 255;
+    // red is canonical and RGB are equal. `grid` is the 0..1 normalised
+    // source for cheap bilinear sampling; `cells` is the pre-scaled
+    // metres-grid exposed to callers that forward the DEM to the backend.
+    const grid  = new Float32Array(width * height);
+    const cells = new Float32Array(width * height);
+    for (let i = 0; i < grid.length; i++) {
+        const n = data[i * 4]! / 255;
+        grid[i]  = n;
+        cells[i] = baseOffset + n * heightScale;
+    }
 
     const sampler: HeightmapSampler = {
         width, height,
-        key: cacheKey,
+        key:       cacheKey,
+        cells,
+        worldSize,
         sample(x, z) {
             // World (-worldSize/2..+worldSize/2) → UV (0..1)
             const half = worldSize * 0.5;
