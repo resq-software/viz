@@ -29,6 +29,7 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { TelemetryStrip } from './telemetryStrip';
 import { MiniMap } from './miniMap';
+import { apiPost, apiGet, apiPostOrWarn } from './api';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -265,7 +266,7 @@ function _switchPreset(key: PresetKey): void {
         el.classList.toggle('active', el.dataset['preset'] === key);
     });
     // Notify backend so drone physics clamp to the correct terrain
-    void fetch(`/api/sim/preset/${key}`, { method: 'POST' });
+    apiPostOrWarn(`/api/sim/preset/${key}`, undefined, `preset ${key}`);
 }
 
 // ─── Heightmap import (optional real-world DEM source) ─────────────────────
@@ -302,7 +303,7 @@ document.querySelector<HTMLElement>('.terrain-card[data-preset="alpine"]')
 void geoCache.init();
 
 // Sync backend terrain preset to alpine on first load.
-void fetch('/api/sim/preset/alpine', { method: 'POST' });
+apiPostOrWarn('/api/sim/preset/alpine', undefined, 'initial preset');
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
@@ -363,11 +364,11 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                 const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
                 if (terrainHit && selectedId) {
                     const alt = droneManager.getSelectedAltitude() ?? 15;
-                    void fetch(`/api/sim/drone/${selectedId}/cmd`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ type: 'goto', target: [terrainHit.x, alt, terrainHit.z] }),
-                    }).then(r => { if (!r.ok) console.warn('GoTo failed:', r.status); });
+                    apiPostOrWarn(
+                        `/api/sim/drone/${selectedId}/cmd`,
+                        { type: 'goto', target: [terrainHit.x, alt, terrainHit.z] },
+                        'GoTo',
+                    );
                     viz.showTargetMarker(terrainHit, alt);
                 }
             } else {
@@ -383,11 +384,11 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
             if (terrainHit) {
                 const alt = droneManager.getSelectedAltitude() ?? 15;
-                void fetch(`/api/sim/drone/${selectedId}/cmd`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'goto', target: [terrainHit.x, alt, terrainHit.z] }),
-                }).then(r => { if (!r.ok) console.warn('GoTo failed:', r.status); });
+                apiPostOrWarn(
+                    `/api/sim/drone/${selectedId}/cmd`,
+                    { type: 'goto', target: [terrainHit.x, alt, terrainHit.z] },
+                    'GoTo',
+                );
                 viz.showTargetMarker(terrainHit, alt);
             }
         } else {
@@ -401,12 +402,8 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
 });
 
 dronePanel.onCommand(async (droneId, cmd) => {
-    const res = await fetch(`/api/sim/drone/${droneId}/cmd`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: cmd }),
-    });
-    if (!res.ok) console.warn(`Command ${cmd} on ${droneId} failed: ${res.status}`);
+    const res = await apiPost(`/api/sim/drone/${droneId}/cmd`, { type: cmd });
+    if (!res.success) console.warn(`Command ${cmd} on ${droneId} failed:`, res.error.message);
 });
 
 dronePanel.onClose(() => {
@@ -514,15 +511,10 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         if (_backhaulToggleInFlight) return;
         _backhaulToggleInFlight = true;
         const nextKilled = !_backhaulKilled;
-        fetch('/api/sim/mesh/backhaul', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ killed: nextKilled }),
-        })
-            .then(r => {
-                if (!r.ok) console.warn(`Backhaul toggle failed: ${r.status}`);
+        void apiPost('/api/sim/mesh/backhaul', { killed: nextKilled })
+            .then(res => {
+                if (!res.success) console.warn('Backhaul toggle failed:', res.error.message);
             })
-            .catch(err => { console.warn('Backhaul toggle failed:', err); })
             .finally(() => { _backhaulToggleInFlight = false; });
         return;
     }
@@ -585,11 +577,11 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
                     if (e.code === 'KeyD') pos.x += step;
                     if (e.code === 'KeyQ') pos.y += step;
                     if (e.code === 'KeyE') pos.y -= step;
-                    void fetch(`/api/sim/drone/${nudgeId}/cmd`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ type: 'goto', target: [pos.x, pos.y, pos.z] }),
-                    }).then(r => { if (!r.ok) console.warn('Nudge failed:', r.status); });
+                    apiPostOrWarn(
+                        `/api/sim/drone/${nudgeId}/cmd`,
+                        { type: 'goto', target: [pos.x, pos.y, pos.z] },
+                        'Nudge',
+                    );
                     viz.showTargetMarker(pos, pos.y);
                 }
             }
@@ -688,15 +680,10 @@ window.addEventListener('beforeunload', () => clearInterval(_fpsTick));
 let _starting = false;
 
 async function _autoSpawnIfEmpty(): Promise<void> {
-    try {
-        const res = await fetch('/api/sim/state');
-        if (!res.ok) return;
-        const drones = await res.json() as unknown[];
-        if (drones.length === 0) {
-            await fetch('/api/sim/scenario/single', { method: 'POST' });
-        }
-    } catch {
-        // Non-critical — user can spawn manually via the sidebar
+    const state = await apiGet<unknown[]>('/api/sim/state');
+    if (!state.success) return;   // non-critical; sidebar lets the user spawn manually
+    if (state.value.length === 0) {
+        await apiPost('/api/sim/scenario/single');
     }
 }
 
