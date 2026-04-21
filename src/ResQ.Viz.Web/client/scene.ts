@@ -194,6 +194,23 @@ export class Scene {
     /** Underlying camera controller — exposed for scripted-playback clients. */
     get cameraController(): UnityCamera { return this._cam; }
 
+    /**
+     * Camera state projected to the XZ plane (world-space) plus the current
+     * field-of-view in degrees. Consumed by the mini-map to render a
+     * viewport-frustum indicator so the operator sees what's in view.
+     */
+    getCameraState(): { x: number; z: number; fwd: { x: number; z: number }; fov: number } {
+        const dir = new THREE.Vector3();
+        this._camera.getWorldDirection(dir);
+        const fwdLen = Math.hypot(dir.x, dir.z) || 1;
+        return {
+            x: this._camera.position.x,
+            z: this._camera.position.z,
+            fwd: { x: dir.x / fwdLen, z: dir.z / fwdLen },
+            fov: this._camera.fov,
+        };
+    }
+
     /** Smoothly orbit-target and zoom to frame all given world positions. */
     fitToPositions(positions: THREE.Vector3[]): void {
         this._cam.fitToPositions(positions);

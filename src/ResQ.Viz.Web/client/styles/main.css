@@ -767,7 +767,8 @@ body.investor-mode .shortcuts-panel,
 body.investor-mode .drone-panel,
 body.investor-mode .wind-compass,
 body.investor-mode .telemetry-strip,
-body.investor-mode .event-log {
+body.investor-mode .event-log,
+body.investor-mode .minimap {
     display: none !important;
 }
 
@@ -1227,4 +1228,28 @@ body.partitioned .mc-phase { color: var(--danger); }
 .ts-row-warn   .ts-status { color: var(--warning); }
 .ts-row-alert  { border-left-color: var(--danger); }
 .ts-row-alert  .ts-status { color: var(--danger); }
+
+/* ── Mini-map ────────────────────────────────────────────────────────────
+   Bottom-right 200×200 top-down radar plot. Opacity + blur matches the
+   telemetry strip / event log aesthetic. Click-to-select drone dots.
+*/
+.minimap {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 420;
+    padding: 6px;
+    background: rgba(13, 17, 23, 0.65);
+    border: 1px solid rgba(88, 166, 255, 0.22);
+    border-radius: 4px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    line-height: 0;          /* kill inline-canvas baseline gap */
+}
+.minimap canvas {
+    display: block;
+    border-radius: 2px;
+    cursor: crosshair;
+}
+
 

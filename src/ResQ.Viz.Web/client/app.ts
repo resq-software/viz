@@ -28,6 +28,7 @@ import { loadHeightmapFromLocation } from './heightmapLoader';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { TelemetryStrip } from './telemetryStrip';
+import { MiniMap } from './miniMap';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -69,6 +70,12 @@ const eventLog = new EventLog();
 // Telemetry strip — right-edge per-drone HUD. Complements DronePanel
 // (selected drone detail) with a live roster of every unit's status.
 const telemetryStrip = new TelemetryStrip();
+
+// Mini-map — bottom-right 2D top-down radar plot. Complements the 3D
+// scene by showing global spatial relationships at a glance. Click a
+// drone dot to select it through the standard dispatch.
+const miniMap = new MiniMap();
+miniMap.onCameraQuery(() => viz.getCameraState());
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -368,6 +375,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                 dronePanel.show(droneId);
                 hud.setSelectedDrone(droneId);
                 telemetryStrip.setSelected(droneId);
+                miniMap.setSelected(droneId);
             }
         }
     } else {
@@ -387,6 +395,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             dronePanel.hide();
             hud.setSelectedDrone(null);
             telemetryStrip.setSelected(null);
+            miniMap.setSelected(null);
         }
     }
 });
@@ -404,17 +413,21 @@ dronePanel.onClose(() => {
     droneManager.setSelected(null);
     hud.setSelectedDrone(null);
     telemetryStrip.setSelected(null);
+    miniMap.setSelected(null);
 });
 
 // Telemetry strip row click → same selection path as the scene click-through,
 // so the DronePanel opens and the 3D ring highlights identically regardless
 // of which surface the operator used to pick a drone.
-telemetryStrip.onSelect((droneId) => {
+function _selectFromAnySurface(droneId: string): void {
     droneManager.setSelected(droneId);
     dronePanel.show(droneId);
     hud.setSelectedDrone(droneId);
     telemetryStrip.setSelected(droneId);
-});
+    miniMap.setSelected(droneId);
+}
+telemetryStrip.onSelect(_selectFromAnySurface);
+miniMap.onSelect(_selectFromAnySurface);
 
 let _fittedToSwarm = false;
 let _lastFrame: VizFrame | null = null;
@@ -554,6 +567,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             dronePanel.show(next);
             hud.setSelectedDrone(next);
             telemetryStrip.setSelected(next);
+            miniMap.setSelected(next);
             break;
         }
         // Drone nudge — only when a drone is selected and camera is NOT in free-fly mode
@@ -608,6 +622,7 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     droneManager.update(drones, frame.detections);
     effectsMgr.update(frame);
     telemetryStrip.update(drones);
+    miniMap.update(drones, frame.hazards);
     overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
