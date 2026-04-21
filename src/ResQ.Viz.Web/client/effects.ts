@@ -35,9 +35,18 @@ interface DetectionEntry {
 }
 
 interface HazardEntry {
-    disc: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
-    ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+    disc:      THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
+    rings:     THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[];
+    sweep:     THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+    crosshair: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+    radius:    number;
+    phase:     number;   // animation phase 0..1 for the sweep expansion
 }
+
+// Iso-ring sampling fractions — Palantir-style "ranging rings" at 50/75/100 %.
+const _ISO_RING_FRACTIONS = [0.50, 0.75, 1.00] as const;
+const _SWEEP_PERIOD_SEC   = 2.2;   // one sweep cycle (centre → full radius)
+const _CROSSHAIR_TICK_LEN = 0.08;  // tick length as a fraction of radius
 
 export class EffectsManager {
     private readonly _scene: THREE.Scene;
@@ -160,12 +169,17 @@ export class EffectsManager {
         }
         for (const [key, entry] of this._hazards) {
             if (!seenKeys.has(key)) {
-                this._scene.remove(entry.disc);
-                this._scene.remove(entry.ring);
+                this._scene.remove(entry.disc, entry.sweep, entry.crosshair, ...entry.rings);
                 entry.disc.geometry.dispose();
                 entry.disc.material.dispose();
-                entry.ring.geometry.dispose();
-                entry.ring.material.dispose();
+                entry.sweep.geometry.dispose();
+                entry.sweep.material.dispose();
+                entry.crosshair.geometry.dispose();
+                entry.crosshair.material.dispose();
+                for (const r of entry.rings) {
+                    r.geometry.dispose();
+                    r.material.dispose();
+                }
                 this._hazards.delete(key);
             }
         }
@@ -177,12 +191,13 @@ export class EffectsManager {
         const cx = h.center?.[0] ?? 0;
         const cz = h.center?.[2] ?? 0;
 
-        // Flat disc — low height ground marker
+        // Ground marker disc — keeps the low-opacity colour fill so the hazard
+        // reads from overhead. 1.5 m thick so it survives minor z-noise.
         const discGeo = new THREE.CylinderGeometry(radius, radius, 1.5, 64);
         const discMat = new THREE.MeshStandardMaterial({
             color:       typeColor,
             transparent: true,
-            opacity:     0.18,
+            opacity:     0.15,
             side:        THREE.DoubleSide,
             depthWrite:  false,
         });
@@ -190,27 +205,84 @@ export class EffectsManager {
         disc.position.set(cx, 0.8, cz);
         disc.renderOrder = 1;
 
-        // Border ring
-        const ringGeo = new THREE.RingGeometry(radius - 1.5, radius, 64);
-        ringGeo.rotateX(-Math.PI / 2);
-        const ringMat = new THREE.MeshBasicMaterial({
+        // Iso-rings — Palantir-style "ranging rings" at 50/75/100 % of radius.
+        // Thinnest at the outer edge so it reads as a hard boundary; inner
+        // rings are subtler grid references.
+        const rings: HazardEntry['rings'] = [];
+        for (let i = 0; i < _ISO_RING_FRACTIONS.length; i++) {
+            const frac   = _ISO_RING_FRACTIONS[i]!;
+            const rOuter = radius * frac;
+            // Thinner for inner rings, slightly thicker for the boundary.
+            const width  = Math.max(0.5, 0.8 + i * 0.5);
+            const geo    = new THREE.RingGeometry(rOuter - width, rOuter, 64);
+            geo.rotateX(-Math.PI / 2);
+            const mat = new THREE.MeshBasicMaterial({
+                color:       typeColor,
+                transparent: true,
+                // Outer ring brightest, inner rings fade to grid lines.
+                opacity:     0.35 + i * 0.20,
+                side:        THREE.DoubleSide,
+                depthWrite:  false,
+            });
+            const ring = new THREE.Mesh(geo, mat);
+            ring.position.set(cx, 0.5 + i * 0.02, cz);   // tiny z-lift avoids z-fight
+            ring.renderOrder = 2 + i;
+            rings.push(ring);
+        }
+
+        // Animated sweep ring — expands from centre to boundary then restarts.
+        // Radar-ping aesthetic; radius advances in _animateHazards().
+        const sweepGeo = new THREE.RingGeometry(0.5, 1.0, 64);
+        sweepGeo.rotateX(-Math.PI / 2);
+        const sweepMat = new THREE.MeshBasicMaterial({
             color:       typeColor,
             transparent: true,
-            opacity:     0.7,
+            opacity:     0.0,
             side:        THREE.DoubleSide,
             depthWrite:  false,
         });
-        const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.position.set(cx, 0.5, cz);
-        ring.renderOrder = 2;
+        const sweep = new THREE.Mesh(sweepGeo, sweepMat);
+        sweep.position.set(cx, 0.58, cz);
+        sweep.renderOrder = 6;
 
-        this._scene.add(disc, ring);
-        return { disc, ring };
+        // Cardinal crosshair — 4 short radial ticks at N/S/E/W marking the
+        // centre. Keeps the marker readable when the rings are faint.
+        const tickLen = radius * _CROSSHAIR_TICK_LEN;
+        const verts   = new Float32Array([
+             0,       0.6,  -tickLen,   0,      0.6,  tickLen,   // N ↔ S
+            -tickLen, 0.6,   0,         tickLen, 0.6, 0,         // W ↔ E
+        ]);
+        const crossGeo = new THREE.BufferGeometry();
+        crossGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+        const crossMat = new THREE.LineBasicMaterial({
+            color:       typeColor,
+            transparent: true,
+            opacity:     0.55,
+            depthWrite:  false,
+        });
+        const crosshair = new THREE.LineSegments(crossGeo, crossMat);
+        crosshair.position.set(cx, 0, cz);
+        crosshair.renderOrder = 7;
+
+        this._scene.add(disc, ...rings, sweep, crosshair);
+        return { disc, rings, sweep, crosshair, radius, phase: 0 };
     }
 
     private _animateHazards(): void {
+        // Phase derived from shared _time (seconds) — dt-correct, runs at a
+        // consistent cadence independent of frame rate. All hazards sweep in
+        // unison, which reads as a coordinated threat display rather than a
+        // chaotic mix of pings.
+        const phase = (this._time % _SWEEP_PERIOD_SEC) / _SWEEP_PERIOD_SEC;
         for (const entry of this._hazards.values()) {
-            entry.disc.material.opacity = 0.10 + 0.08 * Math.sin(this._time * 2);
+            entry.disc.material.opacity = 0.08 + 0.06 * Math.sin(this._time * 2);
+
+            entry.phase = phase;
+            const r = 0.5 + phase * (entry.radius - 0.5);
+            entry.sweep.scale.set(r, 1, r);
+            // Quadratic fade — reads as a single expanding pulse rather than
+            // a thick ring stuck at the boundary.
+            entry.sweep.material.opacity = 0.55 * (1 - phase) * (1 - phase);
         }
     }
 
