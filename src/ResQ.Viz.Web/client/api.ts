@@ -46,23 +46,57 @@ export class ApiHttpError extends Error {
     }
 }
 
+export interface ApiOptions {
+    /** Milliseconds before the request is aborted. Default 8 s — generous
+     *  for a local sim server, tight enough that a frozen backend doesn't
+     *  hang UI handlers forever. */
+    timeoutMs?: number;
+}
+
+export interface ApiGetOptions extends ApiOptions {
+    /** Retry count on network-level (fetch-rejected or timeout) failure
+     *  only. HTTP errors (non-2xx with a body) are *not* retried — the
+     *  server saw the request and produced an authoritative answer. Default
+     *  1 retry for GET, which covers SignalR reconnect windows where a
+     *  concurrent fetch loses its connection mid-flight. */
+    retries?: number;
+    /** Backoff between retries in milliseconds. Default 250 ms. */
+    retryDelayMs?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 8_000;
+
+async function _fetchWithTimeout(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+    const ac    = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+        return await fetch(path, { ...init, signal: ac.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 /**
  * POST JSON to the given path. Resolves to a `Result<Response, Error>`:
  * `success` is the raw `Response` (callers that need the body can call
- * `.json()`); `failure` carries either a network `Error` or `ApiHttpError`
- * on non-2xx.
+ * `.json()`); `failure` carries either a network `Error`, `AbortError` on
+ * timeout, or `ApiHttpError` on non-2xx.
+ *
+ * POSTs are *never* retried — they may be non-idempotent (a timed-out
+ * drone-cmd could still have been executed server-side). Timeout-only.
  *
  * Fire-and-forget callers can ignore the result; inspecting callers should
  * branch on `res.success` and log the failure.
  */
-export function apiPost(path: string, body?: unknown) {
+export function apiPost(path: string, body?: unknown, opts: ApiOptions = {}) {
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     return _catch(async () => {
         const init: RequestInit = { method: 'POST' };
         if (body !== undefined) {
             init.headers = { 'Content-Type': 'application/json' };
             init.body    = JSON.stringify(body);
         }
-        const res = await fetch(path, init);
+        const res = await _fetchWithTimeout(path, init, timeoutMs);
         if (!res.ok) throw new ApiHttpError(res.status, path);
         return res;
     });
@@ -70,14 +104,32 @@ export function apiPost(path: string, body?: unknown) {
 
 /**
  * GET JSON from the given path. Parses the body as the declared type T and
- * resolves to `Result<T, Error>`. Failures follow the same contract as
- * `apiPost`.
+ * resolves to `Result<T, Error>`. Retries on *network-level* failures only
+ * (fetch rejections or timeouts — a SignalR reconnect dropping a concurrent
+ * fetch is the motivating case). HTTP errors (non-2xx with a body) fail fast.
  */
-export function apiGet<T>(path: string) {
+export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
+    const timeoutMs    = opts.timeoutMs    ?? DEFAULT_TIMEOUT_MS;
+    const retries      = opts.retries      ?? 1;
+    const retryDelayMs = opts.retryDelayMs ?? 250;
+
     return _catch(async () => {
-        const res = await fetch(path);
-        if (!res.ok) throw new ApiHttpError(res.status, path);
-        return (await res.json()) as T;
+        let lastErr: unknown;
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            try {
+                const res = await _fetchWithTimeout(path, {}, timeoutMs);
+                if (!res.ok) throw new ApiHttpError(res.status, path);
+                return (await res.json()) as T;
+            } catch (err) {
+                // HTTP error → surface immediately; the server spoke.
+                if (err instanceof ApiHttpError) throw err;
+                lastErr = err;
+                if (attempt < retries) {
+                    await new Promise(r => setTimeout(r, retryDelayMs));
+                }
+            }
+        }
+        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
     });
 }
 
