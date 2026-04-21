@@ -111,6 +111,22 @@ export class EventLog {
             level: up ? 'mesh' : 'alert',
         });
     }
+
+    /** Convenience for new detection reports. Formatted as
+     *  `DET  d-003 · survivor` under the SAR level so it picks up the
+     *  green accent in the log. */
+    pushDetection(droneId: string, type: string): void {
+        this.push(`${droneId} · ${type}`, { level: 'sar', tag: 'DET' });
+    }
+
+    /** Convenience for hazard lifecycle transitions. `kind='enter'` fires
+     *  when a new hazard appears (alert level); `kind='exit'` fires when
+     *  a hazard clears (mesh level, since "clearance" is the good news). */
+    pushHazard(kind: 'enter' | 'exit', type: string): void {
+        const verb  = kind === 'enter' ? 'detected' : 'cleared';
+        const level: EventLevel = kind === 'enter' ? 'alert' : 'mesh';
+        this.push(`${type} ${verb}`, { level, tag: 'HAZ' });
+    }
 }
 
 // Re-export helpers for tests / future callers that want stamps.

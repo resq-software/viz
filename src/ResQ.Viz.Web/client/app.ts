@@ -594,6 +594,12 @@ const connection = new HubConnectionBuilder()
     .configureLogging(LogLevel.Warning)
     .build();
 
+// Seen-sets for event-log diffing. Each holds the ids observed on the prior
+// frame so we can emit DET / HAZ entries exactly once per detection or
+// hazard-lifecycle transition, rather than once per incoming frame.
+const _seenDetectionIds = new Set<string>();
+const _seenHazardIds    = new Map<string, string>();   // id → type
+
 connection.on('ReceiveFrame', (frame: VizFrame) => {
     _lastFrame = frame;
     loadingOverlay.onFrame();
@@ -607,6 +613,32 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
     dronePanel.update(drones);
     windCompass.updateFromWeatherSliders();
+
+    // Detection events — fire once per new detection.id.
+    for (const det of frame.detections) {
+        if (_seenDetectionIds.has(det.id)) continue;
+        _seenDetectionIds.add(det.id);
+        eventLog.pushDetection(det.droneId, det.type);
+    }
+
+    // Hazard lifecycle — diff current vs. last frame to catch enter/exit.
+    const currentHazardIds = new Set<string>();
+    for (const h of frame.hazards) {
+        // Legacy frames may omit `id`; synthesize a stable key from type+centre.
+        const hId = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
+        currentHazardIds.add(hId);
+        if (!_seenHazardIds.has(hId)) {
+            _seenHazardIds.set(hId, h.type);
+            eventLog.pushHazard('enter', h.type);
+        }
+    }
+    for (const [id, type] of _seenHazardIds) {
+        if (!currentHazardIds.has(id)) {
+            eventLog.pushHazard('exit', type);
+            _seenHazardIds.delete(id);
+        }
+    }
+
     const partitioned = frame.mesh?.partitioned === true;
     if (partitioned !== _backhaulKilled) {
         _backhaulKilled = partitioned;
