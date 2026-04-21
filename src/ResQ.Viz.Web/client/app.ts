@@ -560,7 +560,7 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     loadingOverlay.onFrame();
     missionChrome.update(frame.time ?? 0);
     const drones = frame.drones ?? [];
-    droneManager.update(drones);
+    droneManager.update(drones, frame.detections);
     effectsMgr.update(frame);
     overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
