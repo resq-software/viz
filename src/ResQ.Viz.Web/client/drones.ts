@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
-import type { DroneState } from './types';
+import type { DroneState, DetectionState } from './types';
 import { terrainHeight } from './terrain';
 import { loadGltf } from './assetLoader';
+import { classifyLED, applyLED, DETECTION_FLASH_DURATION_SEC } from './dronesLed';
 
 // ── Optional glTF drone model ────────────────────────────────────────────────
 // Loaded once at module init. When available, each drone instance clones the
@@ -220,6 +221,14 @@ export class DroneManager {
     private _detectionRingVisible = false;
     private _batteryWarnThreshold = 0.20;
 
+    // Per-drone detection-flash timer. When a detection arrives for drone X,
+    // `_detectionFlashUntil.set(X, _simTimeSec + DURATION)` — the LED
+    // classifier reads the remaining seconds to decide between DETECTING and
+    // whatever mission state would otherwise apply.
+    private readonly _detectionFlashUntil = new Map<string, number>();
+    private readonly _seenDetections       = new Set<string>();   // dedupe across frames
+    private _simTimeSec = 0;
+
     constructor(scene: THREE.Scene) {
         this._threeScene = scene;
 
@@ -240,7 +249,19 @@ export class DroneManager {
         });
     }
 
-    update(drones: DroneState[]): void {
+    update(drones: DroneState[], detections: DetectionState[] = []): void {
+        // Stamp detection-flash deadlines for drones that just reported a new
+        // detection. Dedupe by detection id so a long-lived detection doesn't
+        // re-flash every frame.
+        for (const det of detections) {
+            if (this._seenDetections.has(det.id)) continue;
+            this._seenDetections.add(det.id);
+            this._detectionFlashUntil.set(
+                det.droneId,
+                this._simTimeSec + DETECTION_FLASH_DURATION_SEC,
+            );
+        }
+
         const seenIds = new Set<string>();
         for (const d of drones) {
             seenIds.add(d.id);
@@ -248,11 +269,15 @@ export class DroneManager {
             this._updateDrone(d);
         }
         for (const [id, entry] of this._drones) {
-            if (!seenIds.has(id)) this._remove(id, entry);
+            if (!seenIds.has(id)) {
+                this._remove(id, entry);
+                this._detectionFlashUntil.delete(id);
+            }
         }
     }
 
     tick(dt: number): void {
+        this._simTimeSec += dt;
         const alpha = lerpAlpha(dt);
         for (const entry of this._drones.values()) {
             entry.group.position.lerp(entry.targetPos, alpha);
@@ -603,13 +628,7 @@ export class DroneManager {
         if (!entry.targetRot) entry.targetRot = new THREE.Quaternion();
         entry.targetRot.copy(entry._q);
 
-        // Battery + status visual feedback on the status LED
-        const battery = (d.battery ?? 100) / 100; // normalise to 0–1 (backend sends 0–100)
-        const status  = d.status ?? 'flying';
-        const ledMat  = entry.led;
-        const now     = Date.now();
-
-        // Update label visibility based on label mode
+        // Label visibility — independent of LED state.
         const labelVisible = this._labelMode === 'always'
             ? true
             : this._labelMode === 'hover'
@@ -617,34 +636,21 @@ export class DroneManager {
                 : false;
         entry.label.visible = labelVisible;
 
-        if (battery < this._batteryWarnThreshold * 0.75) {
-            // Critical battery: red, fast pulse
-            ledMat.emissive.setHex(0xff2200);
-            ledMat.emissiveIntensity = 2.5 + Math.sin(now * 0.01) * 1.5;
-            ledMat.color.setHex(0xff2200);
-        } else if (battery < this._batteryWarnThreshold) {
-            // Low battery: orange
-            ledMat.emissive.setHex(0xff8800);
-            ledMat.emissiveIntensity = 2.0;
-            ledMat.color.setHex(0xff8800);
-        } else if (status === 'emergency' || status === 'EMERGENCY') {
-            ledMat.emissive.setHex(0xff0000);
-            ledMat.emissiveIntensity = 3.0 + Math.sin(now * 0.008) * 2.0;
-            ledMat.color.setHex(0xff0000);
-        } else if (status === 'rtl' || status === 'landing' || status === 'RETURNING') {
-            ledMat.emissive.setHex(0xffaa00);
-            ledMat.emissiveIntensity = 1.8;
-            ledMat.color.setHex(0xffaa00);
-        } else if (status === 'hovering') {
-            ledMat.emissive.setHex(0x0088ff);
-            ledMat.emissiveIntensity = 1.5;
-            ledMat.color.setHex(0x0088ff);
-        } else {
-            // Normal flying: green
-            ledMat.emissive.setHex(0x00ff44);
-            ledMat.emissiveIntensity = 2.0;
-            ledMat.color.setHex(0x00ff44);
+        // Status LED — delegate classification + material mutation to the
+        // state-machine module. Detection-flash timer is decremented here so
+        // DETECTING → FLYING transitions automatically when the beacon expires.
+        const flashEnds  = this._detectionFlashUntil.get(d.id);
+        const remaining  = flashEnds !== undefined ? flashEnds - this._simTimeSec : 0;
+        if (remaining <= 0 && flashEnds !== undefined) {
+            this._detectionFlashUntil.delete(d.id);
         }
+        const state = classifyLED({
+            drone:             d,
+            batteryPct:        (d.battery ?? 100) / 100,
+            batteryWarn:       this._batteryWarnThreshold,
+            detectionFlashSec: remaining,
+        });
+        applyLED(entry.led, state, this._simTimeSec);
     }
 
     private _remove(id: string, entry: DroneEntry): void {
