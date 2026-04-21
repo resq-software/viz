@@ -445,6 +445,18 @@ export class DroneManager {
 
     private _buildQuadrotor(statusColor: number, droneId: string, bodyColor: number = BODY_COLOR): QuadrotorMesh {
         const group = new THREE.Group();
+        const rotors: THREE.Mesh[] = [];
+
+        // Skip the programmatic body entirely when the glTF template is
+        // already loaded at spawn time. The overlay further down will
+        // attach glTF meshes and populate `rotors` — building the 19
+        // programmatic body meshes first just to hide them a moment
+        // later is pure waste (scene traversal + shadow-map cost add up
+        // at 12 drones). When the template is still loading, the
+        // programmatic body renders as the transient fallback; the
+        // retroactive swap (see DroneManager constructor) upgrades
+        // existing drones once the asset arrives.
+        if (_gltfTemplate === null) {
 
         // ── Central body ──────────────────────────────────────────────────────
         const topPlate = new THREE.Mesh(
@@ -486,8 +498,6 @@ export class DroneManager {
             { angle:  3 * Math.PI / 4,   tipPos: new THREE.Vector3(-3.5, 0,  3.5), navColor: 0x33ff33 },
             { angle: -3 * Math.PI / 4,   tipPos: new THREE.Vector3(-3.5, 0, -3.5), navColor: 0xff3333 },
         ];
-
-        const rotors: THREE.Mesh[] = [];
 
         for (const { angle, tipPos, navColor } of armDirs) {
             const arm = new THREE.Mesh(
@@ -548,6 +558,8 @@ export class DroneManager {
             group.add(foot);
             foot.castShadow = true;
         }
+
+        } // end `if (_gltfTemplate === null)` — programmatic body skip
 
         // ── Status LED ────────────────────────────────────────────────────────
         const ledMat = new THREE.MeshStandardMaterial({
