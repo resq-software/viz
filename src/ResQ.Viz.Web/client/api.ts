@@ -10,6 +10,9 @@
 // ladder that callers can branch on via `if (res.success) …`.
 
 import { success, failure } from '@resq-sw/helpers';
+import { getLogger } from './log';
+
+const log = getLogger('api');
 
 // Result is the discriminated union the `@resq-sw/helpers` `success` /
 // `failure` constructors return. The upstream package doesn't re-export
@@ -140,6 +143,6 @@ export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
  */
 export function apiPostOrWarn(path: string, body?: unknown, label?: string): void {
     void apiPost(path, body).then(res => {
-        if (!res.success) console.warn(`[api] ${label ?? path} failed:`, res.error.message);
+        if (!res.success) log.warn(`${label ?? path} failed`, { error: res.error.message });
     });
 }

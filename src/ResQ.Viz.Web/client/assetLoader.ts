@@ -14,6 +14,9 @@
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREE from 'three';
+import { getLogger } from './log';
+
+const log = getLogger('assetLoader');
 
 let _gltf: GLTFLoader | null = null;
 let _tex:  THREE.TextureLoader | null = null;
@@ -63,7 +66,7 @@ export async function withFallback<T>(
     try {
         return await loader();
     } catch (err) {
-        console.warn(`[assetLoader] ${label} failed, using fallback:`, err);
+        log.warn(`${label} failed, using fallback`, { err });
         return await fallback();
     }
 }
