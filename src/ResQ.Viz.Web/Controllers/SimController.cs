@@ -243,4 +243,52 @@ public sealed class SimController : ControllerBase
         _logger.LogInformation("Terrain preset set to '{Key}'.", Sanitize(key));
         return Ok(new { preset = key });
     }
+
+    /// <summary>
+    /// Installs a client-uploaded heightmap (row-major <paramref name="payload"/>.Cells,
+    /// length == Rows × Cols) as the authoritative terrain. Drone altitude clamping
+    /// switches to the DEM immediately so drones physically track the imported
+    /// terrain the viz renders.
+    /// </summary>
+    [HttpPost("heightmap")]
+    public IActionResult SetHeightmap([FromBody] HeightmapPayload payload)
+    {
+        if (payload.Cells is null || payload.Cells.Length == 0)
+            return BadRequest(new { error = "cells must be non-empty" });
+        if (payload.Rows <= 0 || payload.Cols <= 0)
+            return BadRequest(new { error = "rows and cols must be positive" });
+        if (payload.Cells.Length != payload.Rows * payload.Cols)
+            return BadRequest(new { error = $"cells length {payload.Cells.Length} does not match rows*cols {payload.Rows * payload.Cols}" });
+        if (payload.Width <= 0 || payload.Depth <= 0)
+            return BadRequest(new { error = "width and depth must be positive metres" });
+
+        // Re-shape the flat payload into the float[,] HeightmapTerrain expects.
+        var grid = new float[payload.Rows, payload.Cols];
+        for (var r = 0; r < payload.Rows; r++)
+        {
+            for (var c = 0; c < payload.Cols; c++)
+            {
+                grid[r, c] = payload.Cells[r * payload.Cols + c];
+            }
+        }
+
+        _sim.SetHeightmap(grid, payload.Width, payload.Depth);
+        return Ok(new { rows = payload.Rows, cols = payload.Cols, width = payload.Width, depth = payload.Depth });
+    }
+
+    /// <summary>Clears the heightmap override; procedural preset resumes.</summary>
+    [HttpDelete("heightmap")]
+    public IActionResult ClearHeightmap()
+    {
+        _sim.ClearHeightmap();
+        return Ok(new { cleared = true });
+    }
+
+    /// <summary>Wire payload for <see cref="SetHeightmap(HeightmapPayload)"/>.</summary>
+    public sealed record HeightmapPayload(
+        int Rows,
+        int Cols,
+        double Width,
+        double Depth,
+        float[] Cells);
 }

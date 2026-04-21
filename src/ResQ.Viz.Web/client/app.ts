@@ -288,6 +288,26 @@ void (async () => {
     setHeightmapOverride(sampler);
     _switchPreset(_currentPresetKey);
     log.info(`heightmap installed ${sampler.width}×${sampler.height} DEM — terrain rebuilt`);
+
+    // Ship the decoded grid to the backend so drone physics clamp to the
+    // same DEM the viz renders. Payload is large (1024² ≈ 4 MB JSON) but
+    // fires exactly once per page load; timeout bumped so the send has
+    // room on slow connections. Silent warn on failure — the viz is
+    // already rendering correctly; only drone-ground contact is affected.
+    const uploadRes = await apiPost('/api/sim/heightmap', {
+        rows:   sampler.height,
+        cols:   sampler.width,
+        width:  sampler.worldSize,
+        depth:  sampler.worldSize,
+        cells:  Array.from(sampler.cells),
+    }, { timeoutMs: 30_000 });
+    if (uploadRes.success) {
+        log.info(`heightmap uploaded to backend — drone physics now track DEM`);
+    } else {
+        log.warn('heightmap backend upload failed — drones will follow procedural terrain', {
+            error: uploadRes.error.message,
+        });
+    }
 })();
 
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {

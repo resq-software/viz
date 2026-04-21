@@ -18,6 +18,11 @@ public sealed class TerrainNoiseService : ITerrain
 {
     private string _preset = "alpine";
 
+    // Heightmap override — when installed (via SetHeightmap), replaces the
+    // procedural preset with a client-uploaded DEM. Drone altitude clamping
+    // then tracks the imported terrain, matching what the viz renders.
+    private HeightmapTerrain? _heightmap;
+
     /// <inheritdoc/>
     public double Width => 4000;
 
@@ -30,15 +35,43 @@ public sealed class TerrainNoiseService : ITerrain
     public void SetPreset(string key) =>
         _preset = key.ToLowerInvariant();
 
+    /// <summary>
+    /// Installs a heightmap override.  Subsequent <see cref="GetElevation"/>
+    /// queries sample the uploaded DEM instead of the procedural preset, so
+    /// drone physics clamp to the same terrain the viz renders.
+    /// </summary>
+    /// <param name="heights">Row-major elevation grid in metres.</param>
+    /// <param name="width">World width the grid covers, in metres.</param>
+    /// <param name="depth">World depth the grid covers, in metres.</param>
+    public void SetHeightmap(float[,] heights, double width, double depth) =>
+        _heightmap = new HeightmapTerrain(heights, width, depth);
+
+    /// <summary>
+    /// Clears the heightmap override.  <see cref="GetElevation"/> resumes
+    /// sampling the procedural preset.
+    /// </summary>
+    public void ClearHeightmap() =>
+        _heightmap = null;
+
     /// <inheritdoc/>
-    public double GetElevation(double x, double z) => _preset switch
+    public double GetElevation(double x, double z)
     {
-        "ridgeline" => RidgelineHeight(x, z),
-        "coastal" => CoastalHeight(x, z),
-        "canyon" => CanyonHeight(x, z),
-        "dunes" => DuneHeight(x, z),
-        _ => AlpineHeight(x, z),
-    };
+        if (_heightmap is not null)
+        {
+            // Client world-space is centred on origin; HeightmapTerrain expects
+            // origin-bottom-left indexing.  Shift by half-width/depth.
+            return _heightmap.GetElevation(x + Width * 0.5, z + Depth * 0.5);
+        }
+
+        return _preset switch
+        {
+            "ridgeline" => RidgelineHeight(x, z),
+            "coastal" => CoastalHeight(x, z),
+            "canyon" => CanyonHeight(x, z),
+            "dunes" => DuneHeight(x, z),
+            _ => AlpineHeight(x, z),
+        };
+    }
 
     /// <inheritdoc/>
     public SurfaceType GetSurfaceType(double x, double z) => SurfaceType.Vegetation;
