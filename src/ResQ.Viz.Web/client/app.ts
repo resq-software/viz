@@ -30,6 +30,9 @@ import { EventLog } from './eventLog';
 import { TelemetryStrip } from './telemetryStrip';
 import { MiniMap } from './miniMap';
 import { apiPost, apiGet, apiPostOrWarn } from './api';
+import { getLogger } from './log';
+
+const log = getLogger('app');
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -284,7 +287,7 @@ void (async () => {
     if (!sampler) return;
     setHeightmapOverride(sampler);
     _switchPreset(_currentPresetKey);
-    console.info(`[heightmap] installed ${sampler.width}×${sampler.height} DEM — terrain rebuilt.`);
+    log.info(`heightmap installed ${sampler.width}×${sampler.height} DEM — terrain rebuilt`);
 })();
 
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
@@ -403,7 +406,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
 
 dronePanel.onCommand(async (droneId, cmd) => {
     const res = await apiPost(`/api/sim/drone/${droneId}/cmd`, { type: cmd });
-    if (!res.success) console.warn(`Command ${cmd} on ${droneId} failed:`, res.error.message);
+    if (!res.success) log.warn(`command ${cmd} on ${droneId} failed`, { error: res.error.message });
 });
 
 dronePanel.onClose(() => {
@@ -513,7 +516,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         const nextKilled = !_backhaulKilled;
         void apiPost('/api/sim/mesh/backhaul', { killed: nextKilled })
             .then(res => {
-                if (!res.success) console.warn('Backhaul toggle failed:', res.error.message);
+                if (!res.success) log.warn('backhaul toggle failed', { error: res.error.message });
             })
             .finally(() => { _backhaulToggleInFlight = false; });
         return;

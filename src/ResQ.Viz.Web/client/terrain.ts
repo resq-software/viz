@@ -7,6 +7,9 @@ import { PRESETS, PresetKey, TerrainPreset, _noise } from './terrainPresets';
 import * as geoCache from './geoCache';
 import { loadTexture } from './assetLoader';
 import type { HeightmapSampler } from './heightmapLoader';
+import { getLogger } from './log';
+
+const log = getLogger('terrain');
 import {
     buildCrossGeo,
     buildBillboardMaterial,
@@ -195,7 +198,7 @@ async function _loadPbrTextures(): Promise<void> {
         _applyPresetTiers();
         _pbrUniforms.uUsePbrTiles.value = true;
     } catch (err) {
-        console.warn('[terrain] PBR texture load failed, keeping constant-color path:', err);
+        log.warn('PBR texture load failed, keeping constant-color path', { err });
     }
 }
 
@@ -227,7 +230,7 @@ async function _loadWaterNormals(): Promise<void> {
             if (u) u.value = tex;
         }
     } catch (err) {
-        console.warn('[terrain] water normals load failed, keeping flat water:', err);
+        log.warn('water normals load failed, keeping flat water', { err });
     }
 }
 
