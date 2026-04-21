@@ -56,6 +56,10 @@ interface PbrUniforms {
     uRLow:        { value: THREE.Texture | null };  // roughness maps
     uRMid:        { value: THREE.Texture | null };
     uRHigh:       { value: THREE.Texture | null };
+    uNLow:        { value: THREE.Texture | null };  // tangent-space normal maps
+    uNMid:        { value: THREE.Texture | null };
+    uNHigh:       { value: THREE.Texture | null };
+    uNormalStrength: { value: number };             // 0 = flat, ~0.7 = natural relief
     uTileScale:   { value: number };
     uUsePbrTiles: { value: boolean };
     // Per-preset zone + slope mapping — non-alpine biomes have very
@@ -74,6 +78,12 @@ const _pbrUniforms: PbrUniforms = {
     uRLow:        { value: null },
     uRMid:        { value: null },
     uRHigh:       { value: null },
+    uNLow:        { value: null },
+    uNMid:        { value: null },
+    uNHigh:       { value: null },
+    // Natural relief — too high and rock faces look like corrugated cardboard,
+    // too low and the terrain reads flat. 0.65 tested well at mid-camera range.
+    uNormalStrength: { value: 0.65 },
     // ~20 m per texture tile feels correct for a 4 km terrain at
     // mesh-altitude camera distance. Tune in settings if ever exposed.
     uTileScale:   { value: 1 / 20 },
@@ -89,6 +99,9 @@ const _tierAlbedo: Record<TierName, THREE.Texture | null> = {
     grass: null, rock: null, snow: null, sand: null,
 };
 const _tierRoughness: Record<TierName, THREE.Texture | null> = {
+    grass: null, rock: null, snow: null, sand: null,
+};
+const _tierNormal: Record<TierName, THREE.Texture | null> = {
     grass: null, rock: null, snow: null, sand: null,
 };
 
@@ -119,6 +132,9 @@ function _applyPresetTiers(): void {
     _pbrUniforms.uRLow.value  = _tierRoughness[p.low];
     _pbrUniforms.uRMid.value  = _tierRoughness[p.mid];
     _pbrUniforms.uRHigh.value = _tierRoughness[p.high];
+    _pbrUniforms.uNLow.value  = _tierNormal[p.low];
+    _pbrUniforms.uNMid.value  = _tierNormal[p.mid];
+    _pbrUniforms.uNHigh.value = _tierNormal[p.high];
     _pbrUniforms.uZoneOffset.value = p.zoneOffset;
     _pbrUniforms.uZoneScale.value  = p.zoneScale;
     _pbrUniforms.uZoneLowMid.value.set(p.lowMid[0],  p.lowMid[1]);
@@ -141,14 +157,14 @@ async function _loadPbrTextures(): Promise<void> {
 
     const tiers: TierName[] = ['grass', 'rock', 'snow', 'sand'];
     try {
-        // Load albedo + roughness for each tier in parallel. Normal maps
-        // are shipped in the same directory but not yet consumed — reoriented-
-        // normal triplanar is its own PR.
+        // Load albedo + roughness + normal for each tier in parallel.
         const albedoLoads    = tiers.map(t => loadTexture(`/textures/terrain/${t}/albedo.jpg`));
         const roughnessLoads = tiers.map(t => loadTexture(`/textures/terrain/${t}/roughness.jpg`));
-        const [albedo, roughness] = await Promise.all([
+        const normalLoads    = tiers.map(t => loadTexture(`/textures/terrain/${t}/normal.jpg`));
+        const [albedo, roughness, normal] = await Promise.all([
             Promise.all(albedoLoads),
             Promise.all(roughnessLoads),
+            Promise.all(normalLoads),
         ]);
         for (let i = 0; i < tiers.length; i++) {
             const tier = tiers[i]!;
@@ -167,6 +183,14 @@ async function _loadPbrTextures(): Promise<void> {
             r.colorSpace = THREE.NoColorSpace;
             r.anisotropy = 4;
             _tierRoughness[tier] = r;
+
+            const n = normal[i]!;
+            n.wrapS = THREE.RepeatWrapping;
+            n.wrapT = THREE.RepeatWrapping;
+            // Normal maps are linear tangent-space data — never sRGB.
+            n.colorSpace = THREE.NoColorSpace;
+            n.anisotropy = 4;
+            _tierNormal[tier] = n;
         }
         _applyPresetTiers();
         _pbrUniforms.uUsePbrTiles.value = true;
@@ -304,6 +328,9 @@ uniform sampler2D uTHigh;
 uniform sampler2D uRLow;
 uniform sampler2D uRMid;
 uniform sampler2D uRHigh;
+uniform sampler2D uNLow;
+uniform sampler2D uNMid;
+uniform sampler2D uNHigh;
 uniform float uTileScale;
 uniform bool  uUsePbrTiles;
 uniform float uZoneOffset;
@@ -311,6 +338,7 @@ uniform float uZoneScale;
 uniform vec2  uZoneLowMid;
 uniform vec2  uZoneMidHigh;
 uniform vec2  uSlopeRocky;
+uniform float uNormalStrength;
 
 vec3 _triplanar(sampler2D tex, vec3 wp, vec3 blend, float scale) {
     vec3 x = texture2D(tex, wp.yz * scale).rgb;
@@ -385,6 +413,28 @@ float _pbrRoughness(vec3 wp, vec3 wn, float tile) {
     if (w.y > 0.0) r += _triplanarR(uRMid,  wp, blend, tile) * w.y;
     if (w.z > 0.0) r += _triplanarR(uRHigh, wp, blend, tile) * w.z;
     return r;
+}
+
+// Triplanar-sampled tangent-space normals, tier-weighted, then applied as
+// a "UDN-style" perturbation to the world surface normal. The TS vector's
+// xy drives horizontal perturbation; its z acts as a scalar weight. The
+// approximation is not strictly tangent-frame-correct — we treat the TS
+// basis as world-axis-aligned — but on a heightfield with no UV unwrap
+// and mostly-horizontal surfaces, it reads as natural pebble / rock /
+// grass relief without any UV or tangent-buffer cost.
+vec3 _pbrNormalWS(vec3 wp, vec3 wn, float tile, vec3 blend, vec3 w, float strength) {
+    // Per-tier triplanar normal sample, decoded from 0..1 → −1..1.
+    vec3 nLow  = _triplanar(uNLow,  wp, blend, tile) * 2.0 - 1.0;
+    vec3 nMid  = _triplanar(uNMid,  wp, blend, tile) * 2.0 - 1.0;
+    vec3 nHigh = _triplanar(uNHigh, wp, blend, tile) * 2.0 - 1.0;
+    // Tier-blend the decoded TS normals. Normalising at the end keeps the
+    // result well-conditioned even if the three samples disagree.
+    vec3 ts = nLow * w.x + nMid * w.y + nHigh * w.z;
+    // UDN blend — treat TS.xy as a world-space perturbation along the
+    // surface-plane axes. Strength controls how much the detail bends
+    // the surface normal relative to the geometric normal.
+    vec3 perturbed = wn + vec3(ts.x, 0.0, ts.y) * strength;
+    return normalize(perturbed);
 }
 `;
 
@@ -522,6 +572,18 @@ export class Terrain {
                 `#include <roughnessmap_fragment>
                 if (uUsePbrTiles) {
                     roughnessFactor = _pbrRoughness(vTerrainWorld, vWorldNormal, uTileScale);
+                }`,
+            );
+            // Perturb the shading normal from the tier normal maps when
+            // PBR is active. `normal` is set by the default normal chunk;
+            // we overwrite with our triplanar-derived world-space normal.
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <normal_fragment_maps>',
+                `#include <normal_fragment_maps>
+                if (uUsePbrTiles) {
+                    vec3 _nBlend;
+                    vec3 _nW = _pbrTierWeights(vTerrainWorld, vWorldNormal, _nBlend);
+                    normal = _pbrNormalWS(vTerrainWorld, vWorldNormal, uTileScale, _nBlend, _nW, uNormalStrength);
                 }`,
             );
         };
