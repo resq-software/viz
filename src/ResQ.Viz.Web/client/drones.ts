@@ -38,10 +38,41 @@ void (async () => {
             if (m.isMesh) m.castShadow = true;
         });
         _gltfTemplate = root;
+        console.log('[drones] quadrotor.glb loaded, retroactively upgrading existing drones');
+        // DroneManager instances subscribe to this event so drones already
+        // in the scene swap from programmatic → glTF. Without this any drone
+        // spawned during the 1-3 s asset download window would stay
+        // programmatic for the whole session.
+        document.dispatchEvent(new CustomEvent('resq:drone-model-ready'));
     } catch (err) {
         console.warn('[drones] quadrotor.glb load failed, staying programmatic:', err);
     }
 })();
+
+/**
+ * Apply the glTF overlay to an existing drone group — hide programmatic
+ * body meshes (keeping LED / selection ring / label sprite per the
+ * `keepOnGltfSwap` userData flag), attach the cloned + tinted glTF,
+ * return the new rotor meshes. Called both on initial build (when the
+ * template is already loaded) and retroactively when a scenario's
+ * drones spawned before the asset finished downloading.
+ *
+ * Idempotent via `group.userData.gltfApplied` — re-entry from a second
+ * retroactive pass is a no-op.
+ */
+function _applyGltfOverlay(group: THREE.Group, bodyColor: number): THREE.Mesh[] {
+    if (!_gltfTemplate) return [];
+    if (group.userData['gltfApplied']) return [];
+    group.traverse(child => {
+        if ((child as THREE.Mesh).isMesh && !child.userData['keepOnGltfSwap']) {
+            child.visible = false;
+        }
+    });
+    const { body, rotors } = _cloneGltfBody(bodyColor);
+    group.add(body);
+    group.userData['gltfApplied'] = true;
+    return rotors;
+}
 
 interface GltfBody {
     body: THREE.Object3D;
@@ -191,6 +222,22 @@ export class DroneManager {
 
     constructor(scene: THREE.Scene) {
         this._threeScene = scene;
+
+        // Retroactive glTF swap: when the async template load finishes,
+        // upgrade every drone that was spawned during the load window.
+        // Without this, any drone that appeared in the first 1-3s of the
+        // session stays programmatic forever (the `_buildQuadrotor` call
+        // captured `_gltfTemplate === null` and moved on).
+        document.addEventListener('resq:drone-model-ready', () => {
+            for (const entry of this._drones.values()) {
+                const bodyColor = (entry.group.userData['bodyColor'] ?? BODY_COLOR) as number;
+                const newRotors = _applyGltfOverlay(entry.group, bodyColor);
+                if (newRotors.length > 0) {
+                    entry.rotors.length = 0;
+                    entry.rotors.push(...newRotors);
+                }
+            }
+        });
     }
 
     update(drones: DroneState[]): void {
@@ -526,21 +573,21 @@ export class DroneManager {
         // 2× overall scale — makes the drone clearly visible at the default camera distance
         group.scale.setScalar(2);
 
-        // glTF overlay — when the template loaded, swap the programmatic
-        // body + arms + nav lights + landing legs for the richer model. We
-        // keep the status LED sphere, selection ring, and label sprite
-        // visible so the HUD signals and select/follow behaviour still
-        // work. Programmatic rotors are hidden; the glTF's detected rotor
-        // meshes take their place in the `rotors` array and spin via the
-        // same `tick()` callback.
-        if (_gltfTemplate) {
-            const keep = new Set<THREE.Object3D>([led, ring, labelSprite]);
-            group.traverse(child => {
-                if (keep.has(child)) return;
-                if ((child as THREE.Mesh).isMesh) child.visible = false;
-            });
-            const { body: gltfBody, rotors: gltfRotors } = _cloneGltfBody(bodyColor);
-            group.add(gltfBody);
+        // Tag the HUD-signal meshes so the glTF overlay (initial or
+        // retroactive) keeps them visible while hiding every other
+        // programmatic mesh. `bodyColor` is stashed on the group so the
+        // retroactive swap knows what tint to apply without needing to
+        // rediscover the drone's vendor.
+        led.userData['keepOnGltfSwap']         = true;
+        ring.userData['keepOnGltfSwap']        = true;
+        labelSprite.userData['keepOnGltfSwap'] = true;
+        group.userData['bodyColor']            = bodyColor;
+
+        // If the template is already loaded, apply the overlay inline.
+        // Otherwise the `resq:drone-model-ready` listener (wired in the
+        // DroneManager constructor) will apply it when the asset arrives.
+        const gltfRotors = _applyGltfOverlay(group, bodyColor);
+        if (gltfRotors.length > 0) {
             rotors.length = 0;
             rotors.push(...gltfRotors);
         }
