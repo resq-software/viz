@@ -6,6 +6,7 @@ import { Water } from 'three/addons/objects/Water.js';
 import { PRESETS, PresetKey, TerrainPreset, _noise } from './terrainPresets';
 import * as geoCache from './geoCache';
 import { loadTexture } from './assetLoader';
+import type { HeightmapSampler } from './heightmapLoader';
 import {
     buildCrossGeo,
     buildBillboardMaterial,
@@ -217,12 +218,31 @@ export function tickWater(dt: number): void {
     }
 }
 
+// ── Heightmap override (PNG DEM import) ──────────────────────────────────────
+// When a heightmap sampler is installed, it replaces the active preset's
+// procedural heightFn for all visual callers (vertex gen, obstacle placement,
+// camera clamp, detection rings). Preset biome GLSL (colour tiers, PBR) is
+// untouched — a DEM of the Alps still reads as "alpine" via the active preset.
+// Clear with setHeightmapOverride(null) to restore procedural terrain.
+
+let _heightmapOverride: HeightmapSampler | null = null;
+
+export function setHeightmapOverride(sampler: HeightmapSampler | null): void {
+    _heightmapOverride = sampler;
+}
+
+export function getHeightmapOverride(): HeightmapSampler | null {
+    return _heightmapOverride;
+}
+
 /**
  * Terrain height at world position (x, z).
- * Delegates to the active preset's heightFn.
+ * Delegates to the installed heightmap sampler if present, otherwise to the
+ * active preset's procedural heightFn.
  * Called from vertex generation, camera collision, and obstacle placement.
  */
 export function terrainHeight(x: number, z: number): number {
+    if (_heightmapOverride) return _heightmapOverride.sample(x, z);
     return _activePreset.heightFn(x, z);
 }
 
@@ -429,7 +449,11 @@ export class Terrain {
         geo.rotateX(-Math.PI / 2);
 
         const pos    = geo.attributes['position'] as THREE.BufferAttribute;
-        const cacheK = _activePreset.cacheKey;
+        // Include the heightmap key (if any) so procedural and DEM-sourced
+        // geometries don't share cache entries.
+        const cacheK = _heightmapOverride
+            ? `${_activePreset.cacheKey}|hm:${_heightmapOverride.key}`
+            : _activePreset.cacheKey;
 
         const cached = geoCache.tryGet(cacheK);
         if (cached) {
