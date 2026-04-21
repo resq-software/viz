@@ -43,7 +43,13 @@ void (async () => {
     }
 })();
 
-function _cloneGltfBody(bodyColor: number): THREE.Object3D {
+interface GltfBody {
+    body: THREE.Object3D;
+    /** Four meshes identified by position heuristic as rotor blades. */
+    rotors: THREE.Mesh[];
+}
+
+function _cloneGltfBody(bodyColor: number): GltfBody {
     // Three's Object3D.clone(true) shares geometries + materials by
     // reference. We clone (and mark) resources so the per-drone `_remove`
     // disposal path doesn't free geometry/materials still in use by
@@ -68,6 +74,10 @@ function _cloneGltfBody(bodyColor: number): THREE.Object3D {
         matCache.set(src, cloned);
         return cloned;
     };
+    // Collect every mesh so we can run the rotor-detection heuristic
+    // after the traversal — rotor XZ distance depends on world-space
+    // positions resolved by updateWorldMatrix.
+    const meshes: THREE.Mesh[] = [];
     body.traverse(c => {
         const m = c as THREE.Mesh;
         if (!m.isMesh) return;
@@ -76,8 +86,24 @@ function _cloneGltfBody(bodyColor: number): THREE.Object3D {
         // Tag the geometry so `_remove` knows to skip disposal — the
         // same geometry reference is live on N sibling drones.
         m.geometry.userData['gltfShared'] = true;
+        meshes.push(m);
     });
-    return body;
+
+    // Rotor detection. The loaded glb has every node named `default.NNN`,
+    // so the usual name regex (`/rotor|prop/i`) picks up nothing. Instead
+    // find the 4 meshes furthest from the drone's center on the XZ
+    // plane — for a quadrotor silhouette that picks out the rotor blades.
+    // Ties broken by Y (higher = more rotor-like on a top-mounted prop).
+    body.updateWorldMatrix(true, true);
+    const wp = new THREE.Vector3();
+    const scored = meshes.map(m => {
+        m.getWorldPosition(wp);
+        return { m, xz: Math.hypot(wp.x, wp.z), y: wp.y };
+    });
+    scored.sort((a, b) => (b.xz - a.xz) || (b.y - a.y));
+    const rotors = scored.slice(0, 4).map(s => s.m);
+
+    return { body, rotors };
 }
 
 const STATUS_COLORS: Record<string, number> = {
@@ -504,15 +530,19 @@ export class DroneManager {
         // body + arms + nav lights + landing legs for the richer model. We
         // keep the status LED sphere, selection ring, and label sprite
         // visible so the HUD signals and select/follow behaviour still
-        // work. Rotors hide (static model; spin animation is lost — swap
-        // back to programmatic via `?programmatic` URL param, TODO).
+        // work. Programmatic rotors are hidden; the glTF's detected rotor
+        // meshes take their place in the `rotors` array and spin via the
+        // same `tick()` callback.
         if (_gltfTemplate) {
             const keep = new Set<THREE.Object3D>([led, ring, labelSprite]);
             group.traverse(child => {
                 if (keep.has(child)) return;
                 if ((child as THREE.Mesh).isMesh) child.visible = false;
             });
-            group.add(_cloneGltfBody(bodyColor));
+            const { body: gltfBody, rotors: gltfRotors } = _cloneGltfBody(bodyColor);
+            group.add(gltfBody);
+            rotors.length = 0;
+            rotors.push(...gltfRotors);
         }
 
         return { group, led: ledMat, ring, rotors, label: labelSprite };
