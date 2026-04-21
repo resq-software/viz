@@ -16,7 +16,10 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const TERRAIN_SIZE = 4000;
-const TERRAIN_SEGS = 220;
+// Raised from 220 for sharper ridge silhouettes at close camera distance.
+// 320² ≈ 102k verts — ~2× the prior budget, still well under bottleneck
+// on modern GPUs and the L1/L2 geoCache absorbs the rebuild cost.
+const TERRAIN_SEGS = 320;
 
 /** Minimum metres the camera stays above terrain (consumed by cameraControl). */
 export const TERRAIN_MIN_ABOVE = 2.5;
@@ -344,6 +347,13 @@ vec3 _pbrBiome(vec3 wp, vec3 wn, float tile) {
     if (w.x > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * w.x;
     if (w.y > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * w.y;
     if (w.z > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * w.z;
+
+    // Macro-scale anti-tile break-up. The per-tier textures tile every
+    // ~20 m world — at fly altitude you see the same speckle repeat
+    // every few metres. Multiply by a low-frequency FBM so each tile
+    // instance gets a unique luminance dip/boost.
+    float macro = _fbm(wp.xz * 0.0018);
+    c *= 0.78 + macro * 0.44;
     return c;
 }
 
