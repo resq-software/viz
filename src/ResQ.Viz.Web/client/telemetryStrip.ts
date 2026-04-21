@@ -48,15 +48,41 @@ interface Row {
     status: HTMLSpanElement;
 }
 
+type SelectFn = (droneId: string) => void;
+
 export class TelemetryStrip {
     private readonly _el: HTMLDivElement;
     private readonly _rows = new Map<string, Row>();
+    private _selectFn: SelectFn | null = null;
+    private _selectedId: string | null = null;
 
     constructor() {
         this._el = document.createElement('div');
         this._el.className = 'telemetry-strip';
         this._el.setAttribute('aria-label', 'Per-drone telemetry');
         document.body.appendChild(this._el);
+
+        // Row click → onSelect callback. Event is delegated to the strip
+        // root so adding/removing rows doesn't require rebinding.
+        this._el.addEventListener('click', (e) => {
+            const row = (e.target as HTMLElement | null)?.closest('.ts-row') as HTMLElement | null;
+            const id  = row?.dataset['droneId'];
+            if (id && this._selectFn) this._selectFn(id);
+        });
+    }
+
+    /** Called when the user clicks a drone row. Caller opens DronePanel,
+     *  drives scene selection, etc. */
+    onSelect(cb: SelectFn): void { this._selectFn = cb; }
+
+    /** Highlight the row matching the given drone id (null clears). */
+    setSelected(id: string | null): void {
+        if (this._selectedId === id) return;
+        if (this._selectedId) {
+            this._rows.get(this._selectedId)?.el.classList.remove('ts-row-selected');
+        }
+        this._selectedId = id;
+        if (id) this._rows.get(id)?.el.classList.add('ts-row-selected');
     }
 
     /** Update the strip from a frame's drone list. Creates / removes rows
@@ -70,6 +96,7 @@ export class TelemetryStrip {
                 row = this._createRow(d);
                 this._rows.set(d.id, row);
                 this._el.appendChild(row.el);
+                if (this._selectedId === d.id) row.el.classList.add('ts-row-selected');
             }
             this._updateRow(row, d);
         }
