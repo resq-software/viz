@@ -7,6 +7,35 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostFx } from './postfx';
 import { UnityCamera } from './cameraControl';
 
+// Leading-edge + trailing-edge throttle. `@resq-sw/rate-limiting` offers
+// this API but imports `@upstash/ratelimit` at module load for its
+// rate-limiter code path (not used here — viz only needs throttle). That
+// peer would bundle ~420 KB of unused code or require a resolve-alias
+// shim. 15 lines of local throttle is the right trade for one call site.
+// `effect@beta` stays installed so future `@resq-sw/*` adoptions that
+// don't pull `@upstash/*` can import directly.
+function throttle<A extends unknown[]>(fn: (...args: A) => void, waitMs: number): (...args: A) => void {
+    let lastCall  = 0;
+    let trailing: ReturnType<typeof setTimeout> | null = null;
+    let lastArgs: A | null = null;
+    return (...args: A) => {
+        const now = Date.now();
+        lastArgs = args;
+        if (now - lastCall >= waitMs) {
+            lastCall = now;
+            fn(...args);
+            return;
+        }
+        if (!trailing) {
+            trailing = setTimeout(() => {
+                trailing = null;
+                lastCall = Date.now();
+                if (lastArgs) fn(...lastArgs);
+            }, waitMs - (now - lastCall));
+        }
+    };
+}
+
 export class Scene {
     readonly scene: THREE.Scene;
     readonly renderer: THREE.WebGLRenderer;
@@ -58,7 +87,10 @@ export class Scene {
             window.innerHeight,
         );
         this._startRenderLoop();
-        window.addEventListener('resize', () => this._onResize());
+        // Resize storms (window drag-resize, devtools docking) can fire
+        // dozens of events per second. Throttle to ~10 Hz — the renderer
+        // re-layout still feels instant, and we skip ~90 % of the work.
+        window.addEventListener('resize', throttle(() => this._onResize(), 100));
     }
 
     private _initSky(): void {
