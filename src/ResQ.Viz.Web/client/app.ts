@@ -535,6 +535,27 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             viz.fitToPositions(positions);
             break;
         }
+        // [ / ] — cycle selection through the telemetry strip's severity-sorted
+        // drone list. Matches what the operator sees top-to-bottom on the strip
+        // so CRITICAL drones come first when nothing is selected.
+        case 'BracketLeft':
+        case 'BracketRight': {
+            const ids = telemetryStrip.getOrderedIds();
+            if (ids.length === 0) break;
+            e.preventDefault();
+            const current = droneManager.selectedId;
+            const step    = e.code === 'BracketRight' ? 1 : -1;
+            const idx     = current ? ids.indexOf(current) : -1;
+            // From no selection, ] → first, [ → last.
+            const next    = idx === -1
+                ? (step === 1 ? ids[0]! : ids[ids.length - 1]!)
+                : ids[(idx + step + ids.length) % ids.length]!;
+            droneManager.setSelected(next);
+            dronePanel.show(next);
+            hud.setSelectedDrone(next);
+            telemetryStrip.setSelected(next);
+            break;
+        }
         // Drone nudge — only when a drone is selected and camera is NOT in free-fly mode
         case 'KeyW': case 'KeyS': case 'KeyA': case 'KeyD':
         case 'KeyQ': case 'KeyE': {
