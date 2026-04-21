@@ -27,6 +27,7 @@ import { tickWater, setHeightmapOverride } from './terrain';
 import { loadHeightmapFromLocation } from './heightmapLoader';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
+import { TelemetryStrip } from './telemetryStrip';
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -64,6 +65,10 @@ const missionChrome = new MissionChrome();
 // Event log — left-edge SIGINT-style ticker. Self-wires scenario-starts;
 // app.ts pushes partition transitions explicitly since it owns that state.
 const eventLog = new EventLog();
+
+// Telemetry strip — right-edge per-drone HUD. Complements DronePanel
+// (selected drone detail) with a live roster of every unit's status.
+const telemetryStrip = new TelemetryStrip();
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -562,6 +567,7 @@ connection.on('ReceiveFrame', (frame: VizFrame) => {
     const drones = frame.drones ?? [];
     droneManager.update(drones, frame.detections);
     effectsMgr.update(frame);
+    telemetryStrip.update(drones);
     overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
     hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
