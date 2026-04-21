@@ -23,7 +23,8 @@ import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
 import { tickWind } from './treeSprites';
-import { tickWater } from './terrain';
+import { tickWater, setHeightmapOverride } from './terrain';
+import { loadHeightmapFromLocation } from './heightmapLoader';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 
@@ -239,7 +240,10 @@ overlayMgr.showVelocity = settings.get('showVelocity');
 
 // ─── Terrain preset switching ──────────────────────────────────────────────
 
+let _currentPresetKey: PresetKey = 'alpine';
+
 function _switchPreset(key: PresetKey): void {
+    _currentPresetKey = key;
     terrain.dispose(viz.scene);
     terrain = new Terrain(viz.scene, key);
     const p = PRESETS[key];
@@ -251,6 +255,24 @@ function _switchPreset(key: PresetKey): void {
     // Notify backend so drone physics clamp to the correct terrain
     void fetch(`/api/sim/preset/${key}`, { method: 'POST' });
 }
+
+// ─── Heightmap import (optional real-world DEM source) ─────────────────────
+// Enabled via URL params:
+//   ?heightmap=/heightmaps/somewhere.png
+//   &heightScale=400        (optional, metres — default 400)
+//   &worldSize=4000         (optional, metres — default 4000)
+//   &baseOffset=0           (optional, metres — default 0)
+// When a heightmap is configured, the load runs after initial render so the
+// user sees the procedural terrain immediately and the DEM tile swaps in
+// once decoded (single re-build). If the PNG 404s or decode fails, the
+// procedural terrain stays — never blanks.
+void (async () => {
+    const sampler = await loadHeightmapFromLocation();
+    if (!sampler) return;
+    setHeightmapOverride(sampler);
+    _switchPreset(_currentPresetKey);
+    console.info(`[heightmap] installed ${sampler.width}×${sampler.height} DEM — terrain rebuilt.`);
+})();
 
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
     el.addEventListener('click', () => {
