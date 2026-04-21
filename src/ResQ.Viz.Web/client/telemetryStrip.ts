@@ -12,6 +12,29 @@
 // 12-drone scenario costs O(12) text writes per frame.
 
 import type { DroneState } from './types';
+import { classifyLED, type LEDState } from './dronesLed';
+
+// Display-order rank for telemetry rows. Lower = higher priority (top of
+// the strip). Mirrors the LED severity ladder from dronesLed.ts so the
+// operator sees the "most-actionable" drones first without having to
+// scroll. DETECTING is a 0.45 s transient so we intentionally don't rank
+// on it — re-ordering every flash would make the strip jitter.
+const SEVERITY_RANK: Record<LEDState, number> = {
+    CRITICAL:    0,
+    EMERGENCY:   1,
+    LOW_BATTERY: 2,
+    RETURNING:   3,
+    DETECTING:   4,
+    HOVERING:    5,
+    FLYING:      6,
+    DISARMED:    7,
+};
+
+// Battery warn threshold used for classification. DroneManager has the
+// authoritative setting but the strip isn't wired to it — 0.20 matches
+// the default in settings.ts and drifts are tolerable (the sort is a
+// visual hint, not safety-of-flight).
+const CLASSIFY_BATTERY_WARN = 0.20;
 
 // Vendor colour palette — mirrors VENDOR_COLORS in drones.ts so a chip on
 // the strip matches the drone's body tint. Any unknown vendor falls back to
@@ -53,6 +76,7 @@ type SelectFn = (droneId: string) => void;
 export class TelemetryStrip {
     private readonly _el: HTMLDivElement;
     private readonly _rows = new Map<string, Row>();
+    private readonly _orderedIds: string[] = [];
     private _selectFn: SelectFn | null = null;
     private _selectedId: string | null = null;
 
@@ -86,7 +110,9 @@ export class TelemetryStrip {
     }
 
     /** Update the strip from a frame's drone list. Creates / removes rows
-     *  as the roster changes; mutates existing rows in place otherwise. */
+     *  as the roster changes; mutates existing rows in place otherwise.
+     *  Rows are reordered by severity (CRITICAL at top) when the sort
+     *  key changes — stable so normal-flying drones don't reshuffle. */
     update(drones: DroneState[]): void {
         const seen = new Set<string>();
         for (const d of drones) {
@@ -104,6 +130,48 @@ export class TelemetryStrip {
             if (!seen.has(id)) {
                 row.el.remove();
                 this._rows.delete(id);
+            }
+        }
+
+        this._applySeveritySort(drones.filter(d => seen.has(d.id)));
+    }
+
+    /**
+     * Reorder DOM children by severity. `_orderedIds` caches the last
+     * applied order so no-op frames are free — we only re-append when
+     * the sort actually changes.
+     */
+    private _applySeveritySort(drones: DroneState[]): void {
+        const ranked = drones
+            .map(d => ({
+                id:   d.id,
+                rank: SEVERITY_RANK[classifyLED({
+                    drone:             d,
+                    batteryPct:        (d.battery ?? 100) / 100,
+                    batteryWarn:       CLASSIFY_BATTERY_WARN,
+                    detectionFlashSec: 0,
+                })],
+            }))
+            // Stable secondary sort by id so same-severity drones don't churn.
+            .sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
+
+        // Cheap dirty-check: compare the ordered id list against last frame's.
+        let same = ranked.length === this._orderedIds.length;
+        if (same) {
+            for (let i = 0; i < ranked.length; i++) {
+                if (ranked[i]!.id !== this._orderedIds[i]) { same = false; break; }
+            }
+        }
+        if (same) return;
+
+        // Re-append rows in rank order. `appendChild` on an existing node
+        // moves it — no layout thrash beyond the reordered nodes.
+        this._orderedIds.length = 0;
+        for (const { id } of ranked) {
+            const row = this._rows.get(id);
+            if (row) {
+                this._el.appendChild(row.el);
+                this._orderedIds.push(id);
             }
         }
     }
