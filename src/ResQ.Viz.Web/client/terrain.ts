@@ -418,26 +418,58 @@ float _pbrRoughness(vec3 wp, vec3 wn, float tile) {
     return r;
 }
 
-// Triplanar-sampled tangent-space normals, tier-weighted, then applied as
-// a "UDN-style" perturbation to the world surface normal. The TS vector's
-// xy drives horizontal perturbation; its z acts as a scalar weight. The
-// approximation is not strictly tangent-frame-correct — we treat the TS
-// basis as world-axis-aligned — but on a heightfield with no UV unwrap
-// and mostly-horizontal surfaces, it reads as natural pebble / rock /
-// grass relief without any UV or tangent-buffer cost.
+// Proper triplanar tangent-space normal mapping. Each projection plane's
+// normal sample is interpreted in that plane's tangent frame, rotated into
+// world space via the canonical per-plane swizzle, scaled by the user
+// strength, sign-flipped on back-facing planes so the TS basis stays
+// right-handed, then blended by the triplanar weights. Unlike the prior
+// Y-up-only UDN approximation, this formulation works correctly on cliff
+// faces — which is the whole reason triplanar mapping exists.
+//
+// Per-plane TS → world swizzle:
+//   X-plane (UV = wp.yz): TS.(x,y,z) → world.(y, z, x)
+//   Y-plane (UV = wp.xz): TS.(x,y,z) → world.(x, z, y)
+//   Z-plane (UV = wp.xy): TS identity
+//
+// Nine texture reads (3 tiers × 3 planes) — same cost as the prior
+// implementation; the difference is correctness on non-Y-up surfaces.
 vec3 _pbrNormalWS(vec3 wp, vec3 wn, float tile, vec3 blend, vec3 w, float strength) {
-    // Per-tier triplanar normal sample, decoded from 0..1 → −1..1.
-    vec3 nLow  = _triplanar(uNLow,  wp, blend, tile) * 2.0 - 1.0;
-    vec3 nMid  = _triplanar(uNMid,  wp, blend, tile) * 2.0 - 1.0;
-    vec3 nHigh = _triplanar(uNHigh, wp, blend, tile) * 2.0 - 1.0;
-    // Tier-blend the decoded TS normals. Normalising at the end keeps the
-    // result well-conditioned even if the three samples disagree.
-    vec3 ts = nLow * w.x + nMid * w.y + nHigh * w.z;
-    // UDN blend — treat TS.xy as a world-space perturbation along the
-    // surface-plane axes. Strength controls how much the detail bends
-    // the surface normal relative to the geometric normal.
-    vec3 perturbed = wn + vec3(ts.x, 0.0, ts.y) * strength;
-    return normalize(perturbed);
+    vec2 uvX = wp.yz * tile;
+    vec2 uvY = wp.xz * tile;
+    vec2 uvZ = wp.xy * tile;
+
+    // Per-tier TS samples, tier-weighted in tangent space.
+    vec3 nxLo = texture2D(uNLow,  uvX).xyz * 2.0 - 1.0;
+    vec3 nxMi = texture2D(uNMid,  uvX).xyz * 2.0 - 1.0;
+    vec3 nxHi = texture2D(uNHigh, uvX).xyz * 2.0 - 1.0;
+    vec3 nx = nxLo * w.x + nxMi * w.y + nxHi * w.z;
+
+    vec3 nyLo = texture2D(uNLow,  uvY).xyz * 2.0 - 1.0;
+    vec3 nyMi = texture2D(uNMid,  uvY).xyz * 2.0 - 1.0;
+    vec3 nyHi = texture2D(uNHigh, uvY).xyz * 2.0 - 1.0;
+    vec3 ny = nyLo * w.x + nyMi * w.y + nyHi * w.z;
+
+    vec3 nzLo = texture2D(uNLow,  uvZ).xyz * 2.0 - 1.0;
+    vec3 nzMi = texture2D(uNMid,  uvZ).xyz * 2.0 - 1.0;
+    vec3 nzHi = texture2D(uNHigh, uvZ).xyz * 2.0 - 1.0;
+    vec3 nz = nzLo * w.x + nzMi * w.y + nzHi * w.z;
+
+    // Scale tangent-plane deflection by user strength, then flip the whole
+    // TS vector on back-facing planes so the rotated frame stays
+    // right-handed relative to the world normal direction.
+    nx.xy *= strength;  nx *= sign(wn.x);
+    ny.xy *= strength;  ny *= sign(wn.y);
+    nz.xy *= strength;  nz *= sign(wn.z);
+
+    // Swizzle each plane's TS normal into world space and blend by the
+    // triplanar weights. Sum(blend) = 1 so the resulting vector carries
+    // the geometric-normal contribution plus perturbation; one normalize
+    // at the end is sufficient.
+    return normalize(
+          blend.x * vec3(nx.z, nx.x, nx.y)
+        + blend.y * vec3(ny.x, ny.z, ny.y)
+        + blend.z * vec3(nz.x, nz.y, nz.z)
+    );
 }
 `;
 

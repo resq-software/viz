@@ -160,6 +160,11 @@ export class Scene {
         // from -0.0018 to -0.0010 without re-introducing the edge artifact.
         sun.shadow.bias          = -0.0010;
         sun.shadow.normalBias    =  0.02;     // reduce peter-panning on trees
+        // After mutating the orthographic frustum bounds the projection
+        // matrix must be recomputed — otherwise Three.js renders the shadow
+        // map using the default ±5 bounds and drones outside that tiny
+        // footprint cast no shadow at all.
+        sun.shadow.camera.updateProjectionMatrix();
         this.scene.add(sun);
 
         const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);

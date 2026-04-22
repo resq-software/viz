@@ -255,15 +255,21 @@ export class DroneManager {
     update(drones: DroneState[], detections: DetectionState[] = []): void {
         // Stamp detection-flash deadlines for drones that just reported a new
         // detection. Dedupe by detection id so a long-lived detection doesn't
-        // re-flash every frame.
+        // re-flash every frame. Trim `_seenDetections` to just the ids
+        // present in the current frame so it never grows past the active
+        // detection roster — otherwise long-running sessions would leak
+        // memory as every historical detection id stayed in the Set.
+        const currentDetIds = new Set<string>();
         for (const det of detections) {
+            currentDetIds.add(det.id);
             if (this._seenDetections.has(det.id)) continue;
-            this._seenDetections.add(det.id);
             this._detectionFlashUntil.set(
                 det.droneId,
                 this._simTimeSec + DETECTION_FLASH_DURATION_SEC,
             );
         }
+        this._seenDetections.clear();
+        for (const id of currentDetIds) this._seenDetections.add(id);
 
         const seenIds = new Set<string>();
         for (const d of drones) {
