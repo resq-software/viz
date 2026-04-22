@@ -1,15 +1,17 @@
 # Copyright 2026 ResQ Software
 # SPDX-License-Identifier: Apache-2.0
 #
-# Comprehensive CI. Two parallel job streams converge into the `required`
+# Comprehensive CI. Two parallel streams converge into the `required`
 # aggregator that the org ruleset `default-branch-baseline` watches:
 #
 #   gates   — org-wide reusable: dotnet build/test/format + security scan
-#   client  — TypeScript + Vite + bundle-size budget (not covered by dotnet-ci)
+#   client  — inline TypeScript + Vite + bundle-size budget
 #
-# The client stream exists because the viz's Three.js frontend is ~775 KB of
-# TypeScript that the reusable dotnet-ci pipeline never touches — type errors
-# or a broken vite build would otherwise ship to main unnoticed.
+# NOTE ON node-ci.yml: the org's node-ci reusable does not currently
+# accept a `cache-dependency-path` input, so `actions/setup-node`'s
+# npm cache detection fails for viz (lockfile is at
+# src/ResQ.Viz.Web/package-lock.json, not repo root). Upstream fix
+# tracked — once `node-ci.yml` takes that input, switch `client` over.
 
 name: CI
 
@@ -39,21 +41,30 @@ jobs:
     secrets: inherit
 
   # ── Frontend (TypeScript / Vite) ─────────────────────────────────────
-  # Bundle-size budget in bytes. Current build is ~776 KB; 800 KB gives
-  # ~24 KB headroom. Bumping it is a policy decision, not a typo — edit
-  # deliberately if you accept the bundle growth.
+  # Bundle-size budget in bytes. Current build is ~776 KB JS + 24 KB CSS;
+  # 800 KB / 50 KB gives measured headroom. Bumping is a policy decision.
+  #
+  # SHA-pinned actions match the org's security-harden-runner posture
+  # (upstream node-ci.yml pattern). Switch to the reusable once it
+  # accepts cache-dependency-path.
   client:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: src/ResQ.Viz.Web
     env:
-      BUNDLE_JS_BUDGET_BYTES: '819200'   # 800 KB
-      BUNDLE_CSS_BUDGET_BYTES: '51200'   # 50 KB
+      BUNDLE_JS_BUDGET_BYTES: '819200'    # 800 KB
+      BUNDLE_CSS_BUDGET_BYTES: '51200'    # 50 KB
     steps:
-      - uses: actions/checkout@v4
+      - name: Harden Runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176  # v2
+        with:
+          egress-policy: audit
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
         with:
           node-version: 22
           cache: npm
@@ -69,7 +80,6 @@ jobs:
         run: npx vite build
 
       - name: Measure + enforce bundle-size budget
-        id: budget
         run: |
           set -euo pipefail
           js=$(stat -c%s wwwroot/assets/index-*.js)
@@ -94,14 +104,13 @@ jobs:
 
       - name: Advisory audit (non-blocking)
         # Surfaces high-severity npm advisories for visibility without
-        # blocking PRs — `npm audit` sometimes flags transitive dev-deps we
-        # can't address immediately. The Socket Security job in the org
-        # security-scan workflow is the enforcing gate for supply chain.
+        # blocking PRs. Socket Security (via security-scan.yml) is the
+        # enforcing gate for supply chain.
         continue-on-error: true
         run: npm audit --audit-level=high --legacy-peer-deps
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: viz-wwwroot-${{ github.sha }}
           path: src/ResQ.Viz.Web/wwwroot/
@@ -116,13 +125,13 @@ jobs:
     steps:
       - name: Assert all upstream jobs passed or were skipped
         env:
-          GATES: ${{ needs.gates.result }}
+          GATES:  ${{ needs.gates.result }}
           CLIENT: ${{ needs.client.result }}
         run: |
           set -eu
           ok() { case "$1" in success|skipped|"") return 0;; *) return 1;; esac; }
           fail=0
-          ok "$GATES"  || { echo "::error::gates=$GATES";  fail=1; }
+          ok "$GATES"  || { echo "::error::gates=$GATES";   fail=1; }
           ok "$CLIENT" || { echo "::error::client=$CLIENT"; fail=1; }
           if [ "$fail" -ne 0 ]; then exit 1; fi
           echo "ok: gates=$GATES client=$CLIENT"
