@@ -7,7 +7,12 @@ obj/
 coverage*/
 TestResults/
 node_modules/
-package-lock.json
+# Anchor the rule to the repo root — the real lockfile lives at
+# src/ResQ.Viz.Web/package-lock.json and must be tracked for `npm ci`
+# in CI and Dependabot to work. An un-anchored `package-lock.json`
+# ignore would mask both. A root-level one, if present, is the
+# artefact of running `npm install` from the wrong CWD; keep ignoring.
+/package-lock.json
 
 # Vite build outputs (generated from client/)
 src/ResQ.Viz.Web/wwwroot/index.html
