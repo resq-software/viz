@@ -192,7 +192,14 @@ public sealed class SimulationService : BackgroundService
     /// <param name="depth">World depth the grid covers, in metres.</param>
     public void SetHeightmap(float[,] heights, double width, double depth)
     {
-        _terrain.SetHeightmap(heights, width, depth);
+        // Hold the sim lock while swapping the terrain source so the 60 Hz
+        // Step() loop can't sample one DEM on iteration N and a different
+        // one on N+1, which could produce a discontinuous altitude and
+        // snap drones vertically by metres.
+        lock (_lock)
+        {
+            _terrain.SetHeightmap(heights, width, depth);
+        }
         _logger.LogInformation("Heightmap installed: {Rows}×{Cols}, {W}×{D} m.",
             heights.GetLength(0), heights.GetLength(1), width, depth);
     }
@@ -200,7 +207,10 @@ public sealed class SimulationService : BackgroundService
     /// <summary>Clears the heightmap override; procedural preset resumes.</summary>
     public void ClearHeightmap()
     {
-        _terrain.ClearHeightmap();
+        lock (_lock)
+        {
+            _terrain.ClearHeightmap();
+        }
         _logger.LogInformation("Heightmap cleared; procedural preset resumes.");
     }
 
