@@ -71,6 +71,15 @@ export interface ApiGetOptions extends ApiOptions {
      *  otherwise thundering-herd at the same fixed interval. `'fixed'`
      *  keeps the constant cadence from the original implementation. */
     retryBackoff?: 'fixed' | 'exponential';
+    /** Uniform random jitter added to each retry delay, in the range
+     *  [-retryJitterMs/2, +retryJitterMs/2]. Breaks synchronisation when
+     *  several clients retry from the same reconnect moment. Default
+     *  100 ms; set 0 for deterministic timing (e.g. in tests). */
+    retryJitterMs?: number;
+    /** Upper bound on the retry delay after exponential scaling and
+     *  jitter, in milliseconds. Default 10 000 ms — caps the blast radius
+     *  of callers that request many retries. */
+    maxRetryDelayMs?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -118,10 +127,12 @@ export function apiPost(path: string, body?: unknown, opts: ApiOptions = {}) {
  * fetch is the motivating case). HTTP errors (non-2xx with a body) fail fast.
  */
 export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
-    const timeoutMs    = opts.timeoutMs    ?? DEFAULT_TIMEOUT_MS;
-    const retries      = opts.retries      ?? 1;
-    const retryDelayMs = opts.retryDelayMs ?? 250;
-    const backoff      = opts.retryBackoff ?? 'exponential';
+    const timeoutMs       = opts.timeoutMs       ?? DEFAULT_TIMEOUT_MS;
+    const retries         = opts.retries         ?? 1;
+    const retryDelayMs    = opts.retryDelayMs    ?? 250;
+    const backoff         = opts.retryBackoff    ?? 'exponential';
+    const retryJitterMs   = opts.retryJitterMs   ?? 100;
+    const maxRetryDelayMs = opts.maxRetryDelayMs ?? 10_000;
 
     return _catch(async () => {
         let lastErr: unknown;
@@ -136,10 +147,17 @@ export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
                 if (err instanceof ApiHttpError) throw err;
                 lastErr = err;
                 if (attempt < retries) {
-                    await new Promise(r => setTimeout(r, delay));
-                    // Exponential doubles the delay before the next retry so
-                    // concurrent failures don't thundering-herd at the same
-                    // cadence. Fixed leaves it at retryDelayMs.
+                    // Apply uniform jitter in [-j/2, +j/2] to the base delay
+                    // so synchronised clients don't retry in lock-step.
+                    const jitter = retryJitterMs > 0
+                        ? (Math.random() - 0.5) * retryJitterMs
+                        : 0;
+                    const effective = Math.min(Math.max(delay + jitter, 0), maxRetryDelayMs);
+                    await new Promise(r => setTimeout(r, effective));
+                    // Exponential doubles the *pre-jitter* delay for the next
+                    // retry; fixed leaves it at retryDelayMs. The cap is
+                    // applied after jitter, not here, so jitter still spreads
+                    // even at the ceiling.
                     if (backoff === 'exponential') delay *= 2;
                 }
             }
