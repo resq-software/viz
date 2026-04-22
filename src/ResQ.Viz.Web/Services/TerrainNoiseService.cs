@@ -22,6 +22,11 @@ public sealed class TerrainNoiseService : ITerrain
     // procedural preset with a client-uploaded DEM. Drone altitude clamping
     // then tracks the imported terrain, matching what the viz renders.
     private HeightmapTerrain? _heightmap;
+    // Dimensions of the uploaded DEM, stored so `GetElevation` can shift
+    // client-centred world coords onto the SDK's corner-origin grid without
+    // assuming the DEM covers the service's default 4000×4000 m footprint.
+    private double _hmWidth;
+    private double _hmDepth;
 
     /// <inheritdoc/>
     public double Width => 4000;
@@ -43,8 +48,12 @@ public sealed class TerrainNoiseService : ITerrain
     /// <param name="heights">Row-major elevation grid in metres.</param>
     /// <param name="width">World width the grid covers, in metres.</param>
     /// <param name="depth">World depth the grid covers, in metres.</param>
-    public void SetHeightmap(float[,] heights, double width, double depth) =>
+    public void SetHeightmap(float[,] heights, double width, double depth)
+    {
         _heightmap = new HeightmapTerrain(heights, width, depth);
+        _hmWidth = width;
+        _hmDepth = depth;
+    }
 
     /// <summary>
     /// Clears the heightmap override.  <see cref="GetElevation"/> resumes
@@ -60,7 +69,7 @@ public sealed class TerrainNoiseService : ITerrain
         {
             // Client world-space is centred on origin; HeightmapTerrain expects
             // origin-bottom-left indexing.  Shift by half-width/depth.
-            return _heightmap.GetElevation(x + Width * 0.5, z + Depth * 0.5);
+            return _heightmap.GetElevation(x + _hmWidth * 0.5, z + _hmDepth * 0.5);
         }
 
         return _preset switch
