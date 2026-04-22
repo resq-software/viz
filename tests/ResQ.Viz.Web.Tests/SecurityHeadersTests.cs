@@ -57,6 +57,10 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
     {
         using var client = _factory.CreateClient();
         var response = await client.GetAsync("/");
+        // Assert the header is present first so a missing header surfaces as
+        // "expected ContainKey" rather than InvalidOperationException from
+        // GetValues on an absent key.
+        response.Headers.Should().ContainKey("Content-Security-Policy");
         var csp = string.Join(";", response.Headers.GetValues("Content-Security-Policy"));
 
         csp.Should().Contain("default-src 'self'");
@@ -74,6 +78,7 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
     {
         using var client = _factory.CreateClient();
         var response = await client.GetAsync("/");
+        response.Headers.Should().ContainKey("Permissions-Policy");
         var pp = string.Join(",", response.Headers.GetValues("Permissions-Policy"));
 
         // Features that should be locked out entirely.

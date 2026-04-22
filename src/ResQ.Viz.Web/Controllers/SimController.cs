@@ -33,6 +33,10 @@ public sealed class SimController : ControllerBase
 {
     private const int MaxDroneCount = 50;
 
+    // DoS guardrail for POST /api/sim/heightmap. Well past the ~1024² sweet
+    // spot the viz actually renders; caps the grid at 64 MB allocated memory.
+    private const int MaxHeightmapDimension = 4096;
+
     private readonly SimulationService _sim;
     private readonly ScenarioService _scenarios;
     private readonly ILogger<SimController> _logger;
@@ -253,20 +257,12 @@ public sealed class SimController : ControllerBase
     [HttpPost("heightmap")]
     public IActionResult SetHeightmap([FromBody] HeightmapPayload payload)
     {
-        // DoS guardrail. Kestrel's default MaxRequestBodySize (30 MB) already
-        // caps the payload, but without a dimension check a malicious client
-        // could still craft a valid-size request that triggers a huge float[,]
-        // allocation (or int32-overflow the length equality). 4096² is well
-        // past the ~1024² sweet spot the viz actually renders and still caps
-        // the grid at 64 MB allocated memory.
-        const int MaxHeightmapDimension = 4096;
-
         if (payload.Cells is null || payload.Cells.Length == 0)
             return BadRequest(new { error = "cells must be non-empty" });
         if (payload.Rows <= 0 || payload.Cols <= 0)
             return BadRequest(new { error = "rows and cols must be positive" });
         if (payload.Rows > MaxHeightmapDimension || payload.Cols > MaxHeightmapDimension)
-            return BadRequest(new { error = $"rows and cols must each be ≤ {MaxHeightmapDimension}" });
+            return BadRequest(new { error = $"rows and cols must each be <= {MaxHeightmapDimension}" });
 
         // Use long arithmetic so int32 overflow surfaces as a mismatch rather
         // than silently passing the equality check with a wrapped value.
