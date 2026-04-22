@@ -57,9 +57,10 @@ export interface LEDInputs {
 export function classifyLED(inputs: LEDInputs): LEDState {
     const { drone, batteryPct, batteryWarn, detectionFlashSec } = inputs;
 
-    if (drone.armed === false) return 'DISARMED';
-
-    // Safety-of-flight overrides everything.
+    // Safety-of-flight overrides everything, *including* disarmed. A drone
+    // that's on the ground with a critical battery still needs the red
+    // beacon — the operator must see the hazard regardless of armed state.
+    // DISARMED is a fallback below mission + detection states.
     if (batteryPct < batteryWarn * 0.75) return 'CRITICAL';
     const status = drone.status ?? 'flying';
     if (status === 'emergency' || status === 'EMERGENCY') return 'EMERGENCY';
@@ -70,6 +71,8 @@ export function classifyLED(inputs: LEDInputs): LEDState {
 
     // Detection beacon — brief flash when the drone reports a new detection.
     if (detectionFlashSec > 0) return 'DETECTING';
+
+    if (drone.armed === false) return 'DISARMED';
 
     if (status === 'hovering') return 'HOVERING';
     return 'FLYING';

@@ -19,14 +19,17 @@ function _initGlobalLevel(): void {
     if (typeof window === 'undefined') return;
     const param = new URLSearchParams(window.location.search).get('log');
     if (!param) return;
-    const match: Record<string, LogLevel> = {
-        none:  LogLevel.NONE,
-        error: LogLevel.ERROR,
-        warn:  LogLevel.WARN,
-        info:  LogLevel.INFO,
-        debug: LogLevel.DEBUG,
-        trace: LogLevel.TRACE,
-    };
+    // `Object.create(null)` omits Object.prototype, so a malicious
+    // `?log=toString` or `?log=constructor` resolves to `undefined`
+    // instead of the inherited function — otherwise `setGlobalLogLevel`
+    // would be called with a non-LogLevel value and throw.
+    const match: Record<string, LogLevel> = Object.create(null);
+    match['none']  = LogLevel.NONE;
+    match['error'] = LogLevel.ERROR;
+    match['warn']  = LogLevel.WARN;
+    match['info']  = LogLevel.INFO;
+    match['debug'] = LogLevel.DEBUG;
+    match['trace'] = LogLevel.TRACE;
     const level = match[param.toLowerCase()];
     if (level !== undefined) Logger.setGlobalLogLevel(level);
 }

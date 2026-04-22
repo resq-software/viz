@@ -59,6 +59,14 @@ export async function loadHeightmapSampler(
         baseOffset  = 0,
     } = opts;
 
+    // Guard against NaN/Infinity from bad URL params and non-positive
+    // worldSize, which would divide-by-zero in the bilinear sampler and
+    // poison every subsequent terrain vertex with NaN elevations (drones
+    // fall through the floor).
+    if (!Number.isFinite(worldSize)   || worldSize   <= 0) throw new Error(`heightmap: worldSize must be a positive finite number, got ${worldSize}`);
+    if (!Number.isFinite(heightScale))                     throw new Error(`heightmap: heightScale must be finite, got ${heightScale}`);
+    if (!Number.isFinite(baseOffset))                      throw new Error(`heightmap: baseOffset must be finite, got ${baseOffset}`);
+
     const cacheKey = `${url}|${worldSize}|${heightScale}|${baseOffset}`;
     const cached   = _samplerCache.get(cacheKey);
     if (cached) return cached;
@@ -123,13 +131,22 @@ export async function loadHeightmapFromLocation(): Promise<HeightmapSampler | nu
     const url    = params.get('heightmap');
     if (!url) return null;
 
+    // Use parseFloat + isFinite guard so typos like `?heightScale=abc`
+    // silently fall back to the default instead of producing NaN, which
+    // would cascade into NaN elevations downstream.
+    const parseFiniteParam = (key: string): number | undefined => {
+        const raw = params.get(key);
+        if (raw === null) return undefined;
+        const n = parseFloat(raw);
+        return Number.isFinite(n) ? n : undefined;
+    };
     const opts: HeightmapOptions = {};
-    const hs = params.get('heightScale');
-    const ws = params.get('worldSize');
-    const bo = params.get('baseOffset');
-    if (hs) opts.heightScale = Number(hs);
-    if (ws) opts.worldSize   = Number(ws);
-    if (bo) opts.baseOffset  = Number(bo);
+    const hs = parseFiniteParam('heightScale');
+    const ws = parseFiniteParam('worldSize');
+    const bo = parseFiniteParam('baseOffset');
+    if (hs !== undefined) opts.heightScale = hs;
+    if (ws !== undefined) opts.worldSize   = ws;
+    if (bo !== undefined) opts.baseOffset  = bo;
 
     try {
         return await loadHeightmapSampler(url, opts);

@@ -95,6 +95,25 @@ async function _fetchWithTimeout(path: string, init: RequestInit, timeoutMs: num
 }
 
 /**
+ * Fetch + parse JSON body under a single timeout window. The plain
+ * `_fetchWithTimeout` clears the timer as soon as `fetch()` resolves
+ * (headers received), which leaves the body stream unguarded — a server
+ * that streams forever would hang the caller indefinitely. Keeping the
+ * timer armed until after `.json()` closes that gap for GET callers.
+ */
+async function _fetchAndParseJson<T>(path: string, init: RequestInit, timeoutMs: number): Promise<T> {
+    const ac    = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+        const res = await fetch(path, { ...init, signal: ac.signal });
+        if (!res.ok) throw new ApiHttpError(res.status, path);
+        return (await res.json()) as T;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
  * POST JSON to the given path. Resolves to a `Result<Response, Error>`:
  * `success` is the raw `Response` (callers that need the body can call
  * `.json()`); `failure` carries either a network `Error`, `AbortError` on
@@ -139,12 +158,14 @@ export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
         let delay = retryDelayMs;
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
-                const res = await _fetchWithTimeout(path, {}, timeoutMs);
-                if (!res.ok) throw new ApiHttpError(res.status, path);
-                return (await res.json()) as T;
+                return await _fetchAndParseJson<T>(path, {}, timeoutMs);
             } catch (err) {
                 // HTTP error → surface immediately; the server spoke.
                 if (err instanceof ApiHttpError) throw err;
+                // JSON parse error → the server returned an authoritative
+                // (but malformed) body. Retrying will just get the same bad
+                // body; surface to the caller with the real error.
+                if (err instanceof SyntaxError) throw err;
                 lastErr = err;
                 if (attempt < retries) {
                     // Apply uniform jitter in [-j/2, +j/2] to the base delay
