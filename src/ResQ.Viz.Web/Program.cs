@@ -43,16 +43,50 @@ if (app.Environment.IsDevelopment())
 app.UseStaticFiles();
 app.UseRateLimiter();
 
-// Security headers + cache-control for API responses
+// Security headers + cache-control for API responses.
+// Baseline follows the OWASP Secure Headers Project recommendations:
+//   X-Content-Type-Options           — prevents MIME sniffing
+//   X-Frame-Options: DENY            — prevents clickjacking (legacy; also covered by CSP frame-ancestors)
+//   Content-Security-Policy          — tight script / style / connect / img allow-lists
+//     + frame-ancestors 'none'       — modern clickjacking block
+//     + base-uri 'self'              — prevent <base> injection redirecting relative URLs
+//     + form-action 'self'           — prevent form submission to external origins
+//     + object-src 'none'            — block legacy plugins (Flash, Java applets)
+//   Referrer-Policy                  — strip cross-origin referrer query strings
+//   Permissions-Policy               — deny every powerful feature the viz doesn't use
+//   Cross-Origin-Opener-Policy       — isolate from window.opener (Spectre mitigation)
+//   Cross-Origin-Resource-Policy     — prevent cross-site resource pulls
 app.Use(async (context, next) =>
 {
-    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    context.Response.Headers["X-Frame-Options"] = "DENY";
-    context.Response.Headers["Content-Security-Policy"] =
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:;";
+    var headers = context.Response.Headers;
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Content-Security-Policy"] =
+        "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "connect-src 'self' ws: wss:; " +
+        "img-src 'self' data:; " +
+        "frame-ancestors 'none'; " +
+        "base-uri 'self'; " +
+        "form-action 'self'; " +
+        "object-src 'none';";
+    headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    // Deny every Permissions-Policy feature the viz doesn't need. If a
+    // future feature needs one (e.g. camera for AR overlay), relax the
+    // specific entry here rather than dropping the header.
+    headers["Permissions-Policy"] =
+        "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), " +
+        "camera=(), display-capture=(), document-domain=(), encrypted-media=(), " +
+        "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), " +
+        "microphone=(), midi=(), payment=(), picture-in-picture=(), " +
+        "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), " +
+        "usb=(), web-share=(), xr-spatial-tracking=()";
+    headers["Cross-Origin-Opener-Policy"] = "same-origin";
+    headers["Cross-Origin-Resource-Policy"] = "same-site";
 
     if (context.Request.Path.StartsWithSegments("/api"))
-        context.Response.Headers["Cache-Control"] = "no-store";
+        headers["Cache-Control"] = "no-store";
 
     await next();
 });
