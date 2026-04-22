@@ -34,16 +34,11 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-// In development, UseViteDevMiddleware MUST come before UseStaticFiles.
-// It starts the Vite child process and proxies frontend requests to it, so
-// a previously built wwwroot/index.html cannot shadow the live dev server.
-if (app.Environment.IsDevelopment())
-    app.UseViteDevelopmentServer();
-
-app.UseStaticFiles();
-app.UseRateLimiter();
-
-// Security headers + cache-control for API responses.
+// Security headers must run BEFORE UseStaticFiles (which short-circuits for
+// physical assets) and UseRateLimiter (which can emit a 429 and skip the rest
+// of the pipeline). Using OnStarting rather than pre-await writes ensures the
+// headers land even on early-terminated responses.
+//
 // Baseline follows the OWASP Secure Headers Project recommendations:
 //   X-Content-Type-Options           — prevents MIME sniffing
 //   X-Frame-Options: DENY            — prevents clickjacking (legacy; also covered by CSP frame-ancestors)
@@ -58,38 +53,52 @@ app.UseRateLimiter();
 //   Cross-Origin-Resource-Policy     — prevent cross-site resource pulls
 app.Use(async (context, next) =>
 {
-    var headers = context.Response.Headers;
-    headers["X-Content-Type-Options"] = "nosniff";
-    headers["X-Frame-Options"] = "DENY";
-    headers["Content-Security-Policy"] =
-        "default-src 'self'; " +
-        "script-src 'self'; " +
-        "style-src 'self' 'unsafe-inline'; " +
-        "connect-src 'self' ws: wss:; " +
-        "img-src 'self' data:; " +
-        "frame-ancestors 'none'; " +
-        "base-uri 'self'; " +
-        "form-action 'self'; " +
-        "object-src 'none';";
-    headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
-    // Deny every Permissions-Policy feature the viz doesn't need. If a
-    // future feature needs one (e.g. camera for AR overlay), relax the
-    // specific entry here rather than dropping the header.
-    headers["Permissions-Policy"] =
-        "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), " +
-        "camera=(), display-capture=(), document-domain=(), encrypted-media=(), " +
-        "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), " +
-        "microphone=(), midi=(), payment=(), picture-in-picture=(), " +
-        "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), " +
-        "usb=(), web-share=(), xr-spatial-tracking=()";
-    headers["Cross-Origin-Opener-Policy"] = "same-origin";
-    headers["Cross-Origin-Resource-Policy"] = "same-site";
+    context.Response.OnStarting(() =>
+    {
+        var headers = context.Response.Headers;
+        headers["X-Content-Type-Options"] = "nosniff";
+        headers["X-Frame-Options"] = "DENY";
+        headers["Content-Security-Policy"] =
+            "default-src 'self'; " +
+            "script-src 'self'; " +
+            "style-src 'self' 'unsafe-inline'; " +
+            "connect-src 'self' ws: wss:; " +
+            "img-src 'self' data:; " +
+            "frame-ancestors 'none'; " +
+            "base-uri 'self'; " +
+            "form-action 'self'; " +
+            "object-src 'none';";
+        headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        // Deny every Permissions-Policy feature the viz doesn't need. If a
+        // future feature needs one (e.g. camera for AR overlay), relax the
+        // specific entry here rather than dropping the header.
+        headers["Permissions-Policy"] =
+            "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), " +
+            "camera=(), display-capture=(), document-domain=(), encrypted-media=(), " +
+            "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), " +
+            "microphone=(), midi=(), payment=(), picture-in-picture=(), " +
+            "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), " +
+            "usb=(), web-share=(), xr-spatial-tracking=()";
+        headers["Cross-Origin-Opener-Policy"] = "same-origin";
+        headers["Cross-Origin-Resource-Policy"] = "same-site";
 
-    if (context.Request.Path.StartsWithSegments("/api"))
-        headers["Cache-Control"] = "no-store";
+        if (context.Request.Path.StartsWithSegments("/api"))
+            headers["Cache-Control"] = "no-store";
+
+        return Task.CompletedTask;
+    });
 
     await next();
 });
+
+// In development, UseViteDevMiddleware MUST come before UseStaticFiles.
+// It starts the Vite child process and proxies frontend requests to it, so
+// a previously built wwwroot/index.html cannot shadow the live dev server.
+if (app.Environment.IsDevelopment())
+    app.UseViteDevelopmentServer();
+
+app.UseStaticFiles();
+app.UseRateLimiter();
 
 if (!app.Environment.IsDevelopment())
 {
