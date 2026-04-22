@@ -96,4 +96,26 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         response.Headers.Should().ContainKey("Cache-Control")
             .WhoseValue.Should().Contain("no-store");
     }
+
+    /// <summary>
+    /// Regression guard for the middleware-ordering bug caught in PR #46
+    /// review: security headers must apply to responses that short-circuit
+    /// the pipeline before the terminal handler runs (static files, 404s,
+    /// rate-limit rejections). The previous placement — after UseStaticFiles
+    /// + UseRateLimiter — silently skipped those responses. `OnStarting`
+    /// registered at the top of the pipeline fixes both.
+    /// </summary>
+    [Fact]
+    public async Task NonRootPathStillReceivesSecurityHeaders()
+    {
+        using var client = _factory.CreateClient();
+        // A path that doesn't match any controller or static file — exercises
+        // the terminal-404 path through the middleware chain.
+        var response = await client.GetAsync("/nonexistent-asset-for-header-coverage.js");
+
+        response.Headers.Should().ContainKey("X-Content-Type-Options")
+            .WhoseValue.Should().Contain("nosniff");
+        response.Headers.Should().ContainKey("Content-Security-Policy");
+        response.Headers.Should().ContainKey("Cross-Origin-Resource-Policy");
+    }
 }
