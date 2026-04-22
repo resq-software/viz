@@ -51,9 +51,9 @@ jobs:
       BUNDLE_JS_BUDGET_BYTES: '819200'   # 800 KB
       BUNDLE_CSS_BUDGET_BYTES: '51200'   # 50 KB
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -101,7 +101,7 @@ jobs:
         run: npm audit --audit-level=high --legacy-peer-deps
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: viz-wwwroot-${{ github.sha }}
           path: src/ResQ.Viz.Web/wwwroot/
