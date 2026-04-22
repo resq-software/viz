@@ -14,9 +14,10 @@
 
 import type { DroneState, HazardState } from './types';
 import { classifyLED, LED_PROFILES } from './dronesLed';
+import { TERRAIN_SIZE } from './terrain';
 
 const CANVAS_SIZE = 200;
-const WORLD_SIZE  = 4000;   // mirrors TERRAIN_SIZE in terrain.ts
+const WORLD_SIZE  = TERRAIN_SIZE;   // single source of truth
 const HALF_WORLD  = WORLD_SIZE * 0.5;
 const BATTERY_WARN = 0.20;
 

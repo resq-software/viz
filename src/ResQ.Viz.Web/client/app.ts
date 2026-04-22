@@ -629,6 +629,15 @@ const connection = new HubConnectionBuilder()
 const _seenDetectionIds = new Set<string>();
 const _seenHazardIds    = new Map<string, string>();   // id → type
 
+// Reset on scenario switch so a `det-1` from scenario A doesn't suppress
+// the first `det-1` of scenario B; same for hazards. Without this the
+// event log stays silent for the first few seconds after a preset change
+// if the two scenarios happen to share ids.
+document.addEventListener('resq:scenario-start', () => {
+    _seenDetectionIds.clear();
+    _seenHazardIds.clear();
+});
+
 connection.on('ReceiveFrame', (frame: VizFrame) => {
     _lastFrame = frame;
     loadingOverlay.onFrame();
@@ -704,9 +713,15 @@ let _starting = false;
 
 async function _autoSpawnIfEmpty(): Promise<void> {
     const state = await apiGet<unknown[]>('/api/sim/state');
-    if (!state.success) return;   // non-critical; sidebar lets the user spawn manually
+    if (!state.success) {
+        log.warn('auto-spawn skipped — /api/sim/state unreachable', { error: state.error.message });
+        return;
+    }
     if (state.value.length === 0) {
-        await apiPost('/api/sim/scenario/single');
+        const spawn = await apiPost('/api/sim/scenario/single');
+        if (!spawn.success) {
+            log.warn('auto-spawn scenario/single failed', { error: spawn.error.message });
+        }
     }
 }
 

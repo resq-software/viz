@@ -19,7 +19,7 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const TERRAIN_SIZE = 4000;
+export const TERRAIN_SIZE = 4000;
 // Raised from 220 for sharper ridge silhouettes at close camera distance.
 // 320² ≈ 102k verts — ~2× the prior budget, still well under bottleneck
 // on modern GPUs and the L1/L2 geoCache absorbs the rebuild cost.
