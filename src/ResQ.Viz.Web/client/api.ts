@@ -63,8 +63,14 @@ export interface ApiGetOptions extends ApiOptions {
      *  1 retry for GET, which covers SignalR reconnect windows where a
      *  concurrent fetch loses its connection mid-flight. */
     retries?: number;
-    /** Backoff between retries in milliseconds. Default 250 ms. */
+    /** Initial backoff between retries in milliseconds. Default 250 ms. */
     retryDelayMs?: number;
+    /** Backoff strategy between retries. `'exponential'` (default) doubles
+     *  the delay before each successive retry — friendlier to the server
+     *  during a full reconnect where several concurrent GETs might
+     *  otherwise thundering-herd at the same fixed interval. `'fixed'`
+     *  keeps the constant cadence from the original implementation. */
+    retryBackoff?: 'fixed' | 'exponential';
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -115,9 +121,11 @@ export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
     const timeoutMs    = opts.timeoutMs    ?? DEFAULT_TIMEOUT_MS;
     const retries      = opts.retries      ?? 1;
     const retryDelayMs = opts.retryDelayMs ?? 250;
+    const backoff      = opts.retryBackoff ?? 'exponential';
 
     return _catch(async () => {
         let lastErr: unknown;
+        let delay = retryDelayMs;
         for (let attempt = 0; attempt <= retries; attempt++) {
             try {
                 const res = await _fetchWithTimeout(path, {}, timeoutMs);
@@ -128,7 +136,11 @@ export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
                 if (err instanceof ApiHttpError) throw err;
                 lastErr = err;
                 if (attempt < retries) {
-                    await new Promise(r => setTimeout(r, retryDelayMs));
+                    await new Promise(r => setTimeout(r, delay));
+                    // Exponential doubles the delay before the next retry so
+                    // concurrent failures don't thundering-herd at the same
+                    // cadence. Fixed leaves it at retryDelayMs.
+                    if (backoff === 'exponential') delay *= 2;
                 }
             }
         }
