@@ -253,12 +253,26 @@ public sealed class SimController : ControllerBase
     [HttpPost("heightmap")]
     public IActionResult SetHeightmap([FromBody] HeightmapPayload payload)
     {
+        // DoS guardrail. Kestrel's default MaxRequestBodySize (30 MB) already
+        // caps the payload, but without a dimension check a malicious client
+        // could still craft a valid-size request that triggers a huge float[,]
+        // allocation (or int32-overflow the length equality). 4096² is well
+        // past the ~1024² sweet spot the viz actually renders and still caps
+        // the grid at 64 MB allocated memory.
+        const int MaxHeightmapDimension = 4096;
+
         if (payload.Cells is null || payload.Cells.Length == 0)
             return BadRequest(new { error = "cells must be non-empty" });
         if (payload.Rows <= 0 || payload.Cols <= 0)
             return BadRequest(new { error = "rows and cols must be positive" });
-        if (payload.Cells.Length != payload.Rows * payload.Cols)
-            return BadRequest(new { error = $"cells length {payload.Cells.Length} does not match rows*cols {payload.Rows * payload.Cols}" });
+        if (payload.Rows > MaxHeightmapDimension || payload.Cols > MaxHeightmapDimension)
+            return BadRequest(new { error = $"rows and cols must each be ≤ {MaxHeightmapDimension}" });
+
+        // Use long arithmetic so int32 overflow surfaces as a mismatch rather
+        // than silently passing the equality check with a wrapped value.
+        long expectedLen = (long)payload.Rows * payload.Cols;
+        if (payload.Cells.Length != expectedLen)
+            return BadRequest(new { error = $"cells length {payload.Cells.Length} does not match rows*cols {expectedLen}" });
         if (payload.Width <= 0 || payload.Depth <= 0)
             return BadRequest(new { error = "width and depth must be positive metres" });
 
