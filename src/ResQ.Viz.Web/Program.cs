@@ -104,3 +104,9 @@ if (!app.Environment.IsDevelopment())
     app.MapFallbackToFile("index.html");  // serves Vite-built wwwroot/index.html in production
 
 app.Run();
+
+// Exposes the top-level-statement `Program` class to tests so they can
+// bootstrap the real pipeline via `WebApplicationFactory<Program>`. No
+// members needed — the partial declaration just flips the implicit
+// access modifier from internal to public.
+public partial class Program;
