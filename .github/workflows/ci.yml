@@ -1,17 +1,19 @@
 # Copyright 2026 ResQ Software
 # SPDX-License-Identifier: Apache-2.0
 #
-# Comprehensive CI. Two parallel streams converge into the `required`
+# Comprehensive CI. Three parallel streams converge into the `required`
 # aggregator that the org ruleset `default-branch-baseline` watches:
 #
-#   gates   — org-wide reusable: dotnet build/test/format + security scan
-#   client  — inline TypeScript + Vite + bundle-size budget
+#   gates          — org-wide reusable: dotnet build/test/format + security scan
+#   client         — org-wide reusable: node-ci (install + tsc + vite build)
+#   client-budget  — bundle-size enforcement + wwwroot artifact upload
 #
-# NOTE ON node-ci.yml: the org's node-ci reusable does not currently
-# accept a `cache-dependency-path` input, so `actions/setup-node`'s
-# npm cache detection fails for viz (lockfile is at
-# src/ResQ.Viz.Web/package-lock.json, not repo root). Upstream fix
-# tracked — once `node-ci.yml` takes that input, switch `client` over.
+# The org's `node-ci.yml` gained `cache-dependency-path` support in
+# resq-software/.github#19, which unblocked viz's subdirectory lockfile
+# (src/ResQ.Viz.Web/package-lock.json). Prior hand-rolled inline job
+# replaced with the shared reusable so viz inherits the org's
+# SHA-pinned actions + step-security/harden-runner + unified timeout
+# policy automatically.
 
 name: CI
 
@@ -32,7 +34,7 @@ concurrency:
 jobs:
   # ── Backend (C#) + security ──────────────────────────────────────────
   gates:
-    uses: resq-software/.github/.github/workflows/required.yml@109c36b59b6c94e235e4590598fd5f719d7d321a
+    uses: resq-software/.github/.github/workflows/required.yml@23ce94eabddf963835624451e89baca7ac9db541
     with:
       lang: dotnet
       dotnet-solution: ResQ.Viz.sln
@@ -40,14 +42,35 @@ jobs:
       submodules: recursive
     secrets: inherit
 
-  # ── Frontend (TypeScript / Vite) ─────────────────────────────────────
-  # Bundle-size budget in bytes. Current build is ~776 KB JS + 24 KB CSS;
-  # 800 KB / 50 KB gives measured headroom. Bumping is a policy decision.
-  #
-  # SHA-pinned actions match the org's security-harden-runner posture
-  # (upstream node-ci.yml pattern). Switch to the reusable once it
-  # accepts cache-dependency-path.
+  # ── Frontend (TypeScript / Vite) — via org reusable ──────────────────
+  # Consumes node-ci.yml directly (not via required.yml) because
+  # required.yml dispatches based on `lang:` — viz already calls it as
+  # `lang: dotnet` for the backend stream, and a second `lang: node`
+  # dispatch would duplicate the security-scan job. Direct use of
+  # node-ci.yml skips that.
   client:
+    uses: resq-software/.github/.github/workflows/node-ci.yml@23ce94eabddf963835624451e89baca7ac9db541
+    with:
+      package-manager: npm
+      node-version: "22"
+      working-directory: src/ResQ.Viz.Web
+      cache-dependency-path: src/ResQ.Viz.Web/package-lock.json
+      install-cmd: npm ci --legacy-peer-deps
+      typecheck-cmd: npx tsc --noEmit
+      build-cmd: npx vite build
+      timeout-minutes: 10
+    secrets: inherit
+
+  # ── Bundle-size budget + artifact upload (companion) ─────────────────
+  # The reusable node-ci doesn't expose bundle outputs or artifact
+  # upload, so this job rebuilds the client on a cache-warm runner
+  # (~15 s) and enforces the ceiling. Depends on `client` so a failing
+  # tsc/build stops the pipeline before wasting a second build.
+  #
+  # Bundle budgets in bytes. Current build is ~776 KB JS + 24 KB CSS;
+  # 800 KB / 50 KB gives measured headroom. Bumping is a policy decision.
+  client-budget:
+    needs: client
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -73,10 +96,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Type check (tsc --noEmit)
-        run: npx tsc --noEmit
-
-      - name: Build (vite build)
+      - name: Build (cache-warm)
         run: npx vite build
 
       - name: Measure + enforce bundle-size budget
@@ -120,18 +140,20 @@ jobs:
   required:
     name: required
     runs-on: ubuntu-latest
-    needs: [gates, client]
+    needs: [gates, client, client-budget]
     if: always()
     steps:
       - name: Assert all upstream jobs passed or were skipped
         env:
           GATES:  ${{ needs.gates.result }}
           CLIENT: ${{ needs.client.result }}
+          BUDGET: ${{ needs.client-budget.result }}
         run: |
           set -eu
           ok() { case "$1" in success|skipped|"") return 0;; *) return 1;; esac; }
           fail=0
-          ok "$GATES"  || { echo "::error::gates=$GATES";   fail=1; }
-          ok "$CLIENT" || { echo "::error::client=$CLIENT"; fail=1; }
+          ok "$GATES"  || { echo "::error::gates=$GATES";          fail=1; }
+          ok "$CLIENT" || { echo "::error::client=$CLIENT";        fail=1; }
+          ok "$BUDGET" || { echo "::error::client-budget=$BUDGET"; fail=1; }
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "ok: gates=$GATES client=$CLIENT"
+          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET"
