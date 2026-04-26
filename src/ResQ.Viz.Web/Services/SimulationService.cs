@@ -132,7 +132,7 @@ public sealed class SimulationService : BackgroundService
             {
                 _droneVendors[id] = vendor;
             }
-            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}) vendor={Vendor}.", id, position.X, position.Y, position.Z, vendor ?? "none");
+            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}) vendor={Vendor}.", LogSafe(id), position.X, position.Y, position.Z, LogSafe(vendor) ?? "none");
         }
     }
 
@@ -146,11 +146,11 @@ public sealed class SimulationService : BackgroundService
             var drone = _world.Drones.FirstOrDefault(d => d.Id == droneId);
             if (drone is null)
             {
-                _logger.LogWarning("SendCommand: drone {DroneId} not found.", droneId);
+                _logger.LogWarning("SendCommand: drone {DroneId} not found.", LogSafe(droneId));
                 return;
             }
             drone.SendCommand(command);
-            _logger.LogDebug("Command {Command} sent to drone {DroneId}.", command, droneId);
+            _logger.LogDebug("Command {Command} sent to drone {DroneId}.", command, LogSafe(droneId));
         }
     }
 
@@ -179,7 +179,7 @@ public sealed class SimulationService : BackgroundService
         {
             _swarm.SetTerrainPreset(key, _terrain, _world.Drones.ToList());
         }
-        _logger.LogInformation("Terrain preset switched to '{Key}'.", key);
+        _logger.LogInformation("Terrain preset switched to '{Key}'.", LogSafe(key));
     }
 
     /// <summary>
@@ -310,4 +310,18 @@ public sealed class SimulationService : BackgroundService
             await Task.Delay(16, stoppingToken);
         }
     }
+
+    /// <summary>
+    /// Strips CR/LF from a user-supplied string before it is rendered into a
+    /// log line. Without this, an attacker who controls a value that flows
+    /// into <see cref="ILogger"/> can inject newline characters and forge
+    /// fake log entries (CWE-117). Recognised as a sanitiser by the CodeQL
+    /// `cs/log-forging` rule.
+    ///
+    /// Returns <c>null</c> for a <c>null</c> input so structured loggers
+    /// (Serilog, the default JSON formatter, …) can render the null state
+    /// natively rather than seeing a magic <c>"&lt;null&gt;"</c> string.
+    /// </summary>
+    private static string? LogSafe(string? value) =>
+        value?.Replace("\r", string.Empty).Replace("\n", string.Empty);
 }
