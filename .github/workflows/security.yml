@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   scan:
-    uses: resq-software/.github/.github/workflows/security-scan.yml@main
+    uses: resq-software/.github/.github/workflows/security-scan.yml@23ce94eabddf963835624451e89baca7ac9db541  # main
     with:
       languages: '["csharp","actions"]'
       submodules: recursive
