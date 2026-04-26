@@ -132,7 +132,7 @@ public sealed class SimulationService : BackgroundService
             {
                 _droneVendors[id] = vendor;
             }
-            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}) vendor={Vendor}.", id, position.X, position.Y, position.Z, vendor ?? "none");
+            _logger.LogInformation("Drone {DroneId} added at ({X}, {Y}, {Z}) vendor={Vendor}.", LogSafe(id), position.X, position.Y, position.Z, LogSafe(vendor) ?? "none");
         }
     }
 
@@ -317,7 +317,11 @@ public sealed class SimulationService : BackgroundService
     /// into <see cref="ILogger"/> can inject newline characters and forge
     /// fake log entries (CWE-117). Recognised as a sanitiser by the CodeQL
     /// `cs/log-forging` rule.
+    ///
+    /// Returns <c>null</c> for a <c>null</c> input so structured loggers
+    /// (Serilog, the default JSON formatter, …) can render the null state
+    /// natively rather than seeing a magic <c>"&lt;null&gt;"</c> string.
     /// </summary>
-    private static string LogSafe(string? value) =>
-        value is null ? "<null>" : value.Replace("\r", string.Empty).Replace("\n", string.Empty);
+    private static string? LogSafe(string? value) =>
+        value?.Replace("\r", string.Empty).Replace("\n", string.Empty);
 }
