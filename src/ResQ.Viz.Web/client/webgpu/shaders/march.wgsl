@@ -37,17 +37,51 @@ struct Hit {
   mat:    u32,
 };
 
+// Slab AABB intersection. Returns vec2(t_enter, t_exit). The ray misses the
+// box iff t_exit < max(t_enter, 0).
+fn ray_aabb(ro: vec3<f32>, inv: vec3<f32>, box_min: vec3<f32>, box_max: vec3<f32>) -> vec2<f32> {
+  let t1 = (box_min - ro) * inv;
+  let t2 = (box_max - ro) * inv;
+  let t_lo = min(t1, t2);
+  let t_hi = max(t1, t2);
+  let t_enter = max(max(t_lo.x, t_lo.y), t_lo.z);
+  let t_exit  = min(min(t_hi.x, t_hi.y), t_hi.z);
+  return vec2<f32>(t_enter, t_exit);
+}
+
 fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
-  var v = vec3<i32>(floor(ro));
-  let step = vec3<i32>(sign(rd));
-  let inv = 1.0 / rd;
+  // Replace exact-zero ray-direction components with a tiny epsilon to keep
+  // 1/rd finite. Otherwise 1/0 = ∞ propagates into t_max as 0*∞ = NaN, and
+  // the min-axis comparisons below behave undefined-ly for axis-aligned rays
+  // starting on integer coordinates.
+  let rd_safe = select(rd, vec3<f32>(1e-30), rd == vec3<f32>(0.0));
+  let inv = 1.0 / rd_safe;
+
+  // Most camera rays start outside the grid AABB. Clip the ray into the
+  // grid first, then run DDA from the entry point — the previous version
+  // bailed out on the immediate out-of-bounds check before walking in.
+  let box_min = vec3<f32>(0.0);
+  let box_max = vec3<f32>(grid.size);
+  let aabb = ray_aabb(ro, inv, box_min, box_max);
+  let t_enter = max(aabb.x, 0.0);
+  let t_exit  = aabb.y;
+  if (t_exit < t_enter) {
+    return Hit(false, vec3<f32>(0.0), 0u);
+  }
+
+  let entry = ro + rd_safe * t_enter;
+  let s = vec3<i32>(grid.size);
+  // Clamp to guard against floating-point drift past the boundary.
+  var v = clamp(vec3<i32>(floor(entry)), vec3<i32>(0), s - vec3<i32>(1));
+
+  let step = vec3<i32>(sign(rd_safe));
   let t_delta = abs(inv);
+  // t_max measured from the original ray origin (so step accumulation stays
+  // consistent with t_delta). The starting cell `v` is already inside.
   var t_max = (vec3<f32>(v + max(step, vec3<i32>(0))) - ro) * inv;
+
   var n = vec3<f32>(0.0);
   for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
-    if (!in_bounds(v)) {
-      return Hit(false, n, 0u);
-    }
     let m = voxels[idx(v)];
     if (m != 0u) {
       return Hit(true, n, m);
@@ -65,8 +99,13 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
       v.z = v.z + step.z;
       n = vec3<f32>(0.0, 0.0, -f32(step.z));
     }
+    // Bounds check AFTER the step: we exit only when we step OUT of the
+    // grid, never on the initial cell.
+    if (!in_bounds(v)) {
+      return Hit(false, vec3<f32>(0.0), 0u);
+    }
   }
-  return Hit(false, n, 0u);
+  return Hit(false, vec3<f32>(0.0), 0u);
 }
 
 @compute @workgroup_size(8, 8, 1)

@@ -103,6 +103,8 @@ async function main(): Promise<void> {
 
   let outTex: GPUTexture | null = null;
   let outView: GPUTextureView | null = null;
+  let computeBG: GPUBindGroup | null = null;
+  let blitBG: GPUBindGroup | null = null;
   function resize(): void {
     const dpr = Math.min(window.devicePixelRatio, 2);
     const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
@@ -117,37 +119,9 @@ async function main(): Promise<void> {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
     outView = outTex.createView();
-  }
-  resize();
-  window.addEventListener('resize', resize);
-
-  function writeCamera(t: number): void {
-    const r = N * 1.6;
-    const ox = N / 2 + r * Math.cos(t * 0.25);
-    const oz = N / 2 + r * Math.sin(t * 0.25);
-    const oy = N * 0.7;
-    const fwd = norm([N / 2 - ox, N * 0.4 - oy, N / 2 - oz]);
-    const right = norm(cross(fwd, [0, 1, 0]));
-    const up = cross(right, fwd);
-    const data = new Float32Array(20);
-    data[0]  = ox;       data[1]  = oy;       data[2]  = oz;
-    data[4]  = fwd[0];   data[5]  = fwd[1];   data[6]  = fwd[2];
-    data[8]  = right[0]; data[9]  = right[1]; data[10] = right[2];
-    data[12] = up[0];    data[13] = up[1];    data[14] = up[2];
-    data[16] = canvas.width;
-    data[17] = canvas.height;
-    data[18] = Math.tan(Math.PI / 6);
-    device.queue.writeBuffer(camBuf, 0, data);
-  }
-
-  setStatus(hasTimestamp ? 'running (timestamp on)' : 'running');
-
-  function frame(t: number): void {
-    resize();
-    if (!outView || !ctx) return;
-    writeCamera(t / 1000);
-
-    const computeBG = device.createBindGroup({
+    // Bind groups reference outView, so they must be rebuilt whenever the
+    // storage texture is recreated. Buffers and the sampler are stable.
+    computeBG = device.createBindGroup({
       layout: computePipe.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: camBuf } },
@@ -156,13 +130,43 @@ async function main(): Promise<void> {
         { binding: 3, resource: outView },
       ],
     });
-    const blitBG = device.createBindGroup({
+    blitBG = device.createBindGroup({
       layout: blitPipe.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: outView },
         { binding: 1, resource: sampler },
       ],
     });
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // Reusable scratch for the camera uniform — avoids per-frame allocation.
+  const camData = new Float32Array(20);
+  function writeCamera(t: number): void {
+    const r = N * 1.6;
+    const ox = N / 2 + r * Math.cos(t * 0.25);
+    const oz = N / 2 + r * Math.sin(t * 0.25);
+    const oy = N * 0.7;
+    const fwd = norm([N / 2 - ox, N * 0.4 - oy, N / 2 - oz]);
+    const right = norm(cross(fwd, [0, 1, 0]));
+    const up = cross(right, fwd);
+    camData[0]  = ox;       camData[1]  = oy;       camData[2]  = oz;
+    camData[4]  = fwd[0];   camData[5]  = fwd[1];   camData[6]  = fwd[2];
+    camData[8]  = right[0]; camData[9]  = right[1]; camData[10] = right[2];
+    camData[12] = up[0];    camData[13] = up[1];    camData[14] = up[2];
+    camData[16] = canvas.width;
+    camData[17] = canvas.height;
+    camData[18] = Math.tan(Math.PI / 6);
+    device.queue.writeBuffer(camBuf, 0, camData);
+  }
+
+  setStatus(hasTimestamp ? 'running (timestamp on)' : 'running');
+
+  function frame(t: number): void {
+    resize();
+    if (!outView || !ctx || !computeBG || !blitBG) return;
+    writeCamera(t / 1000);
 
     const enc = device.createCommandEncoder();
     const cp = enc.beginComputePass();
