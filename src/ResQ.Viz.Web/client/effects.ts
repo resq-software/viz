@@ -62,12 +62,15 @@ export class EffectsManager {
     private _trailMaxPositions: number = TRAIL_LENGTH_DEFAULT;
 
     /**
-     * Cached mesh-link opacity per drone-pair, keyed by canonical
-     * `"min-max"` of the indices. Populated asynchronously from LoS
-     * query results so opacity persists across the per-frame line
-     * teardown/rebuild in `_updateMeshLinks`.
+     * Cached mesh-link occlusion state per drone-pair, keyed by canonical
+     * `"<idA>--<idB>"` (lexicographically sorted drone IDs — stable across
+     * any reordering of the drones array). True iff the most recent LoS
+     * query reported terrain blocking the line of sight. Opacity is
+     * computed dynamically at line-creation time so changes to base
+     * opacity (e.g. `mesh.partitioned` toggling) take effect immediately
+     * without invalidating the cache.
      */
-    private readonly _linkOpacityCache = new Map<string, number>();
+    private readonly _meshLinkOccluded = new Map<string, boolean>();
     /**
      * Skip-if-busy throttle for LoS dispatches. When non-null, a query
      * is in flight and we skip new dispatches until it settles. Prevents
@@ -354,7 +357,7 @@ export class EffectsManager {
         // Occluded links fade significantly but stay faintly visible so
         // operators can still see the topology even when terrain blocks
         // direct line-of-sight.
-        const occludedOpacity = baseOpacity * 0.25;
+        const occludedFactor = 0.25;
 
         // Collect rays alongside line creation so we don't iterate twice.
         const losRays: LosRay[] = [];
@@ -371,11 +374,14 @@ export class EffectsManager {
             ];
             const geo = new THREE.BufferGeometry().setFromPoints(pts);
 
-            // Use the cached LoS-modulated opacity if we have one for this
-            // pair; otherwise fall back to the base opacity for this frame.
-            // The next dispatched query will populate the cache.
-            const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-            const opacity = this._linkOpacityCache.get(key) ?? baseOpacity;
+            // Cache key uses drone IDs (stable across array reorderings).
+            // Opacity is computed dynamically from the cached occlusion
+            // boolean so changes in baseOpacity (e.g. mesh.partitioned
+            // toggling) take effect on the next frame without
+            // invalidating the cache.
+            const key = a.id < b.id ? `${a.id}--${b.id}` : `${b.id}--${a.id}`;
+            const occluded = this._meshLinkOccluded.get(key) ?? false;
+            const opacity = occluded ? baseOpacity * occludedFactor : baseOpacity;
 
             const mat = new THREE.LineBasicMaterial({
                 color: MESH_LINK_COLOR,
@@ -406,23 +412,21 @@ export class EffectsManager {
         // Dispatch LoS query if the sensor stack is ready and we don't
         // already have one in flight. Skipping when busy keeps queries
         // bounded — at sim rates (10 Hz) this is plenty fresh, and the
-        // cached opacity covers the gap.
+        // cached occlusion state covers the gap.
         const ctx = getSensorContext();
         if (ctx && losRays.length > 0 && !this._losQueryInFlight) {
-            const cache = this._linkOpacityCache;
+            const cache = this._meshLinkOccluded;
             this._losQueryInFlight = ctx.los.query(losRays).then(
                 hits => {
                     for (let i = 0; i < hits.length; i++) {
                         const hit = hits[i]!;
                         const key = losKeys[i]!;
-                        const occluded = (hit.flags & HIT_OBSTACLE) !== 0;
-                        cache.set(key, occluded ? occludedOpacity : baseOpacity);
+                        cache.set(key, (hit.flags & HIT_OBSTACLE) !== 0);
                     }
                 },
                 err => {
                     // Don't crash the render on sensor failure — log and
-                    // fall back to the base opacity (the cache simply
-                    // stays unpopulated for this frame's keys).
+                    // leave the cache untouched for this frame's keys.
                     console.warn('[viz] mesh-link LoS query failed:', err);
                 },
             ).finally(() => {
