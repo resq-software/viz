@@ -3,6 +3,9 @@
 
 import * as THREE from 'three';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
+import type { LosRay } from './webgpu/los';
+import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
+import { getSensorContext } from './webgpu/registry';
 
 const HAZARD_COLORS: Record<string, number> = {
     // Legacy uppercase keys
@@ -57,6 +60,20 @@ export class EffectsManager {
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
     private _trailMaxPositions: number = TRAIL_LENGTH_DEFAULT;
+
+    /**
+     * Cached mesh-link opacity per drone-pair, keyed by canonical
+     * `"min-max"` of the indices. Populated asynchronously from LoS
+     * query results so opacity persists across the per-frame line
+     * teardown/rebuild in `_updateMeshLinks`.
+     */
+    private readonly _linkOpacityCache = new Map<string, number>();
+    /**
+     * Skip-if-busy throttle for LoS dispatches. When non-null, a query
+     * is in flight and we skip new dispatches until it settles. Prevents
+     * unbounded queueing if GPU+readback can't keep up with the render.
+     */
+    private _losQueryInFlight: Promise<void> | null = null;
 
     constructor(scene: THREE.Scene) {
         this._scene = scene;
@@ -333,6 +350,16 @@ export class EffectsManager {
 
         if (!mesh?.links || drones.length === 0) return;
 
+        const baseOpacity = mesh.partitioned ? 0.3 : 0.6;
+        // Occluded links fade significantly but stay faintly visible so
+        // operators can still see the topology even when terrain blocks
+        // direct line-of-sight.
+        const occludedOpacity = baseOpacity * 0.25;
+
+        // Collect rays alongside line creation so we don't iterate twice.
+        const losRays: LosRay[] = [];
+        const losKeys: string[] = [];
+
         for (const [i, j] of mesh.links) {
             const a = drones[i];
             const b = drones[j];
@@ -343,14 +370,64 @@ export class EffectsManager {
                 new THREE.Vector3(b.pos[0], b.pos[1], b.pos[2]),
             ];
             const geo = new THREE.BufferGeometry().setFromPoints(pts);
+
+            // Use the cached LoS-modulated opacity if we have one for this
+            // pair; otherwise fall back to the base opacity for this frame.
+            // The next dispatched query will populate the cache.
+            const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+            const opacity = this._linkOpacityCache.get(key) ?? baseOpacity;
+
             const mat = new THREE.LineBasicMaterial({
                 color: MESH_LINK_COLOR,
                 transparent: true,
-                opacity: mesh.partitioned ? 0.3 : 0.6,
+                opacity,
             });
             const line = new THREE.Line(geo, mat);
             this._scene.add(line);
             this._meshLines.push(line);
+
+            // Build the LoS ray for this pair. Skip degenerate
+            // zero-length pairs (shouldn't happen but defensive).
+            const dx = b.pos[0] - a.pos[0];
+            const dy = b.pos[1] - a.pos[1];
+            const dz = b.pos[2] - a.pos[2];
+            const len = Math.hypot(dx, dy, dz);
+            if (len > 0) {
+                losRays.push({
+                    origin: [a.pos[0], a.pos[1], a.pos[2]],
+                    direction: [dx / len, dy / len, dz / len],
+                    maxT: len,
+                    mask: MASK_OBSTACLES,
+                });
+                losKeys.push(key);
+            }
+        }
+
+        // Dispatch LoS query if the sensor stack is ready and we don't
+        // already have one in flight. Skipping when busy keeps queries
+        // bounded — at sim rates (10 Hz) this is plenty fresh, and the
+        // cached opacity covers the gap.
+        const ctx = getSensorContext();
+        if (ctx && losRays.length > 0 && !this._losQueryInFlight) {
+            const cache = this._linkOpacityCache;
+            this._losQueryInFlight = ctx.los.query(losRays).then(
+                hits => {
+                    for (let i = 0; i < hits.length; i++) {
+                        const hit = hits[i]!;
+                        const key = losKeys[i]!;
+                        const occluded = (hit.flags & HIT_OBSTACLE) !== 0;
+                        cache.set(key, occluded ? occludedOpacity : baseOpacity);
+                    }
+                },
+                err => {
+                    // Don't crash the render on sensor failure — log and
+                    // fall back to the base opacity (the cache simply
+                    // stays unpopulated for this frame's keys).
+                    console.warn('[viz] mesh-link LoS query failed:', err);
+                },
+            ).finally(() => {
+                this._losQueryInFlight = null;
+            });
         }
     }
 }
