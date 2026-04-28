@@ -9,6 +9,17 @@ import marchSrc from './webgpu/shaders/march.wgsl?raw';
 import blitSrc from './webgpu/shaders/blit.wgsl?raw';
 import { initDevice } from './webgpu/device';
 import { BRICK, buildBrickMap, createBrickMap } from './webgpu/brickmap';
+import {
+    HIT_HIT,
+    HIT_OBSTACLE,
+    MASK_OBSTACLES,
+    RAY_BYTES,
+    RAY_HIT_BYTES,
+    createHitBuffer,
+    createRayBuffer,
+    readHit,
+    writeRay,
+} from './webgpu/rays';
 
 const N = 128;
 const TILE = 8;
@@ -94,6 +105,77 @@ async function main(): Promise<void> {
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   device.queue.writeBuffer(gridBuf, 0, new Uint32Array([N, N, N, TOP]));
+
+  // Sensor-batch demonstrator — fire one ray from above the terrain
+  // straight down and log the hit. Proves the Ray/RayHit wire format
+  // and march_batch entry are wired correctly. Same brick map, same
+  // DDA the camera path uses; just a different ray source.
+  {
+    const rayViews = createRayBuffer(1);
+    writeRay(
+      rayViews,
+      0,
+      [N / 2, N - 1, N / 2],   // origin: top-center of grid
+      [0, -1, 0],              // direction: straight down
+      N,                        // max_t: span the grid
+      MASK_OBSTACLES,
+    );
+
+    const rayBuf = device.createBuffer({
+      size: RAY_BYTES,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(rayBuf, 0, rayViews.buffer);
+
+    const hitBuf = device.createBuffer({
+      size: RAY_HIT_BYTES,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    const hitReadBuf = device.createBuffer({
+      size: RAY_HIT_BYTES,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const probePipe = device.createComputePipeline({
+      layout: 'auto',
+      compute: {
+        module: device.createShaderModule({ code: marchSrc }),
+        entryPoint: 'march_batch',
+      },
+    });
+    const probeBG = device.createBindGroup({
+      layout: probePipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 1, resource: { buffer: gridBuf } },
+        { binding: 2, resource: { buffer: brickMap.topGrid } },
+        { binding: 4, resource: { buffer: brickMap.brickPool } },
+        { binding: 5, resource: { buffer: rayBuf } },
+        { binding: 6, resource: { buffer: hitBuf } },
+      ],
+    });
+
+    const enc = device.createCommandEncoder();
+    const cp = enc.beginComputePass();
+    cp.setPipeline(probePipe);
+    cp.setBindGroup(0, probeBG);
+    cp.dispatchWorkgroups(1);
+    cp.end();
+    enc.copyBufferToBuffer(hitBuf, 0, hitReadBuf, 0, RAY_HIT_BYTES);
+    device.queue.submit([enc.finish()]);
+
+    await hitReadBuf.mapAsync(GPUMapMode.READ);
+    const hitView = createHitBuffer(1);
+    new Uint8Array(hitView.buffer).set(
+      new Uint8Array(hitReadBuf.getMappedRange()),
+    );
+    hitReadBuf.unmap();
+    const hit = readHit(hitView, 0);
+    console.log('[spike] sensor probe (one ray, down from top-center):', {
+      ...hit,
+      isHit: (hit.flags & HIT_HIT) !== 0,
+      isObstacle: (hit.flags & HIT_OBSTACLE) !== 0,
+    });
+  }
 
   const computePipe = device.createComputePipeline({
     layout: 'auto',
