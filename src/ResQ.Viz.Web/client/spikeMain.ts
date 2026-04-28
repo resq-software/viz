@@ -8,6 +8,7 @@
 import marchSrc from './webgpu/shaders/march.wgsl?raw';
 import blitSrc from './webgpu/shaders/blit.wgsl?raw';
 import { initDevice } from './webgpu/device';
+import { BRICK, buildBrickMap, createBrickMap } from './webgpu/brickmap';
 
 const N = 128;
 const TILE = 8;
@@ -75,6 +76,15 @@ async function main(): Promise<void> {
   });
   device.queue.writeBuffer(voxelBuf, 0, voxels);
 
+  // Build the brick-map representation from the dense voxel buffer. The
+  // marcher reads top_grid + brick_pool, never the dense buffer; we keep
+  // voxelBuf alive only because rebuilds (e.g. for terrain edits later)
+  // would re-source from it. Worst-case slot count is one brick per top
+  // cell — the heightmap occupies far fewer.
+  const TOP = N / BRICK;
+  const brickMap = createBrickMap(device, N, TOP * TOP * TOP);
+  buildBrickMap(device, voxelBuf, brickMap);
+
   const camBuf = device.createBuffer({
     size: 80,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -83,7 +93,7 @@ async function main(): Promise<void> {
     size: 16,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(gridBuf, 0, new Uint32Array([N, N, N, 0]));
+  device.queue.writeBuffer(gridBuf, 0, new Uint32Array([N, N, N, TOP]));
 
   const computePipe = device.createComputePipeline({
     layout: 'auto',
@@ -126,8 +136,9 @@ async function main(): Promise<void> {
       entries: [
         { binding: 0, resource: { buffer: camBuf } },
         { binding: 1, resource: { buffer: gridBuf } },
-        { binding: 2, resource: { buffer: voxelBuf } },
+        { binding: 2, resource: { buffer: brickMap.topGrid } },
         { binding: 3, resource: outView },
+        { binding: 4, resource: { buffer: brickMap.brickPool } },
       ],
     });
     blitBG = device.createBindGroup({
