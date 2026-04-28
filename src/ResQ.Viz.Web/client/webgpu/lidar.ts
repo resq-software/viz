@@ -148,6 +148,10 @@ export class LidarScan {
         const rays = this._rays;
         if (rot) {
             const qx = rot[0], qy = rot[1], qz = rot[2], qw = rot[3];
+            // Pre-multiply the q.xyz components by 2 so the inner loop
+            // doesn't recompute `2 * qx` etc. per ray. Saves 3 mults per
+            // ray ≈ 12k mults per 4096-ray scan.
+            const qx2 = qx * 2, qy2 = qy * 2, qz2 = qz * 2;
             for (let i = 0; i < dirs.length; i++) {
                 const d = dirs[i]!;
                 const out = rays[i]!.direction;
@@ -157,9 +161,9 @@ export class LidarScan {
                 const tx = qy * vz - qz * vy + qw * vx;
                 const ty = qz * vx - qx * vz + qw * vy;
                 const tz = qx * vy - qy * vx + qw * vz;
-                out[0] = vx + 2 * (qy * tz - qz * ty);
-                out[1] = vy + 2 * (qz * tx - qx * tz);
-                out[2] = vz + 2 * (qx * ty - qy * tx);
+                out[0] = vx + qy2 * tz - qz2 * ty;
+                out[1] = vy + qz2 * tx - qx2 * tz;
+                out[2] = vz + qx2 * ty - qy2 * tx;
             }
         } else {
             for (let i = 0; i < dirs.length; i++) {
