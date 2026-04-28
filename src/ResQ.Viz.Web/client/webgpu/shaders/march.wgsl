@@ -29,6 +29,43 @@ struct Grid {
 const MAX_STEPS: u32 = 1024u;
 const BRICK: i32 = 8;
 
+// Mask flags — combine into Ray.mask. Reserve bits for future shader work
+// (density volumes, terrain SDF) so the wire format stays stable.
+const MASK_OBSTACLES:   u32 = 1u;
+const MASK_DENSITY:     u32 = 2u;
+const MASK_TERRAIN_SDF: u32 = 4u;
+
+// Hit flags — bits set on RayHit.flags by the marcher.
+const HIT_HIT:      u32 = 1u;
+const HIT_OBSTACLE: u32 = 2u;
+const HIT_VOLUME:   u32 = 4u;
+const HIT_TERRAIN:  u32 = 8u;
+
+// Sensor-batch ray and hit. Kept in sync with client/webgpu/rays.ts —
+// 48 B per Ray, 32 B per RayHit. Explicit padding so the host-side
+// TypedArray slot indices map cleanly to WGSL field offsets.
+struct Ray {
+  origin:    vec3<f32>, _p0: f32,
+  direction: vec3<f32>, _p1: f32,
+  max_t:     f32,
+  mask:      u32,
+  _p2:       vec2<u32>,
+};
+struct RayHit {
+  t:        f32,
+  material: u32,
+  flags:    u32,
+  _p0:      u32,
+  normal:   vec3<f32>,
+  _p1:      f32,
+};
+
+// Sensor-batch bindings used by march_batch. Camera entry's bindings 0..4
+// are unchanged; auto-derived pipeline layouts pick up only the bindings
+// each entry actually references.
+@group(0) @binding(5) var<storage, read>           rays: array<Ray>;
+@group(0) @binding(6) var<storage, read_write>     hits: array<RayHit>;
+
 fn in_bounds_top(p: vec3<i32>) -> bool {
   let s = i32(grid.top_size);
   return all(p >= vec3<i32>(0)) && all(p < vec3<i32>(s));
@@ -39,12 +76,6 @@ fn in_bounds_top(p: vec3<i32>) -> bool {
 fn floor_div_brick(a: vec3<i32>) -> vec3<i32> {
   return vec3<i32>(floor(vec3<f32>(a) / f32(BRICK)));
 }
-
-struct Hit {
-  hit:    bool,
-  normal: vec3<f32>,
-  mat:    u32,
-};
 
 // Slab AABB intersection. Returns vec2(t_enter, t_exit). The ray misses the
 // box iff t_exit < max(t_enter, 0).
@@ -64,7 +95,15 @@ fn sample_brick(fv: vec3<i32>, cv: vec3<i32>, slot: u32) -> u32 {
   return brick_pool[slot * u32(BRICK * BRICK * BRICK) + li];
 }
 
-fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
+fn dda(ro: vec3<f32>, rd: vec3<f32>) -> RayHit {
+  // Initialize the result with zeroed fields. Miss paths return as-is;
+  // the hit path overwrites t/material/flags/normal before returning.
+  var out: RayHit;
+  out.t        = 0.0;
+  out.material = 0u;
+  out.flags    = 0u;
+  out.normal   = vec3<f32>(0.0);
+
   // Replace exact-zero ray-direction components with a tiny epsilon to keep
   // 1/rd finite. (See PR #1 review feedback for the NaN trap on axis-aligned
   // rays starting on integer coordinates.)
@@ -79,7 +118,7 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
   let t_enter = max(aabb.x, 0.0);
   let t_exit  = aabb.y;
   if (t_exit < t_enter) {
-    return Hit(false, vec3<f32>(0.0), 0u);
+    return out;
   }
 
   let step    = vec3<i32>(sign(rd_safe));
@@ -113,7 +152,7 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
   for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
     if (level == 1u) {
       if (!in_bounds_top(cv)) {
-        return Hit(false, vec3<f32>(0.0), 0u);
+        return out;
       }
       let entry_top = top_grid[cv.x + cv.y * ts + cv.z * ts * ts];
       if (entry_top == 0u) {
@@ -147,7 +186,11 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
     // Fine level — sample the current voxel through the brick pool.
     let m = sample_brick(fv, cv, slot);
     if (m != 0u) {
-      return Hit(true, n, m);
+      out.t        = t;
+      out.material = m;
+      out.flags    = HIT_HIT | HIT_OBSTACLE;
+      out.normal   = n;
+      return out;
     }
 
     // Step the fine DDA.
@@ -176,10 +219,10 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
     // inside (we descended from a valid cv). Per-axis check supports
     // non-cubic grids.
     if (any(fv < vec3<i32>(0)) || any(fv >= fs)) {
-      return Hit(false, vec3<f32>(0.0), 0u);
+      return out;
     }
   }
-  return Hit(false, vec3<f32>(0.0), 0u);
+  return out;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -198,9 +241,37 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   );
   let h = dda(camera.origin, dir);
   var col = vec3<f32>(0.05, 0.07, 0.10);
-  if (h.hit) {
+  if ((h.flags & HIT_HIT) != 0u) {
     let l = max(dot(h.normal, normalize(vec3<f32>(0.4, 0.8, 0.3))), 0.0);
     col = vec3<f32>(0.8, 0.7, 0.5) * (0.2 + 0.8 * l);
   }
   textureStore(output, vec2<i32>(gid.xy), vec4<f32>(col, 1.0));
+}
+
+// Sensor-batch entry. One thread per Ray. Walks the same brick-map DDA
+// the camera entry uses, honors per-ray max_t, writes RayHit to the
+// hits buffer. Future PRs (LiDAR, mesh-link LoS, drone collision probes)
+// just supply different ray sets to this same kernel.
+@compute @workgroup_size(64, 1, 1)
+fn march_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= arrayLength(&rays)) {
+    return;
+  }
+  let r = rays[i];
+
+  // PR #3 only handles obstacles. Density / SDF branches arrive in PR #4+;
+  // until then we ignore r.mask beyond honoring per-ray max_t below.
+  var h = dda(r.origin, r.direction);
+
+  // Hits past max_t are misses for this ray. Don't move t past max_t —
+  // callers (LiDAR, LoS) compare `t < max_t` to decide visibility.
+  if ((h.flags & HIT_HIT) != 0u && h.t > r.max_t) {
+    h.t        = 0.0;
+    h.material = 0u;
+    h.flags    = 0u;
+    h.normal   = vec3<f32>(0.0);
+  }
+
+  hits[i] = h;
 }

@@ -45,6 +45,11 @@ declare const GPUTextureUsage: {
     readonly RENDER_ATTACHMENT: GPUFlagsConstant;
 };
 
+declare const GPUMapMode: {
+    readonly READ: GPUFlagsConstant;
+    readonly WRITE: GPUFlagsConstant;
+};
+
 interface HTMLCanvasElement {
     getContext(contextId: 'webgpu'): GPUCanvasContext | null;
 }
