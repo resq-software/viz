@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
+import { LidarScan, type LidarHit } from './webgpu/lidar';
 import type { LosRay } from './webgpu/los';
 import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
 import { getSensorContext } from './webgpu/registry';
@@ -78,6 +79,19 @@ export class EffectsManager {
      */
     private _losQueryInFlight: Promise<void> | null = null;
 
+    /**
+     * LiDAR scan state. Lazy-initialized on first frame after the WebGPU
+     * sensor context is available. The Points object lives for the
+     * EffectsManager's lifetime — its draw range is reset to 0 if no
+     * recent scan, so a stale cloud isn't shown indefinitely.
+     */
+    private _lidar: LidarScan | null = null;
+    private _lidarPoints: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
+    private _lidarScanInFlight: Promise<void> | null = null;
+    private _lidarLastScanTime: number = -Infinity;
+    /** Seconds between LiDAR scans for the demo drone. */
+    private static readonly LIDAR_SCAN_INTERVAL_SEC = 1.0;
+
     constructor(scene: THREE.Scene) {
         this._scene = scene;
         // Pool: green/gold survivor marker spheres
@@ -106,6 +120,88 @@ export class EffectsManager {
         this._updateHazards(frame.hazards);
         this._updateDetections(frame.detections);
         this._updateMeshLinks(frame.drones ?? [], frame.mesh);
+        this._updateLidar(frame.drones ?? []);
+    }
+
+    // ─── LiDAR (sensor demo) ───────────────────────────────────────────────
+
+    /**
+     * Run a LiDAR scan from the first-available drone every
+     * LIDAR_SCAN_INTERVAL_SEC seconds, render hits as a point cloud.
+     * Throttled + skip-if-busy so the WebGPU dispatch never queues more
+     * than one in-flight scan at a time. No-op if the sensor context
+     * isn't ready (graceful fallback on browsers without WebGPU).
+     */
+    private _updateLidar(drones: DroneState[]): void {
+        const ctx = getSensorContext();
+        if (!ctx) return;
+
+        // Lazy-init LidarScan + the visualization Points object on the
+        // first call where the sensor context is ready.
+        if (!this._lidar) {
+            this._lidar = new LidarScan(ctx.lidar, {
+                elevationCount: 16,
+                azimuthCount:   256,
+                elevationFov:   Math.PI / 4,   // ±22.5°
+                range:          200,
+            });
+        }
+        if (!this._lidarPoints) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute(
+                'position',
+                new THREE.BufferAttribute(new Float32Array(this._lidar.rayCount * 3), 3),
+            );
+            geo.setDrawRange(0, 0);
+            const mat = new THREE.PointsMaterial({
+                color:            0x00ddff,
+                size:             1.5,
+                sizeAttenuation:  true,
+                transparent:      true,
+                opacity:          0.85,
+                depthWrite:       false,
+            });
+            this._lidarPoints = new THREE.Points(geo, mat);
+            this._scene.add(this._lidarPoints);
+        }
+
+        // Throttle: at most one scan per LIDAR_SCAN_INTERVAL_SEC, and only
+        // when no scan is currently in flight.
+        if (this._lidarScanInFlight) return;
+        if (this._time - this._lidarLastScanTime < EffectsManager.LIDAR_SCAN_INTERVAL_SEC) return;
+
+        const drone = drones.find(d => d.pos);
+        if (!drone || !drone.pos) return;
+
+        this._lidarLastScanTime = this._time;
+        const origin: [number, number, number] = [drone.pos[0], drone.pos[1], drone.pos[2]];
+        const lidar = this._lidar;
+        this._lidarScanInFlight = lidar.scan(origin)
+            .then(hits => { this._applyLidarHits(hits); })
+            .catch(err => {
+                console.warn('[viz] LiDAR scan failed:', err);
+            })
+            .finally(() => {
+                this._lidarScanInFlight = null;
+            });
+    }
+
+    /** Refresh the Points geometry from a fresh batch of LiDAR hits. */
+    private _applyLidarHits(hits: LidarHit[]): void {
+        const points = this._lidarPoints;
+        if (!points) return;
+        const attr = points.geometry.getAttribute('position') as THREE.BufferAttribute;
+        const arr = attr.array as Float32Array;
+        let writeIdx = 0;
+        for (const hit of hits) {
+            if (!hit.hit) continue;
+            arr[writeIdx * 3]     = hit.position[0];
+            arr[writeIdx * 3 + 1] = hit.position[1];
+            arr[writeIdx * 3 + 2] = hit.position[2];
+            writeIdx++;
+        }
+        attr.needsUpdate = true;
+        points.geometry.setDrawRange(0, writeIdx);
     }
 
     tick(deltaTime: number): void {

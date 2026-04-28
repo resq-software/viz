@@ -18,7 +18,19 @@ import { createWorld, type World } from './world';
 export type SensorContext = {
     device: GPUDevice;
     world: World;
+    /**
+     * Mesh-link / LoS query manager. Small per-slot capacity (256 rays);
+     * the consumer in effects.ts throttles to one in-flight query, so
+     * the default 2-slot ring is sized appropriately.
+     */
     los: LosQueryManager;
+    /**
+     * High-rate sensor query manager. Larger per-slot capacity (4096 rays)
+     * + 3-slot ring for pipelined dispatches. Used by LiDAR scans and any
+     * future sensor that fires many rays per query at sub-second cadence.
+     * Shares the same world / brick map as `los`.
+     */
+    lidar: LosQueryManager;
 };
 
 // The cached context lives in `./registry` so non-WebGPU callers (effects.ts)
@@ -55,7 +67,12 @@ export async function bootSensors(): Promise<SensorContext | null> {
                 origin: [-512, 0, -512],
             });
 
+            // Mesh-link LoS path: small capacity, default 2-slot ring.
             const los = new LosQueryManager(device, world, 256);
+            // High-rate sensor path: 4096 rays per query (e.g. 16 elev × 256
+            // azim LiDAR scan), 3-slot ring so pipelined dispatches don't
+            // stall waiting for GPU + readback to settle.
+            const lidar = new LosQueryManager(device, world, 4096, 3);
 
             // Sanity probe — fire one ray straight down through origin from
             // 200 m altitude. If WebGPU + the brick map are working, we get
@@ -72,7 +89,7 @@ export async function bootSensors(): Promise<SensorContext | null> {
                 console.warn('[viz] sensor probe failed (primitive still initialized):', probeErr);
             }
 
-            const ctx: SensorContext = { device, world, los };
+            const ctx: SensorContext = { device, world, los, lidar };
             // Publish via the registry so non-WebGPU callers (effects.ts)
             // can find us without a static import path.
             setSensorContext(ctx);
