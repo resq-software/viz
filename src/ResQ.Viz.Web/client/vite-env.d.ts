@@ -19,3 +19,32 @@
 // `import.meta.env`, etc.; this triple-slash reference pulls them into the
 // project so `import './styles/main.css'` (and friends) typecheck.
 /// <reference types="vite/client" />
+
+// TypeScript 6 lib.dom ships most WebGPU types (GPUDevice, GPUAdapter,
+// GPUCanvasContext, etc.) but is missing the runtime usage-flag constants
+// and the HTMLCanvasElement.getContext('webgpu') overload. Patch those in
+// here until lib.dom catches up. Used by client/webgpu/* and /spike.html.
+declare const GPUBufferUsage: {
+    readonly MAP_READ: GPUFlagsConstant;
+    readonly MAP_WRITE: GPUFlagsConstant;
+    readonly COPY_SRC: GPUFlagsConstant;
+    readonly COPY_DST: GPUFlagsConstant;
+    readonly INDEX: GPUFlagsConstant;
+    readonly VERTEX: GPUFlagsConstant;
+    readonly UNIFORM: GPUFlagsConstant;
+    readonly STORAGE: GPUFlagsConstant;
+    readonly INDIRECT: GPUFlagsConstant;
+    readonly QUERY_RESOLVE: GPUFlagsConstant;
+};
+
+declare const GPUTextureUsage: {
+    readonly COPY_SRC: GPUFlagsConstant;
+    readonly COPY_DST: GPUFlagsConstant;
+    readonly TEXTURE_BINDING: GPUFlagsConstant;
+    readonly STORAGE_BINDING: GPUFlagsConstant;
+    readonly RENDER_ATTACHMENT: GPUFlagsConstant;
+};
+
+interface HTMLCanvasElement {
+    getContext(contextId: 'webgpu'): GPUCanvasContext | null;
+}
