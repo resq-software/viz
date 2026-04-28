@@ -68,6 +68,13 @@ export function createHitBuffer(count: number): RayBufferViews {
  *   slot  8     = max_t (f32)
  *   slot  9     = mask  (u32, written via Uint32Array view)
  *   slots 10..11 = pad
+ *
+ * `direction` must be a unit vector — `max_t` and the hit `t` returned
+ * by the marcher are world-space distances along the ray. An unnormalized
+ * direction scales those values inversely and breaks LiDAR/LoS comparisons.
+ *
+ * Throws RangeError on out-of-bounds index so packing-count bugs surface
+ * immediately instead of looking like legitimate misses downstream.
  */
 export function writeRay(
     views: RayBufferViews,
@@ -79,6 +86,10 @@ export function writeRay(
 ): void {
     const o = i * 12;
     const { f, u } = views;
+    if (o + 11 >= f.length) {
+        const cap = Math.floor(f.length / 12);
+        throw new RangeError(`writeRay: index ${i} out of bounds (buffer holds ${cap} rays)`);
+    }
     f[o + 0] = origin[0];
     f[o + 1] = origin[1];
     f[o + 2] = origin[2];
@@ -104,18 +115,22 @@ export type ParsedHit = {
  *   slot  3    = pad
  *   slots 4..6 = normal.xyz
  *   slot  7    = pad
+ *
+ * Throws RangeError on out-of-bounds index. (We deliberately don't fall
+ * back to all-zero misses on OOB — that would mask packing/count bugs
+ * by making them look like legitimate "no hit" results downstream.)
  */
 export function readHit(views: RayBufferViews, i: number): ParsedHit {
     const o = i * 8;
     const { f, u } = views;
+    if (o + 7 >= f.length) {
+        const cap = Math.floor(f.length / 8);
+        throw new RangeError(`readHit: index ${i} out of bounds (buffer holds ${cap} hits)`);
+    }
     return {
-        t: f[o + 0] ?? 0,
-        material: u[o + 1] ?? 0,
-        flags: u[o + 2] ?? 0,
-        normal: [
-            f[o + 4] ?? 0,
-            f[o + 5] ?? 0,
-            f[o + 6] ?? 0,
-        ],
+        t: f[o + 0]!,
+        material: u[o + 1]!,
+        flags: u[o + 2]!,
+        normal: [f[o + 4]!, f[o + 5]!, f[o + 6]!],
     };
 }

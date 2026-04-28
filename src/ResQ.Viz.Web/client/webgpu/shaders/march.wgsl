@@ -95,7 +95,7 @@ fn sample_brick(fv: vec3<i32>, cv: vec3<i32>, slot: u32) -> u32 {
   return brick_pool[slot * u32(BRICK * BRICK * BRICK) + li];
 }
 
-fn dda(ro: vec3<f32>, rd: vec3<f32>) -> RayHit {
+fn dda(ro: vec3<f32>, rd: vec3<f32>, max_t: f32) -> RayHit {
   // Initialize the result with zeroed fields. Miss paths return as-is;
   // the hit path overwrites t/material/flags/normal before returning.
   var out: RayHit;
@@ -117,7 +117,10 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> RayHit {
   let aabb = ray_aabb(ro, inv, box_min, box_max);
   let t_enter = max(aabb.x, 0.0);
   let t_exit  = aabb.y;
-  if (t_exit < t_enter) {
+  // Miss if the ray misses the AABB OR the AABB entry is already past
+  // the caller's max_t bound — the second case lets short LiDAR/LoS rays
+  // skip the whole walk without entering the loop at all.
+  if (t_exit < t_enter || t_enter > max_t) {
     return out;
   }
 
@@ -150,6 +153,11 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> RayHit {
   var level: u32 = 1u;   // 1 = coarse, 0 = fine
 
   for (var i = 0u; i < MAX_STEPS; i = i + 1u) {
+    // Honor max_t at the top of every iteration so empty-cell strides that
+    // cross the bound exit immediately (LiDAR/LoS short-range early-out).
+    if (t > max_t) {
+      return out;
+    }
     if (level == 1u) {
       if (!in_bounds_top(cv)) {
         return out;
@@ -239,7 +247,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     + camera.right * ndc.x * aspect * camera.fov_tan
     - camera.up    * ndc.y * camera.fov_tan
   );
-  let h = dda(camera.origin, dir);
+  // Camera rays are unbounded — pass a sentinel max_t larger than any
+  // reachable t so the AABB exit dominates termination.
+  let h = dda(camera.origin, dir, 1e30);
   var col = vec3<f32>(0.05, 0.07, 0.10);
   if ((h.flags & HIT_HIT) != 0u) {
     let l = max(dot(h.normal, normalize(vec3<f32>(0.4, 0.8, 0.3))), 0.0);
@@ -249,29 +259,35 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 // Sensor-batch entry. One thread per Ray. Walks the same brick-map DDA
-// the camera entry uses, honors per-ray max_t, writes RayHit to the
-// hits buffer. Future PRs (LiDAR, mesh-link LoS, drone collision probes)
-// just supply different ray sets to this same kernel.
+// the camera entry uses, honors per-ray max_t (enforced inside dda for
+// early exit during traversal), and writes RayHit to the hits buffer.
+// Future PRs (LiDAR, mesh-link LoS, drone collision probes) supply
+// different ray sets to this same kernel.
 @compute @workgroup_size(64, 1, 1)
 fn march_batch(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
-  if (i >= arrayLength(&rays)) {
+  // Bounds-check both buffers — the host API allocates rays and hits
+  // independently, so a short hit buffer must not overrun.
+  if (i >= arrayLength(&rays) || i >= arrayLength(&hits)) {
     return;
   }
   let r = rays[i];
 
-  // PR #3 only handles obstacles. Density / SDF branches arrive in PR #4+;
-  // until then we ignore r.mask beyond honoring per-ray max_t below.
-  var h = dda(r.origin, r.direction);
-
-  // Hits past max_t are misses for this ray. Don't move t past max_t —
-  // callers (LiDAR, LoS) compare `t < max_t` to decide visibility.
-  if ((h.flags & HIT_HIT) != 0u && h.t > r.max_t) {
-    h.t        = 0.0;
-    h.material = 0u;
-    h.flags    = 0u;
-    h.normal   = vec3<f32>(0.0);
+  // Respect r.mask. PR #3 only implements obstacles; rays that don't ask
+  // for them get an immediate miss regardless of geometry along the ray.
+  // Future masks (DENSITY, TERRAIN_SDF) will branch into other code paths
+  // here once the corresponding marchers land.
+  if ((r.mask & MASK_OBSTACLES) == 0u) {
+    var miss: RayHit;
+    miss.t        = 0.0;
+    miss.material = 0u;
+    miss.flags    = 0u;
+    miss.normal   = vec3<f32>(0.0);
+    hits[i] = miss;
+    return;
   }
 
-  hits[i] = h;
+  // dda enforces r.max_t internally so it can early-exit during traversal,
+  // not just post-filter at the end.
+  hits[i] = dda(r.origin, r.direction, r.max_t);
 }
