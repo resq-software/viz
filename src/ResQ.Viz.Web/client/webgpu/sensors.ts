@@ -12,6 +12,7 @@ import { terrainHeight } from '../terrain';
 import { initDevice } from './device';
 import { LosQueryManager } from './los';
 import { MASK_OBSTACLES } from './rays';
+import { setSensorContext } from './registry';
 import { createWorld, type World } from './world';
 
 export type SensorContext = {
@@ -20,18 +21,11 @@ export type SensorContext = {
     los: LosQueryManager;
 };
 
-let _ctx: SensorContext | null = null;
+// The cached context lives in `./registry` so non-WebGPU callers (effects.ts)
+// can read it without a static import path back into this module — that
+// would defeat the dynamic-import chunk split and pull the WebGPU runtime
+// into the main bundle. We just track in-flight here for boot deduping.
 let _bootInFlight: Promise<SensorContext | null> | null = null;
-
-/**
- * Returns the cached sensor context once `bootSensors()` has resolved, or
- * `null` if WebGPU is unavailable / the boot is still pending. PR #5's
- * `effects.ts` wiring guards on this — when it returns null, mesh-link
- * lines render exactly as they do today (no opacity modulation).
- */
-export function getSensorContext(): SensorContext | null {
-    return _ctx;
-}
 
 /**
  * Initialize the WebGPU sensor stack. Idempotent — multiple callers see
@@ -44,7 +38,6 @@ export function getSensorContext(): SensorContext | null {
  * params here if a deployment exceeds that range).
  */
 export async function bootSensors(): Promise<SensorContext | null> {
-    if (_ctx) return _ctx;
     if (_bootInFlight) return _bootInFlight;
 
     _bootInFlight = (async (): Promise<SensorContext | null> => {
@@ -67,7 +60,6 @@ export async function bootSensors(): Promise<SensorContext | null> {
             // Sanity probe — fire one ray straight down through origin from
             // 200 m altitude. If WebGPU + the brick map are working, we get
             // an obstacle hit at roughly (200 - terrain_height_at_origin) m.
-            // PR #5 replaces this log with per-frame mesh-link queries.
             try {
                 const probe = await los.query([{
                     origin: [0, 200, 0],
@@ -80,8 +72,11 @@ export async function bootSensors(): Promise<SensorContext | null> {
                 console.warn('[viz] sensor probe failed (primitive still initialized):', probeErr);
             }
 
-            _ctx = { device, world, los };
-            return _ctx;
+            const ctx: SensorContext = { device, world, los };
+            // Publish via the registry so non-WebGPU callers (effects.ts)
+            // can find us without a static import path.
+            setSensorContext(ctx);
+            return ctx;
         } catch (err) {
             console.warn('[viz] WebGPU sensor primitive init failed:', err);
             return null;
