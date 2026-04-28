@@ -5,11 +5,13 @@
 // returns world-space hit positions for visualization or further
 // processing.
 //
-// The scan pattern is axis-aligned for the prototype (yaw spans 360°,
-// pitch is symmetric around horizontal). Mounting the scan on a moving
-// drone — yawing with heading, gimbal pitch, mast-mounted offset — is a
-// straightforward extension once a real sensor mount spec lands.
+// The scan pattern is built once at construction in a drone-local frame
+// (yaw spans 360°, pitch symmetric around horizontal). Each `scan(origin,
+// rot?)` call rotates that pattern by the optional quaternion to align
+// with the drone's current orientation, then dispatches. Pass identity
+// (or omit `rot`) for a world-axis-aligned scan.
 
+import type { Quat } from '../types';
 import type { LosQueryManager, LosRay } from './los';
 import { HIT_HIT, MASK_OBSTACLES, type Vec3 } from './rays';
 
@@ -91,9 +93,13 @@ export class LidarScan {
         // Pre-allocate ray + hit buffers once. Per-scan GC pressure goes to
         // zero on the LiDAR side; los.ts still allocates internally, but
         // that's a single ArrayBuffer pair per dispatch, not 2*N objects.
+        //
+        // Direction tuples are independent (not aliased to `dirs[i]`) so
+        // each scan() can rotate them in place by the drone's quaternion
+        // without mutating the canonical scan pattern.
         this._rays = this.dirs.map(d => ({
             origin: this._origin,
-            direction: d,
+            direction: [d[0], d[1], d[2]] as Vec3,
             maxT: params.range,
             mask: MASK_OBSTACLES,
         }));
@@ -114,14 +120,19 @@ export class LidarScan {
     }
 
     /**
-     * Run one scan from the given world-space origin. Returns a flat
-     * array of hits in (elevation, azimuth) order — `hits[e * azim + a]`.
+     * Run one scan from the given world-space `origin`. If `rot` is supplied
+     * (the drone's orientation quaternion in `[x, y, z, w]` order), the
+     * canonical scan pattern is rotated into the drone's frame so the
+     * cone follows yaw / pitch / roll. If `rot` is omitted, the scan is
+     * world-axis-aligned (suitable for spinning ground-mounted sensors).
      *
-     * The returned array is `this._hits` — the same reference is reused
-     * across every call. Callers MUST consume the hits before the next
-     * `scan()` resolves, or copy them into caller-owned storage.
+     * Returns a flat array of hits in (elevation, azimuth) order —
+     * `hits[e * azim + a]`. The returned array is `this._hits` — the same
+     * reference is reused across every call. Callers MUST consume the
+     * hits before the next `scan()` resolves, or copy them into
+     * caller-owned storage.
      */
-    async scan(origin: Vec3): Promise<LidarHit[]> {
+    async scan(origin: Vec3, rot?: Quat): Promise<LidarHit[]> {
         // Mutate the shared `_origin` tuple in place. All pre-allocated
         // rays in `_rays` reference this same tuple, so this single update
         // applies to every ray without iterating.
@@ -129,16 +140,46 @@ export class LidarScan {
         this._origin[1] = origin[1];
         this._origin[2] = origin[2];
 
-        const hitData = await this.los.query(this._rays);
+        // Stage the (possibly rotated) directions into each ray's
+        // pre-allocated direction tuple. World-frame copy when `rot` is
+        // omitted; quaternion-rotated otherwise. The cost is ~3 writes
+        // per ray either way (~12k writes per 4096-ray scan, negligible).
+        const dirs = this.dirs;
+        const rays = this._rays;
+        if (rot) {
+            const qx = rot[0], qy = rot[1], qz = rot[2], qw = rot[3];
+            for (let i = 0; i < dirs.length; i++) {
+                const d = dirs[i]!;
+                const out = rays[i]!.direction;
+                // Rodrigues form: v' = v + 2 * q.xyz × (q.xyz × v + q.w * v).
+                // Used by gl-matrix, Three.js, etc.; valid for unit q.
+                const vx = d[0], vy = d[1], vz = d[2];
+                const tx = qy * vz - qz * vy + qw * vx;
+                const ty = qz * vx - qx * vz + qw * vy;
+                const tz = qx * vy - qy * vx + qw * vz;
+                out[0] = vx + 2 * (qy * tz - qz * ty);
+                out[1] = vy + 2 * (qz * tx - qx * tz);
+                out[2] = vz + 2 * (qx * ty - qy * tx);
+            }
+        } else {
+            for (let i = 0; i < dirs.length; i++) {
+                const d = dirs[i]!;
+                const out = rays[i]!.direction;
+                out[0] = d[0]; out[1] = d[1]; out[2] = d[2];
+            }
+        }
+
+        const hitData = await this.los.query(rays);
 
         // Write hit results into the pre-allocated `_hits` buffer. Position
         // tuples are mutated component-wise rather than reassigned so the
-        // tuple identities stay stable across scans.
+        // tuple identities stay stable across scans. Hit positions use the
+        // *rotated* direction (rays[i].direction) so they match the actual
+        // ray that was traced, not the canonical pattern.
         const hits = this._hits;
-        const dirs = this.dirs;
         for (let i = 0; i < hitData.length; i++) {
             const h = hitData[i]!;
-            const d = dirs[i]!;
+            const d = rays[i]!.direction;
             const target = hits[i]!;
             const isHit = (h.flags & HIT_HIT) !== 0;
             target.hit = isHit;

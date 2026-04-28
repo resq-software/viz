@@ -209,8 +209,14 @@ export class EffectsManager {
 
         this._lidarLastScanTime = this._time;
         const origin: [number, number, number] = [drone.pos[0], drone.pos[1], drone.pos[2]];
+        // Pass the drone's quaternion if it looks well-formed so the scan
+        // cone yaws / pitches / rolls with the drone. Falls back to a
+        // world-axis-aligned scan when the rotation isn't available.
+        const rot = (Array.isArray(drone.rot) && drone.rot.length === 4)
+            ? [drone.rot[0], drone.rot[1], drone.rot[2], drone.rot[3]] as [number, number, number, number]
+            : undefined;
         const lidar = this._lidar;
-        this._lidarScanInFlight = lidar.scan(origin)
+        this._lidarScanInFlight = lidar.scan(origin, rot)
             .then(hits => { this._applyLidarHits(hits); })
             .catch(err => {
                 log.warn('LiDAR scan failed', { error: err instanceof Error ? err.message : String(err) });
