@@ -31,6 +31,7 @@ import { TelemetryStrip } from './telemetryStrip';
 import { MiniMap } from './miniMap';
 import { apiPost, apiGet, apiPostOrWarn } from './api';
 import { getLogger } from './log';
+import { bootSensors } from './webgpu/sensors';
 
 const log = getLogger('app');
 
@@ -740,3 +741,10 @@ async function start(): Promise<void> {
     _starting = false;
 }
 void start();
+
+// Initialize the WebGPU sensor primitive (brick-map world + LoS query
+// manager). Async + non-blocking — `bootSensors()` swallows its own errors
+// and returns null on failure, so we don't await here. PR #5 will consume
+// the resulting `getSensorContext()` from effects.ts to drive mesh-link
+// occlusion against terrain.
+void bootSensors();
