@@ -36,11 +36,42 @@ let _activePresetKey: PresetKey = 'alpine';
 /** Current water level — live binding updated whenever the preset changes. */
 export let WATER_LEVEL: number = _activePreset.waterLevel;
 
+// ── Terrain-change events ────────────────────────────────────────────────────
+// Lets non-terrain modules invalidate any state they've derived from the
+// height field when the active preset or heightmap override changes. Used
+// today by the WebGPU sensor stack (rebuilds the brick map) and the
+// EffectsManager (clears mesh-link occlusion + LiDAR cloud caches).
+
+type TerrainChangeListener = () => void;
+const _terrainChangeListeners = new Set<TerrainChangeListener>();
+
+/**
+ * Subscribe to terrain-change events. The listener fires after
+ * `setActivePreset` or `setHeightmapOverride` updates the active height
+ * field. Returns an unsubscribe function.
+ */
+export function onTerrainChange(listener: TerrainChangeListener): () => void {
+    _terrainChangeListeners.add(listener);
+    return () => { _terrainChangeListeners.delete(listener); };
+}
+
+function _fireTerrainChange(): void {
+    for (const listener of _terrainChangeListeners) {
+        try {
+            listener();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.warn('terrain-change listener failed', { error: msg });
+        }
+    }
+}
+
 export function setActivePreset(key: PresetKey): void {
     _activePresetKey = key;
     _activePreset = PRESETS[key];
     WATER_LEVEL   = _activePreset.waterLevel;
     _applyPresetTiers();
+    _fireTerrainChange();
 }
 
 // ── PBR terrain texture state (PR 2 of the visual upgrade roadmap) ───────────
@@ -256,6 +287,7 @@ let _heightmapOverride: HeightmapSampler | null = null;
 
 export function setHeightmapOverride(sampler: HeightmapSampler | null): void {
     _heightmapOverride = sampler;
+    _fireTerrainChange();
 }
 
 export function getHeightmapOverride(): HeightmapSampler | null {
