@@ -26,11 +26,13 @@ export type BrickMap = {
     brickPool: GPUBuffer;
     /** Single atomic<u32> used by the build pass to allocate slots. */
     counter: GPUBuffer;
-    /** Uniform `Sizes { fine, brick, top, _pad }` consumed by build_brickmap.wgsl. */
+    /** Uniform `Sizes { fine, brick, top, max_bricks }` consumed by build_brickmap.wgsl. */
     sizes: GPUBuffer;
+    /** Cached build-pass pipeline — created once in `createBrickMap`. */
+    buildPipeline: GPUComputePipeline;
 };
 
-/** Allocate the GPU-side buffers for a brick map. Buffers start zeroed. */
+/** Allocate the GPU-side buffers for a brick map and the cached build pipeline. */
 export function createBrickMap(
     device: GPUDevice,
     fine: number,
@@ -62,15 +64,41 @@ export function createBrickMap(
         size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    device.queue.writeBuffer(sizes, 0, new Uint32Array([fine, BRICK, top, 0]));
+    // Last slot is `max_bricks` so the shader can bounds-check atomic
+    // allocations against pool size and avoid out-of-bounds writes.
+    device.queue.writeBuffer(
+        sizes,
+        0,
+        new Uint32Array([fine, BRICK, top, maxBricks]),
+    );
 
-    return { top, fine, maxBricks, topGrid, brickPool, counter, sizes };
+    // Build pipeline cached on the BrickMap so repeat builds (e.g. for
+    // terrain edits) don't re-compile the shader module.
+    const buildPipeline = device.createComputePipeline({
+        layout: 'auto',
+        compute: {
+            module: device.createShaderModule({ code: buildSrc }),
+            entryPoint: 'main',
+        },
+    });
+
+    return {
+        top,
+        fine,
+        maxBricks,
+        topGrid,
+        brickPool,
+        counter,
+        sizes,
+        buildPipeline,
+    };
 }
 
 /**
  * Run the build pass: scan each top-level cell's BRICK^3 voxels, mark the cell
  * empty if all are zero, otherwise atomically allocate a pool slot and copy
- * the voxels in. One dispatch covers the whole map.
+ * the voxels in. One dispatch covers the whole map. Safe to call multiple
+ * times — the cached pipeline is reused.
  */
 export function buildBrickMap(
     device: GPUDevice,
@@ -80,15 +108,8 @@ export function buildBrickMap(
     // Reset the slot counter to 0 for a fresh build.
     device.queue.writeBuffer(bm.counter, 0, new Uint32Array([0]));
 
-    const pipeline = device.createComputePipeline({
-        layout: 'auto',
-        compute: {
-            module: device.createShaderModule({ code: buildSrc }),
-            entryPoint: 'main',
-        },
-    });
     const bg = device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
+        layout: bm.buildPipeline.getBindGroupLayout(0),
         entries: [
             { binding: 0, resource: { buffer: voxelBuf } },
             { binding: 1, resource: { buffer: bm.topGrid } },
@@ -100,7 +121,7 @@ export function buildBrickMap(
 
     const enc = device.createCommandEncoder();
     const p = enc.beginComputePass();
-    p.setPipeline(pipeline);
+    p.setPipeline(bm.buildPipeline);
     p.setBindGroup(0, bg);
     // Workgroup is 4×4×4 — one thread per top-level cell.
     p.dispatchWorkgroups(

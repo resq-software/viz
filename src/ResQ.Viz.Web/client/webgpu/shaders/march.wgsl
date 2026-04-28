@@ -86,7 +86,9 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
   let f_delta = abs(inv);
   let c_delta = f_delta * f32(BRICK);
   let ts = i32(grid.top_size);
-  let fs = i32(grid.size.x);
+  // Per-axis fine grid size — supports non-cubic grids for future PRs that
+  // stream rectangular terrain regions, not just N×N×N test data.
+  let fs = vec3<i32>(grid.size);
 
   // Top-level (coarse) state — start at the brick containing the entry point.
   let entry = ro + rd_safe * t_enter;
@@ -171,8 +173,9 @@ fn dda(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
     }
 
     // Out-of-grid termination — only after a step. The initial fv is always
-    // inside (we descended from a valid cv).
-    if (any(fv < vec3<i32>(0)) || any(fv >= vec3<i32>(fs))) {
+    // inside (we descended from a valid cv). Per-axis check supports
+    // non-cubic grids.
+    if (any(fv < vec3<i32>(0)) || any(fv >= fs)) {
       return Hit(false, vec3<f32>(0.0), 0u);
     }
   }
