@@ -740,3 +740,11 @@ async function start(): Promise<void> {
     _starting = false;
 }
 void start();
+
+// Initialize the WebGPU sensor primitive (brick-map world + LoS query
+// manager). Lazy-loaded via dynamic import so the sensor stack lives in
+// its own JS chunk — keeps the main bundle under the client-budget cap
+// and parallelizes the network fetch with the rest of app boot. Async +
+// non-blocking; `bootSensors()` swallows its own errors and returns null
+// on failure. PR #5 will consume `getSensorContext()` from effects.ts.
+void import('./webgpu/sensors').then(m => m.bootSensors());
