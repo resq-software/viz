@@ -46,8 +46,15 @@ export class LosQueryManager {
     private readonly pipeline: GPUComputePipeline;
     private readonly bindGroup: GPUBindGroup;
 
-    /** Single-slot serialization. PR #5 will replace with a ring. */
-    private inFlight: Promise<ParsedHit[]> | null = null;
+    /**
+     * Serialization tail. Each new query chains onto this with `.then()`,
+     * and `inFlight` is updated to the post-`.catch()` version of the new
+     * query so a failed batch settles the chain (lets later callers
+     * proceed) without poisoning their results. Single-slot for now —
+     * PR #5 will replace with a ring of concurrent slots when per-frame
+     * mesh-link queries actually need throughput.
+     */
+    private inFlight: Promise<unknown> = Promise.resolve();
 
     constructor(device: GPUDevice, world: World, maxRays: number) {
         if (maxRays <= 0) {
@@ -100,30 +107,28 @@ export class LosQueryManager {
     /**
      * Submit a batch of WORLD-space rays. Returns hits whose `t` is also
      * in world-space metres. Calls serialize against any prior in-flight
-     * `query()` (single-slot — PR #5 adds a ring).
+     * `query()` via a promise chain (single-slot — PR #5 adds a ring).
+     *
+     * If a prior batch rejects, subsequent waiters proceed normally; the
+     * rejection only reaches the caller who submitted the failing batch.
      */
-    async query(rays: LosRay[]): Promise<ParsedHit[]> {
+    query(rays: LosRay[]): Promise<ParsedHit[]> {
         if (rays.length === 0) {
-            return [];
+            return Promise.resolve([]);
         }
         if (rays.length > this.maxRays) {
-            throw new RangeError(
+            return Promise.reject(new RangeError(
                 `LosQueryManager.query: ${rays.length} rays exceeds capacity ${this.maxRays}`,
-            );
+            ));
         }
 
-        // Wait for any prior dispatch — the readback buffer is shared.
-        while (this.inFlight) {
-            await this.inFlight;
-        }
-
-        const promise = this.runBatch(rays);
-        this.inFlight = promise;
-        try {
-            return await promise;
-        } finally {
-            this.inFlight = null;
-        }
+        // Append our work onto the tail of the chain. The next caller will
+        // .then() onto the post-.catch() version below, so a failed batch
+        // settles the chain (lets later callers proceed) without poisoning
+        // their results — only the failing caller sees the rejection.
+        const ours = this.inFlight.then(() => this.runBatch(rays));
+        this.inFlight = ours.catch(() => undefined);
+        return ours;
     }
 
     private async runBatch(rays: LosRay[]): Promise<ParsedHit[]> {

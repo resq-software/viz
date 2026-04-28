@@ -45,6 +45,18 @@ export function createWorld(
     params: WorldParams,
 ): World {
     const { gridSize: N, voxelScale: vs, origin } = params;
+    // Validate before voxelizing — `yiMax` divides by `vs` and indexes
+    // an `N³` array, so a non-positive scale or non-positive size would
+    // turn the inner loop into an infinite loop or produce NaN coords.
+    if (!Number.isInteger(N) || N <= 0) {
+        throw new Error(`world: gridSize must be a positive integer (got ${N})`);
+    }
+    if (!Number.isFinite(vs) || vs <= 0) {
+        throw new Error(`world: voxelScale must be a positive finite number (got ${vs})`);
+    }
+    if (!origin.every(c => Number.isFinite(c))) {
+        throw new Error(`world: origin components must be finite (got ${origin.join(', ')})`);
+    }
     if (N % BRICK !== 0) {
         throw new Error(`world: gridSize ${N} not divisible by BRICK ${BRICK}`);
     }
