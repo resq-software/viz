@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
+import { getLogger } from './log';
+import { onTerrainChange } from './terrain';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
 import { LidarScan, type LidarHit } from './webgpu/lidar';
 import type { LosRay } from './webgpu/los';
 import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
 import { getSensorContext } from './webgpu/registry';
+
+const log = getLogger('effects');
 
 const HAZARD_COLORS: Record<string, number> = {
     // Legacy uppercase keys
@@ -92,6 +96,14 @@ export class EffectsManager {
     /** Seconds between LiDAR scans for the demo drone. */
     private static readonly LIDAR_SCAN_INTERVAL_SEC = 1.0;
 
+    /**
+     * Captured unsubscribe handle for the constructor's `onTerrainChange`
+     * subscription. EffectsManager is long-lived in the production viz, but
+     * holding the handle lets `dispose()` clean up properly if a future
+     * caller needs it (tests, hot-reload, scenario teardown).
+     */
+    private readonly _terrainUnsub: () => void;
+
     constructor(scene: THREE.Scene) {
         this._scene = scene;
         // Pool: green/gold survivor marker spheres
@@ -109,6 +121,28 @@ export class EffectsManager {
             scene.add(m);
             this._detectionPool.push(m);
         }
+
+        // Terrain changes invalidate every cached value derived from the
+        // height field — mesh-link occlusion booleans and the LiDAR point
+        // cloud are both potentially stale until the next sensor query
+        // resolves against the rebuilt brick map. Clear them eagerly so
+        // the next render frame doesn't show wrong data.
+        this._terrainUnsub = onTerrainChange(() => {
+            this._meshLinkOccluded.clear();
+            if (this._lidarPoints) {
+                this._lidarPoints.geometry.setDrawRange(0, 0);
+            }
+        });
+    }
+
+    /**
+     * Tear down listeners + state owned exclusively by this manager.
+     * Three.js scene-graph nodes added in the constructor are NOT removed
+     * here — those follow the scene's lifetime, not this manager's. Call
+     * this in tests, hot-reload paths, or if the scene is being disposed.
+     */
+    dispose(): void {
+        this._terrainUnsub();
     }
 
     private _grabFromPool(): THREE.Mesh | null {
@@ -179,7 +213,7 @@ export class EffectsManager {
         this._lidarScanInFlight = lidar.scan(origin)
             .then(hits => { this._applyLidarHits(hits); })
             .catch(err => {
-                console.warn('[viz] LiDAR scan failed:', err);
+                log.warn('LiDAR scan failed', { error: err instanceof Error ? err.message : String(err) });
             })
             .finally(() => {
                 this._lidarScanInFlight = null;
@@ -523,7 +557,7 @@ export class EffectsManager {
                 err => {
                     // Don't crash the render on sensor failure — log and
                     // leave the cache untouched for this frame's keys.
-                    console.warn('[viz] mesh-link LoS query failed:', err);
+                    log.warn('mesh-link LoS query failed', { error: err instanceof Error ? err.message : String(err) });
                 },
             ).finally(() => {
                 this._losQueryInFlight = null;

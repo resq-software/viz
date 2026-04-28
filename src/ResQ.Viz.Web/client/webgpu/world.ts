@@ -61,25 +61,11 @@ export function createWorld(
         throw new Error(`world: gridSize ${N} not divisible by BRICK ${BRICK}`);
     }
 
-    // CPU voxelize. For a 128³ grid this is ~2M cells but the inner column
-    // only writes up to `yiMax` per (x, z), so the actual write count is
-    // bounded by `N² * avg_height_voxels`.
+    // CPU voxelize into a fresh array. The voxelization helper is shared
+    // with `rebuildWorld` so terrain-edit invalidation walks the exact
+    // same loop with the new heightfield.
     const voxels = new Uint32Array(N * N * N);
-    for (let zi = 0; zi < N; zi++) {
-        const wz = origin[2] + (zi + 0.5) * vs;
-        const rowStride = zi * N * N;
-        for (let xi = 0; xi < N; xi++) {
-            const wx = origin[0] + (xi + 0.5) * vs;
-            const h = heightFn(wx, wz);
-            // World-Y of voxel yi's centre = origin[1] + (yi + 0.5) * vs.
-            // Solid iff that centre is <= h. Solve for yi:
-            //   yi <= (h - origin[1]) / vs - 0.5
-            const yiMax = Math.min(N - 1, Math.floor((h - origin[1]) / vs - 0.5));
-            for (let yi = 0; yi <= yiMax; yi++) {
-                voxels[xi + yi * N + rowStride] = 1;
-            }
-        }
-    }
+    _voxelize(heightFn, params, voxels);
 
     const voxelBuf = device.createBuffer({
         size: voxels.byteLength,
@@ -98,4 +84,60 @@ export function createWorld(
     device.queue.writeBuffer(gridBuf, 0, new Uint32Array([N, N, N, TOP]));
 
     return { params, brickMap, voxelBuf, gridBuf };
+}
+
+/**
+ * Re-voxelize an existing world from a (possibly changed) heightfield and
+ * rebuild its brick map. Reuses the existing GPU buffers (`voxelBuf`,
+ * `topGrid`, `brickPool`, `counter`, `gridBuf`) — no buffer allocation,
+ * just `device.queue.writeBuffer` for the new voxel data and the existing
+ * `buildBrickMap` compute pass for the sparse top grid.
+ *
+ * Call this when the simulator switches terrain presets or installs a new
+ * heightmap override; otherwise the brick map silently lies about LoS.
+ */
+export function rebuildWorld(
+    device: GPUDevice,
+    heightFn: (x: number, z: number) => number,
+    world: World,
+): void {
+    const { gridSize: N } = world.params;
+    // CPU-side voxelization. The transient Uint32Array is GC'd after the
+    // writeBuffer copies it; the GPU buffer itself stays put.
+    const voxels = new Uint32Array(N * N * N);
+    _voxelize(heightFn, world.params, voxels);
+    device.queue.writeBuffer(world.voxelBuf, 0, voxels);
+    buildBrickMap(device, world.voxelBuf, world.brickMap);
+}
+
+/**
+ * Fill `target` with 1s for voxel cells whose centres lie below the
+ * heightfield, 0s above. Shared between `createWorld` and `rebuildWorld`.
+ *
+ * For a 128³ grid this is ~2M cells, but the inner column only writes up
+ * to `yiMax` per (x, z) so the actual write count is bounded by
+ * `N² * avg_height_voxels`.
+ */
+function _voxelize(
+    heightFn: (x: number, z: number) => number,
+    params: WorldParams,
+    target: Uint32Array,
+): void {
+    const { gridSize: N, voxelScale: vs, origin } = params;
+    target.fill(0);
+    for (let zi = 0; zi < N; zi++) {
+        const wz = origin[2] + (zi + 0.5) * vs;
+        const rowStride = zi * N * N;
+        for (let xi = 0; xi < N; xi++) {
+            const wx = origin[0] + (xi + 0.5) * vs;
+            const h = heightFn(wx, wz);
+            // World-Y of voxel yi's centre = origin[1] + (yi + 0.5) * vs.
+            // Solid iff that centre is <= h. Solve for yi:
+            //   yi <= (h - origin[1]) / vs - 0.5
+            const yiMax = Math.min(N - 1, Math.floor((h - origin[1]) / vs - 0.5));
+            for (let yi = 0; yi <= yiMax; yi++) {
+                target[xi + yi * N + rowStride] = 1;
+            }
+        }
+    }
 }

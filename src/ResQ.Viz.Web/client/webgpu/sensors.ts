@@ -8,12 +8,19 @@
 // Falls back gracefully when WebGPU isn't available — the entire production
 // renderer is unaffected, this is purely additive sensor capability.
 
-import { terrainHeight } from '../terrain';
+import { getLogger } from '../log';
+import { onTerrainChange, terrainHeight } from '../terrain';
 import { initDevice } from './device';
 import { LosQueryManager } from './los';
 import { MASK_OBSTACLES } from './rays';
-import { setSensorContext } from './registry';
-import { createWorld, type World } from './world';
+import { getSensorContext, setSensorContext } from './registry';
+import { createWorld, rebuildWorld, type World } from './world';
+
+const log = getLogger('webgpu/sensors');
+
+function _errMsg(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
 
 export type SensorContext = {
     device: GPUDevice;
@@ -50,12 +57,20 @@ let _bootInFlight: Promise<SensorContext | null> | null = null;
  * params here if a deployment exceeds that range).
  */
 export async function bootSensors(): Promise<SensorContext | null> {
+    // Sequential idempotency: if a previous boot already published a
+    // context, return it directly. Without this guard, a second call
+    // after the first resolved would re-initialize the device, allocate
+    // fresh GPU buffers (leaking the old ones), AND register a duplicate
+    // `onTerrainChange` listener (each subscription would call
+    // `rebuildWorld` separately on every preset change).
+    const existing = getSensorContext();
+    if (existing) return existing;
     if (_bootInFlight) return _bootInFlight;
 
     _bootInFlight = (async (): Promise<SensorContext | null> => {
         const init = await initDevice();
         if (!init.ok) {
-            console.warn('[viz] WebGPU sensor primitive disabled:', init.reason);
+            log.warn('WebGPU sensor primitive disabled', { reason: init.reason });
             return null;
         }
         const { device } = init;
@@ -84,18 +99,31 @@ export async function bootSensors(): Promise<SensorContext | null> {
                     maxT: 400,
                     mask: MASK_OBSTACLES,
                 }]);
-                console.info('[viz] WebGPU sensor primitive ready (probe hit):', probe[0]);
+                log.info('WebGPU sensor primitive ready', { probeHit: probe[0] });
             } catch (probeErr) {
-                console.warn('[viz] sensor probe failed (primitive still initialized):', probeErr);
+                log.warn('sensor probe failed (primitive still initialized)', { error: _errMsg(probeErr) });
             }
 
             const ctx: SensorContext = { device, world, los, lidar };
             // Publish via the registry so non-WebGPU callers (effects.ts)
             // can find us without a static import path.
             setSensorContext(ctx);
+
+            // When terrain changes (preset switch, heightmap override),
+            // re-voxelize and rebuild the brick map so LoS / LiDAR queries
+            // don't silently lie. Reuses the existing GPU buffers — no
+            // allocation churn.
+            onTerrainChange(() => {
+                try {
+                    rebuildWorld(device, terrainHeight, world);
+                } catch (err) {
+                    log.warn('terrain rebuild failed', { error: _errMsg(err) });
+                }
+            });
+
             return ctx;
         } catch (err) {
-            console.warn('[viz] WebGPU sensor primitive init failed:', err);
+            log.warn('WebGPU sensor primitive init failed', { error: _errMsg(err) });
             return null;
         }
     })();
