@@ -13,7 +13,7 @@ import { onTerrainChange, terrainHeight } from '../terrain';
 import { initDevice } from './device';
 import { LosQueryManager } from './los';
 import { MASK_OBSTACLES } from './rays';
-import { setSensorContext } from './registry';
+import { getSensorContext, setSensorContext } from './registry';
 import { createWorld, rebuildWorld, type World } from './world';
 
 const log = getLogger('webgpu/sensors');
@@ -57,6 +57,14 @@ let _bootInFlight: Promise<SensorContext | null> | null = null;
  * params here if a deployment exceeds that range).
  */
 export async function bootSensors(): Promise<SensorContext | null> {
+    // Sequential idempotency: if a previous boot already published a
+    // context, return it directly. Without this guard, a second call
+    // after the first resolved would re-initialize the device, allocate
+    // fresh GPU buffers (leaking the old ones), AND register a duplicate
+    // `onTerrainChange` listener (each subscription would call
+    // `rebuildWorld` separately on every preset change).
+    const existing = getSensorContext();
+    if (existing) return existing;
     if (_bootInFlight) return _bootInFlight;
 
     _bootInFlight = (async (): Promise<SensorContext | null> => {

@@ -96,6 +96,14 @@ export class EffectsManager {
     /** Seconds between LiDAR scans for the demo drone. */
     private static readonly LIDAR_SCAN_INTERVAL_SEC = 1.0;
 
+    /**
+     * Captured unsubscribe handle for the constructor's `onTerrainChange`
+     * subscription. EffectsManager is long-lived in the production viz, but
+     * holding the handle lets `dispose()` clean up properly if a future
+     * caller needs it (tests, hot-reload, scenario teardown).
+     */
+    private readonly _terrainUnsub: () => void;
+
     constructor(scene: THREE.Scene) {
         this._scene = scene;
         // Pool: green/gold survivor marker spheres
@@ -119,12 +127,22 @@ export class EffectsManager {
         // cloud are both potentially stale until the next sensor query
         // resolves against the rebuilt brick map. Clear them eagerly so
         // the next render frame doesn't show wrong data.
-        onTerrainChange(() => {
+        this._terrainUnsub = onTerrainChange(() => {
             this._meshLinkOccluded.clear();
             if (this._lidarPoints) {
                 this._lidarPoints.geometry.setDrawRange(0, 0);
             }
         });
+    }
+
+    /**
+     * Tear down listeners + state owned exclusively by this manager.
+     * Three.js scene-graph nodes added in the constructor are NOT removed
+     * here — those follow the scene's lifetime, not this manager's. Call
+     * this in tests, hot-reload paths, or if the scene is being disposed.
+     */
+    dispose(): void {
+        this._terrainUnsub();
     }
 
     private _grabFromPool(): THREE.Mesh | null {
