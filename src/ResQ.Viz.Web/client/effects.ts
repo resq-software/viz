@@ -9,6 +9,9 @@ import { LidarScan, type LidarHit } from './webgpu/lidar';
 import type { LosRay } from './webgpu/los';
 import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
 import { getSensorContext } from './webgpu/registry';
+// Type-only import — TS strips it at runtime, so it doesn't pull the
+// WebGPU stack into the main bundle (same pattern as `registry.ts`).
+import type { SensorContext } from './webgpu/sensors';
 
 const log = getLogger('effects');
 
@@ -51,6 +54,22 @@ interface HazardEntry {
     phase:     number;   // animation phase 0..1 for the sweep expansion
 }
 
+interface LidarEntry {
+    scan:         LidarScan;
+    points:       THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+    /** When non-null, a scan is currently dispatched on this entry. */
+    inFlight:     Promise<void> | null;
+    /** `_time` value when the most recent scan was kicked off. */
+    lastScanTime: number;
+    /**
+     * Set when the entry is being disposed (drone disappeared from the
+     * frame, or `dispose()` was called) so any in-flight scan resolution
+     * can skip writing into the released BufferGeometry. Without this
+     * flag, the `.then()` would dereference a freed attribute array.
+     */
+    disposed:     boolean;
+}
+
 // Iso-ring sampling fractions — Palantir-style "ranging rings" at 50/75/100 %.
 const _ISO_RING_FRACTIONS = [0.50, 0.75, 1.00] as const;
 const _SWEEP_PERIOD_SEC   = 2.2;   // one sweep cycle (centre → full radius)
@@ -84,16 +103,16 @@ export class EffectsManager {
     private _losQueryInFlight: Promise<void> | null = null;
 
     /**
-     * LiDAR scan state. Lazy-initialized on first frame after the WebGPU
-     * sensor context is available. The Points object lives for the
-     * EffectsManager's lifetime — its draw range is reset to 0 if no
-     * recent scan, so a stale cloud isn't shown indefinitely.
+     * Per-drone LiDAR state, keyed by drone ID. Each entry owns its own
+     * `LidarScan` + visualization `Points`. Created lazily on the first
+     * frame a drone is seen with a valid `pos`, removed (and Three.js
+     * objects disposed) when the drone disappears from the frame. The
+     * shared ring-buffered `LosQueryManager` (3 slots for `ctx.lidar`)
+     * absorbs concurrent dispatches across drones; beyond ring depth
+     * scans queue per-slot — see `LosQueryStats.peakSlotDepth`.
      */
-    private _lidar: LidarScan | null = null;
-    private _lidarPoints: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> | null = null;
-    private _lidarScanInFlight: Promise<void> | null = null;
-    private _lidarLastScanTime: number = -Infinity;
-    /** Seconds between LiDAR scans for the demo drone. */
+    private readonly _lidarEntries = new Map<string, LidarEntry>();
+    /** Seconds between LiDAR scans per drone. */
     private static readonly LIDAR_SCAN_INTERVAL_SEC = 1.0;
 
     /**
@@ -123,14 +142,14 @@ export class EffectsManager {
         }
 
         // Terrain changes invalidate every cached value derived from the
-        // height field — mesh-link occlusion booleans and the LiDAR point
-        // cloud are both potentially stale until the next sensor query
-        // resolves against the rebuilt brick map. Clear them eagerly so
-        // the next render frame doesn't show wrong data.
+        // height field — mesh-link occlusion booleans and every per-drone
+        // LiDAR point cloud are potentially stale until the next sensor
+        // query resolves against the rebuilt brick map. Clear them
+        // eagerly so the next render frame doesn't show wrong data.
         this._terrainUnsub = onTerrainChange(() => {
             this._meshLinkOccluded.clear();
-            if (this._lidarPoints) {
-                this._lidarPoints.geometry.setDrawRange(0, 0);
+            for (const entry of this._lidarEntries.values()) {
+                entry.points.geometry.setDrawRange(0, 0);
             }
         });
     }
@@ -140,9 +159,16 @@ export class EffectsManager {
      * Three.js scene-graph nodes added in the constructor are NOT removed
      * here — those follow the scene's lifetime, not this manager's. Call
      * this in tests, hot-reload paths, or if the scene is being disposed.
+     *
+     * Per-drone LiDAR entries ARE owned exclusively by this manager
+     * (created lazily as drones appear) so they're disposed here.
      */
     dispose(): void {
         this._terrainUnsub();
+        for (const entry of this._lidarEntries.values()) {
+            this._disposeLidarEntry(entry);
+        }
+        this._lidarEntries.clear();
     }
 
     private _grabFromPool(): THREE.Mesh | null {
@@ -160,77 +186,138 @@ export class EffectsManager {
     // ─── LiDAR (sensor demo) ───────────────────────────────────────────────
 
     /**
-     * Run a LiDAR scan from the first-available drone every
-     * LIDAR_SCAN_INTERVAL_SEC seconds, render hits as a point cloud.
-     * Throttled + skip-if-busy so the WebGPU dispatch never queues more
-     * than one in-flight scan at a time. No-op if the sensor context
-     * isn't ready (graceful fallback on browsers without WebGPU).
+     * Run a LiDAR scan from every drone every LIDAR_SCAN_INTERVAL_SEC,
+     * render hits as a per-drone point cloud. Each drone has its own
+     * `LidarScan` + `Points` (lazy-created on first sight, evicted when
+     * the drone disappears). Per-drone throttle + skip-if-busy so each
+     * drone's pipeline never queues more than one in-flight scan; the
+     * shared 3-slot ring on `ctx.lidar` absorbs cross-drone concurrency.
+     * No-op if the sensor context isn't ready.
      */
     private _updateLidar(drones: DroneState[]): void {
         const ctx = getSensorContext();
-        if (!ctx) return;
-
-        // Lazy-init LidarScan + the visualization Points object on the
-        // first call where the sensor context is ready.
-        if (!this._lidar) {
-            this._lidar = new LidarScan(ctx.lidar, {
-                elevationCount: 16,
-                azimuthCount:   256,
-                elevationFov:   Math.PI / 4,   // ±22.5°
-                range:          200,
-            });
-        }
-        if (!this._lidarPoints) {
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute(
-                'position',
-                new THREE.BufferAttribute(new Float32Array(this._lidar.rayCount * 3), 3),
-            );
-            geo.setDrawRange(0, 0);
-            const mat = new THREE.PointsMaterial({
-                color:            0x00ddff,
-                size:             1.5,
-                sizeAttenuation:  true,
-                transparent:      true,
-                opacity:          0.85,
-                depthWrite:       false,
-            });
-            this._lidarPoints = new THREE.Points(geo, mat);
-            this._scene.add(this._lidarPoints);
+        if (!ctx) {
+            // If the sensor context never came up, evict any stale entries
+            // (e.g. terrain rebuild that disposed the device); shouldn't
+            // happen today but keeps the map in lockstep with reality.
+            if (this._lidarEntries.size > 0) {
+                for (const entry of this._lidarEntries.values()) {
+                    this._disposeLidarEntry(entry);
+                }
+                this._lidarEntries.clear();
+            }
+            return;
         }
 
-        // Throttle: at most one scan per LIDAR_SCAN_INTERVAL_SEC, and only
-        // when no scan is currently in flight.
-        if (this._lidarScanInFlight) return;
-        if (this._time - this._lidarLastScanTime < EffectsManager.LIDAR_SCAN_INTERVAL_SEC) return;
+        const seenIds = new Set<string>();
+        for (const drone of drones) {
+            if (!drone.pos) continue;
+            seenIds.add(drone.id);
 
-        const drone = drones.find(d => d.pos);
-        if (!drone || !drone.pos) return;
+            let entry = this._lidarEntries.get(drone.id);
+            if (!entry) {
+                entry = this._createLidarEntry(ctx);
+                this._lidarEntries.set(drone.id, entry);
+            }
 
-        this._lidarLastScanTime = this._time;
-        const origin: [number, number, number] = [drone.pos[0], drone.pos[1], drone.pos[2]];
-        // Pass the drone's quaternion if it looks well-formed so the scan
-        // cone yaws / pitches / rolls with the drone. Falls back to a
-        // world-axis-aligned scan when the rotation isn't available.
-        const rot = (Array.isArray(drone.rot) && drone.rot.length === 4)
-            ? [drone.rot[0], drone.rot[1], drone.rot[2], drone.rot[3]] as [number, number, number, number]
-            : undefined;
-        const lidar = this._lidar;
-        this._lidarScanInFlight = lidar.scan(origin, rot)
-            .then(hits => { this._applyLidarHits(hits); })
-            .catch(err => {
-                log.warn('LiDAR scan failed', { error: err instanceof Error ? err.message : String(err) });
-            })
-            .finally(() => {
-                this._lidarScanInFlight = null;
-            });
+            // Per-drone throttle: at most one scan per
+            // LIDAR_SCAN_INTERVAL_SEC, and only when this drone's previous
+            // scan has settled. Other drones run independently — they
+            // share the LiDAR ring buffer but not this gate.
+            if (entry.inFlight) continue;
+            if (this._time - entry.lastScanTime < EffectsManager.LIDAR_SCAN_INTERVAL_SEC) continue;
+
+            entry.lastScanTime = this._time;
+            const origin: [number, number, number] = [drone.pos[0], drone.pos[1], drone.pos[2]];
+            // Pass the drone's quaternion if it looks well-formed so the
+            // scan cone yaws / pitches / rolls with the drone. Falls back
+            // to a world-axis-aligned scan when rotation isn't available.
+            const rot = (Array.isArray(drone.rot) && drone.rot.length === 4)
+                ? [drone.rot[0], drone.rot[1], drone.rot[2], drone.rot[3]] as [number, number, number, number]
+                : undefined;
+            const captured = entry;
+            const droneId = drone.id;
+            captured.inFlight = captured.scan.scan(origin, rot)
+                .then(hits => {
+                    if (!captured.disposed) this._applyLidarHits(captured, hits);
+                })
+                .catch(err => {
+                    log.warn('LiDAR scan failed', {
+                        droneId,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                })
+                .finally(() => {
+                    captured.inFlight = null;
+                });
+        }
+
+        // Evict entries for drones not seen this frame. Without this, a
+        // disconnected drone leaks its `Points`, geometry, material, and
+        // 4096-position Float32Array forever.
+        if (this._lidarEntries.size > seenIds.size) {
+            for (const [id, entry] of this._lidarEntries) {
+                if (!seenIds.has(id)) {
+                    this._disposeLidarEntry(entry);
+                    this._lidarEntries.delete(id);
+                }
+            }
+        }
     }
 
-    /** Refresh the Points geometry from a fresh batch of LiDAR hits. */
-    private _applyLidarHits(hits: LidarHit[]): void {
-        const points = this._lidarPoints;
-        if (!points) return;
-        const attr = points.geometry.getAttribute('position') as THREE.BufferAttribute;
+    /**
+     * Allocate a fresh `LidarScan` + visualization `Points` for one drone.
+     * The Points is added to the scene immediately with draw-range 0 so
+     * it stays invisible until the first scan resolves.
+     */
+    private _createLidarEntry(ctx: SensorContext): LidarEntry {
+        const scan = new LidarScan(ctx.lidar, {
+            elevationCount: 16,
+            azimuthCount:   256,
+            elevationFov:   Math.PI / 4,   // ±22.5°
+            range:          200,
+        });
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute(
+            'position',
+            new THREE.BufferAttribute(new Float32Array(scan.rayCount * 3), 3),
+        );
+        geo.setDrawRange(0, 0);
+        const mat = new THREE.PointsMaterial({
+            color:            0x00ddff,
+            size:             1.5,
+            sizeAttenuation:  true,
+            transparent:      true,
+            opacity:          0.85,
+            depthWrite:       false,
+        });
+        const points = new THREE.Points(geo, mat);
+        this._scene.add(points);
+        return {
+            scan,
+            points,
+            inFlight: null,
+            lastScanTime: -Infinity,
+            disposed: false,
+        };
+    }
+
+    /**
+     * Tear down one entry's Three.js objects and mark it disposed so any
+     * still-in-flight scan resolution skips writing to the released
+     * geometry. Safe to call multiple times.
+     */
+    private _disposeLidarEntry(entry: LidarEntry): void {
+        if (entry.disposed) return;
+        entry.disposed = true;
+        this._scene.remove(entry.points);
+        entry.points.geometry.dispose();
+        entry.points.material.dispose();
+    }
+
+    /** Refresh one entry's Points geometry from a fresh batch of hits. */
+    private _applyLidarHits(entry: LidarEntry, hits: LidarHit[]): void {
+        const attr = entry.points.geometry.getAttribute('position') as THREE.BufferAttribute;
         const arr = attr.array as Float32Array;
         let writeIdx = 0;
         for (const hit of hits) {
@@ -241,7 +328,7 @@ export class EffectsManager {
             writeIdx++;
         }
         attr.needsUpdate = true;
-        points.geometry.setDrawRange(0, writeIdx);
+        entry.points.geometry.setDrawRange(0, writeIdx);
     }
 
     tick(deltaTime: number): void {
