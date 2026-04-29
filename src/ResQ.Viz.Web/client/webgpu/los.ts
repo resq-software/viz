@@ -57,6 +57,18 @@ export type LosQueryStats = {
      * arrived on the same slot; > 1 means callers are queueing.
      */
     peakSlotDepth: number;
+    /**
+     * Rays whose world-space origin fell strictly outside the world's
+     * voxel AABB. The shader's ray-AABB clip still handles rays that
+     * enter the box from outside, but a ray whose origin is outside AND
+     * whose direction never crosses the AABB returns a clean miss with
+     * no obstacle — silently wrong if the operator expects the sensor
+     * to cover the full visualization terrain. The visualization
+     * terrain spans `TERRAIN_SIZE` (4000 m) but the default sensor
+     * world is a 1024 m cube, so this is the audit signal that exposes
+     * the gap.
+     */
+    raysOutsideWorld: number;
 };
 
 type Slot = {
@@ -91,6 +103,7 @@ export class LosQueryManager {
         totalQueries: 0,
         totalRays: 0,
         peakSlotDepth: 0,
+        raysOutsideWorld: 0,
     };
 
     /**
@@ -240,19 +253,30 @@ export class LosQueryManager {
     private async runBatch(slot: Slot, rays: LosRay[]): Promise<ParsedHit[]> {
         const { device, world } = this;
         const { rayBuf, hitBuf, readBuf, bindGroup } = slot;
-        const { voxelScale, origin } = world.params;
+        const { voxelScale, origin, gridSize } = world.params;
 
         // Pack rays into a CPU-side buffer, transforming each origin into
         // grid-space (the marcher's frame). Direction stays a unit vector
         // because the voxel scale is uniform; max_t scales by 1/voxelScale.
         const views = createRayBuffer(rays.length);
+        let outsideCount = 0;
         for (let i = 0; i < rays.length; i++) {
             const r = rays[i]!;
-            const gridOrigin: Vec3 = [
-                (r.origin[0] - origin[0]) / voxelScale,
-                (r.origin[1] - origin[1]) / voxelScale,
-                (r.origin[2] - origin[2]) / voxelScale,
-            ];
+            const gx = (r.origin[0] - origin[0]) / voxelScale;
+            const gy = (r.origin[1] - origin[1]) / voxelScale;
+            const gz = (r.origin[2] - origin[2]) / voxelScale;
+            // Origin outside the voxel AABB. The shader's ray-AABB clip
+            // handles rays that ENTER from outside, but a ray whose
+            // origin is outside AND whose direction never crosses the
+            // box still returns a clean miss — silently wrong if the
+            // operator expects sensor coverage to match the visualization
+            // terrain. Audit: see `LosQueryStats.raysOutsideWorld`.
+            if (gx < 0 || gx >= gridSize ||
+                gy < 0 || gy >= gridSize ||
+                gz < 0 || gz >= gridSize) {
+                outsideCount += 1;
+            }
+            const gridOrigin: Vec3 = [gx, gy, gz];
             writeRay(
                 views,
                 i,
@@ -261,6 +285,9 @@ export class LosQueryManager {
                 r.maxT / voxelScale,
                 r.mask,
             );
+        }
+        if (outsideCount > 0) {
+            this._stats.raysOutsideWorld += outsideCount;
         }
         const rayBytes = rays.length * RAY_BYTES;
         device.queue.writeBuffer(rayBuf, 0, views.buffer, 0, rayBytes);
