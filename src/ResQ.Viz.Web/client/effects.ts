@@ -8,7 +8,7 @@ import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } fro
 import { LidarScan, type LidarHit } from './webgpu/lidar';
 import type { LosRay } from './webgpu/los';
 import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
-import { getSensorContext } from './webgpu/registry';
+import { LIDAR_MANAGER_CAPACITY, getSensorContext } from './webgpu/registry';
 // Type-only import — TS strips it at runtime, so it doesn't pull the
 // WebGPU stack into the main bundle (same pattern as `registry.ts`).
 import type { SensorContext } from './webgpu/sensors';
@@ -75,6 +75,105 @@ const _ISO_RING_FRACTIONS = [0.50, 0.75, 1.00] as const;
 const _SWEEP_PERIOD_SEC   = 2.2;   // one sweep cycle (centre → full radius)
 const _CROSSHAIR_TICK_LEN = 0.08;  // tick length as a fraction of radius
 
+/**
+ * URL-overridable LiDAR scan params. Read once at module load. The
+ * defaults match the values that have been in the production code path
+ * since PR #72 (16 × 256 = 4096 rays, ±22.5° FOV, 200 m range, 1 s
+ * interval); operators can tune them from the URL for testing without
+ * a redeploy. Pairs naturally with the world-bounds overrides in
+ * `webgpu/sensors.ts:_resolveWorldParams` (PR #85).
+ *
+ * Recognised keys (all optional):
+ *   ?lidarElev=N       elevationCount, positive integer
+ *   ?lidarAzim=N       azimuthCount,   positive integer
+ *   ?lidarFov=D        elevationFov in degrees, 1–180
+ *   ?lidarRange=M      max range in metres, positive finite
+ *   ?lidarInterval=S   seconds between scans, positive finite
+ *
+ * Per-scan ray count must not exceed the LiDAR manager's per-slot
+ * capacity (4096 rays — see `webgpu/sensors.ts`). If `elev × azim`
+ * exceeds that, both fall back to defaults with a warning, since
+ * partial fallbacks would produce unexpected aspect ratios.
+ */
+// LiDAR manager capacity is the SOURCE OF TRUTH in `webgpu/registry.ts`
+// — both `sensors.ts` (constructing the manager) and this file
+// (validating that user-overridden scan params don't exceed it) read
+// the same number from there.
+type LidarOverrideShape = {
+    elevationCount:  number;
+    azimuthCount:    number;
+    elevationFov:    number;          // radians
+    range:           number;          // metres
+    scanIntervalSec: number;          // seconds
+};
+const LIDAR_DEFAULTS: LidarOverrideShape = {
+    elevationCount:  16,
+    azimuthCount:    256,
+    elevationFov:    Math.PI / 4,     // ±22.5°
+    range:           200,
+    scanIntervalSec: 1.0,
+};
+const LIDAR_OVERRIDES: LidarOverrideShape = _resolveLidarOverrides();
+
+function _resolveLidarOverrides(): LidarOverrideShape {
+    if (typeof window === 'undefined' || !window.location) return { ...LIDAR_DEFAULTS };
+    const q = new URLSearchParams(window.location.search);
+    const elev     = _readPositiveInt(q, 'lidarElev', LIDAR_DEFAULTS.elevationCount);
+    const azim     = _readPositiveInt(q, 'lidarAzim', LIDAR_DEFAULTS.azimuthCount);
+    const fovDeg   = _readNumberInRange(q, 'lidarFov', LIDAR_DEFAULTS.elevationFov * 180 / Math.PI, 1, 180);
+    const range    = _readPositiveFinite(q, 'lidarRange', LIDAR_DEFAULTS.range);
+    const interval = _readPositiveFinite(q, 'lidarInterval', LIDAR_DEFAULTS.scanIntervalSec);
+    if (elev * azim > LIDAR_MANAGER_CAPACITY) {
+        log.warn('LiDAR override exceeds manager capacity — falling back to defaults', {
+            requested: elev * azim, capacity: LIDAR_MANAGER_CAPACITY,
+        });
+        return { ...LIDAR_DEFAULTS };
+    }
+    return {
+        elevationCount:  elev,
+        azimuthCount:    azim,
+        elevationFov:    fovDeg * Math.PI / 180,
+        range,
+        scanIntervalSec: interval,
+    };
+}
+
+function _readPositiveInt(q: URLSearchParams, key: string, fallback: number): number {
+    const raw = q.get(key);
+    if (raw === null) return fallback;
+    // `Number()` is stricter than `parseInt`/`parseFloat` — it rejects
+    // trailing garbage like "16abc" and decimals like "16.9", which for
+    // a config override should fall back rather than silently truncate.
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) {
+        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive integer' });
+        return fallback;
+    }
+    return n;
+}
+
+function _readPositiveFinite(q: URLSearchParams, key: string, fallback: number): number {
+    const raw = q.get(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive finite number' });
+        return fallback;
+    }
+    return n;
+}
+
+function _readNumberInRange(q: URLSearchParams, key: string, fallback: number, min: number, max: number): number {
+    const raw = q.get(key);
+    if (raw === null) return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < min || n > max) {
+        log.warn('ignoring invalid URL param', { key, raw, reason: `must be a finite number in [${min}, ${max}]` });
+        return fallback;
+    }
+    return n;
+}
+
 export class EffectsManager {
     private readonly _scene: THREE.Scene;
     private readonly _trails = new Map<string, Trail>();
@@ -112,8 +211,8 @@ export class EffectsManager {
      * scans queue per-slot — see `LosQueryStats.peakSlotDepth`.
      */
     private readonly _lidarEntries = new Map<string, LidarEntry>();
-    /** Seconds between LiDAR scans per drone. */
-    private static readonly LIDAR_SCAN_INTERVAL_SEC = 1.0;
+    /** Seconds between LiDAR scans per drone (URL-overridable; see `LIDAR_OVERRIDES`). */
+    private static readonly LIDAR_SCAN_INTERVAL_SEC = LIDAR_OVERRIDES.scanIntervalSec;
 
     /**
      * Captured unsubscribe handle for the constructor's `onTerrainChange`
@@ -275,10 +374,10 @@ export class EffectsManager {
      */
     private _createLidarEntry(ctx: SensorContext): LidarEntry {
         const scan = new LidarScan(ctx.lidar, {
-            elevationCount: 16,
-            azimuthCount:   256,
-            elevationFov:   Math.PI / 4,   // ±22.5°
-            range:          200,
+            elevationCount: LIDAR_OVERRIDES.elevationCount,
+            azimuthCount:   LIDAR_OVERRIDES.azimuthCount,
+            elevationFov:   LIDAR_OVERRIDES.elevationFov,
+            range:          LIDAR_OVERRIDES.range,
         });
         const geo = new THREE.BufferGeometry();
         geo.setAttribute(

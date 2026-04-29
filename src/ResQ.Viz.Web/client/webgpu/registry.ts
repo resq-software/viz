@@ -13,6 +13,16 @@
 
 import type { SensorContext } from './sensors';
 
+/**
+ * Per-slot capacity of the LiDAR `LosQueryManager` constructed by
+ * `bootSensors()`. Lives here because both `sensors.ts` (constructing
+ * the manager) and `effects.ts` (validating that user-overridden scan
+ * params do not exceed it before instantiating `LidarScan`) need the
+ * same number, and `effects.ts` cannot static-import `sensors.ts`
+ * without breaking the WebGPU dynamic-chunk split.
+ */
+export const LIDAR_MANAGER_CAPACITY = 4096;
+
 let _ctx: SensorContext | null = null;
 
 /** Internal — invoked by `bootSensors()` after the sensor stack is ready. */

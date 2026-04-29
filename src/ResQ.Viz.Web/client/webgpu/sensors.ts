@@ -14,7 +14,7 @@ import { BRICK } from './brickmap';
 import { initDevice } from './device';
 import { LosQueryManager } from './los';
 import { MASK_OBSTACLES } from './rays';
-import { getSensorContext, setSensorContext } from './registry';
+import { LIDAR_MANAGER_CAPACITY, getSensorContext, setSensorContext } from './registry';
 import { createWorld, rebuildWorld, type World, type WorldParams } from './world';
 
 const log = getLogger('webgpu/sensors');
@@ -169,10 +169,13 @@ export async function bootSensors(): Promise<SensorContext | null> {
 
             // Mesh-link LoS path: small capacity, default 2-slot ring.
             const los = new LosQueryManager(device, world, 256);
-            // High-rate sensor path: 4096 rays per query (e.g. 16 elev × 256
-            // azim LiDAR scan), 3-slot ring so pipelined dispatches don't
-            // stall waiting for GPU + readback to settle.
-            const lidar = new LosQueryManager(device, world, 4096, 3);
+            // High-rate sensor path: `LIDAR_MANAGER_CAPACITY` rays per query
+            // (e.g. 16 elev × 256 azim LiDAR scan), 3-slot ring so pipelined
+            // dispatches don't stall waiting for GPU + readback to settle.
+            // Capacity lives in `./registry` so `effects.ts` can validate
+            // user-overridden scan params against the same number without
+            // pulling sensors.ts into the main bundle.
+            const lidar = new LosQueryManager(device, world, LIDAR_MANAGER_CAPACITY, 3);
 
             // Sanity probe — fire one ray straight down through origin from
             // 200 m altitude. If WebGPU + the brick map are working, we get
