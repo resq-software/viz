@@ -147,19 +147,32 @@ export class LidarScan {
         const dirs = this.dirs;
         const rays = this._rays;
         if (rot) {
+            // Convert the quaternion to a 3x3 rotation matrix once,
+            // outside the per-ray loop. The rotation is constant for
+            // every ray in this scan, so the matrix-form rotate (9 muls
+            // + 6 adds per ray) beats the Rodrigues form (15 muls + 12
+            // adds per ray) — saving ~24k mults on a 4096-ray scan.
+            // Standard q→matrix; valid for unit quaternions.
             const qx = rot[0], qy = rot[1], qz = rot[2], qw = rot[3];
+            const xx = qx * qx, yy = qy * qy, zz = qz * qz;
+            const xy = qx * qy, xz = qx * qz, yz = qy * qz;
+            const wx = qw * qx, wy = qw * qy, wz = qw * qz;
+            const m00 = 1 - 2 * (yy + zz);
+            const m01 = 2 * (xy - wz);
+            const m02 = 2 * (xz + wy);
+            const m10 = 2 * (xy + wz);
+            const m11 = 1 - 2 * (xx + zz);
+            const m12 = 2 * (yz - wx);
+            const m20 = 2 * (xz - wy);
+            const m21 = 2 * (yz + wx);
+            const m22 = 1 - 2 * (xx + yy);
             for (let i = 0; i < dirs.length; i++) {
                 const d = dirs[i]!;
                 const out = rays[i]!.direction;
-                // Rodrigues form: v' = v + 2 * q.xyz × (q.xyz × v + q.w * v).
-                // Used by gl-matrix, Three.js, etc.; valid for unit q.
                 const vx = d[0], vy = d[1], vz = d[2];
-                const tx = qy * vz - qz * vy + qw * vx;
-                const ty = qz * vx - qx * vz + qw * vy;
-                const tz = qx * vy - qy * vx + qw * vz;
-                out[0] = vx + 2 * (qy * tz - qz * ty);
-                out[1] = vy + 2 * (qz * tx - qx * tz);
-                out[2] = vz + 2 * (qx * ty - qy * tx);
+                out[0] = m00 * vx + m01 * vy + m02 * vz;
+                out[1] = m10 * vx + m11 * vy + m12 * vz;
+                out[2] = m20 * vx + m21 * vy + m22 * vz;
             }
         } else {
             for (let i = 0; i < dirs.length; i++) {
