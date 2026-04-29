@@ -280,7 +280,7 @@ viz/
 │   ├── Models/                  Request / response records
 │   ├── Services/                SimulationService · VizFrameBuilder · ScenarioService
 │   ├── styles/main.css          CSS custom properties, glassmorphism panels, HUD
-│   └── wwwroot/                 Vite build output (committed for zero-install deploys)
+│   └── wwwroot/                 Vite build output (gitignored; produced by `dotnet build` and uploaded as the `viz-wwwroot-{sha}` CI artifact for deploys)
 │
 ├── tests/ResQ.Viz.Web.Tests/    xUnit + FluentAssertions + Moq
 └── lib/dotnet-sdk/              Git submodule — ResQ .NET SDK
