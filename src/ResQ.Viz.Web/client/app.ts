@@ -3,7 +3,11 @@
 
 import './styles/main.css';
 import * as THREE from 'three';
-import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
+// SignalR runtime is loaded lazily inside `start()` (see below) — keeps
+// ~54 KB of `@microsoft/signalr` out of the main bundle so the first
+// paint isn't blocked on parsing it. The type-only import is free at
+// runtime and lets `connection` stay strongly typed.
+import type { HubConnection } from '@microsoft/signalr';
 import { Scene }          from './scene';
 import { Terrain }        from './terrain';
 import { DroneManager }   from './drones';
@@ -616,12 +620,13 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
 });
 
 // ─── SignalR ───────────────────────────────────────────────────────────────
+//
+// `connection` is constructed lazily inside `start()` so the SignalR
+// runtime (~54 KB minified) ships as a separate chunk and doesn't
+// block first paint. All handlers are wired in `_wireConnection`
+// before the first `connection.start()` call.
 
-const connection = new HubConnectionBuilder()
-    .withUrl('/viz')
-    .withAutomaticReconnect()
-    .configureLogging(LogLevel.Warning)
-    .build();
+let connection: HubConnection | null = null;
 
 // Seen-sets for event-log diffing. Each holds the ids observed on the prior
 // frame so we can emit DET / HAZ entries exactly once per detection or
@@ -638,73 +643,75 @@ document.addEventListener('resq:scenario-start', () => {
     _seenHazardIds.clear();
 });
 
-connection.on('ReceiveFrame', (frame: VizFrame) => {
-    _lastFrame = frame;
-    loadingOverlay.onFrame();
-    missionChrome.update(frame.time ?? 0);
-    const drones = frame.drones ?? [];
-    droneManager.update(drones, frame.detections);
-    effectsMgr.update(frame);
-    telemetryStrip.update(drones);
-    miniMap.update(drones, frame.hazards);
-    overlayMgr.update(drones);
-    controlPanel.updateDroneList(drones);
-    hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
-    dronePanel.update(drones);
-    windCompass.updateFromWeatherSliders();
+function _wireConnection(c: HubConnection): void {
+    c.on('ReceiveFrame', (frame: VizFrame) => {
+        _lastFrame = frame;
+        loadingOverlay.onFrame();
+        missionChrome.update(frame.time ?? 0);
+        const drones = frame.drones ?? [];
+        droneManager.update(drones, frame.detections);
+        effectsMgr.update(frame);
+        telemetryStrip.update(drones);
+        miniMap.update(drones, frame.hazards);
+        overlayMgr.update(drones);
+        controlPanel.updateDroneList(drones);
+        hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
+        dronePanel.update(drones);
+        windCompass.updateFromWeatherSliders();
 
-    // Detection events — fire once per new detection.id.
-    for (const det of frame.detections) {
-        if (_seenDetectionIds.has(det.id)) continue;
-        _seenDetectionIds.add(det.id);
-        eventLog.pushDetection(det.droneId, det.type);
-    }
-
-    // Hazard lifecycle — diff current vs. last frame to catch enter/exit.
-    const currentHazardIds = new Set<string>();
-    for (const h of frame.hazards) {
-        // Legacy frames may omit `id`; synthesize a stable key from type+centre.
-        const hId = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
-        currentHazardIds.add(hId);
-        if (!_seenHazardIds.has(hId)) {
-            _seenHazardIds.set(hId, h.type);
-            eventLog.pushHazard('enter', h.type);
+        // Detection events — fire once per new detection.id.
+        for (const det of frame.detections) {
+            if (_seenDetectionIds.has(det.id)) continue;
+            _seenDetectionIds.add(det.id);
+            eventLog.pushDetection(det.droneId, det.type);
         }
-    }
-    for (const [id, type] of _seenHazardIds) {
-        if (!currentHazardIds.has(id)) {
-            eventLog.pushHazard('exit', type);
-            _seenHazardIds.delete(id);
+
+        // Hazard lifecycle — diff current vs. last frame to catch enter/exit.
+        const currentHazardIds = new Set<string>();
+        for (const h of frame.hazards) {
+            // Legacy frames may omit `id`; synthesize a stable key from type+centre.
+            const hId = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
+            currentHazardIds.add(hId);
+            if (!_seenHazardIds.has(hId)) {
+                _seenHazardIds.set(hId, h.type);
+                eventLog.pushHazard('enter', h.type);
+            }
         }
-    }
+        for (const [id, type] of _seenHazardIds) {
+            if (!currentHazardIds.has(id)) {
+                eventLog.pushHazard('exit', type);
+                _seenHazardIds.delete(id);
+            }
+        }
 
-    const partitioned = frame.mesh?.partitioned === true;
-    if (partitioned !== _backhaulKilled) {
-        _backhaulKilled = partitioned;
-        partitionBanner.textContent = partitioned ? PARTITION_BANNER_TEXT : '';
-        partitionBanner.setAttribute('aria-hidden', String(!partitioned));
-        eventLog.pushPartition(!partitioned);
-    }
-    document.body.classList.toggle('partitioned', partitioned);
-    if (emptyStateEl) {
-        if (drones.length > 0) emptyStateEl.classList.add('hidden');
-        else                   emptyStateEl.classList.remove('hidden');
-    }
-    // Allow refit whenever drones are cleared (reset or scenario switch)
-    if (_prevDroneCount > 0 && drones.length === 0) _fittedToSwarm = false;
-    _prevDroneCount = drones.length;
-    if (!_fittedToSwarm && drones.length > 0) {
-        _fittedToSwarm = true;
-        const positions = drones
-            .filter(isDroneReady)
-            .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
-        viz.fitToPositions(positions);
-    }
-});
+        const partitioned = frame.mesh?.partitioned === true;
+        if (partitioned !== _backhaulKilled) {
+            _backhaulKilled = partitioned;
+            partitionBanner.textContent = partitioned ? PARTITION_BANNER_TEXT : '';
+            partitionBanner.setAttribute('aria-hidden', String(!partitioned));
+            eventLog.pushPartition(!partitioned);
+        }
+        document.body.classList.toggle('partitioned', partitioned);
+        if (emptyStateEl) {
+            if (drones.length > 0) emptyStateEl.classList.add('hidden');
+            else                   emptyStateEl.classList.remove('hidden');
+        }
+        // Allow refit whenever drones are cleared (reset or scenario switch)
+        if (_prevDroneCount > 0 && drones.length === 0) _fittedToSwarm = false;
+        _prevDroneCount = drones.length;
+        if (!_fittedToSwarm && drones.length > 0) {
+            _fittedToSwarm = true;
+            const positions = drones
+                .filter(isDroneReady)
+                .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
+            viz.fitToPositions(positions);
+        }
+    });
 
-connection.onreconnecting(() => { hud.setStatus('reconnecting'); loadingOverlay.onReconnecting(); });
-connection.onreconnected(()  => { hud.setStatus('connected');    loadingOverlay.onReconnected();  });
-connection.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
+    c.onreconnecting(() => { hud.setStatus('reconnecting'); loadingOverlay.onReconnecting(); });
+    c.onreconnected(()  => { hud.setStatus('connected');    loadingOverlay.onReconnected();  });
+    c.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
+}
 
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
 window.addEventListener('beforeunload', () => clearInterval(_fpsTick));
@@ -729,6 +736,18 @@ async function start(): Promise<void> {
     if (_starting) return;
     _starting = true;
     try {
+        if (!connection) {
+            // Lazy-load the SignalR runtime. Triggers a ~54 KB chunk
+            // fetch on first start; subsequent reconnects reuse the
+            // cached module + the same `HubConnection` instance.
+            const { HubConnectionBuilder, LogLevel } = await import('@microsoft/signalr');
+            connection = new HubConnectionBuilder()
+                .withUrl('/viz')
+                .withAutomaticReconnect()
+                .configureLogging(LogLevel.Warning)
+                .build();
+            _wireConnection(connection);
+        }
         await connection.start();
         hud.setStatus('connected');
         await _autoSpawnIfEmpty();
