@@ -307,7 +307,7 @@ viz/
 
 **Weather modes**: `calm` · `steady` · `turbulent`
 
-**Scenarios**: `single` · `swarm-5` · `swarm-20` · `sar`
+**Scenarios**: `single` · `swarm-5` · `swarm-20` · `sar` · `multi-agency-sar`
 
 ---
 
@@ -337,6 +337,7 @@ viz/
 | `V` | Toggle velocity component arrows |
 | `H` | Toggle altitude halos |
 | `G` | Toggle formation lines |
+| `[` / `]` | Cycle drone selection (severity-sorted to match the telemetry strip) |
 | `Space` | Stop simulation |
 | `R` | Reset simulation |
 | `Tab` | Toggle sidebar |
@@ -344,6 +345,10 @@ viz/
 | `2` | Scenario: swarm-5 |
 | `3` | Scenario: swarm-20 |
 | `4` | Scenario: SAR |
+| `5` | Scenario: multi-agency-sar (12 drones across skydio · autel · anzu) |
+| `Shift` + `1` … `5` | Camera presets: overview · tactical · cockpit · ground · investor |
+| `K` | Toggle simulated backhaul kill (mesh-only degradation banner) |
+| `Ctrl` + `Shift` + `R` | Toggle investor-mode cinematic playback for screen recording |
 | `?` | Toggle keyboard shortcuts panel |
 | `i` | Toggle WebGPU sensor-stack stats overlay (queries, peakSlotDepth, raysOutsideWorld) |
 
