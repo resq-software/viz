@@ -15,19 +15,23 @@
 -->
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr" class="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="dark">
-    <title>ResQ Viz — Live Coordination</title>
-    <meta name="description" content="Real-time 3D coordination across autonomous drone swarms — mesh topology, hazard fusion, and decentralized consensus for disaster response.">
-    <meta name="author" content="Mike Odnis">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover, interactive-widget=resizes-visual">
+
+    <title>ResQ Viz — Real-time 3D coordination for autonomous drone swarms in disaster response.</title>
+    <meta name="description" content="Real-time 3D coordination for autonomous drone swarms. Mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.">
+    <meta name="author" content="ResQ Systems, Inc.">
+    <meta name="keywords" content="drone visualization,swarm coordination,mesh network,disaster response,search and rescue,real-time telemetry,autonomous drones,kinetic operating system,first responder technology,ResQ">
+    <meta name="category" content="technology">
     <meta name="robots" content="index, follow">
 
     <!-- Theme color -->
-    <meta name="theme-color" content="#0d1117">
-    <meta name="msapplication-TileColor" content="#0d1117">
+    <meta name="theme-color" content="#E8EAF0" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0A0E1A" media="(prefers-color-scheme: dark)">
+    <meta name="color-scheme" content="dark light">
+    <meta name="msapplication-TileColor" content="#0A0E1A">
 
     <!-- Security -->
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
@@ -36,18 +40,24 @@
     <link rel="canonical" href="https://viz.resq.software/">
 
     <!-- Open Graph -->
-    <meta property="og:title" content="ResQ Viz — Live Coordination">
-    <meta property="og:description" content="Real-time 3D coordination across autonomous drone swarms — mesh topology, hazard fusion, and decentralized consensus for disaster response.">
+    <meta property="og:title" content="ResQ Viz">
+    <meta property="og:description" content="Real-time 3D coordination for autonomous drone swarms. Mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://viz.resq.software/">
-    <meta property="og:site_name" content="ResQ Viz">
+    <meta property="og:site_name" content="ResQ Tactical OS">
     <meta property="og:locale" content="en_US">
+    <meta property="og:image" content="https://resq.software/og-banner.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="ResQ Viz">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:creator" content="@mike_odnis">
-    <meta name="twitter:title" content="ResQ Viz — Live Coordination">
-    <meta name="twitter:description" content="Real-time 3D coordination across autonomous drone swarms — mesh topology, hazard fusion, and decentralized consensus for disaster response.">
+    <meta name="twitter:site" content="@ResQSoftware">
+    <meta name="twitter:creator" content="@ResQSoftware">
+    <meta name="twitter:title" content="ResQ Viz">
+    <meta name="twitter:description" content="Real-time 3D coordination for autonomous drone swarms. Mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.">
+    <meta name="twitter:image" content="https://resq.software/og-banner.png">
 
     <!-- Favicon -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛸</text></svg>">
@@ -66,52 +76,83 @@
 
     <!-- Top HUD bar -->
     <header id="hud-top">
-        <div id="hud-logo">RESQ<span>VIZ</span></div>
-        <div id="hud-conn">
-            <span class="conn-dot" id="conn-dot"></span>
-            <span id="conn-label">Connecting…</span>
-        </div>
-        <div id="hud-stats">
-            <div class="hud-stat">
-                <span class="hud-stat-label">Drones</span>
-                <span class="hud-stat-value" id="drone-count">0</span>
-            </div>
-            <span class="hud-sep">|</span>
-            <div class="hud-stat">
-                <span class="hud-stat-label">FPS</span>
-                <span class="hud-stat-value" id="fps">--</span>
-            </div>
-            <span class="hud-sep">|</span>
-            <div class="hud-stat">
-                <span class="hud-stat-label">Time</span>
-                <span class="hud-stat-value" id="sim-time">0.0s</span>
+        <div class="hud-zone hud-zone-left">
+            <div id="hud-logo">RESQ<span>VIZ</span></div>
+            <div id="hud-conn" title="Connection status">
+                <span class="conn-dot" id="conn-dot"></span>
+                <span id="conn-label">Connecting…</span>
             </div>
         </div>
-        <div id="hud-battery">
-            <span class="bat-label">Fleet Bat</span>
-            <div id="battery-track"><div id="battery-fill"></div></div>
-            <span id="battery-pct">--%</span>
+
+        <div class="hud-zone hud-zone-center">
+            <div id="hud-stats">
+                <div class="hud-stat" title="Active drones">
+                    <span class="hud-stat-label">DRN</span>
+                    <span class="hud-stat-value" id="drone-count">0</span>
+                </div>
+                <div class="hud-stat" title="Render rate">
+                    <span class="hud-stat-label">FPS</span>
+                    <span class="hud-stat-value" id="fps">--</span>
+                </div>
+                <div class="hud-stat" title="Simulation time">
+                    <span class="hud-stat-label">T+</span>
+                    <span class="hud-stat-value" id="sim-time">0.0s</span>
+                </div>
+                <div class="hud-stat hud-stat-bat" title="Fleet battery average">
+                    <span class="hud-stat-label">BAT</span>
+                    <div id="battery-track"><div id="battery-fill"></div></div>
+                    <span class="hud-stat-value" id="battery-pct">--%</span>
+                </div>
+            </div>
         </div>
-        <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
-        <div class="hud-sep"></div>
-        <button id="hud-vel-toggle"    class="hud-toggle active" title="Velocity vectors (V)">&#x21D2;</button>
-        <button id="hud-halo-toggle"   class="hud-toggle active" title="Altitude halos (H)">&#x25CB;</button>
-        <button id="hud-form-toggle"   class="hud-toggle active" title="Formation lines (G)">&#x22EF;</button>
-        <button id="hud-follow-toggle" class="hud-toggle"        title="Follow selected (F)">&#x25CE;</button>
-        <button id="btn-sidebar-toggle" title="Toggle panel [Tab]">☰</button>
-        <button id="hud-hints-toggle"  class="hud-toggle active" title="Keyboard shortcuts (?)">?</button>
-        <button id="hud-settings-toggle" class="hud-toggle" title="Settings">⚙</button>
+
+        <div class="hud-zone hud-zone-right">
+            <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
+            <div class="hud-toggle-group" role="group" aria-label="Layer visibility">
+                <button id="hud-vel-toggle"    class="hud-toggle active" title="Velocity vectors (V)">&#x21D2;</button>
+                <button id="hud-halo-toggle"   class="hud-toggle active" title="Altitude halos (H)">&#x25CB;</button>
+                <button id="hud-form-toggle"   class="hud-toggle active" title="Formation lines (G)">&#x22EF;</button>
+                <button id="hud-follow-toggle" class="hud-toggle"        title="Follow selected (F)">&#x25CE;</button>
+            </div>
+            <div class="hud-action-group">
+                <button id="btn-sidebar-toggle"  class="hud-action" title="Toggle panel [Tab]">☰</button>
+                <button id="hud-hints-toggle"    class="hud-action" title="Keyboard shortcuts (?)" aria-pressed="false">?</button>
+                <button id="hud-settings-toggle" class="hud-action" title="Settings">⚙</button>
+            </div>
+        </div>
     </header>
 
     <!-- Left sidebar -->
     <aside id="sidebar">
 
-        <div class="panel-section">
+        <div class="panel-section panel-sim">
             <div class="section-title">Simulation</div>
             <div class="btn-row">
-                <button id="btn-start" class="btn btn-success">▶ Start</button>
-                <button id="btn-stop"  class="btn">⏸ Stop</button>
-                <button id="btn-reset" class="btn btn-danger">↺ Reset</button>
+                <button id="btn-start" class="btn btn-success" title="Start simulation">▶ Start</button>
+                <button id="btn-stop"  class="btn"             title="Pause simulation">⏸ Stop</button>
+                <button id="btn-reset" class="btn btn-danger"  title="Reset world">↺ Reset</button>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-title">Scenarios</div>
+            <div class="scenario-grid">
+                <div class="scenario-card" data-scenario="single">
+                    <div class="sc-name">Single</div>
+                    <div class="sc-desc">1 drone</div>
+                </div>
+                <div class="scenario-card" data-scenario="swarm-5">
+                    <div class="sc-name">Swarm 5</div>
+                    <div class="sc-desc">5 drones</div>
+                </div>
+                <div class="scenario-card" data-scenario="swarm-20">
+                    <div class="sc-name">Swarm 20</div>
+                    <div class="sc-desc">20 drones</div>
+                </div>
+                <div class="scenario-card" data-scenario="sar">
+                    <div class="sc-name">SAR</div>
+                    <div class="sc-desc">Search &amp; rescue</div>
+                </div>
             </div>
         </div>
 
@@ -142,50 +183,9 @@
         </div>
 
         <div class="panel-section">
-            <div class="section-title">Scenarios</div>
-            <div class="scenario-grid">
-                <div class="scenario-card" data-scenario="single">
-                    <div class="sc-name">Single</div>
-                    <div class="sc-desc">1 drone</div>
-                </div>
-                <div class="scenario-card" data-scenario="swarm-5">
-                    <div class="sc-name">Swarm 5</div>
-                    <div class="sc-desc">5 drones</div>
-                </div>
-                <div class="scenario-card" data-scenario="swarm-20">
-                    <div class="sc-name">Swarm 20</div>
-                    <div class="sc-desc">20 drones</div>
-                </div>
-                <div class="scenario-card" data-scenario="sar">
-                    <div class="sc-name">SAR</div>
-                    <div class="sc-desc">Search &amp; rescue</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="panel-section">
-            <div class="section-title">Spawn Drone</div>
-            <div class="input-row">
-                <div class="field-group">
-                    <label class="field-label">X (East)</label>
-                    <input type="number" id="spawn-x" value="0">
-                </div>
-                <div class="field-group">
-                    <label class="field-label">Alt (m)</label>
-                    <input type="number" id="spawn-y" value="50">
-                </div>
-                <div class="field-group">
-                    <label class="field-label">Z (South)</label>
-                    <input type="number" id="spawn-z" value="0">
-                </div>
-            </div>
-            <button id="btn-spawn" class="btn btn-primary" style="width:100%">+ Spawn Drone</button>
-        </div>
-
-        <div class="panel-section">
             <div class="section-title">Commands</div>
-            <label class="field-label">Target drone</label>
-            <select id="drone-select" style="margin-bottom:8px">
+            <label class="field-label" for="drone-select">Target drone</label>
+            <select id="drone-select" class="field-select">
                 <option value="">— select —</option>
             </select>
             <div class="btn-grid">
@@ -196,46 +196,71 @@
             </div>
         </div>
 
-        <div class="panel-section">
-            <div class="section-title">Weather</div>
-            <label class="field-label">Mode</label>
-            <select id="weather-mode" style="margin-bottom:8px">
-                <option value="calm">Calm</option>
-                <option value="steady">Steady Wind</option>
-                <option value="turbulent">Turbulent</option>
-            </select>
-            <label class="field-label">Speed: <span id="wind-speed-val">5</span> m/s</label>
-            <input type="range" id="wind-speed" min="0" max="30" value="5">
-            <label class="field-label" style="margin-top:4px">Direction: <span id="wind-dir-val">0</span>°</label>
-            <input type="range" id="wind-dir" min="0" max="359" value="0">
-            <button id="btn-weather" class="btn" style="width:100%;margin-top:8px">Apply Weather</button>
-        </div>
-
-        <div class="panel-section">
-            <div class="section-title">Fault Injection</div>
-            <label class="field-label">Target drone</label>
-            <select id="fault-drone-select" style="margin-bottom:8px">
-                <option value="">— select —</option>
-            </select>
-            <div class="btn-grid">
-                <button class="btn btn-danger fault-btn" data-fault="gps">GPS</button>
-                <button class="btn btn-danger fault-btn" data-fault="comms">Comms</button>
-                <button class="btn btn-danger fault-btn" data-fault="sensor">Sensor</button>
-                <button class="btn btn-danger fault-btn" data-fault="failure">Failure</button>
+        <details class="panel-section panel-collapsible">
+            <summary class="section-title">Spawn Drone</summary>
+            <div class="panel-collapsible-body">
+                <div class="input-row">
+                    <div class="field-group">
+                        <label class="field-label">X (East)</label>
+                        <input type="number" id="spawn-x" value="0">
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label">Alt (m)</label>
+                        <input type="number" id="spawn-y" value="50">
+                    </div>
+                    <div class="field-group">
+                        <label class="field-label">Z (South)</label>
+                        <input type="number" id="spawn-z" value="0">
+                    </div>
+                </div>
+                <button id="btn-spawn" class="btn btn-primary btn-block">+ Spawn Drone</button>
             </div>
-        </div>
+        </details>
+
+        <details class="panel-section panel-collapsible">
+            <summary class="section-title">Weather</summary>
+            <div class="panel-collapsible-body">
+                <label class="field-label" for="weather-mode">Mode</label>
+                <select id="weather-mode" class="field-select">
+                    <option value="calm">Calm</option>
+                    <option value="steady">Steady Wind</option>
+                    <option value="turbulent">Turbulent</option>
+                </select>
+                <label class="field-label">Speed · <span id="wind-speed-val">5</span> m/s</label>
+                <input type="range" id="wind-speed" min="0" max="30" value="5">
+                <label class="field-label">Direction · <span id="wind-dir-val">0</span>°</label>
+                <input type="range" id="wind-dir" min="0" max="359" value="0">
+                <button id="btn-weather" class="btn btn-block">Apply Weather</button>
+            </div>
+        </details>
+
+        <details class="panel-section panel-collapsible panel-faults">
+            <summary class="section-title">Fault Injection</summary>
+            <div class="panel-collapsible-body">
+                <label class="field-label" for="fault-drone-select">Target drone</label>
+                <select id="fault-drone-select" class="field-select">
+                    <option value="">— select —</option>
+                </select>
+                <div class="btn-grid">
+                    <button class="btn btn-danger fault-btn" data-fault="gps">GPS</button>
+                    <button class="btn btn-danger fault-btn" data-fault="comms">Comms</button>
+                    <button class="btn btn-danger fault-btn" data-fault="sensor">Sensor</button>
+                    <button class="btn btn-danger fault-btn" data-fault="failure">Failure</button>
+                </div>
+            </div>
+        </details>
 
     </aside>
 
     <!-- Drone detail panel (hidden until a drone is clicked) -->
     <div id="drone-panel" class="hidden">
-        <button id="dp-close">×</button>
+        <button id="dp-close" aria-label="Close panel">×</button>
         <div id="dp-info">
             <div id="dp-id">—</div>
             <div id="dp-status-row">
                 <span id="dp-badge" class="badge">—</span>
             </div>
-            <div style="margin-top:6px">
+            <div class="dp-bat-block">
                 <div class="dp-metric-label">Battery</div>
                 <div id="dp-bat-track"><div id="dp-bat-fill"></div></div>
                 <div class="dp-metric-value" id="dp-bat-pct">--%</div>
@@ -243,11 +268,11 @@
         </div>
         <div id="dp-metrics">
             <div class="dp-metric">
-                <span class="dp-metric-label">Position (X · Y · Z)</span>
+                <span class="dp-metric-label">Position · X Y Z</span>
                 <span class="dp-metric-value" id="dp-pos">— · — · —</span>
             </div>
             <div class="dp-metric">
-                <span class="dp-metric-label">Velocity (X · Y · Z) m/s</span>
+                <span class="dp-metric-label">Velocity · X Y Z · m/s</span>
                 <span class="dp-metric-value" id="dp-vel">— · — · —</span>
             </div>
         </div>
@@ -265,7 +290,7 @@
     </div>
 
     <!-- Keyboard shortcuts panel — toggleable via ? button or ? key -->
-    <div id="key-hints" class="key-hints">
+    <div id="key-hints" class="key-hints hidden">
       <div class="key-hints-header">
         <span class="key-hints-title">Keyboard Shortcuts</span>
         <button id="key-hints-close" class="key-hints-close" title="Close (?)">✕</button>
