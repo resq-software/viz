@@ -39,6 +39,26 @@ export type LosRay = {
     mask: number;
 };
 
+/**
+ * Lifetime counters for a `LosQueryManager`. The manager itself never
+ * drops queries — it queues them per-slot — so `peakSlotDepth > 1` is
+ * the signal that callers are pushing faster than GPU + readback can
+ * settle. Useful for the periodic sensor audit (see project memory).
+ */
+export type LosQueryStats = {
+    /** Total `query()` calls accepted (excludes empty / oversized batches). */
+    totalQueries: number;
+    /** Total rays summed across every accepted query. */
+    totalRays: number;
+    /**
+     * Max observed slot depth at the moment a new query was assigned to
+     * a slot. Depth = pending + running queries on that slot. A peak of
+     * 1 means GPU + readback always finished before the next query
+     * arrived on the same slot; > 1 means callers are queueing.
+     */
+    peakSlotDepth: number;
+};
+
 type Slot = {
     rayBuf: GPUBuffer;
     hitBuf: GPUBuffer;
@@ -46,11 +66,18 @@ type Slot = {
     bindGroup: GPUBindGroup;
     /**
      * Tail of this slot's serialization chain. Each new query that picks
-     * this slot chains via `.then()`; `inFlight` is updated to the
-     * post-`.catch()` version so a failed batch settles the chain (lets
-     * later callers proceed) without poisoning their results.
+     * this slot chains via `.then()`; `inFlight` is updated to a
+     * downstream promise that always resolves (rejection swallowed +
+     * depth decremented) so a failed batch settles the chain — later
+     * callers proceed without their results being poisoned.
      */
     inFlight: Promise<unknown>;
+    /**
+     * Pending + running queries currently riding this slot's chain.
+     * Bumped at submission, decremented when the corresponding query
+     * settles (either fulfilled or rejected).
+     */
+    depth: number;
 };
 
 export class LosQueryManager {
@@ -60,6 +87,11 @@ export class LosQueryManager {
     private readonly pipeline: GPUComputePipeline;
     private readonly slots: Slot[];
     private nextSlot: number = 0;
+    private readonly _stats: LosQueryStats = {
+        totalQueries: 0,
+        totalRays: 0,
+        peakSlotDepth: 0,
+    };
 
     /**
      * @param maxRays Per-slot capacity in rays. Each slot allocates
@@ -132,6 +164,7 @@ export class LosQueryManager {
                 readBuf,
                 bindGroup,
                 inFlight: Promise.resolve(),
+                depth: 0,
             });
         }
         this.slots = slots;
@@ -145,6 +178,17 @@ export class LosQueryManager {
     /** Number of ring-buffer slots. */
     get slotCount(): number {
         return this.slots.length;
+    }
+
+    /**
+     * Lifetime query counters. Cheap to read every frame for an
+     * observability overlay or audit log. The returned object is the
+     * live counter — fields update in place — so don't snapshot via
+     * reference if the caller needs a stable view across an async
+     * boundary; copy the fields instead.
+     */
+    get stats(): Readonly<LosQueryStats> {
+        return this._stats;
     }
 
     /**
@@ -174,8 +218,22 @@ export class LosQueryManager {
         const slot = this.slots[this.nextSlot]!;
         this.nextSlot = (this.nextSlot + 1) % this.slots.length;
 
+        // Bump depth before chaining so `peakSlotDepth` reflects the
+        // moment a new query lands on this slot, including the running
+        // one already settling. The decrement runs after the user's
+        // promise settles (regardless of outcome) — chain `inFlight` on
+        // a downstream `.then(_, _)` so the next query queued onto this
+        // slot waits for both the GPU work AND the depth decrement.
+        slot.depth += 1;
+        if (slot.depth > this._stats.peakSlotDepth) {
+            this._stats.peakSlotDepth = slot.depth;
+        }
+        this._stats.totalQueries += 1;
+        this._stats.totalRays += rays.length;
+
         const ours = slot.inFlight.then(() => this.runBatch(slot, rays));
-        slot.inFlight = ours.catch(() => undefined);
+        const decrement = (): void => { slot.depth -= 1; };
+        slot.inFlight = ours.then(decrement, decrement);
         return ours;
     }
 
