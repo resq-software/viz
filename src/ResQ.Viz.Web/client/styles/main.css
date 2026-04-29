@@ -1270,7 +1270,7 @@ body.partitioned .mc-phase { color: var(--danger); }
     border-radius: 4px;
     backdrop-filter: blur(8px);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    color: var(--fg, #c9d1d9);
+    color: var(--text, #e6edf3);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 11px;
     line-height: 1.4;
@@ -1289,13 +1289,13 @@ body.partitioned .mc-phase { color: var(--danger); }
     font-weight: 400;
     text-transform: lowercase;
     letter-spacing: 0;
-    color: var(--muted, #8b949e);
+    color: var(--text-muted, #8b949e);
 }
 .sensor-stats-section {
     margin-top: 6px;
 }
 .sensor-stats-section-title {
-    color: var(--muted, #8b949e);
+    color: var(--text-muted, #8b949e);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -1307,15 +1307,20 @@ body.partitioned .mc-phase { color: var(--danger); }
     gap: 1px 12px;
 }
 .sensor-stats-key {
-    color: var(--muted, #8b949e);
+    color: var(--text-muted, #8b949e);
 }
 .sensor-stats-value {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
 .sensor-stats-value.warn {
-    color: var(--warning, #f1c40f);
+    color: var(--warning, #d29922);
     font-weight: 600;
+}
+/* Hide during cinematic recordings — matches the visibility rule for
+   other dev/audit panels (event log, telemetry strip). */
+body.investor-mode .sensor-stats-overlay {
+    display: none !important;
 }
 
 

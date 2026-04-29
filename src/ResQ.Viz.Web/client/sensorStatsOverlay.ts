@@ -63,12 +63,22 @@ export class SensorStatsOverlay {
 
         document.addEventListener('keydown', (e: KeyboardEvent) => {
             // Bail when typing in form controls so a stray 'i' inside an
-            // input doesn't toggle the dev panel from underneath the user.
+            // input / select / textarea doesn't toggle the dev panel
+            // from underneath the user (SELECT also fires keydown when
+            // the operator types to jump-search options).
             const t = e.target as HTMLElement | null;
-            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+            if (t && (
+                t.tagName === 'INPUT' ||
+                t.tagName === 'TEXTAREA' ||
+                t.tagName === 'SELECT' ||
+                t.isContentEditable
+            )) {
                 return;
             }
-            if (e.code === 'KeyI' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            // No modifiers — capital 'I' (Shift+I) shouldn't trigger
+            // because it's commonly produced when typing prose elsewhere.
+            if (e.code === 'KeyI' &&
+                !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
                 this.toggle();
             }
         });
