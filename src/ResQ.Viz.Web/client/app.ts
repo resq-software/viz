@@ -33,6 +33,7 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { TelemetryStrip } from './telemetryStrip';
 import { MiniMap } from './miniMap';
+import { SensorStatsOverlay } from './sensorStatsOverlay';
 import { apiPost, apiGet, apiPostOrWarn } from './api';
 import { getLogger } from './log';
 
@@ -84,6 +85,12 @@ const telemetryStrip = new TelemetryStrip();
 // drone dot to select it through the standard dispatch.
 const miniMap = new MiniMap();
 miniMap.onCameraQuery(() => viz.getCameraState());
+
+// Sensor-stack stats overlay — bottom-left dev/audit panel toggled
+// with the 'i' key. Reads `getSensorContext()?.los.stats` and `.lidar.stats`
+// (LosQueryStats added in #78/#79) so an operator can confirm the
+// WebGPU sensor primitive is healthy and not silently queueing.
+const sensorStats = new SensorStatsOverlay();
 
 // Partition banner — shown when the server reports a degraded backhaul link.
 // Persists across investor-mode so the degradation shows in screen recordings.
@@ -658,6 +665,7 @@ function _wireConnection(c: HubConnection): void {
         hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
         dronePanel.update(drones);
         windCompass.updateFromWeatherSliders();
+        sensorStats.update();
 
         // Detection events — fire once per new detection.id.
         for (const det of frame.detections) {

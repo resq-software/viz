@@ -1252,4 +1252,70 @@ body.partitioned .mc-phase { color: var(--danger); }
     cursor: crosshair;
 }
 
+/* ── Sensor stats overlay ───────────────────────────────────────────────
+   Dev/audit panel toggled with the 'i' key. Surfaces LosQueryStats
+   from the WebGPU sensor stack (mesh-link + LiDAR managers). Hidden
+   by default — `[hidden]` short-circuits both layout and the per-frame
+   update path in sensorStatsOverlay.ts.
+*/
+.sensor-stats-overlay {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    z-index: 420;
+    min-width: 200px;
+    padding: 8px 10px;
+    background: rgba(13, 17, 23, 0.78);
+    border: 1px solid rgba(88, 166, 255, 0.22);
+    border-radius: 4px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    color: var(--fg, #c9d1d9);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.sensor-stats-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent, #58a6ff);
+}
+.sensor-stats-status {
+    font-weight: 400;
+    text-transform: lowercase;
+    letter-spacing: 0;
+    color: var(--muted, #8b949e);
+}
+.sensor-stats-section {
+    margin-top: 6px;
+}
+.sensor-stats-section-title {
+    color: var(--muted, #8b949e);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 2px;
+}
+.sensor-stats-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1px 12px;
+}
+.sensor-stats-key {
+    color: var(--muted, #8b949e);
+}
+.sensor-stats-value {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.sensor-stats-value.warn {
+    color: var(--warning, #f1c40f);
+    font-weight: 600;
+}
+
 
