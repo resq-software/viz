@@ -579,14 +579,16 @@ export class EffectsManager {
         // Evict cache entries for drone pairs not seen this frame. Bounds
         // memory growth as drones spawn/despawn over a long simulation —
         // cache size stays proportional to active link count instead of
-        // cumulative pair count. An in-flight LoS query's `.then()` may
-        // briefly re-add a just-evicted key with a stale value; the next
-        // frame's sweep evicts it again, so the cache remains bounded.
+        // cumulative pair count. Sweep unconditionally: a `cache.size ===
+        // seenKeys.size` guard would silently miss the churn case where
+        // one drone leaves and another joins on the same frame (sizes
+        // match but a stale key still exists). Mesh link counts are
+        // small, so iterating every frame is cheap. An in-flight LoS
+        // query's `.then()` may briefly re-add a just-evicted key with a
+        // stale value; the next frame's sweep evicts it again.
         const occCache = this._meshLinkOccluded;
-        if (occCache.size > seenKeys.size) {
-            for (const key of occCache.keys()) {
-                if (!seenKeys.has(key)) occCache.delete(key);
-            }
+        for (const key of occCache.keys()) {
+            if (!seenKeys.has(key)) occCache.delete(key);
         }
     }
 }
