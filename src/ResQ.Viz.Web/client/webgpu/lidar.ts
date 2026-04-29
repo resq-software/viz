@@ -126,46 +126,67 @@ export class LidarScan {
      * cone follows yaw / pitch / roll. If `rot` is omitted, the scan is
      * world-axis-aligned (suitable for spinning ground-mounted sensors).
      *
+     * `mountOffset` (optional) is the sensor's position in DRONE-LOCAL
+     * coordinates — e.g. `[0, 0.5, 0]` for a sensor on a 0.5 m mast above
+     * the drone body. The offset is rotated into world space by `rot`
+     * (or treated as world-axis-aligned when `rot` is omitted) and added
+     * to `origin` to produce the actual scan origin. Hit positions are
+     * computed from that scan origin, not from the drone's `origin`.
+     *
      * Returns a flat array of hits in (elevation, azimuth) order —
      * `hits[e * azim + a]`. The returned array is `this._hits` — the same
      * reference is reused across every call. Callers MUST consume the
      * hits before the next `scan()` resolves, or copy them into
      * caller-owned storage.
      */
-    async scan(origin: Vec3, rot?: Quat): Promise<LidarHit[]> {
-        // Mutate the shared `_origin` tuple in place. All pre-allocated
-        // rays in `_rays` reference this same tuple, so this single update
-        // applies to every ray without iterating.
-        this._origin[0] = origin[0];
-        this._origin[1] = origin[1];
-        this._origin[2] = origin[2];
-
-        // Stage the (possibly rotated) directions into each ray's
-        // pre-allocated direction tuple. World-frame copy when `rot` is
-        // omitted; quaternion-rotated otherwise. The cost is ~3 writes
-        // per ray either way (~12k writes per 4096-ray scan, negligible).
-        const dirs = this.dirs;
-        const rays = this._rays;
-        if (rot) {
-            // Convert the quaternion to a 3x3 rotation matrix once,
-            // outside the per-ray loop. The rotation is constant for
-            // every ray in this scan, so the matrix-form rotate (9 muls
-            // + 6 adds per ray) beats the Rodrigues form (15 muls + 12
-            // adds per ray) — saving ~24k mults on a 4096-ray scan.
-            // Standard q→matrix; valid for unit quaternions.
+    async scan(origin: Vec3, rot?: Quat, mountOffset?: Vec3): Promise<LidarHit[]> {
+        // Hoist the quaternion → 3x3 rotation matrix once. Reused below
+        // for both the mount-offset transform and the per-ray direction
+        // rotation. Identity when `rot` is omitted; the offset path then
+        // treats `mountOffset` as world-axis-aligned, and the direction
+        // loop falls into a cheaper copy branch (no matrix-vector mul).
+        const haveRot = rot !== undefined;
+        let m00 = 1, m01 = 0, m02 = 0;
+        let m10 = 0, m11 = 1, m12 = 0;
+        let m20 = 0, m21 = 0, m22 = 1;
+        if (haveRot) {
             const qx = rot[0], qy = rot[1], qz = rot[2], qw = rot[3];
             const xx = qx * qx, yy = qy * qy, zz = qz * qz;
             const xy = qx * qy, xz = qx * qz, yz = qy * qz;
             const wx = qw * qx, wy = qw * qy, wz = qw * qz;
-            const m00 = 1 - 2 * (yy + zz);
-            const m01 = 2 * (xy - wz);
-            const m02 = 2 * (xz + wy);
-            const m10 = 2 * (xy + wz);
-            const m11 = 1 - 2 * (xx + zz);
-            const m12 = 2 * (yz - wx);
-            const m20 = 2 * (xz - wy);
-            const m21 = 2 * (yz + wx);
-            const m22 = 1 - 2 * (xx + yy);
+            m00 = 1 - 2 * (yy + zz);
+            m01 = 2 * (xy - wz);
+            m02 = 2 * (xz + wy);
+            m10 = 2 * (xy + wz);
+            m11 = 1 - 2 * (xx + zz);
+            m12 = 2 * (yz - wx);
+            m20 = 2 * (xz - wy);
+            m21 = 2 * (yz + wx);
+            m22 = 1 - 2 * (xx + yy);
+        }
+
+        // Apply the mount offset to compute the actual scan origin in
+        // world space. All pre-allocated rays in `_rays` reference the
+        // same `_origin` tuple, so this update applies to every ray
+        // without iterating.
+        if (mountOffset) {
+            const mx = mountOffset[0], my = mountOffset[1], mz = mountOffset[2];
+            this._origin[0] = origin[0] + m00 * mx + m01 * my + m02 * mz;
+            this._origin[1] = origin[1] + m10 * mx + m11 * my + m12 * mz;
+            this._origin[2] = origin[2] + m20 * mx + m21 * my + m22 * mz;
+        } else {
+            this._origin[0] = origin[0];
+            this._origin[1] = origin[1];
+            this._origin[2] = origin[2];
+        }
+
+        // Stage the (possibly rotated) directions into each ray's
+        // pre-allocated direction tuple. World-frame copy when `rot` is
+        // omitted; matrix-vector multiply otherwise. ~3 writes per ray
+        // either way (~12k writes per 4096-ray scan, negligible).
+        const dirs = this.dirs;
+        const rays = this._rays;
+        if (haveRot) {
             for (let i = 0; i < dirs.length; i++) {
                 const d = dirs[i]!;
                 const out = rays[i]!.direction;
@@ -184,11 +205,11 @@ export class LidarScan {
 
         const hitData = await this.los.query(rays);
 
-        // Write hit results into the pre-allocated `_hits` buffer. Position
-        // tuples are mutated component-wise rather than reassigned so the
-        // tuple identities stay stable across scans. Hit positions use the
-        // *rotated* direction (rays[i].direction) so they match the actual
-        // ray that was traced, not the canonical pattern.
+        // Hit positions use `this._origin` (the post-offset scan origin)
+        // rather than the raw `origin` parameter, so a sensor on a mast
+        // reports hits relative to the mast tip, not the drone center.
+        // Cached locally to avoid re-reading the tuple in the hot loop.
+        const ox = this._origin[0], oy = this._origin[1], oz = this._origin[2];
         const hits = this._hits;
         for (let i = 0; i < hitData.length; i++) {
             const h = hitData[i]!;
@@ -197,9 +218,9 @@ export class LidarScan {
             const isHit = (h.flags & HIT_HIT) !== 0;
             target.hit = isHit;
             if (isHit) {
-                target.position[0] = origin[0] + d[0] * h.t;
-                target.position[1] = origin[1] + d[1] * h.t;
-                target.position[2] = origin[2] + d[2] * h.t;
+                target.position[0] = ox + d[0] * h.t;
+                target.position[1] = oy + d[1] * h.t;
+                target.position[2] = oz + d[2] * h.t;
             } else {
                 target.position[0] = 0;
                 target.position[1] = 0;
