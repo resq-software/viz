@@ -37,14 +37,14 @@ describe('LidarScan — constructor validation', () => {
             .toThrow(/capacity 16/);
     });
 
-    it('rejects elevationCount <= 0', () => {
-        expect(() => new LidarScan(mockLos(1024), { ...baseParams, elevationCount: 0 }))
-            .toThrow(/must be > 0/);
-    });
-
-    it('rejects azimuthCount <= 0', () => {
-        expect(() => new LidarScan(mockLos(1024), { ...baseParams, azimuthCount: 0 }))
-            .toThrow(/must be > 0/);
+    it.each([
+        { param: 'elevationCount', value: 0  },
+        { param: 'elevationCount', value: -1 },
+        { param: 'azimuthCount',   value: 0  },
+        { param: 'azimuthCount',   value: -1 },
+    ] as const)('rejects $param <= 0 (value: $value)', ({ param, value }) => {
+        const invalid: LidarParams = { ...baseParams, [param]: value };
+        expect(() => new LidarScan(mockLos(1024), invalid)).toThrow(/must be > 0/);
     });
 
     it('builds a canonical scan pattern of size elevationCount × azimuthCount', () => {

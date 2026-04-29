@@ -62,7 +62,12 @@ describe('writeRay / readHit roundtrip', () => {
             expect(views.f[o + 0]).toBeCloseTo(i + 0.1, 5);
             expect(views.f[o + 1]).toBeCloseTo(i + 0.2, 5);
             expect(views.f[o + 2]).toBeCloseTo(i + 0.3, 5);
+            // All three direction components — a stride or slot-index
+            // drift in `writeRay` would land them in the wrong cells,
+            // which an x-only assertion would miss.
             expect(views.f[o + 4]).toBe(1);
+            expect(views.f[o + 5]).toBe(0);
+            expect(views.f[o + 6]).toBe(0);
             expect(views.f[o + 8]).toBe(100 + i);
             expect(views.u[o + 9]).toBe(MASK_OBSTACLES);
         }
