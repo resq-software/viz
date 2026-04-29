@@ -109,6 +109,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Run client tests
+        # Vitest unit tests for the host-side WebGPU primitives (ray
+        # packing roundtrip, LidarScan validation). No browser / GPU —
+        # ~350 ms on a cache-warm runner. Stops the pipeline before
+        # the bundle measure if a primitive regressed.
+        run: npm test
+
       - name: Build (cache-warm)
         run: npx vite build
 
