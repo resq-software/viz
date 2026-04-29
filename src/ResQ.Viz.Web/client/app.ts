@@ -354,20 +354,36 @@ const keyHints      = document.getElementById('key-hints');
 const hintsToggle   = document.getElementById('hud-hints-toggle');
 const hintsClose    = document.getElementById('key-hints-close');
 
-const HINTS_KEY = 'resq-viz-hints-visible';
-let hintsVisible = localStorage.getItem(HINTS_KEY) !== 'false';  // default: shown
+// v2 — flipped default to hidden; new key forces a clean state for users
+// who had the v1 'true' value persisted from earlier sessions.
+const HINTS_KEY = 'resq-viz-hints-visible-v2';
+let hintsVisible = localStorage.getItem(HINTS_KEY) === 'true';  // default: hidden — open via ? key or button
 
 function _setHintsVisible(v: boolean): void {
     hintsVisible = v;
     localStorage.setItem(HINTS_KEY, String(v));
     keyHints?.classList.toggle('hidden', !v);
     hintsToggle?.classList.toggle('active', v);
+    hintsToggle?.setAttribute('aria-pressed', String(v));
 }
 
 _setHintsVisible(hintsVisible);  // restore persisted state
 
-hintsToggle?.addEventListener('click', () => _setHintsVisible(!hintsVisible));
+hintsToggle?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _setHintsVisible(!hintsVisible);
+});
 hintsClose?.addEventListener('click',  () => _setHintsVisible(false));
+
+// Click-outside dismiss — keeps the panel feeling popover-like
+document.addEventListener('click', (e) => {
+    if (!hintsVisible) return;
+    const target = e.target as Node | null;
+    if (!target) return;
+    if (keyHints?.contains(target)) return;
+    if (hintsToggle?.contains(target)) return;
+    _setHintsVisible(false);
+});
 
 // ─── Drone click-to-select ─────────────────────────────────────────────────
 
@@ -463,6 +479,34 @@ miniMap.onSelect(_selectFromAnySurface);
 let _fittedToSwarm = false;
 let _lastFrame: VizFrame | null = null;
 let _prevDroneCount = 0;
+
+// ─── A11y telemetry summary ────────────────────────────────────────────────
+// Pushes a short text summary into #a11y-telemetry (aria-live="polite") so
+// screen-reader users get an audible picture of the 3D scene. Throttled to
+// avoid flooding the AT queue: only announces on drone-count change or once
+// every TELEMETRY_ANNOUNCE_MS, whichever comes first.
+const _a11yTelemetryEl = document.getElementById('a11y-telemetry');
+const TELEMETRY_ANNOUNCE_MS = 8000;
+let _lastTelemetryAnnounceAt = 0;
+let _lastTelemetryDroneCount = -1;
+function _updateA11yTelemetry(drones: { battery?: number; status?: string }[], simTime: number): void {
+    if (!_a11yTelemetryEl) return;
+    const now = performance.now();
+    const countChanged = drones.length !== _lastTelemetryDroneCount;
+    if (!countChanged && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
+    _lastTelemetryAnnounceAt = now;
+    _lastTelemetryDroneCount = drones.length;
+    if (drones.length === 0) {
+        _a11yTelemetryEl.textContent = 'No active drones.';
+        return;
+    }
+    const batteries = drones.map(d => d.battery ?? 0).filter(b => b > 0);
+    const avgBat = batteries.length > 0 ? Math.round(batteries.reduce((a, b) => a + b, 0) / batteries.length) : 0;
+    const flying = drones.filter(d => d.status === 'flying').length;
+    _a11yTelemetryEl.textContent =
+        `${drones.length} drone${drones.length === 1 ? '' : 's'} active, ` +
+        `${flying} flying, average battery ${avgBat}%, sim time ${simTime.toFixed(0)} seconds.`;
+}
 // Client-side mirror of the server backhaul state. Optimistically updated on
 // K-press, then reconciled by each incoming frame. The in-flight flag prevents
 // rapid presses from POSTing stale values before the first request lands.
@@ -477,9 +521,13 @@ const emptyStateEl = document.getElementById('empty-state');
 function _bindHudToggle(id: string, getter: () => boolean, setter: (v: boolean) => void): void {
     const btn = document.getElementById(id);
     if (!btn) return;
+    // Mirror initial visual state into aria-pressed so screen readers see it.
+    btn.setAttribute('aria-pressed', String(getter()));
     btn.addEventListener('click', () => {
         setter(!getter());
-        btn.classList.toggle('active', getter());
+        const next = getter();
+        btn.classList.toggle('active', next);
+        btn.setAttribute('aria-pressed', String(next));
     });
 }
 
@@ -494,11 +542,13 @@ followBtn?.addEventListener('click', () => {
     if (viz.isFollowing) {
         viz.followObject(null);
         followBtn.classList.remove('active');
+        followBtn.setAttribute('aria-pressed', 'false');
     } else {
         const group = droneManager.selectedGroup;
         if (group) {
             viz.followObject(group);
             followBtn.classList.add('active');
+            followBtn.setAttribute('aria-pressed', 'true');
         }
     }
 });
@@ -624,6 +674,8 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
     }
     // '?' key (Shift+/) — toggle hints panel
     if (e.key === '?') _setHintsVisible(!hintsVisible);
+    // Esc — close hints if open
+    if (e.key === 'Escape' && hintsVisible) _setHintsVisible(false);
 });
 
 // ─── SignalR ───────────────────────────────────────────────────────────────
@@ -666,6 +718,7 @@ function _wireConnection(c: HubConnection): void {
         dronePanel.update(drones);
         windCompass.updateFromWeatherSliders();
         sensorStats.update();
+        _updateA11yTelemetry(drones, frame.time ?? 0);
 
         // Detection events — fire once per new detection.id.
         for (const det of frame.detections) {

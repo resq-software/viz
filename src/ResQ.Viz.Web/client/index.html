@@ -64,8 +64,15 @@
 </head>
 <body>
 
+    <!-- Skip links — visible only when focused -->
+    <a href="#scene-container" class="skip-link">Skip to 3D viewer</a>
+    <a href="#sidebar" class="skip-link">Skip to controls</a>
+
     <!-- 3D canvas -->
     <main id="scene-container">
+        <h1 class="sr-only">ResQ Viz drone simulation viewer</h1>
+        <!-- Aria-live telemetry summary for screen readers (updated by app.ts) -->
+        <div id="a11y-telemetry" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         <!-- Empty world hint — shown when no drones exist -->
         <div id="empty-state" aria-live="polite">
             <div class="es-icon">&#x2B21;</div>
@@ -109,15 +116,15 @@
         <div class="hud-zone hud-zone-right">
             <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
             <div class="hud-toggle-group" role="group" aria-label="Layer visibility">
-                <button id="hud-vel-toggle"    class="hud-toggle active" title="Velocity vectors (V)">&#x21D2;</button>
-                <button id="hud-halo-toggle"   class="hud-toggle active" title="Altitude halos (H)">&#x25CB;</button>
-                <button id="hud-form-toggle"   class="hud-toggle active" title="Formation lines (G)">&#x22EF;</button>
-                <button id="hud-follow-toggle" class="hud-toggle"        title="Follow selected (F)">&#x25CE;</button>
+                <button id="hud-vel-toggle"    class="hud-toggle active" type="button" aria-label="Velocity vectors" aria-pressed="true"  title="Velocity vectors (V)"><span aria-hidden="true">&#x21D2;</span></button>
+                <button id="hud-halo-toggle"   class="hud-toggle active" type="button" aria-label="Altitude halos"   aria-pressed="true"  title="Altitude halos (H)"><span aria-hidden="true">&#x25CB;</span></button>
+                <button id="hud-form-toggle"   class="hud-toggle active" type="button" aria-label="Formation lines"  aria-pressed="true"  title="Formation lines (G)"><span aria-hidden="true">&#x22EF;</span></button>
+                <button id="hud-follow-toggle" class="hud-toggle"        type="button" aria-label="Follow selected"  aria-pressed="false" title="Follow selected (F)"><span aria-hidden="true">&#x25CE;</span></button>
             </div>
             <div class="hud-action-group">
-                <button id="btn-sidebar-toggle"  class="hud-action" title="Toggle panel [Tab]">☰</button>
-                <button id="hud-hints-toggle"    class="hud-action" title="Keyboard shortcuts (?)" aria-pressed="false">?</button>
-                <button id="hud-settings-toggle" class="hud-action" title="Settings">⚙</button>
+                <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel"   title="Toggle panel [Tab]"><span aria-hidden="true">☰</span></button>
+                <button id="hud-hints-toggle"    class="hud-action" type="button" aria-label="Keyboard shortcuts"    aria-pressed="false" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
+                <button id="hud-settings-toggle" class="hud-action" type="button" aria-label="Settings"              title="Settings"><span aria-hidden="true">⚙</span></button>
             </div>
         </div>
     </header>
@@ -126,7 +133,7 @@
     <aside id="sidebar">
 
         <div class="panel-section panel-sim">
-            <div class="section-title">Simulation</div>
+            <h2 class="section-title">Simulation</h2>
             <div class="btn-row">
                 <button id="btn-start" class="btn btn-success" title="Start simulation">▶ Start</button>
                 <button id="btn-stop"  class="btn"             title="Pause simulation">⏸ Stop</button>
@@ -135,55 +142,55 @@
         </div>
 
         <div class="panel-section">
-            <div class="section-title">Scenarios</div>
+            <h2 class="section-title">Scenarios</h2>
             <div class="scenario-grid">
-                <div class="scenario-card" data-scenario="single">
-                    <div class="sc-name">Single</div>
-                    <div class="sc-desc">1 drone</div>
-                </div>
-                <div class="scenario-card" data-scenario="swarm-5">
-                    <div class="sc-name">Swarm 5</div>
-                    <div class="sc-desc">5 drones</div>
-                </div>
-                <div class="scenario-card" data-scenario="swarm-20">
-                    <div class="sc-name">Swarm 20</div>
-                    <div class="sc-desc">20 drones</div>
-                </div>
-                <div class="scenario-card" data-scenario="sar">
-                    <div class="sc-name">SAR</div>
-                    <div class="sc-desc">Search &amp; rescue</div>
-                </div>
+                <button class="scenario-card" type="button" data-scenario="single">
+                    <span class="sc-name">Single</span>
+                    <span class="sc-desc">1 drone</span>
+                </button>
+                <button class="scenario-card" type="button" data-scenario="swarm-5">
+                    <span class="sc-name">Swarm 5</span>
+                    <span class="sc-desc">5 drones</span>
+                </button>
+                <button class="scenario-card" type="button" data-scenario="swarm-20">
+                    <span class="sc-name">Swarm 20</span>
+                    <span class="sc-desc">20 drones</span>
+                </button>
+                <button class="scenario-card" type="button" data-scenario="sar">
+                    <span class="sc-name">SAR</span>
+                    <span class="sc-desc">Search &amp; rescue</span>
+                </button>
             </div>
         </div>
 
         <div class="panel-section">
-            <div class="section-title">Terrain</div>
+            <h2 class="section-title">Terrain</h2>
             <div class="terrain-grid">
-                <div class="terrain-card" data-preset="alpine">
-                    <div class="tc-icon">🏔</div>
-                    <div class="tc-name">Alpine</div>
-                </div>
-                <div class="terrain-card" data-preset="ridgeline">
-                    <div class="tc-icon">⛰</div>
-                    <div class="tc-name">Ridgeline</div>
-                </div>
-                <div class="terrain-card" data-preset="coastal">
-                    <div class="tc-icon">🏝</div>
-                    <div class="tc-name">Coastal</div>
-                </div>
-                <div class="terrain-card" data-preset="canyon">
-                    <div class="tc-icon">🏜</div>
-                    <div class="tc-name">Canyon</div>
-                </div>
-                <div class="terrain-card" data-preset="dunes">
-                    <div class="tc-icon">🌵</div>
-                    <div class="tc-name">Dunes</div>
-                </div>
+                <button class="terrain-card" type="button" data-preset="alpine">
+                    <span class="tc-icon" aria-hidden="true">🏔</span>
+                    <span class="tc-name">Alpine</span>
+                </button>
+                <button class="terrain-card" type="button" data-preset="ridgeline">
+                    <span class="tc-icon" aria-hidden="true">⛰</span>
+                    <span class="tc-name">Ridgeline</span>
+                </button>
+                <button class="terrain-card" type="button" data-preset="coastal">
+                    <span class="tc-icon" aria-hidden="true">🏝</span>
+                    <span class="tc-name">Coastal</span>
+                </button>
+                <button class="terrain-card" type="button" data-preset="canyon">
+                    <span class="tc-icon" aria-hidden="true">🏜</span>
+                    <span class="tc-name">Canyon</span>
+                </button>
+                <button class="terrain-card" type="button" data-preset="dunes">
+                    <span class="tc-icon" aria-hidden="true">🌵</span>
+                    <span class="tc-name">Dunes</span>
+                </button>
             </div>
         </div>
 
         <div class="panel-section">
-            <div class="section-title">Commands</div>
+            <h2 class="section-title">Commands</h2>
             <label class="field-label" for="drone-select">Target drone</label>
             <select id="drone-select" class="field-select">
                 <option value="">— select —</option>
@@ -201,15 +208,15 @@
             <div class="panel-collapsible-body">
                 <div class="input-row">
                     <div class="field-group">
-                        <label class="field-label">X (East)</label>
+                        <label class="field-label" for="spawn-x">X (East)</label>
                         <input type="number" id="spawn-x" value="0">
                     </div>
                     <div class="field-group">
-                        <label class="field-label">Alt (m)</label>
+                        <label class="field-label" for="spawn-y">Alt (m)</label>
                         <input type="number" id="spawn-y" value="50">
                     </div>
                     <div class="field-group">
-                        <label class="field-label">Z (South)</label>
+                        <label class="field-label" for="spawn-z">Z (South)</label>
                         <input type="number" id="spawn-z" value="0">
                     </div>
                 </div>
@@ -226,9 +233,9 @@
                     <option value="steady">Steady Wind</option>
                     <option value="turbulent">Turbulent</option>
                 </select>
-                <label class="field-label">Speed · <span id="wind-speed-val">5</span> m/s</label>
+                <label class="field-label" for="wind-speed">Speed · <span id="wind-speed-val">5</span> m/s</label>
                 <input type="range" id="wind-speed" min="0" max="30" value="5">
-                <label class="field-label">Direction · <span id="wind-dir-val">0</span>°</label>
+                <label class="field-label" for="wind-dir">Direction · <span id="wind-dir-val">0</span>°</label>
                 <input type="range" id="wind-dir" min="0" max="359" value="0">
                 <button id="btn-weather" class="btn btn-block">Apply Weather</button>
             </div>
@@ -293,7 +300,7 @@
     <div id="key-hints" class="key-hints hidden">
       <div class="key-hints-header">
         <span class="key-hints-title">Keyboard Shortcuts</span>
-        <button id="key-hints-close" class="key-hints-close" title="Close (?)">✕</button>
+        <button id="key-hints-close" class="key-hints-close" type="button" aria-label="Close keyboard shortcuts" title="Close (?)"><span aria-hidden="true">✕</span></button>
       </div>
       <div class="key-hints-grid">
         <span><kbd>LMB drag</kbd> Orbit</span>

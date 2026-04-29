@@ -14,184 +14,332 @@
  * limitations under the License.
  */
 
-/* ── Design tokens ────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────────────
+   ResQ Viz · Mission console
+   Industrial dark glass HUD over a live 3D scene. Confident chrome,
+   restrained density, mono numerics. The 3D scene is the hero — surfaces
+   recede behind the data they carry.
+   ────────────────────────────────────────────────────────────────────────── */
+
 :root {
-  --bg:           #0d1117;
-  --surface:      rgba(13, 17, 23, 0.88);
-  --surface-alt:  rgba(22, 27, 34, 0.92);
-  --border:       rgba(48, 54, 61, 0.55);
-  --border-hi:    rgba(88, 166, 255, 0.35);
+  /* base palette */
+  --bg:           #07090d;
+  --bg-deep:      #04060a;
+  --surface-1:    rgba(13, 17, 23, 0.62);
+  --surface-2:    rgba(15, 21, 30, 0.78);
+  --surface-3:    rgba(20, 27, 38, 0.92);
+  --inset:        rgba(255, 255, 255, 0.04);
+
+  /* lines */
+  --line:         rgba(120, 140, 170, 0.14);
+  --line-strong:  rgba(120, 140, 170, 0.26);
+  --line-accent:  rgba(92, 182, 255, 0.45);
+
+  /* text */
   --text:         #e6edf3;
-  --text-muted:   #8b949e;
-  --accent:       #58a6ff;
-  --success:      #3fb950;
-  --warning:      #d29922;
-  --danger:       #f85149;
-  --blur:         blur(14px);
-  --radius:       6px;
-  --radius-lg:    10px;
-  --sidebar-w:    300px;
-  --hud-h:        44px;
-  --transition:   0.2s ease;
+  --text-dim:     #b3bcc8;
+  --text-muted:   #7a8593;
+  --text-faint:   #4f5866;
+
+  /* semantic */
+  --accent:       #5cb6ff;
+  --accent-soft:  rgba(92, 182, 255, 0.16);
+  --accent-glow:  rgba(92, 182, 255, 0.45);
+  --success:      #4ed694;
+  --warning:      #f5b53b;
+  --danger:       #ff5d5d;
+  --danger-glow:  rgba(255, 93, 93, 0.4);
+
+  /* effects */
+  --blur-strong:  blur(18px) saturate(1.4);
+  --blur-soft:    blur(10px) saturate(1.2);
+  --shadow-1:     0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-2:     0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 36px rgba(0, 0, 0, 0.55);
+  --ring:         0 0 0 1px var(--line);
+  --ring-strong:  0 0 0 1px var(--line-strong);
+
+  /* radii */
+  --r-1:          4px;
+  --r-2:          8px;
+  --r-3:          12px;
+  --r-4:          16px;
+
+  /* layout */
+  --sidebar-w:    320px;
+  --hud-h:        52px;
+  --gutter:       16px;
+
+  /* type */
+  --mono:         'JetBrains Mono', 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+  --sans:         'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  /* motion */
+  --ease:         cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast:       120ms;
+  --t-mid:        220ms;
+  --t-slow:       360ms;
 }
 
-::selection {
-    background: rgba(33, 150, 243, 0.35);
-    color: #e6edf3;
-}
+::selection { background: var(--accent-soft); color: var(--text); }
 
 :focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
 }
 
-/* ── Reset ────────────────────────────────────────────────────────────── */
+/* ── Reset ──────────────────────────────────────────────────────────────── */
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
 
 body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--sans);
   font-size: 13px;
   line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* ── 3D canvas container ──────────────────────────────────────────────── */
+button { font-family: inherit; }
+
+/* ── Scene canvas ───────────────────────────────────────────────────────── */
+
 #scene-container {
   position: fixed;
   inset: 0;
   z-index: 0;
 }
 
-/* ── Top HUD bar ──────────────────────────────────────────────────────── */
-#hud-top {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--hud-h);
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 14px;
-  background: var(--surface-alt);
-  border-bottom: 1px solid var(--border);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+/* Subtle vignette to anchor the chrome over the canvas */
+#scene-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 0%,   rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.35) 100%),
+    radial-gradient(120% 80% at 50% 100%, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.35) 100%);
 }
 
+/* ── HUD top bar ────────────────────────────────────────────────────────── */
+
+#hud-top {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--hud-h);
+  z-index: 200;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: linear-gradient(180deg,
+    rgba(7, 9, 13, 0.9) 0%,
+    rgba(7, 9, 13, 0.72) 100%);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.hud-zone { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.hud-zone-left   { justify-self: start; }
+.hud-zone-center { justify-self: center; }
+.hud-zone-right  { justify-self: end; gap: 10px; }
+
 #hud-logo {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
   color: var(--text);
   white-space: nowrap;
   user-select: none;
 }
-#hud-logo span { color: var(--accent); }
+#hud-logo span {
+  color: var(--accent);
+  margin-left: 2px;
+}
 
 #hud-conn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-.conn-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  transition: background var(--transition);
-}
-.conn-dot.connected   { background: var(--success); box-shadow: 0 0 6px var(--success); }
-.conn-dot.reconnecting { background: var(--warning); }
-#conn-label {
-  font-size: 11px;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: var(--ring);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  box-shadow: 0 0 0 0 transparent;
+  transition: background var(--t-mid), box-shadow var(--t-mid);
+}
+.conn-dot.connected    { background: var(--success); box-shadow: 0 0 8px rgba(78, 214, 148, 0.6); }
+.conn-dot.reconnecting { background: var(--warning); animation: pulse-warn 1.4s ease-in-out infinite; }
+@keyframes pulse-warn {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 181, 59, 0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(245, 181, 59, 0); }
+}
+
+/* ── Live stats (drones · fps · t · battery) ───────────────────────────── */
 
 #hud-stats {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-left: auto;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 10px;
+  box-shadow: var(--ring);
 }
 .hud-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  line-height: 1.2;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+  transition: background var(--t-fast);
 }
+.hud-stat:hover { background: rgba(255, 255, 255, 0.035); }
 .hud-stat-label {
+  font-family: var(--mono);
   font-size: 9px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--text-muted);
-  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
 }
 .hud-stat-value {
-  font-size: 14px;
+  font-family: var(--mono);
+  font-size: 13px;
   font-weight: 600;
-  font-family: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+  letter-spacing: 0.02em;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-.hud-sep { color: var(--border); font-size: 20px; line-height: 1; }
 
-#hud-battery {
-  display: flex;
+.hud-stat-bat {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-.bat-label {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--text-muted);
-  text-transform: uppercase;
+  gap: 8px;
 }
 #battery-track {
-  width: 56px;
-  height: 8px;
-  border-radius: 4px;
-  background: rgba(48, 54, 61, 0.6);
+  position: relative;
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
-  border: 1px solid var(--border);
+  box-shadow: var(--ring);
 }
 #battery-fill {
   height: 100%;
   width: 100%;
-  background: var(--success);
+  background: linear-gradient(90deg, var(--success), #2ee68f);
   border-radius: 3px;
-  transition: width 0.5s ease, background 0.5s ease;
+  transition: width var(--t-slow), background var(--t-slow);
 }
-#battery-fill.warn { background: var(--warning); }
-#battery-fill.crit { background: var(--danger); }
+#battery-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
+#battery-fill.crit { background: linear-gradient(90deg, var(--danger), #ff8a8a); }
+
+/* legacy spans inside the old battery markup — kept as fallbacks */
+.bat-label { display: none; }
 #battery-pct {
+  font-family: var(--mono);
   font-size: 11px;
-  font-family: 'SF Mono', ui-monospace, monospace;
+  font-weight: 600;
   color: var(--text);
-  width: 34px;
 }
 
-#btn-sidebar-toggle {
+/* ── Selected drone chip ───────────────────────────────────────────────── */
+
+#hud-selected-drone {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 4px 12px;
+  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.32), 0 0 12px rgba(92, 182, 255, 0.16);
+  white-space: nowrap;
+  transition: opacity var(--t-mid);
+  cursor: default;
+}
+#hud-selected-drone.hidden { display: none; }
+#hud-selected-drone::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+/* ── HUD toggle group (vel · halo · form · follow) ─────────────────────── */
+
+.hud-toggle-group,
+.hud-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 9px;
+  box-shadow: var(--ring);
+}
+
+.hud-toggle,
+.hud-action {
+  appearance: none;
   background: transparent;
-  border: 1px solid var(--border);
+  border: 0;
   color: var(--text-muted);
   width: 30px;
-  height: 30px;
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 14px;
-  display: flex;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--transition), color var(--transition);
-  flex-shrink: 0;
+  font-size: 14px;
+  font-family: var(--sans);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
 }
-#btn-sidebar-toggle:hover { background: rgba(48, 54, 61, 0.5); color: var(--text); }
+.hud-toggle:hover,
+.hud-action:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+.hud-toggle.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(92, 182, 255, 0.32);
+}
 
-/* ── Left Sidebar ─────────────────────────────────────────────────────── */
+/* legacy separator markup in the old HUD — fully suppressed */
+.hud-sep { display: none !important; }
+
+/* ── Sidebar ────────────────────────────────────────────────────────────── */
+
 #sidebar {
   position: fixed;
   top: var(--hud-h);
@@ -199,920 +347,1023 @@ body {
   bottom: 0;
   width: var(--sidebar-w);
   z-index: 100;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  background: linear-gradient(180deg,
+    rgba(10, 13, 19, 0.78) 0%,
+    rgba(10, 13, 19, 0.68) 100%);
+  border-right: 1px solid var(--line);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px;
+  padding: 18px 16px 24px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 16px;
   transform: translateX(0);
-  transition: transform var(--transition);
+  transition: transform var(--t-mid) var(--ease);
   scrollbar-width: thin;
-  scrollbar-color: rgba(48,54,61,0.8) transparent;
+  scrollbar-color: rgba(120, 140, 170, 0.3) transparent;
 }
 #sidebar.collapsed { transform: translateX(calc(-1 * var(--sidebar-w))); }
 
-/* ── Panel sections ───────────────────────────────────────────────────── */
+/* ── Sidebar sections ───────────────────────────────────────────────────── */
+
 .panel-section {
-  background: rgba(22, 27, 34, 0.5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
-.panel-section + .panel-section { margin-top: 6px; }
+
+/* Featured "primary" panel — Simulation gets a soft surface to ground it */
+.panel-section.panel-sim {
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: var(--r-2);
+  box-shadow: var(--ring);
+}
 
 .section-title {
+  font-family: var(--mono);
   font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 600;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 10px;
+  color: var(--text-faint);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  user-select: none;
 }
-.section-title::after {
+.section-title::before {
   content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
 }
 
-/* ── Buttons ──────────────────────────────────────────────────────────── */
+/* Collapsible sections (Spawn · Weather · Faults) */
+.panel-collapsible {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.panel-collapsible > summary {
+  cursor: pointer;
+  list-style: none;
+  position: relative;
+  padding-right: 18px;
+}
+.panel-collapsible > summary::-webkit-details-marker { display: none; }
+.panel-collapsible > summary::after {
+  content: '＋';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--text-faint);
+  transition: transform var(--t-fast), color var(--t-fast);
+}
+.panel-collapsible[open] > summary::after { content: '−'; color: var(--accent); }
+.panel-collapsible[open] > summary::before { background: var(--accent); }
+.panel-collapsible-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
 .btn {
-  background: rgba(33, 38, 45, 0.7);
-  border: 1px solid var(--border);
+  appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: 0;
+  box-shadow: var(--ring);
   color: var(--text);
-  padding: 6px 12px;
-  border-radius: var(--radius);
+  padding: 7px 12px;
+  border-radius: var(--r-1);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  transition: background var(--transition), border-color var(--transition);
+  letter-spacing: 0.01em;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
-.btn:hover { background: rgba(56, 63, 72, 0.9); border-color: rgba(88,96,105,0.8); }
-.btn:active { transform: scale(0.97); }
+.btn:hover  { background: rgba(255, 255, 255, 0.08); box-shadow: var(--ring-strong); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn-primary {
-  background: rgba(31, 111, 235, 0.18);
-  border-color: rgba(31, 111, 235, 0.45);
+  background: var(--accent-soft);
   color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.32);
 }
-.btn-primary:hover { background: rgba(31, 111, 235, 0.32); border-color: rgba(31,111,235,0.7); }
+.btn-primary:hover {
+  background: rgba(92, 182, 255, 0.24);
+  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.52), 0 0 12px rgba(92, 182, 255, 0.18);
+}
 
 .btn-success {
-  background: rgba(46, 160, 67, 0.18);
-  border-color: rgba(46, 160, 67, 0.45);
+  background: rgba(78, 214, 148, 0.14);
   color: var(--success);
+  box-shadow: 0 0 0 1px rgba(78, 214, 148, 0.32);
 }
-.btn-success:hover { background: rgba(46, 160, 67, 0.3); }
+.btn-success:hover { background: rgba(78, 214, 148, 0.22); }
 
 .btn-danger {
-  background: rgba(218, 54, 51, 0.15);
-  border-color: rgba(218, 54, 51, 0.4);
+  background: rgba(255, 93, 93, 0.12);
   color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.32);
 }
-.btn-danger:hover { background: rgba(218, 54, 51, 0.3); }
+.btn-danger:hover { background: rgba(255, 93, 93, 0.2); }
 
-.btn-row { display: flex; gap: 6px; }
+.btn-block { width: 100%; }
+.btn-row   { display: flex; gap: 6px; }
 .btn-row .btn { flex: 1; }
-.btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.btn-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 
-/* ── Form controls ────────────────────────────────────────────────────── */
+/* ── Form controls ──────────────────────────────────────────────────────── */
+
 .field-label {
   display: block;
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 9px;
   font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
+
 input[type='number'],
 input[type='text'],
-select {
+select,
+.field-select {
   width: 100%;
-  background: rgba(13, 17, 23, 0.7);
-  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.3);
+  border: 0;
+  box-shadow: var(--ring);
   color: var(--text);
-  padding: 6px 8px;
-  border-radius: var(--radius);
+  padding: 8px 10px;
+  border-radius: var(--r-1);
   font-size: 12px;
-  font-family: inherit;
-  transition: border-color var(--transition);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  transition: box-shadow var(--t-fast), background var(--t-fast);
   appearance: none;
 }
 input[type='number']:focus,
 input[type='text']:focus,
-select:focus {
+select:focus,
+.field-select:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px rgba(92, 182, 255, 0.16);
 }
-.input-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px; margin-bottom: 6px; }
-.input-row .field-group { display: flex; flex-direction: column; }
+select,
+.field-select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'><path d='M1 1l4 4 4-4' stroke='%237a8593' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+.input-row .field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.input-row .field-group input { padding: 7px 8px; font-size: 11px; }
 
 input[type='range'] {
   width: 100%;
   height: 4px;
-  margin: 6px 0;
+  margin: 4px 0;
   accent-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
 }
 
-/* ── Status badges ────────────────────────────────────────────────────── */
+/* ── Status badges ──────────────────────────────────────────────────────── */
+
 .badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 20px;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9px;
   font-weight: 600;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-.badge-flying   { background: rgba(63,185,80,0.18); color: var(--success); border: 1px solid rgba(63,185,80,0.35); }
-.badge-landed   { background: rgba(139,148,158,0.18); color: var(--text-muted); border: 1px solid rgba(139,148,158,0.35); }
-.badge-emergency{ background: rgba(248,81,73,0.18); color: var(--danger); border: 1px solid rgba(248,81,73,0.35); }
-.badge-armed    { background: rgba(88,166,255,0.18); color: var(--accent); border: 1px solid rgba(88,166,255,0.35); }
-
-/* ── Drone detail panel ───────────────────────────────────────────────── */
-#drone-panel {
-  position: fixed; /* also acts as containing block for #dp-close (position:absolute) */
-  bottom: 14px;
-  left: calc(var(--sidebar-w) + 20px);
-  right: 110px;
-  max-width: 480px;
-  z-index: 150;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  padding: 14px 16px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 12px;
-  align-items: start;
-  transition: opacity var(--transition), transform var(--transition);
+.badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
-#drone-panel.hidden { opacity: 0; pointer-events: none; transform: translateY(8px); }
+.badge-flying    { background: rgba(78, 214, 148, 0.14);  color: var(--success);     box-shadow: 0 0 0 1px rgba(78, 214, 148, 0.3); }
+.badge-landed    { background: rgba(120, 140, 170, 0.14); color: var(--text-muted);  box-shadow: 0 0 0 1px rgba(120, 140, 170, 0.3); }
+.badge-emergency { background: rgba(255, 93, 93, 0.14);   color: var(--danger);      box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.32); }
+.badge-armed     { background: var(--accent-soft);        color: var(--accent);      box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.32); }
 
-#dp-info { display: flex; flex-direction: column; gap: 4px; }
+/* ── Drone detail panel ─────────────────────────────────────────────────── */
+
+#drone-panel {
+  position: fixed;
+  bottom: 18px;
+  left: calc(var(--sidebar-w) + 24px);
+  z-index: 150;
+  width: min(440px, calc(100vw - var(--sidebar-w) - 260px));
+  background: var(--surface-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--ring), var(--shadow-2);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  padding: 14px 16px 12px;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr auto;
+  gap: 14px;
+  align-items: start;
+  transition: opacity var(--t-mid), transform var(--t-mid);
+}
+#drone-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
+
+#dp-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 #dp-id {
-  font-size: 15px;
+  font-family: var(--mono);
+  font-size: 14px;
   font-weight: 700;
-  font-family: 'SF Mono', ui-monospace, monospace;
+  letter-spacing: 0.04em;
   color: var(--text);
 }
 #dp-status-row { display: flex; align-items: center; gap: 8px; }
 
-#dp-metrics { display: flex; flex-direction: column; gap: 6px; }
-.dp-metric { display: flex; flex-direction: column; gap: 2px; }
-.dp-metric-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); font-weight: 600; }
-.dp-metric-value { font-size: 12px; font-family: 'SF Mono', ui-monospace, monospace; color: var(--text); }
+.dp-bat-block { margin-top: 2px; display: flex; flex-direction: column; gap: 4px; }
+.dp-bat-block .dp-metric-label { margin: 0; }
+
+#dp-metrics { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dp-metric { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dp-metric-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.dp-metric-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
 
 #dp-bat-track {
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  background: rgba(48,54,61,0.6);
+  background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
-  border: 1px solid var(--border);
-  margin-top: 2px;
+  box-shadow: var(--ring);
 }
-#dp-bat-fill { height: 100%; background: var(--success); border-radius: 2px; transition: width 0.4s, background 0.4s; }
-#dp-bat-fill.warn { background: var(--warning); }
-#dp-bat-fill.crit { background: var(--danger); }
+#dp-bat-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--success), #2ee68f);
+  border-radius: 3px;
+  transition: width var(--t-slow), background var(--t-slow);
+}
+#dp-bat-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
+#dp-bat-fill.crit { background: linear-gradient(90deg, var(--danger),  #ff8a8a); }
 
-#dp-cmds { display: flex; flex-direction: column; gap: 5px; }
+#dp-cmds { display: flex; flex-direction: column; gap: 6px; }
+#dp-cmds .btn { padding: 6px 12px; font-size: 11px; }
+
 #dp-close {
   position: absolute;
   top: 8px;
   right: 10px;
   background: transparent;
-  border: none;
-  color: var(--text-muted);
+  border: 0;
+  color: var(--text-faint);
   font-size: 16px;
-  cursor: pointer;
   line-height: 1;
-  padding: 2px 4px;
-  border-radius: var(--radius);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--r-1);
+  transition: background var(--t-fast), color var(--t-fast);
 }
-#dp-close:hover { color: var(--text); background: rgba(48,54,61,0.5); }
+#dp-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 
-/* ── Wind compass ─────────────────────────────────────────────────────── */
+/* ── Wind compass ───────────────────────────────────────────────────────── */
+
 #wind-compass {
   position: fixed;
-  bottom: 14px;
-  right: 14px;
+  bottom: 18px;
+  right: 240px;
   z-index: 150;
   text-align: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 10px;
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  background: var(--surface-1);
+  border-radius: var(--r-3);
+  padding: 8px 10px 6px;
+  box-shadow: var(--ring), var(--shadow-1);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
 }
 #wind-canvas { display: block; }
-#wind-label { font-size: 10px; color: var(--text-muted); margin-top: 4px; font-family: 'SF Mono', ui-monospace, monospace; }
+#wind-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
 
-/* ── Keyboard hints panel ─────────────────────────────────────────────── */
+/* ── Keyboard hints popover ─────────────────────────────────────────────
+   Anchored to the `?` button in the top-right HUD; opens as a compact
+   reference card that sits clearly in the help zone. Click-outside,
+   Esc, or `?` again dismisses it.
+*/
+
 #key-hints {
   position: fixed;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 150;
-  font-size: 10px;
-  color: var(--text-muted);
-  background: rgba(13, 17, 23, 0.88);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 16px 12px;
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
-  opacity: 1;
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  pointer-events: auto;
-  min-width: 480px;
-  max-width: 660px;
+  top: calc(var(--hud-h) + 8px);
+  right: 16px;
+  z-index: 250;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface-3);
+  border-radius: var(--r-2);
+  box-shadow: var(--ring-strong), 0 16px 40px rgba(0, 0, 0, 0.55);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  padding: 12px 14px 14px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  transition: opacity var(--t-mid) var(--ease),
+              transform var(--t-mid) var(--ease);
+  transform-origin: top right;
+}
+/* Tiny pointer toward the `?` button */
+#key-hints::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 92px;          /* aligns to the `?` button in the action group */
+  width: 12px;
+  height: 12px;
+  background: var(--surface-3);
+  box-shadow: -1px -1px 0 var(--line-strong);
+  transform: rotate(45deg);
+  border-radius: 2px;
 }
 #key-hints.hidden {
   opacity: 0;
   pointer-events: none;
-  transform: translateX(-50%) translateY(8px);
+  transform: scale(0.96) translateY(-6px);
 }
 
 .key-hints-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .key-hints-title {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
-  color: var(--text);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
+  color: var(--text);
 }
 .key-hints-close {
-  background: none;
-  border: none;
-  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  color: var(--text-faint);
   cursor: pointer;
-  font-size: 11px;
-  padding: 0 2px;
+  font-size: 13px;
+  padding: 2px 6px;
+  margin: -2px -6px -2px 0;
   line-height: 1;
-  transition: color var(--transition);
+  border-radius: var(--r-1);
+  transition: color var(--t-fast), background var(--t-fast);
 }
-.key-hints-close:hover { color: var(--text); }
+.key-hints-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 
 .key-hints-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px 16px;
-  align-items: start;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 14px;
+  row-gap: 5px;
+  font-size: 10px;
 }
 .key-hints-grid span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   white-space: nowrap;
-  color: var(--text-muted);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 kbd {
-  background: rgba(48, 54, 61, 0.6);
-  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: var(--ring);
   border-radius: 3px;
-  padding: 0 4px;
-  font-family: 'SF Mono', ui-monospace, monospace;
+  padding: 1px 5px;
+  font-family: var(--mono);
   font-size: 9px;
+  font-weight: 600;
   color: var(--text);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
 }
 
-/* ── Terrain preset cards ────────────────────────────────────────────── */
+/* ── Terrain & scenario cards ──────────────────────────────────────────── */
+
 .terrain-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 4px;
+  gap: 5px;
 }
 .terrain-card {
-  background: rgba(13, 17, 23, 0.5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 2px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: var(--ring);
+  border-radius: var(--r-1);
+  padding: 7px 2px 6px;
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition);
   text-align: center;
+  transition: background var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
-.terrain-card:hover { background: rgba(88,166,255,0.08); border-color: var(--border-hi); }
-.terrain-card.active { background: rgba(88,166,255,0.12); border-color: var(--accent); }
-.terrain-card .tc-icon { font-size: 16px; line-height: 1.2; }
-.terrain-card .tc-name { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+.terrain-card:hover  { background: rgba(255, 255, 255, 0.05); box-shadow: var(--ring-strong); }
+.terrain-card.active {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.45), 0 0 14px rgba(92, 182, 255, 0.16);
+}
+.terrain-card .tc-icon { font-size: 16px; line-height: 1.1; filter: saturate(0.9); }
+.terrain-card .tc-name {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  letter-spacing: 0.06em;
+}
+.terrain-card.active .tc-name { color: var(--accent); }
 
-/* ── Scenario cards ───────────────────────────────────────────────────── */
-.scenario-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.scenario-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .scenario-card {
-  background: rgba(13, 17, 23, 0.5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: var(--ring);
+  border-radius: var(--r-2);
+  padding: 10px 12px;
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition);
-  text-align: center;
+  text-align: left;
+  transition: background var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
-.scenario-card:hover { background: rgba(88,166,255,0.08); border-color: var(--border-hi); }
-.scenario-card.active { background: rgba(88,166,255,0.12); border-color: var(--accent); }
-.scenario-card .sc-name { font-size: 11px; font-weight: 600; color: var(--text); }
-.scenario-card .sc-desc { font-size: 9px; color: var(--text-muted); margin-top: 2px; }
+.scenario-card:hover  { background: rgba(255, 255, 255, 0.05); box-shadow: var(--ring-strong); }
+.scenario-card.active {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.45), 0 0 14px rgba(92, 182, 255, 0.16);
+}
+.scenario-card .sc-name {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.scenario-card .sc-desc {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  letter-spacing: 0.06em;
+}
+.scenario-card.active .sc-desc { color: var(--accent); }
 
-/* ── Scrollbar polish ─────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; }
+/* ── Scrollbar polish ───────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(48,54,61,0.8); border-radius: 3px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 140, 170, 0.28);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(120, 140, 170, 0.5); }
 
-/* ── Empty state ──────────────────────────────────────────────────────── */
+/* ── Empty state ────────────────────────────────────────────────────────── */
+
 #empty-state {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    pointer-events: none;
-    transition: opacity 0.6s;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  transition: opacity 0.6s ease;
 }
 #empty-state.hidden { opacity: 0; }
-.es-icon  { font-size: 3rem; opacity: 0.2; }
-.es-title { font-size: 1.1rem; font-weight: 600; color: var(--text-muted); }
-.es-sub   { font-size: 0.8rem; color: var(--text-muted); max-width: 280px; text-align: center; opacity: 0.7; }
-
-/* ── HUD selected drone chip ──────────────────────────────────────────── */
-#hud-selected-drone {
-    font-size: 11px;
-    font-weight: 600;
-    font-family: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
-    color: var(--accent);
-    background: rgba(88, 166, 255, 0.12);
-    border: 1px solid rgba(88, 166, 255, 0.35);
-    border-radius: 4px;
-    padding: 2px 8px;
-    white-space: nowrap;
-    cursor: default;
-    transition: opacity var(--transition);
+.es-icon  { font-size: 3rem; opacity: 0.15; }
+.es-title {
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
 }
-#hud-selected-drone.hidden { display: none; }
-
-/* ── HUD overlay toggle buttons ───────────────────────────────────────── */
-#hud-top div.hud-sep { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
-.hud-toggle {
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    padding: 2px 7px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.hud-toggle.active {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: rgba(88,166,255,0.1);
-}
-.hud-toggle:hover { border-color: var(--accent); }
-
-/* ── Keyboard hints layout ────────────────────────────────────────────── */
-/* .key-hints grid is defined in #key-hints section above */
-
-/* ─── Responsive — collapse sidebar on narrow viewports ──────────────────── */
-@media (max-width: 720px) {
-    #sidebar {
-        position: fixed;
-        left: -100%;
-        top: 0;
-        height: 100%;
-        z-index: 200;
-        transition: left 0.25s ease;
-    }
-    #sidebar.open {
-        left: 0;
-    }
-    #scene-container {
-        left: 0 !important;
-        width: 100% !important;
-    }
+.es-sub   {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  max-width: 320px;
+  text-align: center;
+  letter-spacing: 0.04em;
 }
 
-/* ─── Settings Panel ──────────────────────────────────────────────────────── */
+/* ── Settings panel ─────────────────────────────────────────────────────── */
 
 .settings-panel {
-    position: fixed;
-    top: var(--hud-h, 48px);
-    right: 0;
-    width: 280px;
-    max-height: calc(100vh - 48px);
-    overflow-y: auto;
-    background: rgba(13, 17, 23, 0.96);
-    border-left: 1px solid var(--border);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    z-index: 100;
-    transform: translateX(100%);
-    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
-    padding-bottom: 1rem;
+  position: fixed;
+  top: var(--hud-h);
+  right: 0;
+  width: 320px;
+  max-height: calc(100vh - var(--hud-h));
+  overflow-y: auto;
+  background: var(--surface-3);
+  border-left: 1px solid var(--line);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  z-index: 220;
+  transform: translateX(100%);
+  transition: transform var(--t-mid) var(--ease);
+  padding-bottom: 1rem;
+  box-shadow: -16px 0 36px rgba(0, 0, 0, 0.45);
 }
-
-.settings-panel.open {
-    transform: translateX(0);
-}
+.settings-panel.open { transform: translateX(0); }
 
 .settings-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    background: rgba(13, 17, 23, 0.98);
-    z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--surface-3);
+  z-index: 1;
 }
-
 .settings-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text);
 }
-
 .settings-close {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 0.85rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    transition: color 0.15s, background 0.15s;
+  background: transparent;
+  border: 0;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: var(--r-1);
+  transition: color var(--t-fast), background var(--t-fast);
 }
-.settings-close:hover { color: var(--text); background: var(--surface-hover, rgba(255,255,255,0.06)); }
+.settings-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 
 .settings-section {
-    padding: 0.75rem 1rem 0.25rem;
-    border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+  padding: 14px 18px 6px;
+  border-bottom: 1px solid var(--line);
 }
-
 .settings-section-title {
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-secondary);
-    margin: 0 0 0.5rem;
-    opacity: 0.7;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 10px;
 }
 
 .settings-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.35rem 0;
-    font-size: 0.8rem;
-    color: var(--text);
-    cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: default;
 }
-
 .settings-row span { flex: 1; white-space: nowrap; }
 
 .settings-row input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-    accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
-
 .settings-row select {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-size: 0.78rem;
-    padding: 0.2rem 0.4rem;
-    border-radius: 4px;
-    cursor: pointer;
-    width: 100px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 0;
+  box-shadow: var(--ring);
+  color: var(--text);
+  font-size: 11px;
+  padding: 4px 24px 4px 8px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  width: 110px;
+  font-family: var(--mono);
 }
 
 .settings-slider-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex: 1;
-    justify-content: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
 }
-
 .settings-row input[type="range"] {
-    width: 90px;
-    accent-color: var(--accent);
-    cursor: pointer;
+  width: 100px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
-
 .settings-val {
-    font-size: 0.72rem;
-    color: var(--text-secondary);
-    min-width: 28px;
-    text-align: right;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+  letter-spacing: 0.04em;
 }
 
-.settings-footer {
-    padding: 0.75rem 1rem 0;
-}
-
+.settings-footer { padding: 14px 18px 0; }
 .settings-reset-btn {
-    width: 100%;
-    padding: 0.4rem;
-    font-size: 0.75rem;
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s;
+  width: 100%;
+  padding: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: transparent;
+  box-shadow: var(--ring);
+  border: 0;
+  color: var(--text-muted);
+  border-radius: var(--r-1);
+  cursor: pointer;
+  transition: color var(--t-fast), box-shadow var(--t-fast);
 }
-.settings-reset-btn:hover { border-color: var(--danger); color: var(--danger); }
+.settings-reset-btn:hover {
+  color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.5);
+}
 
-/* ── Investor mode ───────────────────────────────────────────────────────
-   Screen-recording preset. Hides dev chrome, disables modal triggers,
-   and burns in a subtle ResQ wordmark for the capture. Toggle via
-   Ctrl+Shift+R (see investorMode.ts).
-*/
+/* ── Investor mode (screen-recording preset) ────────────────────────────── */
+
 body.investor-mode #hud-stats,
-body.investor-mode #hud-vel-toggle,
-body.investor-mode #hud-halo-toggle,
-body.investor-mode #hud-form-toggle,
-body.investor-mode #hud-follow-toggle,
-body.investor-mode #hud-hints-toggle,
-body.investor-mode #hud-settings-toggle,
-body.investor-mode .control-panel,
+body.investor-mode .hud-toggle-group,
+body.investor-mode .hud-action-group,
+body.investor-mode #sidebar,
 body.investor-mode .settings-panel,
-body.investor-mode .shortcuts-panel,
-body.investor-mode .drone-panel,
-body.investor-mode .wind-compass,
+body.investor-mode #key-hints,
+body.investor-mode #drone-panel,
+body.investor-mode #wind-compass,
 body.investor-mode .telemetry-strip,
 body.investor-mode .event-log,
 body.investor-mode .minimap {
-    display: none !important;
+  display: none !important;
 }
-
 body.investor-mode,
-body.investor-mode canvas {
-    cursor: none;
-}
+body.investor-mode canvas { cursor: none; }
 
 .resq-wordmark {
-    position: fixed;
-    left: 24px;
-    bottom: 20px;
-    z-index: 9999;
-    pointer-events: none;
-    font-family: 'DM Sans', system-ui, sans-serif;
-    font-weight: 800;
-    font-size: 22px;
-    letter-spacing: 0.28em;
-    color: var(--text);
-    opacity: 0.40;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-    user-select: none;
+  position: fixed;
+  left: 24px;
+  bottom: 22px;
+  z-index: 9999;
+  pointer-events: none;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 0.28em;
+  color: var(--text);
+  opacity: 0.4;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  user-select: none;
 }
 
-/* ── Partition banner ────────────────────────────────────────────────────
-   Shown when the server reports `frame.mesh.partitioned === true`
-   (backhaul link killed). Persists across investor-mode — the degradation
-   is the narrative payoff and must remain visible in screen recordings.
-*/
+/* ── Partition banner ───────────────────────────────────────────────────── */
+
 .partition-banner {
-    position: fixed;
-    top: calc(var(--hud-h) + 12px);
-    left: 50%;
-    transform: translateX(-50%) translateY(-6px);
-    z-index: 500;
-    padding: 8px 18px;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--danger);
-    background: rgba(20, 7, 7, 0.85);
-    backdrop-filter: blur(10px) saturate(1.4);
-    border: 1px solid var(--danger);
-    border-radius: var(--radius);
-    box-shadow: 0 0 18px rgba(248, 81, 73, 0.35);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease;
+  position: fixed;
+  top: calc(var(--hud-h) + 12px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 500;
+  padding: 8px 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--danger);
+  background: rgba(28, 8, 8, 0.85);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  box-shadow: 0 0 0 1px var(--danger), 0 0 24px var(--danger-glow);
+  border-radius: var(--r-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-mid), transform var(--t-mid);
 }
 body.partitioned .partition-banner {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 .partition-banner::before {
-    content: '⚠';
-    margin-right: 8px;
-    font-size: 14px;
+  content: '⚠';
+  margin-right: 8px;
+  font-size: 14px;
 }
 
-/* ── Scenario intro overlay ─────────────────────────────────────────────
-   Full-viewport fade-in title card shown briefly when a scenario starts.
-   Played by scenarioIntro.ts via the `resq:scenario-start` CustomEvent.
-   Non-interactive; `pointer-events: none` so clicks pass through to the
-   scene even if the fade-out is mid-flight.
-*/
+/* ── Scenario intro ─────────────────────────────────────────────────────── */
+
 .scenario-intro {
-    position: fixed;
-    inset: 0;
-    z-index: 800;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    background: linear-gradient(180deg,
-        rgba(13, 17, 23, 0.82) 0%,
-        rgba(13, 17, 23, 0.62) 45%,
-        rgba(13, 17, 23, 0.00) 100%);
-    opacity: 0;
-    transition: opacity 0.5s ease-out;
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(7, 9, 13, 0.9) 0%,
+    rgba(7, 9, 13, 0.65) 45%,
+    rgba(7, 9, 13, 0)    100%);
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
 }
-.scenario-intro.visible {
-    opacity: 1;
-}
+.scenario-intro.visible { opacity: 1; }
 .scenario-intro-inner {
-    text-align: center;
-    padding: 0 32px;
-    transform: translateY(-4%);
+  text-align: center;
+  padding: 0 32px;
+  transform: translateY(-4%);
 }
 .scenario-intro-kicker {
-    display: block;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: 14px;
-    opacity: 0.85;
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 14px;
+  opacity: 0.95;
 }
 .scenario-intro-title {
-    display: block;
-    font-family: 'DM Sans', system-ui, sans-serif;
-    font-weight: 800;
-    font-size: clamp(42px, 7vw, 96px);
-    letter-spacing: 0.06em;
-    line-height: 1.02;
-    color: var(--text);
-    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+  display: block;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: clamp(42px, 7vw, 96px);
+  letter-spacing: 0.04em;
+  line-height: 1.02;
+  color: var(--text);
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
 }
 .scenario-intro-subtitle {
-    display: block;
-    margin-top: 16px;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 13px;
-    font-weight: 500;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text);
-    opacity: 0.78;
+  display: block;
+  margin-top: 16px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 
-/* ── Loading / connection-lost overlay ────────────────────────────────
-   Rendered over the canvas during cold-load and during SignalR outages
-   that persist past 5 s. Owns its own lifecycle via loadingOverlay.ts.
-*/
+/* ── Loading overlay ────────────────────────────────────────────────────── */
+
 .loading-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: radial-gradient(circle at center,
-        rgba(13, 17, 23, 0.92) 0%,
-        rgba(13, 17, 23, 0.98) 60%,
-        rgba(13, 17, 23, 1.00) 100%);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.4s ease;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center,
+    rgba(7, 9, 13, 0.92) 0%,
+    rgba(7, 9, 13, 0.98) 60%,
+    rgba(7, 9, 13, 1)    100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
 }
-.loading-overlay.visible {
-    opacity: 1;
-    pointer-events: auto;
-}
+.loading-overlay.visible { opacity: 1; pointer-events: auto; }
+
 .loading-overlay-inner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 32px 40px;
-    text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 36px 44px;
+  text-align: center;
 }
 .loading-title {
-    font-family: 'DM Sans', system-ui, sans-serif;
-    font-weight: 800;
-    font-size: 26px;
-    letter-spacing: 0.22em;
-    color: var(--text);
-    margin-top: 8px;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 24px;
+  letter-spacing: 0.22em;
+  color: var(--text);
+  margin-top: 8px;
 }
 .loading-phase {
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    color: var(--accent);
-    min-height: 1.2em;
-    transition: color 0.2s ease;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--accent);
+  min-height: 1.2em;
+  transition: color var(--t-fast);
 }
 .loading-sub {
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    color: var(--text-muted);
-    max-width: 320px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  max-width: 320px;
 }
-
-/* Retry button — hidden during normal connect, revealed in disconnected state. */
 .loading-retry {
-    margin-top: 14px;
-    padding: 8px 20px;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text);
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease, border-color 0.15s, color 0.15s;
+  margin-top: 14px;
+  padding: 8px 22px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  box-shadow: var(--ring);
+  border-radius: var(--r-1);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
 }
-.loading-retry:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-}
+.loading-retry:hover { color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .loading-overlay.disconnected .loading-retry {
-    opacity: 1;
-    pointer-events: auto;
-    border-color: var(--danger);
-    color: var(--danger);
+  opacity: 1;
+  pointer-events: auto;
+  color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
 }
 .loading-overlay.disconnected .loading-retry:hover {
-    background: rgba(248, 81, 73, 0.08);
+  background: rgba(255, 93, 93, 0.08);
 }
 
-/* Disconnected state: danger-red border + phase text accent */
 .loading-overlay.disconnected .loading-overlay-inner {
-    border: 1px solid var(--danger);
-    border-radius: var(--radius-lg);
-    background: rgba(20, 7, 7, 0.55);
-    box-shadow: 0 0 24px rgba(248, 81, 73, 0.25);
+  background: rgba(28, 8, 8, 0.5);
+  border-radius: var(--r-3);
+  box-shadow: 0 0 0 1px var(--danger), 0 0 32px var(--danger-glow);
 }
-.loading-overlay.disconnected .loading-phase {
-    color: var(--danger);
-}
+.loading-overlay.disconnected .loading-phase,
 .loading-overlay.disconnected .loading-title {
-    color: var(--danger);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+  color: var(--danger);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
-/* Concentric-ring spinner */
-.loading-spinner {
-    position: relative;
-    width: 68px;
-    height: 68px;
-    margin-bottom: 8px;
-}
+.loading-spinner { position: relative; width: 68px; height: 68px; margin-bottom: 6px; }
 .loading-ring {
-    position: absolute;
-    inset: 0;
-    border: 1.5px solid transparent;
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: resq-ring-spin 1.6s linear infinite;
+  position: absolute; inset: 0;
+  border: 1.5px solid transparent;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: resq-ring-spin 1.6s linear infinite;
 }
-.loading-ring-outer { inset: 0;   }
-.loading-ring-mid   { inset: 10px; border-top-color: rgba(88, 166, 255, 0.55); animation-duration: 2.2s; animation-direction: reverse; }
-.loading-ring-inner { inset: 20px; border-top-color: rgba(88, 166, 255, 0.35); animation-duration: 1.0s; }
-
+.loading-ring-mid   { inset: 10px; border-top-color: rgba(92, 182, 255, 0.55); animation-duration: 2.2s; animation-direction: reverse; }
+.loading-ring-inner { inset: 20px; border-top-color: rgba(92, 182, 255, 0.35); animation-duration: 1.0s; }
 .loading-overlay.disconnected .loading-ring {
-    border-top-color: var(--danger);
-    animation-play-state: paused;
-    opacity: 0.35;
+  border-top-color: var(--danger);
+  animation-play-state: paused;
+  opacity: 0.35;
 }
-
 @keyframes resq-ring-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
-/* ── Mission chrome ──────────────────────────────────────────────────────
-   Top-center narrative strip. Pinned under the HUD bar.
-   SCENARIO · T+ 00:42 · PHASE
-*/
+/* ── Mission chrome (scenario · T+ · phase ticker) ──────────────────────── */
+
 .mission-chrome {
-    position: fixed;
-    top: calc(var(--hud-h) + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 450;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 16px;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text);
-    background: rgba(13, 17, 23, 0.72);
-    backdrop-filter: blur(10px) saturate(1.4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-    opacity: 1;
+  position: fixed;
+  top: calc(var(--hud-h) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 450;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--surface-2);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  box-shadow: var(--ring), var(--shadow-1);
+  border-radius: 999px;
+  pointer-events: none;
+  transition: opacity var(--t-mid), transform var(--t-mid);
+  opacity: 1;
 }
-.mission-chrome.hidden {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-4px);
-}
-.mc-name  { color: var(--text);     letter-spacing: 0.22em; }
-.mc-time  { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.mc-phase { color: var(--accent);   letter-spacing: 0.22em; }
-.mc-sep   { color: var(--text-muted); opacity: 0.55; padding: 0 2px; }
+.mission-chrome.hidden { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+.mc-name  { color: var(--text);     letter-spacing: 0.26em; }
+.mc-time  { color: var(--text-muted); font-variant-numeric: tabular-nums; letter-spacing: 0.14em; }
+.mc-phase { color: var(--accent);   letter-spacing: 0.26em; }
+.mc-sep   { color: var(--text-faint); padding: 0 2px; }
 body.partitioned .mc-phase { color: var(--danger); }
 
-/* ── Event log ───────────────────────────────────────────────────────────
-   Left-edge SIGINT-style ticker. Rolling buffer capped at 8 rows; newest
-   at bottom. Non-interactive; pointer-events pass through to the scene.
-*/
+/* ── Event log (anchored next to the sidebar to avoid overlap) ──────────── */
+
 .event-log {
-    position: fixed;
-    top: calc(var(--hud-h) + 60px);
-    left: 16px;
-    z-index: 420;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-width: 360px;
-    pointer-events: none;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    line-height: 1.45;
+  position: fixed;
+  top: calc(var(--hud-h) + 16px);
+  left: calc(var(--sidebar-w) + 16px);
+  z-index: 420;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 380px;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  transition: left var(--t-mid) var(--ease);
 }
+/* When sidebar is collapsed, hug the canvas edge instead */
+body:has(#sidebar.collapsed) .event-log { left: 16px; }
+
 .el-row {
-    display: flex;
-    gap: 8px;
-    padding: 3px 8px;
-    color: var(--text);
-    background: rgba(13, 17, 23, 0.55);
-    border-left: 2px solid var(--border);
-    border-radius: 2px;
-    backdrop-filter: blur(6px);
-    opacity: 1;
-    transform: translateX(0);
-    transition: opacity 0.6s ease, transform 0.6s ease;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  display: flex;
+  gap: 10px;
+  padding: 4px 10px;
+  color: var(--text);
+  background: var(--surface-1);
+  border-left: 2px solid var(--line);
+  border-radius: 2px;
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .el-row.el-enter,
-.el-row.el-exit {
-    opacity: 0;
-    transform: translateX(-6px);
-}
-.el-time  { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.el-tag   { color: var(--text-muted); letter-spacing: 0.10em; text-transform: uppercase; }
-.el-msg   { color: var(--text); }
+.el-row.el-exit { opacity: 0; transform: translateX(-6px); }
 
-/* Level accents — set the left border and tint the tag. */
-.el-info  { border-left-color: var(--border); }
+.el-time { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.el-tag  { color: var(--text-muted); letter-spacing: 0.14em; text-transform: uppercase; }
+.el-msg  { color: var(--text-dim); }
+
+.el-info  { border-left-color: var(--line); }
 .el-mesh  { border-left-color: var(--accent); }
 .el-mesh  .el-tag { color: var(--accent); }
 .el-sar   { border-left-color: var(--success); }
@@ -1121,206 +1372,287 @@ body.partitioned .mc-phase { color: var(--danger); }
 .el-alert .el-tag { color: var(--danger); }
 .el-alert .el-msg { color: var(--danger); }
 
-/* ── Telemetry strip ─────────────────────────────────────────────────────
-   Right-edge per-drone HUD. Row per live drone with vendor chip, id,
-   battery bar, altitude, horizontal speed, and status. Updates from
-   ReceiveFrame; not interactive (pointer-events pass through to the
-   scene) — DronePanel handles selection.
-*/
+/* ── Telemetry strip (right edge per-drone HUD) ────────────────────────── */
+
 .telemetry-strip {
-    position: fixed;
-    top: calc(var(--hud-h) + 60px);
-    right: 16px;
-    z-index: 420;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 260px;
-    max-width: 320px;
-    max-height: calc(100vh - var(--hud-h) - 120px);
-    overflow-y: auto;
-    pointer-events: none;
-    font-family: 'DM Mono', ui-monospace, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    line-height: 1.35;
-    scrollbar-width: thin;
+  position: fixed;
+  top: calc(var(--hud-h) + 16px);
+  right: 16px;
+  z-index: 420;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 280px;
+  max-width: 320px;
+  max-height: calc(100vh - var(--hud-h) - 220px);
+  overflow-y: auto;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+  scrollbar-width: thin;
 }
 .telemetry-strip.hidden { display: none; }
 
 .ts-row {
-    display: grid;
-    grid-template-columns: 10px 56px 1fr 44px 58px 58px;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    color: var(--text);
-    background: rgba(13, 17, 23, 0.60);
-    border-left: 2px solid var(--border);
-    border-radius: 2px;
-    backdrop-filter: blur(6px);
-    white-space: nowrap;
-    overflow: hidden;
-    cursor: pointer;
-    pointer-events: auto;
-    transition: background 0.12s ease, transform 0.12s ease;
+  display: grid;
+  grid-template-columns: 8px 56px 1fr 44px 56px 56px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--surface-1);
+  border-left: 2px solid var(--line);
+  border-radius: 2px;
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background var(--t-fast), transform var(--t-fast), border-left-color var(--t-fast);
 }
 .ts-row:hover {
-    background: rgba(22, 27, 34, 0.82);
-    transform: translateX(-2px);
+  background: rgba(20, 27, 38, 0.85);
+  transform: translateX(-2px);
 }
 .ts-row.ts-row-selected {
-    background: rgba(88, 166, 255, 0.18);
-    border-left-color: var(--accent);
-    box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.28);
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(92, 182, 255, 0.35), 0 4px 14px rgba(0, 0, 0, 0.32);
 }
 
 .ts-chip {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    box-shadow: 0 0 4px currentColor;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 5px currentColor;
 }
-
-.ts-id {
-    color: var(--text);
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
+.ts-id { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 
 .ts-bat {
-    position: relative;
-    height: 6px;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 3px;
-    overflow: hidden;
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: var(--ring);
 }
 .ts-bat-fill {
-    height: 100%;
-    background: var(--success);
-    transition: width 0.25s ease, background 0.25s ease;
+  height: 100%;
+  background: linear-gradient(90deg, var(--success), #2ee68f);
+  transition: width 0.25s ease, background 0.25s ease;
 }
-.ts-bat-fill.warn { background: var(--warning); }
-.ts-bat-fill.crit { background: var(--danger); }
+.ts-bat-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
+.ts-bat-fill.crit { background: linear-gradient(90deg, var(--danger),  #ff8a8a); }
 
 .ts-metric {
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
-    text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
-
 .ts-status {
-    font-size: 9px;
-    letter-spacing: 0.10em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Row-level accents — mirror the LED state machine's severity ladder. */
-.ts-row-ok     { border-left-color: var(--success); }
-.ts-row-hover  { border-left-color: var(--accent); }
-.ts-row-warn   { border-left-color: var(--warning); }
-.ts-row-warn   .ts-status { color: var(--warning); }
-.ts-row-alert  { border-left-color: var(--danger); }
-.ts-row-alert  .ts-status { color: var(--danger); }
+.ts-row-ok    { border-left-color: var(--success); }
+.ts-row-hover { border-left-color: var(--accent);  }
+.ts-row-warn  { border-left-color: var(--warning); }
+.ts-row-warn  .ts-status { color: var(--warning); }
+.ts-row-alert { border-left-color: var(--danger); }
+.ts-row-alert .ts-status { color: var(--danger); }
 
-/* ── Mini-map ────────────────────────────────────────────────────────────
-   Bottom-right 200×200 top-down radar plot. Opacity + blur matches the
-   telemetry strip / event log aesthetic. Click-to-select drone dots.
-*/
+/* ── Mini-map ───────────────────────────────────────────────────────────── */
+
 .minimap {
-    position: fixed;
-    bottom: 16px;
-    right: 16px;
-    z-index: 420;
-    padding: 6px;
-    background: rgba(13, 17, 23, 0.65);
-    border: 1px solid rgba(88, 166, 255, 0.22);
-    border-radius: 4px;
-    backdrop-filter: blur(8px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    line-height: 0;          /* kill inline-canvas baseline gap */
+  position: fixed;
+  bottom: 18px;
+  right: 16px;
+  z-index: 420;
+  padding: 7px;
+  background: var(--surface-1);
+  border-radius: var(--r-2);
+  box-shadow: var(--ring), var(--shadow-1);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  line-height: 0;
 }
 .minimap canvas {
-    display: block;
-    border-radius: 2px;
-    cursor: crosshair;
+  display: block;
+  border-radius: 4px;
+  cursor: crosshair;
 }
 
-/* ── Sensor stats overlay ───────────────────────────────────────────────
-   Dev/audit panel toggled with the 'i' key. Surfaces LosQueryStats
-   from the WebGPU sensor stack (mesh-link + LiDAR managers). Hidden
-   by default — `[hidden]` short-circuits both layout and the per-frame
-   update path in sensorStatsOverlay.ts.
-*/
+/* ── Sensor stats overlay (dev) ────────────────────────────────────────── */
+
 .sensor-stats-overlay {
-    position: fixed;
-    bottom: 16px;
-    left: 16px;
-    z-index: 420;
-    min-width: 200px;
-    padding: 8px 10px;
-    background: rgba(13, 17, 23, 0.78);
-    border: 1px solid rgba(88, 166, 255, 0.22);
-    border-radius: 4px;
-    backdrop-filter: blur(8px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    color: var(--text, #e6edf3);
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 11px;
-    line-height: 1.4;
+  position: fixed;
+  bottom: 18px;
+  left: calc(var(--sidebar-w) + 16px);
+  z-index: 420;
+  min-width: 220px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--r-2);
+  box-shadow: var(--ring), var(--shadow-1);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
 }
 .sensor-stats-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 6px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--accent, #58a6ff);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  font-size: 10px;
 }
 .sensor-stats-status {
-    font-weight: 400;
-    text-transform: lowercase;
-    letter-spacing: 0;
-    color: var(--text-muted, #8b949e);
+  font-weight: 400;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  color: var(--text-muted);
 }
-.sensor-stats-section {
-    margin-top: 6px;
-}
+.sensor-stats-section { margin-top: 6px; }
 .sensor-stats-section-title {
-    color: var(--text-muted, #8b949e);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 2px;
+  color: var(--text-faint);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  margin-bottom: 3px;
 }
 .sensor-stats-grid {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 1px 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 14px;
 }
-.sensor-stats-key {
-    color: var(--text-muted, #8b949e);
-}
-.sensor-stats-value {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-}
-.sensor-stats-value.warn {
-    color: var(--warning, #d29922);
-    font-weight: 600;
-}
-/* Hide during cinematic recordings — matches the visibility rule for
-   other dev/audit panels (event log, telemetry strip). */
-body.investor-mode .sensor-stats-overlay {
-    display: none !important;
+.sensor-stats-key   { color: var(--text-muted); }
+.sensor-stats-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.sensor-stats-value.warn { color: var(--warning); font-weight: 600; }
+body.investor-mode .sensor-stats-overlay { display: none !important; }
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 960px) {
+  #drone-panel { left: 16px; right: 16px; width: auto; max-width: none; }
+  #wind-compass { right: 16px; }
+  .event-log { max-width: calc(100vw - var(--sidebar-w) - 32px); }
 }
 
+@media (max-width: 720px) {
+  :root { --sidebar-w: 280px; }
+  #sidebar { transform: translateX(-100%); }
+  #sidebar:not(.collapsed) { transform: translateX(0); }
+  #scene-container { left: 0 !important; width: 100% !important; }
+
+  .event-log,
+  .sensor-stats-overlay { left: 16px; }
+
+  #key-hints { width: auto; left: 16px; right: 16px; top: calc(var(--hud-h) + 8px); }
+  #key-hints::before { display: none; }
+  #key-hints.hidden { transform: scale(0.98) translateY(-6px); }
+  .key-hints-grid { grid-template-columns: 1fr; }
+
+  #hud-stats { gap: 0; }
+  .hud-stat { padding: 4px 8px; }
+  .hud-stat-bat #battery-track { width: 40px; }
+  .hud-zone-right .hud-toggle-group { display: none; }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Accessibility utilities
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Visually hidden content that remains in the accessibility tree.
+   Used for: page <h1>, telemetry live region, icon-only button text. */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip links — visually hidden until focused, then surface near top-left.
+   First control in tab order; lets keyboard users bypass the HUD/sidebar. */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 8px;
+  z-index: 10000;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: var(--bg-deep);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: var(--r-1);
+  transition: top var(--t-fast) var(--ease);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 8px;
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* Card buttons — strip default <button> chrome so the existing card styles
+   (background, ring, padding, layout) apply unchanged. Targets the new
+   <button class="scenario-card|terrain-card"> markup added for keyboard a11y. */
+.scenario-card,
+.terrain-card {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  width: 100%;
+  display: block;
+}
+.scenario-card { text-align: left; }
+.terrain-card  { text-align: center; }
+.scenario-card .sc-name,
+.scenario-card .sc-desc,
+.terrain-card  .tc-icon,
+.terrain-card  .tc-name {
+  display: block;
+}
+
+/* Custom focus ring on cards — slightly stronger than the default :focus-visible
+   so keyboard users can spot the active card against the panel. */
+.scenario-card:focus-visible,
+.terrain-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: var(--accent-soft);
+}
+
+/* Honor user motion preferences. The 3D scene itself is exempt (it's the
+   product), but UI chrome animations, transitions and pulses go silent. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Conn dot reconnect pulse is informational — replace flash with steady dim. */
+  .conn-dot.reconnecting { animation: none; opacity: 0.7; }
+}
 
