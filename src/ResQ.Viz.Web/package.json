@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@microsoft/signalr": "^10.0.0",
@@ -18,7 +19,8 @@
     "@types/node": "^25.5.0",
     "@types/three": "^0.184.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
   },
   "overrides": {
     "uuid": "^14.0.0"
