@@ -32,6 +32,14 @@ const DEFAULT_WORLD_PARAMS: WorldParams = {
     origin: [-512, 0, -512],
 };
 
+// Sanity upper bounds on the URL overrides. Self-DOS guard: a typo like
+// `?worldGrid=8192` would request a ~2 TB voxel buffer and lock up the
+// GPU. 1024³ at 256 m gives a 256 km cube — plenty for any realistic
+// drone-sim envelope, and a 1024³ × 4 B = 4 GB voxel buffer caps the
+// blast radius at "your tab dies" rather than "the OS swap-thrashes".
+const MAX_GRID = 1024;
+const MAX_VOXEL_SCALE = 256;
+
 function _errMsg(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
@@ -56,8 +64,8 @@ function _resolveWorldParams(): WorldParams {
         return DEFAULT_WORLD_PARAMS;
     }
     const q = new URLSearchParams(window.location.search);
-    const gridSize = _readPositiveInt(q, 'worldGrid', DEFAULT_WORLD_PARAMS.gridSize, BRICK);
-    const voxelScale = _readPositiveFiniteNumber(q, 'voxelScale', DEFAULT_WORLD_PARAMS.voxelScale);
+    const gridSize = _readPositiveInt(q, 'worldGrid', DEFAULT_WORLD_PARAMS.gridSize, BRICK, MAX_GRID);
+    const voxelScale = _readPositiveFiniteNumber(q, 'voxelScale', DEFAULT_WORLD_PARAMS.voxelScale, MAX_VOXEL_SCALE);
     // If the operator changed the cube size but didn't pass an explicit
     // origin, recentre automatically so the new cube still straddles
     // the world origin on X/Z (Y still starts at the ground plane).
@@ -72,7 +80,13 @@ function _resolveWorldParams(): WorldParams {
     return { gridSize, voxelScale, origin };
 }
 
-function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, mustDivideBy: number): number {
+/** Truncate the raw URL-param value before logging so a poisoned URL
+ *  with megabytes of garbage doesn't bloat the console / aggregator. */
+function _truncRaw(raw: string): string {
+    return raw.length > 64 ? raw.slice(0, 64) + '…' : raw;
+}
+
+function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, mustDivideBy: number, max?: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
     // `Number()` is stricter than `parseInt`/`parseFloat`: it rejects
@@ -80,19 +94,23 @@ function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, mus
     // for a config override should fall back rather than silently
     // truncating.
     const n = Number(raw);
-    if (!Number.isInteger(n) || n <= 0 || n % mustDivideBy !== 0) {
-        log.warn('ignoring invalid URL param', { key, raw, reason: `must be a positive integer divisible by ${mustDivideBy}` });
+    const tooBig = max !== undefined && n > max;
+    if (!Number.isInteger(n) || n <= 0 || n % mustDivideBy !== 0 || tooBig) {
+        const upper = max !== undefined ? `, ≤ ${max}` : '';
+        log.warn('ignoring invalid URL param', { key, raw: _truncRaw(raw), reason: `must be a positive integer divisible by ${mustDivideBy}${upper}` });
         return fallback;
     }
     return n;
 }
 
-function _readPositiveFiniteNumber(q: URLSearchParams, key: string, fallback: number): number {
+function _readPositiveFiniteNumber(q: URLSearchParams, key: string, fallback: number, max?: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
     const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) {
-        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive finite number' });
+    const tooBig = max !== undefined && n > max;
+    if (!Number.isFinite(n) || n <= 0 || tooBig) {
+        const upper = max !== undefined ? ` ≤ ${max}` : '';
+        log.warn('ignoring invalid URL param', { key, raw: _truncRaw(raw), reason: `must be a positive finite number${upper}` });
         return fallback;
     }
     return n;
@@ -103,7 +121,7 @@ function _readFiniteNumber(q: URLSearchParams, key: string, fallback: number): n
     if (raw === null) return fallback;
     const n = Number(raw);
     if (!Number.isFinite(n)) {
-        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a finite number' });
+        log.warn('ignoring invalid URL param', { key, raw: _truncRaw(raw), reason: 'must be a finite number' });
         return fallback;
     }
     return n;
