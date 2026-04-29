@@ -244,6 +244,30 @@ export class LosQueryManager {
         this._stats.totalQueries += 1;
         this._stats.totalRays += rays.length;
 
+        // Count rays whose origin sits outside the world's voxel AABB.
+        // Done synchronously here so the counter updates in lockstep
+        // with `totalQueries` / `totalRays` — an audit snapshotting
+        // immediately after `query()` returns will see consistent
+        // numbers even if the chained `runBatch` is still queued.
+        // World-space comparison avoids the divide-by-voxelScale needed
+        // for grid-space packing in `runBatch`.
+        const { voxelScale, origin: wOrigin, gridSize } = this.world.params;
+        const xMin = wOrigin[0], yMin = wOrigin[1], zMin = wOrigin[2];
+        const span = gridSize * voxelScale;
+        const xMax = xMin + span, yMax = yMin + span, zMax = zMin + span;
+        let outside = 0;
+        for (let i = 0; i < rays.length; i++) {
+            const o = rays[i]!.origin;
+            if (o[0] < xMin || o[0] >= xMax ||
+                o[1] < yMin || o[1] >= yMax ||
+                o[2] < zMin || o[2] >= zMax) {
+                outside += 1;
+            }
+        }
+        if (outside > 0) {
+            this._stats.raysOutsideWorld += outside;
+        }
+
         const ours = slot.inFlight.then(() => this.runBatch(slot, rays));
         const decrement = (): void => { slot.depth -= 1; };
         slot.inFlight = ours.then(decrement, decrement);
@@ -253,30 +277,21 @@ export class LosQueryManager {
     private async runBatch(slot: Slot, rays: LosRay[]): Promise<ParsedHit[]> {
         const { device, world } = this;
         const { rayBuf, hitBuf, readBuf, bindGroup } = slot;
-        const { voxelScale, origin, gridSize } = world.params;
+        const { voxelScale, origin } = world.params;
 
         // Pack rays into a CPU-side buffer, transforming each origin into
         // grid-space (the marcher's frame). Direction stays a unit vector
         // because the voxel scale is uniform; max_t scales by 1/voxelScale.
+        // The AABB-out stat is counted synchronously in `query()` so audits
+        // snapshotting right after `query()` returns see consistent numbers.
         const views = createRayBuffer(rays.length);
-        let outsideCount = 0;
         for (let i = 0; i < rays.length; i++) {
             const r = rays[i]!;
-            const gx = (r.origin[0] - origin[0]) / voxelScale;
-            const gy = (r.origin[1] - origin[1]) / voxelScale;
-            const gz = (r.origin[2] - origin[2]) / voxelScale;
-            // Origin outside the voxel AABB. The shader's ray-AABB clip
-            // handles rays that ENTER from outside, but a ray whose
-            // origin is outside AND whose direction never crosses the
-            // box still returns a clean miss — silently wrong if the
-            // operator expects sensor coverage to match the visualization
-            // terrain. Audit: see `LosQueryStats.raysOutsideWorld`.
-            if (gx < 0 || gx >= gridSize ||
-                gy < 0 || gy >= gridSize ||
-                gz < 0 || gz >= gridSize) {
-                outsideCount += 1;
-            }
-            const gridOrigin: Vec3 = [gx, gy, gz];
+            const gridOrigin: Vec3 = [
+                (r.origin[0] - origin[0]) / voxelScale,
+                (r.origin[1] - origin[1]) / voxelScale,
+                (r.origin[2] - origin[2]) / voxelScale,
+            ];
             writeRay(
                 views,
                 i,
@@ -285,9 +300,6 @@ export class LosQueryManager {
                 r.maxT / voxelScale,
                 r.mask,
             );
-        }
-        if (outsideCount > 0) {
-            this._stats.raysOutsideWorld += outsideCount;
         }
         const rayBytes = rays.length * RAY_BYTES;
         device.queue.writeBuffer(rayBuf, 0, views.buffer, 0, rayBytes);
