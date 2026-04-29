@@ -203,13 +203,22 @@ export class LidarScan {
             }
         }
 
+        // Snapshot the scan origin BEFORE the await. `this._origin` is
+        // a shared mutable tuple — if a concurrent scan() lands on the
+        // same instance while the query is in flight, it would overwrite
+        // the tuple and the hit-position math below would use the new
+        // scan's origin instead of this scan's. The current consumer
+        // gates per-drone via the in-flight flag (effects.ts), but
+        // capturing here makes LidarScan robust to other call patterns
+        // and to future mistakes.
+        const ox = this._origin[0], oy = this._origin[1], oz = this._origin[2];
+
         const hitData = await this.los.query(rays);
 
-        // Hit positions use `this._origin` (the post-offset scan origin)
-        // rather than the raw `origin` parameter, so a sensor on a mast
-        // reports hits relative to the mast tip, not the drone center.
-        // Cached locally to avoid re-reading the tuple in the hot loop.
-        const ox = this._origin[0], oy = this._origin[1], oz = this._origin[2];
+        // Hit positions use the captured scan origin (drone position +
+        // rotated mount offset) rather than the raw `origin` parameter,
+        // so a sensor on a mast reports hits relative to the mast tip,
+        // not the drone center.
         const hits = this._hits;
         for (let i = 0; i < hitData.length; i++) {
             const h = hitData[i]!;
