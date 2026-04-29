@@ -113,16 +113,24 @@ const LIDAR_DEFAULTS: LidarOverrideShape = {
     range:           200,
     scanIntervalSec: 1.0,
 };
+// Sanity upper bounds. Self-DOS guard: e.g. `?lidarRange=1e30` would
+// make every ray walk the entire DDA without early-exit, plus erode
+// floating-point precision in the shader. 10 km covers any realistic
+// drone-sim envelope; the visualization terrain itself is only 4 km.
+// `lidarInterval` capped at 60 s (1 minute between scans is already
+// the practical floor for "useful sensor"; longer is just silly).
+const MAX_LIDAR_RANGE     = 10000;
+const MAX_LIDAR_INTERVAL  = 60;
 const LIDAR_OVERRIDES: LidarOverrideShape = _resolveLidarOverrides();
 
 function _resolveLidarOverrides(): LidarOverrideShape {
     if (typeof window === 'undefined' || !window.location) return { ...LIDAR_DEFAULTS };
     const q = new URLSearchParams(window.location.search);
-    const elev     = _readPositiveInt(q, 'lidarElev', LIDAR_DEFAULTS.elevationCount);
-    const azim     = _readPositiveInt(q, 'lidarAzim', LIDAR_DEFAULTS.azimuthCount);
+    const elev     = _readPositiveInt(q, 'lidarElev', LIDAR_DEFAULTS.elevationCount, LIDAR_MANAGER_CAPACITY);
+    const azim     = _readPositiveInt(q, 'lidarAzim', LIDAR_DEFAULTS.azimuthCount, LIDAR_MANAGER_CAPACITY);
     const fovDeg   = _readNumberInRange(q, 'lidarFov', LIDAR_DEFAULTS.elevationFov * 180 / Math.PI, 1, 180);
-    const range    = _readPositiveFinite(q, 'lidarRange', LIDAR_DEFAULTS.range);
-    const interval = _readPositiveFinite(q, 'lidarInterval', LIDAR_DEFAULTS.scanIntervalSec);
+    const range    = _readNumberInRange(q, 'lidarRange', LIDAR_DEFAULTS.range, 0.1, MAX_LIDAR_RANGE);
+    const interval = _readNumberInRange(q, 'lidarInterval', LIDAR_DEFAULTS.scanIntervalSec, 0.001, MAX_LIDAR_INTERVAL);
     if (elev * azim > LIDAR_MANAGER_CAPACITY) {
         log.warn('LiDAR override exceeds manager capacity — falling back to defaults', {
             requested: elev * azim, capacity: LIDAR_MANAGER_CAPACITY,
@@ -138,26 +146,23 @@ function _resolveLidarOverrides(): LidarOverrideShape {
     };
 }
 
-function _readPositiveInt(q: URLSearchParams, key: string, fallback: number): number {
+/** Truncate the raw URL-param value before logging so a poisoned URL
+ *  with megabytes of garbage doesn't bloat the console / aggregator. */
+function _truncRaw(raw: string): string {
+    return raw.length > 64 ? raw.slice(0, 64) + '…' : raw;
+}
+
+function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, max?: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
     // `Number()` is stricter than `parseInt`/`parseFloat` — it rejects
     // trailing garbage like "16abc" and decimals like "16.9", which for
     // a config override should fall back rather than silently truncate.
     const n = Number(raw);
-    if (!Number.isInteger(n) || n <= 0) {
-        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive integer' });
-        return fallback;
-    }
-    return n;
-}
-
-function _readPositiveFinite(q: URLSearchParams, key: string, fallback: number): number {
-    const raw = q.get(key);
-    if (raw === null) return fallback;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) {
-        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive finite number' });
+    const tooBig = max !== undefined && n > max;
+    if (!Number.isInteger(n) || n <= 0 || tooBig) {
+        const upper = max !== undefined ? ` ≤ ${max}` : '';
+        log.warn('ignoring invalid URL param', { key, raw: _truncRaw(raw), reason: `must be a positive integer${upper}` });
         return fallback;
     }
     return n;
@@ -168,7 +173,7 @@ function _readNumberInRange(q: URLSearchParams, key: string, fallback: number, m
     if (raw === null) return fallback;
     const n = Number(raw);
     if (!Number.isFinite(n) || n < min || n > max) {
-        log.warn('ignoring invalid URL param', { key, raw, reason: `must be a finite number in [${min}, ${max}]` });
+        log.warn('ignoring invalid URL param', { key, raw: _truncRaw(raw), reason: `must be a finite number in [${min}, ${max}]` });
         return fallback;
     }
     return n;
