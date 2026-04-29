@@ -8,7 +8,7 @@ import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } fro
 import { LidarScan, type LidarHit } from './webgpu/lidar';
 import type { LosRay } from './webgpu/los';
 import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
-import { getSensorContext } from './webgpu/registry';
+import { LIDAR_MANAGER_CAPACITY, getSensorContext } from './webgpu/registry';
 // Type-only import — TS strips it at runtime, so it doesn't pull the
 // WebGPU stack into the main bundle (same pattern as `registry.ts`).
 import type { SensorContext } from './webgpu/sensors';
@@ -95,7 +95,10 @@ const _CROSSHAIR_TICK_LEN = 0.08;  // tick length as a fraction of radius
  * exceeds that, both fall back to defaults with a warning, since
  * partial fallbacks would produce unexpected aspect ratios.
  */
-const LIDAR_MAX_RAYS = 4096;
+// LiDAR manager capacity is the SOURCE OF TRUTH in `webgpu/registry.ts`
+// — both `sensors.ts` (constructing the manager) and this file
+// (validating that user-overridden scan params don't exceed it) read
+// the same number from there.
 type LidarOverrideShape = {
     elevationCount:  number;
     azimuthCount:    number;
@@ -120,9 +123,9 @@ function _resolveLidarOverrides(): LidarOverrideShape {
     const fovDeg   = _readNumberInRange(q, 'lidarFov', LIDAR_DEFAULTS.elevationFov * 180 / Math.PI, 1, 180);
     const range    = _readPositiveFinite(q, 'lidarRange', LIDAR_DEFAULTS.range);
     const interval = _readPositiveFinite(q, 'lidarInterval', LIDAR_DEFAULTS.scanIntervalSec);
-    if (elev * azim > LIDAR_MAX_RAYS) {
+    if (elev * azim > LIDAR_MANAGER_CAPACITY) {
         log.warn('LiDAR override exceeds manager capacity — falling back to defaults', {
-            requested: elev * azim, capacity: LIDAR_MAX_RAYS,
+            requested: elev * azim, capacity: LIDAR_MANAGER_CAPACITY,
         });
         return { ...LIDAR_DEFAULTS };
     }
@@ -138,7 +141,10 @@ function _resolveLidarOverrides(): LidarOverrideShape {
 function _readPositiveInt(q: URLSearchParams, key: string, fallback: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
-    const n = parseInt(raw, 10);
+    // `Number()` is stricter than `parseInt`/`parseFloat` — it rejects
+    // trailing garbage like "16abc" and decimals like "16.9", which for
+    // a config override should fall back rather than silently truncate.
+    const n = Number(raw);
     if (!Number.isInteger(n) || n <= 0) {
         log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive integer' });
         return fallback;
@@ -149,7 +155,7 @@ function _readPositiveInt(q: URLSearchParams, key: string, fallback: number): nu
 function _readPositiveFinite(q: URLSearchParams, key: string, fallback: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
-    const n = parseFloat(raw);
+    const n = Number(raw);
     if (!Number.isFinite(n) || n <= 0) {
         log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive finite number' });
         return fallback;
@@ -160,7 +166,7 @@ function _readPositiveFinite(q: URLSearchParams, key: string, fallback: number):
 function _readNumberInRange(q: URLSearchParams, key: string, fallback: number, min: number, max: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
-    const n = parseFloat(raw);
+    const n = Number(raw);
     if (!Number.isFinite(n) || n < min || n > max) {
         log.warn('ignoring invalid URL param', { key, raw, reason: `must be a finite number in [${min}, ${max}]` });
         return fallback;
