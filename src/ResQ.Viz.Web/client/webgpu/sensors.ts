@@ -10,6 +10,7 @@
 
 import { getLogger } from '../log';
 import { onTerrainChange, terrainHeight } from '../terrain';
+import { BRICK } from './brickmap';
 import { initDevice } from './device';
 import { LosQueryManager } from './los';
 import { MASK_OBSTACLES } from './rays';
@@ -55,7 +56,7 @@ function _resolveWorldParams(): WorldParams {
         return DEFAULT_WORLD_PARAMS;
     }
     const q = new URLSearchParams(window.location.search);
-    const gridSize = _readPositiveInt(q, 'worldGrid', DEFAULT_WORLD_PARAMS.gridSize, 8);
+    const gridSize = _readPositiveInt(q, 'worldGrid', DEFAULT_WORLD_PARAMS.gridSize, BRICK);
     const voxelScale = _readPositiveFiniteNumber(q, 'voxelScale', DEFAULT_WORLD_PARAMS.voxelScale);
     // If the operator changed the cube size but didn't pass an explicit
     // origin, recentre automatically so the new cube still straddles
@@ -74,7 +75,11 @@ function _resolveWorldParams(): WorldParams {
 function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, mustDivideBy: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
-    const n = parseInt(raw, 10);
+    // `Number()` is stricter than `parseInt`/`parseFloat`: it rejects
+    // trailing garbage like "128abc" and decimals like "128.9", which
+    // for a config override should fall back rather than silently
+    // truncating.
+    const n = Number(raw);
     if (!Number.isInteger(n) || n <= 0 || n % mustDivideBy !== 0) {
         log.warn('ignoring invalid URL param', { key, raw, reason: `must be a positive integer divisible by ${mustDivideBy}` });
         return fallback;
@@ -85,7 +90,7 @@ function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, mus
 function _readPositiveFiniteNumber(q: URLSearchParams, key: string, fallback: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
-    const n = parseFloat(raw);
+    const n = Number(raw);
     if (!Number.isFinite(n) || n <= 0) {
         log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive finite number' });
         return fallback;
@@ -96,7 +101,7 @@ function _readPositiveFiniteNumber(q: URLSearchParams, key: string, fallback: nu
 function _readFiniteNumber(q: URLSearchParams, key: string, fallback: number): number {
     const raw = q.get(key);
     if (raw === null) return fallback;
-    const n = parseFloat(raw);
+    const n = Number(raw);
     if (!Number.isFinite(n)) {
         log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a finite number' });
         return fallback;
