@@ -38,6 +38,8 @@ Press `5` to load `multi-agency-sar`. Press `K` to kill the backhaul. Press `Ctr
 - **Drone interaction** — click to select, WASD/QE to nudge in world space, click terrain to issue GoTo command, `F` to follow
 - **Visual overlays** — position trails, altitude halos, velocity component arrows, mesh topology links, hazard zone discs, detection markers
 - **Settings persistence** — bloom, fog density, FOV, fly speed, trail length, detection rings, battery warning threshold; stored in `localStorage`
+- **WebGPU sensor primitive** — brick-map raymarcher voxelizes the heightfield once and serves both **drone-pair line-of-sight** (mesh links visibly fade when terrain occludes them) and **per-drone LiDAR scans** (point clouds emanate from each drone, follow yaw/pitch/roll, optional mast/gimbal mount offsets). One compute kernel, two sensor consumers; ring-buffered async dispatch with `peakSlotDepth` / `raysOutsideWorld` audit counters; press `i` for the live stats overlay.
+- **Lazy-loaded SignalR** — the SignalR runtime ships as a separate ~55 KB chunk and is fetched on first connect, keeping the main bundle below the 800 KiB CI budget
 
 ---
 
@@ -251,8 +253,22 @@ viz/
 │   │   ├── controls.ts          Sidebar REST calls, scenario and command wiring
 │   │   │
 │   │   ├── settings.ts          User settings with localStorage persistence
+│   │   ├── sensorStatsOverlay.ts  Bottom-left dev/audit overlay (`i` to toggle)
 │   │   ├── types.ts             VizFrame · DroneState · HazardState · DetectionState
 │   │   ├── dom.ts               Typed getEl<T>() helper
+│   │   │
+│   │   ├── webgpu/              WebGPU sensor primitive (brick-map raymarcher)
+│   │   │   ├── device.ts          GPUDevice initialization with null-safe fallback
+│   │   │   ├── sensors.ts         bootSensors() — wires world + LoS + LiDAR managers
+│   │   │   ├── registry.ts        Singleton seam — getSensorContext() + LIDAR_MANAGER_CAPACITY
+│   │   │   ├── world.ts           Heightfield → 128³ voxel cube + onTerrainChange rebuild
+│   │   │   ├── brickmap.ts        Sparse top-grid + dense 8³ bricks (BRICK constant)
+│   │   │   ├── los.ts             LosQueryManager — ring-buffered query() with LosQueryStats
+│   │   │   ├── lidar.ts           LidarScan — quaternion-rotated scan pattern + mount offset
+│   │   │   ├── rays.ts            Ray (48 B) / RayHit (32 B) wire format + flag constants
+│   │   │   └── shaders/           build_brickmap.wgsl · march.wgsl · blit.wgsl
+│   │   │
+│   │   ├── __tests__/           Vitest smoke tests (rays packing, LidarScan validation)
 │   │   │
 │   │   └── ui/
 │   │       ├── hud.ts           Top bar — connection, drone count, FPS, battery, selected chip
@@ -329,6 +345,7 @@ viz/
 | `3` | Scenario: swarm-20 |
 | `4` | Scenario: SAR |
 | `?` | Toggle keyboard shortcuts panel |
+| `i` | Toggle WebGPU sensor-stack stats overlay (queries, peakSlotDepth, raysOutsideWorld) |
 
 ---
 
@@ -360,17 +377,19 @@ git submodule update --init --recursive
 
 | Layer | Technology | Notes |
 |-------|------------|-------|
-| Runtime | .NET 9 / ASP.NET Core | `IHostedService` simulation loop |
-| Real-time | SignalR (WebSocket) | 10 Hz frame broadcast |
-| 3D | Three.js r175 (npm) | PBR, InstancedMesh, custom GLSL |
+| Runtime | .NET 10 / ASP.NET Core | `IHostedService` simulation loop |
+| Real-time | SignalR 10 (WebSocket) | 10 Hz frame broadcast; lazy-loaded chunk in the client |
+| 3D | Three.js 0.184 (npm) | PBR, InstancedMesh, custom GLSL |
+| Sensor primitive | WebGPU compute (WGSL) | Brick-map raymarcher; mesh-link LoS + per-drone LiDAR off one kernel |
 | Post-processing | Three.js `EffectComposer` | Selective bloom, SSAO, ACES |
-| Frontend build | TypeScript 5 + Vite 6 | Hot module replacement in dev |
+| Frontend build | TypeScript 6 + Vite 8 | Hot module replacement in dev; rolldown-based |
 | Compression | Web Streams API | `CompressionStream` · `DecompressionStream` · deflate-raw |
 | Simulation | ResQ.Simulation.Engine | Git submodule — physics, terrain, weather |
 | Tests | xUnit + FluentAssertions + Moq | Backend unit tests |
+| Frontend tests | Vitest 4 | Host-side WebGPU primitive smoke tests (~17 cases, ~380 ms) |
 
 ---
 
 ## License
 
-Apache-2.0 — Copyright 2024 ResQ Technologies Ltd.
+Apache-2.0 — Copyright 2026 ResQ Systems, Inc.
