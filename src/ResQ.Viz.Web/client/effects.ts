@@ -197,15 +197,16 @@ export class EffectsManager {
     private _updateLidar(drones: DroneState[]): void {
         const ctx = getSensorContext();
         if (!ctx) {
-            // If the sensor context never came up, evict any stale entries
-            // (e.g. terrain rebuild that disposed the device); shouldn't
-            // happen today but keeps the map in lockstep with reality.
-            if (this._lidarEntries.size > 0) {
-                for (const entry of this._lidarEntries.values()) {
-                    this._disposeLidarEntry(entry);
-                }
-                this._lidarEntries.clear();
+            // If the sensor context disappeared (e.g. terrain rebuild
+            // disposed the device), evict any stale entries so the map
+            // stays in lockstep with reality. Sweep unconditionally —
+            // the empty-map case is a no-op for-loop, and a `size > 0`
+            // guard would silently desync if an entry's Three.js was
+            // already torn down externally.
+            for (const entry of this._lidarEntries.values()) {
+                this._disposeLidarEntry(entry);
             }
+            this._lidarEntries.clear();
             return;
         }
 
@@ -254,13 +255,15 @@ export class EffectsManager {
 
         // Evict entries for drones not seen this frame. Without this, a
         // disconnected drone leaks its `Points`, geometry, material, and
-        // 4096-position Float32Array forever.
-        if (this._lidarEntries.size > seenIds.size) {
-            for (const [id, entry] of this._lidarEntries) {
-                if (!seenIds.has(id)) {
-                    this._disposeLidarEntry(entry);
-                    this._lidarEntries.delete(id);
-                }
+        // 4096-position Float32Array forever. Sweep unconditionally: a
+        // `cache.size > seenIds.size` guard would silently miss the
+        // churn case where one drone disconnects and another joins on
+        // the same frame — sizes match but a stale entry remains. Drone
+        // counts are small, so iterating every frame is cheap.
+        for (const [id, entry] of this._lidarEntries) {
+            if (!seenIds.has(id)) {
+                this._disposeLidarEntry(entry);
+                this._lidarEntries.delete(id);
             }
         }
     }
