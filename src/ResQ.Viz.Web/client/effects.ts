@@ -498,6 +498,11 @@ export class EffectsManager {
         // Collect rays alongside line creation so we don't iterate twice.
         const losRays: LosRay[] = [];
         const losKeys: string[] = [];
+        // Pairs encountered this frame — used at the end to evict stale
+        // entries from `_meshLinkOccluded` for drone pairs that no longer
+        // exist. Without this, the cache grows monotonically over a long
+        // simulation as drones spawn/despawn.
+        const seenKeys = new Set<string>();
 
         for (const [i, j] of mesh.links) {
             const a = drones[i];
@@ -516,6 +521,7 @@ export class EffectsManager {
             // toggling) take effect on the next frame without
             // invalidating the cache.
             const key = a.id < b.id ? `${a.id}--${b.id}` : `${b.id}--${a.id}`;
+            seenKeys.add(key);
             const occluded = this._meshLinkOccluded.get(key) ?? false;
             const opacity = occluded ? baseOpacity * occludedFactor : baseOpacity;
 
@@ -568,6 +574,19 @@ export class EffectsManager {
             ).finally(() => {
                 this._losQueryInFlight = null;
             });
+        }
+
+        // Evict cache entries for drone pairs not seen this frame. Bounds
+        // memory growth as drones spawn/despawn over a long simulation —
+        // cache size stays proportional to active link count instead of
+        // cumulative pair count. An in-flight LoS query's `.then()` may
+        // briefly re-add a just-evicted key with a stale value; the next
+        // frame's sweep evicts it again, so the cache remains bounded.
+        const occCache = this._meshLinkOccluded;
+        if (occCache.size > seenKeys.size) {
+            for (const key of occCache.keys()) {
+                if (!seenKeys.has(key)) occCache.delete(key);
+            }
         }
     }
 }
