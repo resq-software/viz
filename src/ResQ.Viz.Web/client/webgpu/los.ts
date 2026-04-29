@@ -57,6 +57,18 @@ export type LosQueryStats = {
      * arrived on the same slot; > 1 means callers are queueing.
      */
     peakSlotDepth: number;
+    /**
+     * Rays whose world-space origin fell strictly outside the world's
+     * voxel AABB. The shader's ray-AABB clip still handles rays that
+     * enter the box from outside, but a ray whose origin is outside AND
+     * whose direction never crosses the AABB returns a clean miss with
+     * no obstacle — silently wrong if the operator expects the sensor
+     * to cover the full visualization terrain. The visualization
+     * terrain spans `TERRAIN_SIZE` (4000 m) but the default sensor
+     * world is a 1024 m cube, so this is the audit signal that exposes
+     * the gap.
+     */
+    raysOutsideWorld: number;
 };
 
 type Slot = {
@@ -91,6 +103,7 @@ export class LosQueryManager {
         totalQueries: 0,
         totalRays: 0,
         peakSlotDepth: 0,
+        raysOutsideWorld: 0,
     };
 
     /**
@@ -231,6 +244,30 @@ export class LosQueryManager {
         this._stats.totalQueries += 1;
         this._stats.totalRays += rays.length;
 
+        // Count rays whose origin sits outside the world's voxel AABB.
+        // Done synchronously here so the counter updates in lockstep
+        // with `totalQueries` / `totalRays` — an audit snapshotting
+        // immediately after `query()` returns will see consistent
+        // numbers even if the chained `runBatch` is still queued.
+        // World-space comparison avoids the divide-by-voxelScale needed
+        // for grid-space packing in `runBatch`.
+        const { voxelScale, origin: wOrigin, gridSize } = this.world.params;
+        const xMin = wOrigin[0], yMin = wOrigin[1], zMin = wOrigin[2];
+        const span = gridSize * voxelScale;
+        const xMax = xMin + span, yMax = yMin + span, zMax = zMin + span;
+        let outside = 0;
+        for (let i = 0; i < rays.length; i++) {
+            const o = rays[i]!.origin;
+            if (o[0] < xMin || o[0] >= xMax ||
+                o[1] < yMin || o[1] >= yMax ||
+                o[2] < zMin || o[2] >= zMax) {
+                outside += 1;
+            }
+        }
+        if (outside > 0) {
+            this._stats.raysOutsideWorld += outside;
+        }
+
         const ours = slot.inFlight.then(() => this.runBatch(slot, rays));
         const decrement = (): void => { slot.depth -= 1; };
         slot.inFlight = ours.then(decrement, decrement);
@@ -245,6 +282,8 @@ export class LosQueryManager {
         // Pack rays into a CPU-side buffer, transforming each origin into
         // grid-space (the marcher's frame). Direction stays a unit vector
         // because the voxel scale is uniform; max_t scales by 1/voxelScale.
+        // The AABB-out stat is counted synchronously in `query()` so audits
+        // snapshotting right after `query()` returns see consistent numbers.
         const views = createRayBuffer(rays.length);
         for (let i = 0; i < rays.length; i++) {
             const r = rays[i]!;
