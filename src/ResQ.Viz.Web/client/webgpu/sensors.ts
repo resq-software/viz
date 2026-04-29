@@ -14,12 +14,94 @@ import { initDevice } from './device';
 import { LosQueryManager } from './los';
 import { MASK_OBSTACLES } from './rays';
 import { getSensorContext, setSensorContext } from './registry';
-import { createWorld, rebuildWorld, type World } from './world';
+import { createWorld, rebuildWorld, type World, type WorldParams } from './world';
 
 const log = getLogger('webgpu/sensors');
 
+// Defaults: 128³ voxels at 8 m per voxel = 1024 m cube centred on world
+// origin (X/Z) with Y starting at the ground plane. The visualization
+// terrain spans 4000 m × 4000 m (`TERRAIN_SIZE` in `terrain.ts`); the
+// `raysOutsideWorld` stat in `LosQueryStats` reports rays that fall
+// outside this cube. Bumping covers more terrain at 8× GPU memory cost
+// per axis-doubling — operators can override via URL params at boot
+// without rebuilding (see `_resolveWorldParams`).
+const DEFAULT_WORLD_PARAMS: WorldParams = {
+    gridSize: 128,
+    voxelScale: 8,
+    origin: [-512, 0, -512],
+};
+
 function _errMsg(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Read URL params to allow boot-time overrides of the world bounds —
+ * useful for testing the 4 km vs 1 km gap surfaced by `LosQueryStats.
+ * raysOutsideWorld` without redeploying.
+ *
+ * Recognised keys (all optional):
+ *   - `worldGrid`   integer, must be > 0 and divisible by 8 (BRICK)
+ *   - `voxelScale`  positive finite number
+ *   - `worldOriginX`, `worldOriginY`, `worldOriginZ`  finite numbers;
+ *     if omitted, the cube auto-centres on world (X, Z) with the given
+ *     `gridSize × voxelScale` span and Y starting at 0 (ground plane).
+ *
+ * Invalid values fall back to the corresponding default with a logger
+ * warning — boot continues, no exception.
+ */
+function _resolveWorldParams(): WorldParams {
+    if (typeof window === 'undefined' || !window.location) {
+        return DEFAULT_WORLD_PARAMS;
+    }
+    const q = new URLSearchParams(window.location.search);
+    const gridSize = _readPositiveInt(q, 'worldGrid', DEFAULT_WORLD_PARAMS.gridSize, 8);
+    const voxelScale = _readPositiveFiniteNumber(q, 'voxelScale', DEFAULT_WORLD_PARAMS.voxelScale);
+    // If the operator changed the cube size but didn't pass an explicit
+    // origin, recentre automatically so the new cube still straddles
+    // the world origin on X/Z (Y still starts at the ground plane).
+    const span = gridSize * voxelScale;
+    const autoOriginX = -span / 2;
+    const autoOriginZ = -span / 2;
+    const origin: [number, number, number] = [
+        _readFiniteNumber(q, 'worldOriginX', autoOriginX),
+        _readFiniteNumber(q, 'worldOriginY', 0),
+        _readFiniteNumber(q, 'worldOriginZ', autoOriginZ),
+    ];
+    return { gridSize, voxelScale, origin };
+}
+
+function _readPositiveInt(q: URLSearchParams, key: string, fallback: number, mustDivideBy: number): number {
+    const raw = q.get(key);
+    if (raw === null) return fallback;
+    const n = parseInt(raw, 10);
+    if (!Number.isInteger(n) || n <= 0 || n % mustDivideBy !== 0) {
+        log.warn('ignoring invalid URL param', { key, raw, reason: `must be a positive integer divisible by ${mustDivideBy}` });
+        return fallback;
+    }
+    return n;
+}
+
+function _readPositiveFiniteNumber(q: URLSearchParams, key: string, fallback: number): number {
+    const raw = q.get(key);
+    if (raw === null) return fallback;
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a positive finite number' });
+        return fallback;
+    }
+    return n;
+}
+
+function _readFiniteNumber(q: URLSearchParams, key: string, fallback: number): number {
+    const raw = q.get(key);
+    if (raw === null) return fallback;
+    const n = parseFloat(raw);
+    if (!Number.isFinite(n)) {
+        log.warn('ignoring invalid URL param', { key, raw, reason: 'must be a finite number' });
+        return fallback;
+    }
+    return n;
 }
 
 export type SensorContext = {
@@ -76,11 +158,9 @@ export async function bootSensors(): Promise<SensorContext | null> {
         const { device } = init;
 
         try {
-            const world = createWorld(device, terrainHeight, {
-                gridSize: 128,
-                voxelScale: 8,
-                origin: [-512, 0, -512],
-            });
+            const worldParams = _resolveWorldParams();
+            log.info('WebGPU world bounds', worldParams);
+            const world = createWorld(device, terrainHeight, worldParams);
 
             // Mesh-link LoS path: small capacity, default 2-slot ring.
             const los = new LosQueryManager(device, world, 256);
