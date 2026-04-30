@@ -256,8 +256,6 @@ button { font-family: inherit; }
 #battery-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
 #battery-fill.crit { background: linear-gradient(90deg, var(--danger), #ff8a8a); }
 
-/* legacy spans inside the old battery markup — kept as fallbacks */
-.bat-label { display: none; }
 #battery-pct {
   font-family: var(--mono);
   font-size: 11px;
@@ -334,9 +332,6 @@ button { font-family: inherit; }
   color: var(--accent);
   box-shadow: inset 0 0 0 1px rgba(92, 182, 255, 0.32);
 }
-
-/* legacy separator markup in the old HUD — fully suppressed */
-.hud-sep { display: none !important; }
 
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
 

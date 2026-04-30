@@ -15,13 +15,11 @@
  */
 
 using System.Numerics;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ResQ.Simulation.Engine.Core;
 using ResQ.Simulation.Engine.Environment;
 using ResQ.Simulation.Engine.Physics;
-using ResQ.Viz.Web.Hubs;
 
 namespace ResQ.Viz.Web.Services;
 
@@ -54,10 +52,10 @@ public sealed class SimulationService : BackgroundService
     private SimulationWorld _world;
     private readonly UpdatableWeatherSystem _weather;
     private readonly TerrainNoiseService _terrain;
-    private readonly IHubContext<VizHub> _hubContext;
+    private readonly IFrameBroadcaster _broadcaster;
     private readonly VizFrameBuilder _frameBuilder;
     private readonly ILogger<SimulationService> _logger;
-    private readonly SwarmController _swarm;
+    private readonly SwarmCoordinator _swarm;
     private readonly object _lock = new();
     private int _tickCount;
     private int _swarmTick;
@@ -78,20 +76,32 @@ public sealed class SimulationService : BackgroundService
     public event EventHandler? FrameReady;
 
     /// <summary>
-    /// Initialises the service with a flat terrain and calm weather using default settings.
+    /// Initialises the service with DI-supplied collaborators. The simulation domain
+    /// is decoupled from the SignalR transport via <see cref="IFrameBroadcaster"/>;
+    /// terrain, weather, and swarm coordination are injected so the service stays
+    /// testable in isolation.
     /// </summary>
-    /// <param name="hubContext">SignalR hub context used to push frames to connected clients.</param>
+    /// <param name="broadcaster">Transport sink that pushes frames to clients.</param>
     /// <param name="frameBuilder">Stateless service that converts drone snapshots into <see cref="ResQ.Viz.Web.Models.VizFrame"/> objects.</param>
+    /// <param name="terrain">Procedural terrain sampler shared across the simulation pipeline.</param>
+    /// <param name="weather">Mutable weather state — same instance is rebound by <see cref="SetWeather"/>.</param>
+    /// <param name="swarm">Terrain-aware swarm flight controller.</param>
     /// <param name="logger">Logger instance.</param>
-    public SimulationService(IHubContext<VizHub> hubContext, VizFrameBuilder frameBuilder, ILogger<SimulationService> logger)
+    public SimulationService(
+        IFrameBroadcaster broadcaster,
+        VizFrameBuilder frameBuilder,
+        TerrainNoiseService terrain,
+        UpdatableWeatherSystem weather,
+        SwarmCoordinator swarm,
+        ILogger<SimulationService> logger)
     {
-        _hubContext = hubContext;
+        _broadcaster = broadcaster;
         _frameBuilder = frameBuilder;
+        _terrain = terrain;
+        _weather = weather;
+        _swarm = swarm;
         _logger = logger;
-        _terrain = new TerrainNoiseService();
-        _weather = new UpdatableWeatherSystem(new WeatherConfig());
         _world = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
-        _swarm = new SwarmController(_terrain);
         _logger.LogInformation("SimulationService initialised.");
     }
 
@@ -300,7 +310,7 @@ public sealed class SimulationService : BackgroundService
                 var frame = _frameBuilder.Build(snapshot, _simTime, _backhaulKilled);
                 try
                 {
-                    await _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, stoppingToken);
+                    await _broadcaster.BroadcastFrameAsync(frame, stoppingToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

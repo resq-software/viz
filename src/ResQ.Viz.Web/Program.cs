@@ -9,6 +9,20 @@ using Vite.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
 builder.Services.AddControllers();
+
+// Simulation domain singletons — kept transport-agnostic. Terrain, weather, and the
+// swarm coordinator share one instance so SimulationService and any future consumers
+// see the same source of truth rather than constructing private copies.
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.TerrainNoiseService>();
+builder.Services.AddSingleton(_ => new ResQ.Viz.Web.Services.UpdatableWeatherSystem(
+    new ResQ.Simulation.Engine.Environment.WeatherConfig()));
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.SwarmCoordinator>();
+
+// Frame transport: domain talks to IFrameBroadcaster; SignalR is the implementation.
+builder.Services.AddSingleton<
+    ResQ.Viz.Web.Services.IFrameBroadcaster,
+    ResQ.Viz.Web.Services.SignalRFrameBroadcaster>();
+
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationService>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();

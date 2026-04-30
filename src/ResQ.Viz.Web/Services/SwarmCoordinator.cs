@@ -20,7 +20,7 @@ namespace ResQ.Viz.Web.Services;
 /// Terrain awareness: all waypoints have their Y coordinate clamped to
 /// <c>TerrainHeight(x,z) + minAgl</c>, where <c>minAgl</c> depends on the active preset.
 /// </remarks>
-public sealed class SwarmController
+public sealed class SwarmCoordinator
 {
     // ── Tuning constants ─────────────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ public sealed class SwarmController
     }
 
     /// <summary>Initialises the controller with an initial terrain service (alpine preset).</summary>
-    public SwarmController(TerrainNoiseService terrain) => _terrain = terrain;
+    public SwarmCoordinator(TerrainNoiseService terrain) => _terrain = terrain;
 
     // ── Public API ────────────────────────────────────────────────────────────
 

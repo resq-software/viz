@@ -23,7 +23,7 @@
 // TypeScript 6 lib.dom ships most WebGPU types (GPUDevice, GPUAdapter,
 // GPUCanvasContext, etc.) but is missing the runtime usage-flag constants
 // and the HTMLCanvasElement.getContext('webgpu') overload. Patch those in
-// here until lib.dom catches up. Used by client/webgpu/* and /spike.html.
+// here until lib.dom catches up. Used by client/webgpu/*.
 declare const GPUBufferUsage: {
     readonly MAP_READ: GPUFlagsConstant;
     readonly MAP_WRITE: GPUFlagsConstant;
