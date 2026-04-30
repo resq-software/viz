@@ -48,10 +48,20 @@ export class ControlPanel {
     }
 
     private _bindScenarioCards(): void {
-        document.querySelectorAll<HTMLElement>('.scenario-card').forEach(card => {
+        const cards = document.querySelectorAll<HTMLElement>('.scenario-card');
+        // Initialise aria-pressed so AT users hear "not pressed" for every card.
+        cards.forEach(card => card.setAttribute('aria-pressed', 'false'));
+        cards.forEach(card => {
             card.addEventListener('click', () => {
                 const name = card.dataset['scenario'];
-                if (name) void this._runScenario(name);
+                if (!name) return;
+                // Visually + semantically mark the chosen card as the active one.
+                cards.forEach(c => {
+                    const active = c === card;
+                    c.classList.toggle('active', active);
+                    c.setAttribute('aria-pressed', String(active));
+                });
+                void this._runScenario(name);
             });
         });
     }

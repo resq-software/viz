@@ -16,11 +16,7 @@
 
 using System.Numerics;
 using FluentAssertions;
-using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
-using Moq;
 using ResQ.Simulation.Engine.Physics;
-using ResQ.Viz.Web.Hubs;
 using ResQ.Viz.Web.Services;
 using Xunit;
 
@@ -29,23 +25,7 @@ namespace ResQ.Viz.Web.Tests;
 /// <summary>Tests for <see cref="SimulationService"/>.</summary>
 public class SimulationServiceTests
 {
-    private static SimulationService CreateService()
-    {
-        var mockClients = new Mock<IHubClients>();
-        var mockClientProxy = new Mock<IClientProxy>();
-        mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
-        mockClientProxy
-            .Setup(c => c.SendCoreAsync(It.IsAny<string>(), It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var mockHubContext = new Mock<IHubContext<VizHub>>();
-        mockHubContext.Setup(h => h.Clients).Returns(mockClients.Object);
-
-        return new SimulationService(
-            mockHubContext.Object,
-            new VizFrameBuilder(),
-            Mock.Of<ILogger<SimulationService>>());
-    }
+    private static SimulationService CreateService() => TestSimulationFactory.Create();
 
     [Fact]
     public void SimulationService_Creates_SimulationWorld()

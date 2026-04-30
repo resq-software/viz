@@ -51,11 +51,12 @@ export class LoadingOverlay {
         // provide the scaffold here.
         const spinner = document.createElement('div');
         spinner.className = 'loading-spinner';
-        spinner.innerHTML = `
-            <span class="loading-ring loading-ring-outer" aria-hidden="true"></span>
-            <span class="loading-ring loading-ring-mid"   aria-hidden="true"></span>
-            <span class="loading-ring loading-ring-inner" aria-hidden="true"></span>
-        `;
+        for (const tier of ['outer', 'mid', 'inner'] as const) {
+            const ring = document.createElement('span');
+            ring.className = `loading-ring loading-ring-${tier}`;
+            ring.setAttribute('aria-hidden', 'true');
+            spinner.appendChild(ring);
+        }
 
         this._titleEl    = document.createElement('span');
         this._phaseEl    = document.createElement('span');

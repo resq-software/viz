@@ -15,11 +15,7 @@
  */
 
 using FluentAssertions;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using Moq;
-using ResQ.Viz.Web.Hubs;
 using ResQ.Viz.Web.Services;
 using Xunit;
 
@@ -28,6 +24,7 @@ namespace ResQ.Viz.Web.Tests;
 /// <summary>Tests for <see cref="ScenarioService"/>.</summary>
 public class ScenarioServiceTests
 {
+
     private static ScenarioService CreateScenarioService()
     {
         var config = new ConfigurationBuilder()
@@ -157,17 +154,7 @@ public class ScenarioServiceTests
         return new ScenarioService(config);
     }
 
-    private static SimulationService CreateSimulationService()
-    {
-        var mockClients = new Mock<IHubClients>();
-        var mockProxy = new Mock<IClientProxy>();
-        mockClients.Setup(c => c.All).Returns(mockProxy.Object);
-        mockProxy.Setup(c => c.SendCoreAsync(It.IsAny<string>(), It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
-                 .Returns(Task.CompletedTask);
-        var mockHub = new Mock<IHubContext<VizHub>>();
-        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
-        return new SimulationService(mockHub.Object, new VizFrameBuilder(), Mock.Of<ILogger<SimulationService>>());
-    }
+    private static SimulationService CreateSimulationService() => TestSimulationFactory.Create();
 
     [Fact]
     public void ScenarioNames_Contains_All_Four_Builtins()

@@ -17,12 +17,10 @@
 using System.Numerics;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using ResQ.Viz.Web.Controllers;
-using ResQ.Viz.Web.Hubs;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 using Xunit;
@@ -32,17 +30,7 @@ namespace ResQ.Viz.Web.Tests;
 /// <summary>Tests for <see cref="SimController"/> REST endpoints.</summary>
 public class SimControllerTests
 {
-    private static SimulationService CreateSimService()
-    {
-        var mockClients = new Mock<IHubClients>();
-        var mockProxy = new Mock<IClientProxy>();
-        mockClients.Setup(c => c.All).Returns(mockProxy.Object);
-        mockProxy.Setup(c => c.SendCoreAsync(It.IsAny<string>(), It.IsAny<object[]>(), It.IsAny<CancellationToken>()))
-                 .Returns(Task.CompletedTask);
-        var mockHub = new Mock<IHubContext<VizHub>>();
-        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
-        return new SimulationService(mockHub.Object, new VizFrameBuilder(), Mock.Of<ILogger<SimulationService>>());
-    }
+    private static SimulationService CreateSimService() => TestSimulationFactory.Create();
 
     private static ScenarioService CreateScenarioService()
     {
@@ -414,5 +402,224 @@ public class SimControllerTests
         var (ctrl, sim) = CreateController();
         ctrl.RunScenario("swarm-5");
         sim.GetSnapshot().Should().HaveCount(5);
+    }
+
+    // ─── Weather edge cases ─────────────────────────────────────────────────
+
+    [Fact]
+    public void SetWeather_NaN_WindSpeed_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", float.NaN, 90f));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetWeather_NaN_WindDirection_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, float.NaN));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetWeather_Infinity_WindDirection_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, float.PositiveInfinity));
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetWeather_Wraps_WindDirection_Above_360()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, 450f)) as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void SetWeather_Wraps_Negative_WindDirection()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, -90f)) as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    // ─── Backhaul ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void SetBackhaul_Killed_True_Returns_Ok_And_Persists()
+    {
+        var (ctrl, sim) = CreateController();
+        var result = ctrl.SetBackhaul(new BackhaulRequest(Killed: true)) as OkObjectResult;
+        result.Should().NotBeNull();
+        sim.IsBackhaulKilled.Should().BeTrue();
+    }
+
+    [Fact]
+    public void SetBackhaul_Killed_False_Restores_Link()
+    {
+        var (ctrl, sim) = CreateController();
+        ctrl.SetBackhaul(new BackhaulRequest(Killed: true));
+        ctrl.SetBackhaul(new BackhaulRequest(Killed: false));
+        sim.IsBackhaulKilled.Should().BeFalse();
+    }
+
+    [Fact]
+    public void GetBackhaul_Returns_Current_State()
+    {
+        var (ctrl, _) = CreateController();
+        ctrl.SetBackhaul(new BackhaulRequest(Killed: true));
+        var result = ctrl.GetBackhaul() as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    // ─── Terrain Preset ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("alpine")]
+    [InlineData("ridgeline")]
+    [InlineData("coastal")]
+    [InlineData("canyon")]
+    [InlineData("dunes")]
+    public void SetTerrainPreset_KnownKey_Returns_Ok(string key)
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetTerrainPreset(key) as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void SetTerrainPreset_Is_Case_Insensitive()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetTerrainPreset("ALPINE") as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void SetTerrainPreset_Unknown_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.SetTerrainPreset("mars-crater");
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    // ─── Heightmap ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void SetHeightmap_Valid_Payload_Returns_Ok()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0,
+            Cells: [0f, 1f, 2f, 3f]);
+        var result = ctrl.SetHeightmap(payload) as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void SetHeightmap_Empty_Cells_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0, Cells: []);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_Null_Cells_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0, Cells: null!);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_NonPositive_Rows_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 0, Cols: 2, Width: 10.0, Depth: 10.0, Cells: [0f, 1f]);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_NonPositive_Cols_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 0, Width: 10.0, Depth: 10.0, Cells: [0f, 1f]);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_Dimension_Above_Cap_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 4097, Cols: 1, Width: 10.0, Depth: 10.0, Cells: new float[1]);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_Cells_Length_Mismatch_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0,
+            Cells: [0f, 1f, 2f]);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_NonPositive_Width_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 2, Width: 0.0, Depth: 10.0,
+            Cells: [0f, 1f, 2f, 3f]);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetHeightmap_NonPositive_Depth_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        var payload = new SimController.HeightmapPayload(
+            Rows: 2, Cols: 2, Width: 10.0, Depth: -1.0,
+            Cells: [0f, 1f, 2f, 3f]);
+        var result = ctrl.SetHeightmap(payload);
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void ClearHeightmap_Returns_Ok()
+    {
+        var (ctrl, _) = CreateController();
+        var result = ctrl.ClearHeightmap() as OkObjectResult;
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void HeightmapPayload_Stores_All_Properties()
+    {
+        var payload = new SimController.HeightmapPayload(
+            Rows: 3, Cols: 4, Width: 5.5, Depth: 6.5,
+            Cells: [0f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f, 11f]);
+        payload.Rows.Should().Be(3);
+        payload.Cols.Should().Be(4);
+        payload.Width.Should().Be(5.5);
+        payload.Depth.Should().Be(6.5);
+        payload.Cells.Should().HaveCount(12);
     }
 }

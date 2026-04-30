@@ -25,10 +25,6 @@ namespace ResQ.Viz.Web.Hubs;
 /// Client-callable methods: none (server pushes only).
 /// Server-to-client methods:
 ///   - ReceiveFrame(VizFrame frame) — broadcast on every 6th simulation tick (~10 Hz).
-///   - DroneAdded(string droneId) — raised when a drone is added to the world.
-///   - DroneRemoved(string droneId) — raised when a drone is removed from the world.
-///   - Detection(object detection) — raised when a drone detects a target.
-///   - HazardUpdate(object hazard) — raised when a hazard changes state.
 /// </summary>
 public sealed class VizHub(ILogger<VizHub> logger) : Hub
 {

@@ -24,7 +24,7 @@ namespace ResQ.Viz.Web.Services;
 /// and allows hot-swapping the weather configuration at runtime without rebuilding
 /// the <see cref="ResQ.Simulation.Engine.Core.SimulationWorld"/>.
 /// </summary>
-internal sealed class UpdatableWeatherSystem : IWeatherSystem
+public sealed class UpdatableWeatherSystem : IWeatherSystem
 {
     // volatile ensures the reference swap is visible across threads without a full lock.
     private volatile WeatherSystem _inner;
