@@ -124,7 +124,7 @@
             <div class="hud-action-group">
                 <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel"   title="Toggle panel [Tab]"><span aria-hidden="true">☰</span></button>
                 <button id="hud-hints-toggle"    class="hud-action" type="button" aria-label="Keyboard shortcuts"    aria-pressed="false" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
-                <button id="hud-settings-toggle" class="hud-action" type="button" aria-label="Settings"              title="Settings"><span aria-hidden="true">⚙</span></button>
+                <button id="hud-settings-toggle" class="hud-action" type="button" aria-label="Settings"              aria-expanded="false" aria-controls="settings-panel" title="Settings"><span aria-hidden="true">⚙</span></button>
             </div>
         </div>
     </header>
@@ -234,9 +234,9 @@
                     <option value="turbulent">Turbulent</option>
                 </select>
                 <label class="field-label" for="wind-speed">Speed · <span id="wind-speed-val">5</span> m/s</label>
-                <input type="range" id="wind-speed" min="0" max="30" value="5">
+                <input type="range" id="wind-speed" min="0" max="30" value="5" aria-describedby="wind-speed-val">
                 <label class="field-label" for="wind-dir">Direction · <span id="wind-dir-val">0</span>°</label>
-                <input type="range" id="wind-dir" min="0" max="359" value="0">
+                <input type="range" id="wind-dir" min="0" max="359" value="0" aria-describedby="wind-dir-val">
                 <button id="btn-weather" class="btn btn-block">Apply Weather</button>
             </div>
         </details>
@@ -344,7 +344,7 @@
         <label class="settings-row">
           <span>Bloom strength</span>
           <div class="settings-slider-row">
-            <input type="range" id="set-bloom-strength" min="0.05" max="1.0" step="0.05" value="0.55">
+            <input type="range" id="set-bloom-strength" min="0.05" max="1.0" step="0.05" value="0.55" aria-describedby="set-bloom-strength-val">
             <span class="settings-val" id="set-bloom-strength-val">0.55</span>
           </div>
         </label>
@@ -357,7 +357,7 @@
         <label class="settings-row">
           <span>Fog density</span>
           <div class="settings-slider-row">
-            <input type="range" id="set-fog" min="0" max="100" step="1" value="25">
+            <input type="range" id="set-fog" min="0" max="100" step="1" value="25" aria-describedby="set-fog-val">
             <span class="settings-val" id="set-fog-val">25</span>
           </div>
         </label>
@@ -369,7 +369,7 @@
         <label class="settings-row">
           <span>Fly speed</span>
           <div class="settings-slider-row">
-            <input type="range" id="set-fly-speed" min="5" max="200" step="5" value="20">
+            <input type="range" id="set-fly-speed" min="5" max="200" step="5" value="20" aria-describedby="set-fly-speed-val">
             <span class="settings-val" id="set-fly-speed-val">20</span>
           </div>
         </label>
@@ -377,7 +377,7 @@
         <label class="settings-row">
           <span>Field of view</span>
           <div class="settings-slider-row">
-            <input type="range" id="set-fov" min="40" max="100" step="5" value="60">
+            <input type="range" id="set-fov" min="40" max="100" step="5" value="60" aria-describedby="set-fov-val">
             <span class="settings-val" id="set-fov-val">60°</span>
           </div>
         </label>
@@ -419,7 +419,7 @@
         <label class="settings-row">
           <span>Battery warn at</span>
           <div class="settings-slider-row">
-            <input type="range" id="set-battery-warn" min="5" max="40" step="5" value="20">
+            <input type="range" id="set-battery-warn" min="5" max="40" step="5" value="20" aria-describedby="set-battery-warn-val">
             <span class="settings-val" id="set-battery-warn-val">20%</span>
           </div>
         </label>

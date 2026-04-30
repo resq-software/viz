@@ -39,7 +39,7 @@
   --text:         #e6edf3;
   --text-dim:     #b3bcc8;
   --text-muted:   #7a8593;
-  --text-faint:   #4f5866;
+  --text-faint:   #6b7480;  /* lifted from #4f5866 (2.77:1) to meet WCAG 1.4.3 AA on --bg */
 
   /* semantic */
   --accent:       #5cb6ff;

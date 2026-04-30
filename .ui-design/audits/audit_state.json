@@ -1,19 +1,21 @@
 {
-  "audit_id": "viz_client_20260417_011500",
+  "audit_id": "viz_client_20260417_021000",
   "target": "src/ResQ.Viz.Web/client/",
   "wcag_level": "AA",
   "focus_areas": ["all"],
   "status": "complete",
-  "started_at": "2026-04-17T01:15:00Z",
-  "completed_at": "2026-04-17T01:18:00Z",
+  "started_at": "2026-04-17T02:10:00Z",
+  "completed_at": "2026-04-17T02:14:00Z",
   "files_audited": 7,
   "compliance_status": "needs_improvement",
   "issues_found": {
-    "critical": 2,
-    "serious": 4,
-    "moderate": 3,
-    "minor": 2
+    "critical": 0,
+    "serious": 2,
+    "moderate": 1,
+    "minor": 1
   },
-  "criteria_checked": 22,
-  "criteria_passed": 12
+  "criteria_checked": 26,
+  "criteria_passed": 22,
+  "previous_audit": "viz_client_20260417_011500",
+  "previous_issues_resolved": 10
 }

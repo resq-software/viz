@@ -114,18 +114,26 @@ const settingsToggle = document.getElementById('hud-settings-toggle');
 const settingsClose  = document.getElementById('settings-close');
 const settingsReset  = document.getElementById('settings-reset');
 
+function _setSettingsVisible(v: boolean): void {
+    settingsPanel?.classList.toggle('open', v);
+    // Mirror visual state into AT-visible attributes so screen readers don't
+    // see the panel as permanently hidden (it ships with aria-hidden="true").
+    settingsPanel?.setAttribute('aria-hidden', String(!v));
+    settingsToggle?.setAttribute('aria-expanded', String(v));
+}
+
 settingsToggle?.addEventListener('click', () => {
-    settingsPanel?.classList.toggle('open');
+    _setSettingsVisible(!settingsPanel?.classList.contains('open'));
 });
 settingsClose?.addEventListener('click', () => {
-    settingsPanel?.classList.remove('open');
+    _setSettingsVisible(false);
 });
 
 document.addEventListener('click', (e: MouseEvent) => {
     if (!settingsPanel?.classList.contains('open')) return;
     if (settingsPanel.contains(e.target as Node)) return;
     if (settingsToggle?.contains(e.target as Node)) return;
-    settingsPanel.classList.remove('open');
+    _setSettingsVisible(false);
 });
 
 // Bloom controls
@@ -275,9 +283,11 @@ function _switchPreset(key: PresetKey): void {
     terrain = new Terrain(viz.scene, key);
     const p = PRESETS[key];
     viz.setAtmosphere(p.fogColor, p.fogDensity);
-    // Update active card highlight
+    // Update active card highlight + AT-visible pressed state
     document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
-        el.classList.toggle('active', el.dataset['preset'] === key);
+        const active = el.dataset['preset'] === key;
+        el.classList.toggle('active', active);
+        el.setAttribute('aria-pressed', String(active));
     });
     // Notify backend so drone physics clamp to the correct terrain
     apiPostOrWarn(`/api/sim/preset/${key}`, undefined, `preset ${key}`);
@@ -328,9 +338,13 @@ document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
     });
 });
 
-// Mark the initial preset card as active
-document.querySelector<HTMLElement>('.terrain-card[data-preset="alpine"]')
-    ?.classList.add('active');
+// Mark the initial preset card as active. Set aria-pressed on every card so
+// AT users hear "pressed"/"not pressed" instead of nothing.
+document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
+    const active = el.dataset['preset'] === 'alpine';
+    el.classList.toggle('active', active);
+    el.setAttribute('aria-pressed', String(active));
+});
 
 // Warm the geometry cache from sessionStorage in the background.
 // This makes repeat-switches to already-visited presets near-instant.
