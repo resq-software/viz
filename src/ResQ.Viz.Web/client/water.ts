@@ -25,17 +25,24 @@ const _normalsPlaceholder: THREE.Texture = (() => {
 })();
 
 let _instance: Water | null = null;
+let _cachedNormals: THREE.Texture | null = null;
 let _normalsLoadStarted = false;
 
 async function _loadNormals(): Promise<void> {
-    if (_normalsLoadStarted) return;
+    if (_normalsLoadStarted || _cachedNormals) return;
     _normalsLoadStarted = true;
     try {
         const tex = await loadTexture('/textures/waternormals.jpg');
         tex.wrapS = THREE.RepeatWrapping;
         tex.wrapT = THREE.RepeatWrapping;
-        if (_instance) {
-            const u = _instance.material.uniforms['normalSampler'];
+        // Cache so subsequent buildWaterMesh calls reuse the loaded texture
+        // instead of reverting to the placeholder during preset rebuilds.
+        // Read _instance once after await so a swap mid-load can't leave a
+        // dropped texture or hit a disposed instance.
+        _cachedNormals = tex;
+        const target = _instance;
+        if (target) {
+            const u = target.material.uniforms['normalSampler'];
             if (u) u.value = tex;
         }
     } catch (err) {
@@ -58,7 +65,7 @@ export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: bo
     const water = new Water(geo, {
         textureWidth:    256,   // keep the reflection render cheap (vs 512/1024)
         textureHeight:   256,
-        waterNormals:    _normalsPlaceholder,
+        waterNormals:    _cachedNormals ?? _normalsPlaceholder,
         sunDirection:    new THREE.Vector3(0.45, 0.88, 0.25),
         sunColor:        0xfff8e7,   // match the directional sun in scene.ts
         waterColor:      0x102838,   // cooler than the old MeshStandardMaterial hex
@@ -67,7 +74,7 @@ export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: bo
     });
     water.position.y = opts.waterLevel;
     _instance = water;
-    void _loadNormals();
+    if (!_cachedNormals) void _loadNormals();
     return water;
 }
 
