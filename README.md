@@ -395,6 +395,21 @@ git submodule update --init --recursive
 
 ---
 
+## Privacy & Data Handling
+
+ResQ Viz processes only **simulated** drone telemetry. The web app does not:
+
+- collect personal data, account details, or contact information
+- set tracking cookies or run analytics
+- transmit data to third parties
+- store user-generated content beyond an in-memory simulation snapshot
+
+Frame data is broadcast over SignalR to whatever clients are connected to the local server; nothing leaves the host. Because no personal data is processed and no payment or health data is involved, GDPR / HIPAA / PCI-DSS controls are out of scope for this repository. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+A CycloneDX [SBOM](https://cyclonedx.org/) is generated on every push to `main`, every PR, and attached to each release — see the `sbom` workflow.
+
+---
+
 ## License
 
 Apache-2.0 — Copyright 2026 ResQ Systems, Inc.
