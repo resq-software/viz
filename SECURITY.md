@@ -33,7 +33,7 @@ We aim to acknowledge reports within **3 business days** and provide an initial 
 | ASP.NET Core host (`src/ResQ.Viz.Web/`) | Bundled SDK in the `lib/dotnet-sdk` submodule — report at <https://github.com/resq-software/dotnet-sdk> |
 | TypeScript frontend (`src/ResQ.Viz.Web/client/`) | Third-party dependencies — report upstream |
 | CI/CD configuration in `.github/` | Demo content / synthetic scenario data |
-| Static assets served from `wwwroot/` |  |
+| Static assets served from src/ResQ.Viz.Web/wwwroot/ |  |
 
 ## Supported Versions
 
