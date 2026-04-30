@@ -38,7 +38,7 @@ Press `5` to load `multi-agency-sar`. Press `K` to kill the backhaul. Press `Ctr
 - **Drone interaction** — click to select, WASD/QE to nudge in world space, click terrain to issue GoTo command, `F` to follow
 - **Visual overlays** — position trails, altitude halos, velocity component arrows, mesh topology links, hazard zone discs, detection markers
 - **Settings persistence** — bloom, fog density, FOV, fly speed, trail length, detection rings, battery warning threshold; stored in `localStorage`
-- **WebGPU sensor primitive** — brick-map raymarcher voxelizes the heightfield at boot (and rebuilds when the terrain preset switches or a heightmap override is installed) and serves both **drone-pair line-of-sight** (mesh links visibly fade when terrain occludes them) and **per-drone LiDAR scans** (point clouds emanate from each drone, follow yaw/pitch/roll, optional mast/gimbal mount offsets). One compute kernel, two sensor consumers; ring-buffered async dispatch with `peakSlotDepth` / `raysOutsideWorld` audit counters; press `i` for the live stats overlay.
+- **WebGPU sensor primitive** — brick-map raymarcher voxelizes the heightfield at boot, then rebuilds when the terrain preset switches or a heightmap override is installed. It serves both **drone-pair line-of-sight** (mesh links visibly fade when terrain occludes them) and **per-drone LiDAR scans** (point clouds emanate from each drone, follow yaw/pitch/roll, optional mast/gimbal mount offsets). One compute kernel, two sensor consumers; ring-buffered async dispatch with `peakSlotDepth` / `raysOutsideWorld` audit counters; press `i` for the live stats overlay.
 - **Lazy-loaded SignalR** — the SignalR runtime ships as a separate ~55 KB chunk and is fetched on first connect, keeping the main bundle below the 800 KiB CI budget
 
 ---
@@ -280,7 +280,7 @@ viz/
 │   ├── Models/                  Request / response records
 │   ├── Services/                SimulationService · VizFrameBuilder · ScenarioService
 │   ├── styles/main.css          CSS custom properties, glassmorphism panels, HUD
-│   └── wwwroot/                 Vite build output (committed for zero-install deploys)
+│   └── wwwroot/                 Vite build output (gitignored; produced by `dotnet build` and uploaded as the `viz-wwwroot-{sha}` CI artifact for deploys)
 │
 ├── tests/ResQ.Viz.Web.Tests/    xUnit + FluentAssertions + Moq
 └── lib/dotnet-sdk/              Git submodule — ResQ .NET SDK
@@ -307,7 +307,7 @@ viz/
 
 **Weather modes**: `calm` · `steady` · `turbulent`
 
-**Scenarios**: `single` · `swarm-5` · `swarm-20` · `sar`
+**Scenarios**: `single` · `swarm-5` · `swarm-20` · `sar` · `multi-agency-sar`
 
 ---
 
@@ -337,6 +337,7 @@ viz/
 | `V` | Toggle velocity component arrows |
 | `H` | Toggle altitude halos |
 | `G` | Toggle formation lines |
+| `[` / `]` | Cycle drone selection (severity-sorted to match the telemetry strip) |
 | `Space` | Stop simulation |
 | `R` | Reset simulation |
 | `Tab` | Toggle sidebar |
@@ -344,6 +345,10 @@ viz/
 | `2` | Scenario: swarm-5 |
 | `3` | Scenario: swarm-20 |
 | `4` | Scenario: SAR |
+| `5` | Scenario: multi-agency-sar (12 drones across skydio · autel · anzu) |
+| `Shift` + `1` … `5` | Camera presets: overview · tactical · cockpit · ground · investor |
+| `K` | Toggle simulated backhaul kill (mesh-only degradation banner) |
+| `Ctrl` + `Shift` + `R` | Toggle investor-mode cinematic playback for screen recording |
 | `?` | Toggle keyboard shortcuts panel |
 | `i` | Toggle WebGPU sensor-stack stats overlay (queries, peakSlotDepth, raysOutsideWorld) |
 

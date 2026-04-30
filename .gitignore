@@ -34,6 +34,9 @@ __pycache__/
 # Playwright / browser automation logs
 .playwright-mcp/
 
+# Local Claude Code state (per-project settings, scheduled-task locks)
+.claude/
+
 # Security assessment deliverables (contain internal IPs, exploitation evidence)
 deliverables/
 
