@@ -16,6 +16,7 @@
 
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using ResQ.Viz.Web.Services;
 using Xunit;
 
@@ -24,7 +25,6 @@ namespace ResQ.Viz.Web.Tests;
 /// <summary>Tests for <see cref="ScenarioService"/>.</summary>
 public class ScenarioServiceTests
 {
-
     private static ScenarioService CreateScenarioService()
     {
         var config = new ConfigurationBuilder()
@@ -154,7 +154,8 @@ public class ScenarioServiceTests
         return new ScenarioService(config);
     }
 
-    private static SimulationService CreateSimulationService() => TestSimulationFactory.Create();
+    private static SimulationRoom CreateRoom() =>
+        new(id: "test-room", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
 
     [Fact]
     public void ScenarioNames_Contains_All_Four_Builtins()
@@ -167,81 +168,81 @@ public class ScenarioServiceTests
     public void TryRun_UnknownScenario_Returns_False()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
-        svc.TryRun("does-not-exist", sim).Should().BeFalse();
-        sim.GetSnapshot().Should().BeEmpty();
+        var room = CreateRoom();
+        svc.TryRun("does-not-exist", room).Should().BeFalse();
+        room.GetSnapshot().Should().BeEmpty();
     }
 
     [Fact]
     public void TryRun_Single_Returns_True_And_Spawns_One_Drone()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        var result = svc.TryRun("single", sim);
+        var result = svc.TryRun("single", room);
 
         result.Should().BeTrue();
-        sim.GetSnapshot().Should().HaveCount(1);
+        room.GetSnapshot().Should().HaveCount(1);
     }
 
     [Fact]
     public void TryRun_Swarm5_Spawns_Five_Drones()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("swarm-5", sim).Should().BeTrue();
-        sim.GetSnapshot().Should().HaveCount(5);
+        svc.TryRun("swarm-5", room).Should().BeTrue();
+        room.GetSnapshot().Should().HaveCount(5);
     }
 
     [Fact]
     public void TryRun_Swarm20_Spawns_Twenty_Drones()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("swarm-20", sim).Should().BeTrue();
-        sim.GetSnapshot().Should().HaveCount(20);
+        svc.TryRun("swarm-20", room).Should().BeTrue();
+        room.GetSnapshot().Should().HaveCount(20);
     }
 
     [Fact]
     public void TryRun_Sar_Spawns_Three_Drones()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("sar", sim).Should().BeTrue();
-        sim.GetSnapshot().Should().HaveCount(3);
+        svc.TryRun("sar", room).Should().BeTrue();
+        room.GetSnapshot().Should().HaveCount(3);
     }
 
     [Fact]
     public void TryRun_Is_Case_Insensitive()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("SINGLE", sim).Should().BeTrue();
-        sim.GetSnapshot().Should().HaveCount(1);
+        svc.TryRun("SINGLE", room).Should().BeTrue();
+        room.GetSnapshot().Should().HaveCount(1);
     }
 
     [Fact]
     public void TryRun_Single_Drone_Has_Expected_Id()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("single", sim);
-        sim.GetSnapshot()[0].Id.Should().Be("drone-1");
+        svc.TryRun("single", room);
+        room.GetSnapshot()[0].Id.Should().Be("drone-1");
     }
 
     [Fact]
     public void TryRun_Swarm5_Drones_Have_Sequential_Ids()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("swarm-5", sim);
-        var ids = sim.GetSnapshot().Select(d => d.Id).ToList();
+        svc.TryRun("swarm-5", room);
+        var ids = room.GetSnapshot().Select(d => d.Id).ToList();
         ids.Should().BeEquivalentTo(["drone-1", "drone-2", "drone-3", "drone-4", "drone-5"]);
     }
 
@@ -249,12 +250,12 @@ public class ScenarioServiceTests
     public void TryRun_After_Reset_Succeeds()
     {
         var svc = CreateScenarioService();
-        var sim = CreateSimulationService();
+        var room = CreateRoom();
 
-        svc.TryRun("single", sim);
-        sim.Reset(); // engine enforces unique IDs, so reset before re-running
-        svc.TryRun("single", sim);
+        svc.TryRun("single", room);
+        room.Reset();
+        svc.TryRun("single", room);
 
-        sim.GetSnapshot().Should().HaveCount(1);
+        room.GetSnapshot().Should().HaveCount(1);
     }
 }

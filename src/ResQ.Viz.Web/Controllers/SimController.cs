@@ -18,6 +18,7 @@ using System.Numerics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using ResQ.Simulation.Engine.Physics;
+using ResQ.Viz.Web.Filters;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 
@@ -25,48 +26,43 @@ namespace ResQ.Viz.Web.Controllers;
 
 /// <summary>
 /// REST API controller for simulation control, drone management, weather, and scenarios.
+/// Every action operates on the <see cref="SimulationRoom"/> resolved from the
+/// caller's <c>viz_session</c> cookie by <see cref="RequireRoomAttribute"/>.
 /// </summary>
 [ApiController]
 [Route("api/sim")]
 [EnableRateLimiting("general")]
+[RequireRoom]
 public sealed class SimController : ControllerBase
 {
     private const int MaxDroneCount = 50;
-
-    // DoS guardrail for POST /api/sim/heightmap. Well past the ~1024² sweet
-    // spot the viz actually renders; caps the grid at 64 MB allocated memory.
     private const int MaxHeightmapDimension = 4096;
 
-    private readonly SimulationService _sim;
     private readonly ScenarioService _scenarios;
     private readonly ILogger<SimController> _logger;
 
-    /// <summary>
-    /// Initialises the controller with required services.
-    /// </summary>
-    /// <param name="sim">The background simulation service.</param>
-    /// <param name="scenarios">The scenario preset service.</param>
-    /// <param name="logger">Logger instance.</param>
-    public SimController(SimulationService sim, ScenarioService scenarios, ILogger<SimController> logger)
+    /// <summary>Initialises the controller with required services.</summary>
+    public SimController(ScenarioService scenarios, ILogger<SimController> logger)
     {
-        _sim = sim;
         _scenarios = scenarios;
         _logger = logger;
     }
 
-    /// <summary>Resumes/starts the simulation (no-op: sim always runs as a BackgroundService).</summary>
+    private SimulationRoom Room => HttpContext.Room();
+
+    /// <summary>Resumes/starts the simulation (no-op).</summary>
     [HttpPost("start")]
     public IActionResult Start()
     {
-        _logger.LogInformation("Simulation start requested (sim always running as BackgroundService).");
+        _logger.LogInformation("Simulation start requested for room {RoomId}.", Room.Id);
         return Ok(new { status = "running" });
     }
 
-    /// <summary>Pauses the simulation (no-op in Phase 1: sim always runs as a BackgroundService).</summary>
+    /// <summary>Pauses the simulation (no-op).</summary>
     [HttpPost("stop")]
     public IActionResult Stop()
     {
-        _logger.LogInformation("Simulation stop requested (no-op in Phase 1).");
+        _logger.LogInformation("Simulation stop requested for room {RoomId}.", Room.Id);
         return Ok(new { status = "running" });
     }
 
@@ -75,13 +71,11 @@ public sealed class SimController : ControllerBase
     [EnableRateLimiting("destructive")]
     public IActionResult Reset()
     {
-        _sim.Reset();
-        _logger.LogInformation("Simulation reset.");
+        Room.Reset();
         return Ok(new { status = "reset" });
     }
 
     /// <summary>Spawns a new drone at the specified position.</summary>
-    /// <param name="request">Spawn parameters including position and optional model.</param>
     [HttpPost("drone")]
     [EnableRateLimiting("destructive")]
     public IActionResult SpawnDrone([FromBody] SpawnDroneRequest request)
@@ -92,24 +86,24 @@ public sealed class SimController : ControllerBase
         if (request.Position.Any(v => float.IsNaN(v) || float.IsInfinity(v)))
             return BadRequest(new { error = "Position contains invalid values." });
 
-        if (_sim.GetSnapshot().Count >= MaxDroneCount)
+        var room = Room;
+        if (room.GetSnapshot().Count >= MaxDroneCount)
             return StatusCode(429, new { error = $"Maximum drone count ({MaxDroneCount}) reached." });
 
         var id = $"drone-{Guid.NewGuid():N}"[..12];
         var position = new Vector3(request.Position[0], request.Position[1], request.Position[2]);
-        _sim.AddDrone(id, position);
+        room.AddDrone(id, position);
 
-        _logger.LogInformation("Spawned drone {DroneId} at {Position}.", id, position);
+        _logger.LogInformation("Spawned drone {DroneId} at {Position} in room {RoomId}.", id, position, room.Id);
         return Ok(new { droneId = id });
     }
 
     /// <summary>Sends a flight command to the specified drone.</summary>
-    /// <param name="id">Target drone identifier.</param>
-    /// <param name="request">Command parameters.</param>
     [HttpPost("drone/{id}/cmd")]
     public IActionResult SendCommand(string id, [FromBody] DroneCommandRequest request)
     {
-        var snapshot = _sim.GetSnapshot();
+        var room = Room;
+        var snapshot = room.GetSnapshot();
         if (!snapshot.Any(d => d.Id == id))
             return NotFound(new { error = $"Drone '{id}' not found." });
 
@@ -120,7 +114,7 @@ public sealed class SimController : ControllerBase
             "land" => FlightCommand.Land(),
             "goto" when request.Target is { Length: 3 } =>
                 FlightCommand.GoTo(new Vector3(request.Target[0], request.Target[1], request.Target[2])),
-            "goto" => default, // handled below
+            "goto" => default,
             _ => default,
         };
 
@@ -133,13 +127,13 @@ public sealed class SimController : ControllerBase
         if (request.Type.ToLowerInvariant() is not ("hover" or "rtl" or "land" or "goto"))
             return BadRequest(new { error = $"Unknown command type '{request.Type}'. Valid types: hover, goto, rtl, land." });
 
-        _sim.SendCommand(id, command);
-        _logger.LogInformation("Sent command {Type} to drone {DroneId}.", Sanitize(request.Type), Sanitize(id));
+        room.SendCommand(id, command);
+        _logger.LogInformation("Sent command {Type} to drone {DroneId} in room {RoomId}.",
+            Sanitize(request.Type), Sanitize(id), room.Id);
         return Ok(new { droneId = id, command = request.Type });
     }
 
     /// <summary>Updates the weather simulation parameters.</summary>
-    /// <param name="request">New weather configuration.</param>
     [HttpPost("weather")]
     public IActionResult SetWeather([FromBody] WeatherRequest request)
     {
@@ -150,48 +144,37 @@ public sealed class SimController : ControllerBase
             return BadRequest(new { error = "WindDirection contains invalid values." });
 
         var direction = ((request.WindDirection % 360f) + 360f) % 360f;
-        _sim.SetWeather(request.Mode, request.WindSpeed, direction);
-        _logger.LogInformation("Weather updated: mode={Mode}, speed={Speed}, dir={Direction}.",
-            Sanitize(request.Mode), request.WindSpeed, direction);
+        Room.SetWeather(request.Mode, request.WindSpeed, direction);
         return Ok(new { mode = request.Mode, windSpeed = request.WindSpeed, windDirection = direction });
     }
 
-    /// <summary>Injects a fault into a drone (Phase 1: logged only, no actual fault simulation).</summary>
-    /// <param name="request">Fault specification.</param>
+    /// <summary>Injects a fault into a drone (logged only).</summary>
     [HttpPost("fault")]
     [EnableRateLimiting("destructive")]
     public IActionResult InjectFault([FromBody] FaultRequest request)
     {
-        var snapshot = _sim.GetSnapshot();
+        var snapshot = Room.GetSnapshot();
         if (!snapshot.Any(d => d.Id == request.DroneId))
             return NotFound(new { error = $"Drone '{request.DroneId}' not found." });
 
-        _logger.LogWarning("Fault injection requested: drone={DroneId}, type={FaultType}. (Phase 1: no-op)",
-            Sanitize(request.DroneId), Sanitize(request.Type));
+        _logger.LogWarning("Fault injection requested in room {RoomId}: drone={DroneId}, type={FaultType}.",
+            Room.Id, Sanitize(request.DroneId), Sanitize(request.Type));
         return Ok(new { droneId = request.DroneId, faultType = request.Type, status = "logged" });
     }
 
-    /// <summary>
-    /// Toggles the simulated backhaul link. When killed, the swarm is
-    /// reported as <see cref="ResQ.Viz.Web.Models.MeshVizState.Partitioned"/>
-    /// in subsequent viz frames. No effect on physics — this is a demo
-    /// signal for the coordination-degradation narrative.
-    /// </summary>
-    /// <param name="request">Backhaul state toggle.</param>
+    /// <summary>Toggles the simulated backhaul link.</summary>
     [HttpPost("mesh/backhaul")]
     [EnableRateLimiting("destructive")]
     public IActionResult SetBackhaul([FromBody] BackhaulRequest request)
     {
-        _sim.SetBackhaulKilled(request.Killed);
+        Room.SetBackhaulKilled(request.Killed);
         return Ok(new { killed = request.Killed });
     }
 
     /// <summary>Returns the current simulated backhaul-link state.</summary>
     [HttpGet("mesh/backhaul")]
-    public IActionResult GetBackhaul() => Ok(new { killed = _sim.IsBackhaulKilled });
+    public IActionResult GetBackhaul() => Ok(new { killed = Room.IsBackhaulKilled });
 
-    // Strips CR/LF from user-supplied strings before they reach log sinks to prevent log forging.
-    // Truncates to 200 characters to prevent excessively long values in logs.
     private static string Sanitize(string? s)
     {
         if (s is null) return string.Empty;
@@ -203,21 +186,13 @@ public sealed class SimController : ControllerBase
 
     /// <summary>Returns the current simulation state as a list of drone snapshots.</summary>
     [HttpGet("state")]
-    public IActionResult GetState()
-    {
-        var snapshot = _sim.GetSnapshot();
-        return Ok(snapshot);
-    }
+    public IActionResult GetState() => Ok(Room.GetSnapshot());
 
     /// <summary>Lists all available scenario preset names.</summary>
     [HttpGet("scenarios")]
-    public IActionResult GetScenarios()
-    {
-        return Ok(_scenarios.ScenarioNames);
-    }
+    public IActionResult GetScenarios() => Ok(_scenarios.ScenarioNames);
 
-    /// <summary>Runs a named scenario preset, replacing whatever was running.</summary>
-    /// <param name="name">Scenario name (e.g. "single", "swarm-5", "swarm-20", "sar").</param>
+    /// <summary>Runs a named scenario preset.</summary>
     [HttpPost("scenario/{name}")]
     [EnableRateLimiting("destructive")]
     public IActionResult RunScenario(string name)
@@ -225,15 +200,15 @@ public sealed class SimController : ControllerBase
         if (!_scenarios.HasScenario(name))
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
-        _sim.Reset();
-        _scenarios.TryRun(name, _sim);
-        _sim.NotifyScenario(name);
-        _logger.LogInformation("Scenario '{Name}' started.", Sanitize(name));
+        var room = Room;
+        room.Reset();
+        _scenarios.TryRun(name, room);
+        room.NotifyScenario(name);
+        _logger.LogInformation("Scenario '{Name}' started in room {RoomId}.", Sanitize(name), room.Id);
         return Ok(new { scenario = name, status = "started" });
     }
 
-    /// <summary>Switches the terrain preset used for drone altitude clamping.</summary>
-    /// <param name="key">Preset key: alpine, ridgeline, coastal, canyon, or dunes.</param>
+    /// <summary>Switches the terrain preset.</summary>
     [HttpPost("preset/{key}")]
     public IActionResult SetTerrainPreset(string key)
     {
@@ -243,17 +218,11 @@ public sealed class SimController : ControllerBase
         if (!validKeys.Contains(key))
             return BadRequest(new { error = $"Unknown preset '{key}'. Valid presets: alpine, ridgeline, coastal, canyon, dunes." });
 
-        _sim.SetTerrainPreset(key);
-        _logger.LogInformation("Terrain preset set to '{Key}'.", Sanitize(key));
+        Room.SetTerrainPreset(key);
         return Ok(new { preset = key });
     }
 
-    /// <summary>
-    /// Installs a client-uploaded heightmap (row-major <paramref name="payload"/>.Cells,
-    /// length == Rows × Cols) as the authoritative terrain. Drone altitude clamping
-    /// switches to the DEM immediately so drones physically track the imported
-    /// terrain the viz renders.
-    /// </summary>
+    /// <summary>Installs a client-uploaded heightmap as the authoritative terrain.</summary>
     [HttpPost("heightmap")]
     public IActionResult SetHeightmap([FromBody] HeightmapPayload payload)
     {
@@ -264,15 +233,12 @@ public sealed class SimController : ControllerBase
         if (payload.Rows > MaxHeightmapDimension || payload.Cols > MaxHeightmapDimension)
             return BadRequest(new { error = $"rows and cols must each be <= {MaxHeightmapDimension}" });
 
-        // Use long arithmetic so int32 overflow surfaces as a mismatch rather
-        // than silently passing the equality check with a wrapped value.
         long expectedLen = (long)payload.Rows * payload.Cols;
         if (payload.Cells.Length != expectedLen)
             return BadRequest(new { error = $"cells length {payload.Cells.Length} does not match rows*cols {expectedLen}" });
         if (payload.Width <= 0 || payload.Depth <= 0)
             return BadRequest(new { error = "width and depth must be positive metres" });
 
-        // Re-shape the flat payload into the float[,] HeightmapTerrain expects.
         var grid = new float[payload.Rows, payload.Cols];
         for (var r = 0; r < payload.Rows; r++)
         {
@@ -282,15 +248,15 @@ public sealed class SimController : ControllerBase
             }
         }
 
-        _sim.SetHeightmap(grid, payload.Width, payload.Depth);
+        Room.SetHeightmap(grid, payload.Width, payload.Depth);
         return Ok(new { rows = payload.Rows, cols = payload.Cols, width = payload.Width, depth = payload.Depth });
     }
 
-    /// <summary>Clears the heightmap override; procedural preset resumes.</summary>
+    /// <summary>Clears the heightmap override.</summary>
     [HttpDelete("heightmap")]
     public IActionResult ClearHeightmap()
     {
-        _sim.ClearHeightmap();
+        Room.ClearHeightmap();
         return Ok(new { cleared = true });
     }
 

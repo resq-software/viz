@@ -61,19 +61,19 @@ public sealed class ScenarioService
     public bool HasScenario(string name) => _scenarios.ContainsKey(name);
 
     /// <summary>
-    /// Runs a named scenario by spawning its drones into the simulation.
+    /// Runs a named scenario by spawning its drones into the simulation room.
     /// Returns <see langword="false"/> if the scenario name is not found.
     /// </summary>
     /// <param name="name">Scenario name.</param>
-    /// <param name="sim">The simulation service to spawn drones into.</param>
+    /// <param name="room">The simulation room to spawn drones into.</param>
     /// <returns><see langword="true"/> if the scenario was found and started; <see langword="false"/> otherwise.</returns>
-    public bool TryRun(string name, SimulationService sim)
+    public bool TryRun(string name, SimulationRoom room)
     {
         if (!_scenarios.TryGetValue(name, out var drones))
             return false;
 
         foreach (var entry in drones)
-            sim.AddDrone(entry.Id, entry.Pos, entry.Vendor);
+            room.AddDrone(entry.Id, entry.Pos, entry.Vendor);
 
         return true;
     }
