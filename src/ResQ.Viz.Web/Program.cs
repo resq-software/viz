@@ -3,6 +3,7 @@
 // (see https://www.apache.org/licenses/LICENSE-2.0)
 
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Vite.AspNetCore;
 
@@ -10,23 +11,36 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
 builder.Services.AddControllers();
 
-// Simulation domain singletons — kept transport-agnostic. Terrain, weather, and the
-// swarm coordinator share one instance so SimulationService and any future consumers
-// see the same source of truth rather than constructing private copies.
-builder.Services.AddSingleton<ResQ.Viz.Web.Services.TerrainNoiseService>();
-builder.Services.AddSingleton(_ => new ResQ.Viz.Web.Services.UpdatableWeatherSystem(
-    new ResQ.Simulation.Engine.Environment.WeatherConfig()));
-builder.Services.AddSingleton<ResQ.Viz.Web.Services.SwarmCoordinator>();
-
-// Frame transport: domain talks to IFrameBroadcaster; SignalR is the implementation.
-builder.Services.AddSingleton<
-    ResQ.Viz.Web.Services.IFrameBroadcaster,
-    ResQ.Viz.Web.Services.SignalRFrameBroadcaster>();
-
-builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationService>();
+// Per-room simulation: SimulationManager owns the dictionary of rooms and the
+// 60 Hz tick loop; RoomSessionService issues / validates the encrypted
+// HttpOnly cookie (viz_session) that binds a request to its room. The cookie
+// payload is signed+encrypted with IDataProtector (AES-256-CBC + HMAC-SHA256,
+// automatic key rotation) and bound to a /24 (IPv4) or /64 (IPv6) IP-prefix
+// bucket so a leaked cookie replayed from a different network is rejected.
+//
+// Each SimulationRoom owns its own TerrainNoiseService, UpdatableWeatherSystem,
+// and SwarmCoordinator — they are no longer process-wide singletons because
+// rooms must not share state. The IFrameBroadcaster abstraction introduced
+// for the legacy single-sim path is unused here: SimulationManager broadcasts
+// directly to per-room SignalR groups so it can fan out one frame per room
+// without an extra hop.
+builder.Services.AddDataProtection();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationService>());
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
+
+// Forwarded headers: when deployed behind a reverse proxy (nginx, Cloudflare,
+// load balancer), the proxy MUST be added to KnownProxies/KnownNetworks via
+// configuration — otherwise an attacker can spoof X-Forwarded-For and bypass
+// IP-bucket binding. The default (loopback only) is safe for direct exposure
+// and for proxies on the same host.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+});
+
 builder.Services.AddViteServices();
 
 builder.Services.AddRateLimiter(options =>
@@ -47,6 +61,12 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+// Forwarded headers must run before any middleware that inspects the client
+// IP — otherwise IP-bucket session binding sees the proxy's address rather
+// than the real client's. Default trust list is loopback only; production
+// behind a non-local proxy must add KnownProxies/KnownNetworks via config.
+app.UseForwardedHeaders();
 
 // Security headers must run BEFORE UseStaticFiles (which short-circuits for
 // physical assets) and UseRateLimiter (which can emit a 429 and skip the rest

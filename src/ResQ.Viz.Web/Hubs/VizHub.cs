@@ -16,32 +16,91 @@
 
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
-using ResQ.Viz.Web.Models;
+using ResQ.Viz.Web.Services;
 
 namespace ResQ.Viz.Web.Hubs;
 
 /// <summary>
-/// SignalR hub that streams simulation frames to browser clients.
-/// Client-callable methods: none (server pushes only).
+/// SignalR hub that streams simulation frames to browser clients. Per-room
+/// isolation: every connection is bound to the <see cref="SimulationRoom"/>
+/// resolved from the caller's <c>viz_session</c> cookie at handshake. Frames
+/// are broadcast to <see cref="RoomGroupName"/> rather than <c>Clients.All</c>
+/// so a connection only ever sees its own sim. Connections without a valid
+/// cookie are aborted before joining any group.
+///
 /// Server-to-client methods:
 ///   - ReceiveFrame(VizFrame frame) — broadcast on every 6th simulation tick (~10 Hz).
 /// </summary>
-public sealed class VizHub(ILogger<VizHub> logger) : Hub
+public sealed class VizHub : Hub
 {
-    /// <inheritdoc/>
-    public override Task OnConnectedAsync()
+    private readonly RoomSessionService _sessions;
+    private readonly ILogger<VizHub> _logger;
+
+    /// <summary>Initialises the hub.</summary>
+    public VizHub(RoomSessionService sessions, ILogger<VizHub> logger)
     {
-        logger.LogInformation("Client connected: {ConnectionId}.", Context.ConnectionId);
-        return base.OnConnectedAsync();
+        _sessions = sessions;
+        _logger = logger;
+    }
+
+    /// <summary>Computes the SignalR group name used to fan out a single room's frames.</summary>
+    public static string RoomGroupName(string roomId) => $"room:{roomId}";
+
+    /// <summary>HubCallerContext.Items key used to remember the room across the connection lifetime.</summary>
+    private const string ConnectionRoomKey = "sim.hub.room";
+
+    /// <inheritdoc/>
+    public override async Task OnConnectedAsync()
+    {
+        var http = Context.GetHttpContext();
+        if (http is null)
+        {
+            _logger.LogWarning("Hub handshake without HttpContext; aborting {ConnectionId}.", Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+
+        var cookie = http.Request.Cookies[RoomSessionService.CookieName];
+        var ip = http.Connection.RemoteIpAddress;
+        if (!_sessions.TryValidate(cookie, ip, out _, out var room) || room is null)
+        {
+            // No session, expired session, IP-bucket mismatch, or reaped room.
+            // Abort the WebSocket — the client will reconnect after refreshing
+            // the cookie via POST /api/sim/session.
+            _logger.LogWarning("Hub handshake rejected for {ConnectionId}: invalid or missing session cookie.",
+                Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+
+        // Track the room on the connection so OnDisconnectedAsync can decrement
+        // without re-validating the (possibly-expired-by-then) cookie.
+        Context.Items[ConnectionRoomKey] = room;
+        room.IncrementConnections();
+        await Groups.AddToGroupAsync(Context.ConnectionId, RoomGroupName(room.Id));
+
+        _logger.LogInformation("Client {ConnectionId} joined room {RoomId} (connections={Count}).",
+            Context.ConnectionId, room.Id, room.ConnectionCount);
+
+        await base.OnConnectedAsync();
     }
 
     /// <inheritdoc/>
-    public override Task OnDisconnectedAsync(Exception? exception)
+    public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        if (Context.Items.TryGetValue(ConnectionRoomKey, out var roomObj) && roomObj is SimulationRoom room)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, RoomGroupName(room.Id));
+            room.DecrementConnections();
+            _logger.LogInformation("Client {ConnectionId} left room {RoomId} (connections={Count}).",
+                Context.ConnectionId, room.Id, room.ConnectionCount);
+        }
+
         if (exception is null)
-            logger.LogInformation("Client disconnected: {ConnectionId}.", Context.ConnectionId);
+            _logger.LogInformation("Client disconnected: {ConnectionId}.", Context.ConnectionId);
         else
-            logger.LogWarning(exception, "Client disconnected with error: {ConnectionId}.", Context.ConnectionId);
-        return base.OnDisconnectedAsync(exception);
+            _logger.LogWarning(exception, "Client disconnected with error: {ConnectionId}.", Context.ConnectionId);
+
+        await base.OnDisconnectedAsync(exception);
     }
 }

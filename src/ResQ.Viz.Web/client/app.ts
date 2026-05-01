@@ -40,6 +40,28 @@ import { getLogger } from './log';
 
 const log = getLogger('app');
 
+// ─── Session bootstrap ────────────────────────────────────────────────────
+//
+// Every authenticated request (REST + SignalR) needs the `viz_session`
+// HttpOnly cookie. We POST /api/sim/session as the first thing the client
+// does and share the resolved promise across every other startup path so
+// nothing fires before the cookie lands. Idempotent: the server returns
+// the existing room id if the cookie is already valid for the caller's IP
+// bucket. The cookie itself is HttpOnly + Secure + SameSite=Strict, so JS
+// never sees it; only the response body's `roomId` (used for HUD display).
+
+async function _bootstrapSession(): Promise<boolean> {
+    const res = await apiPost('/api/sim/session');
+    if (res.success) {
+        log.info('session bootstrapped — viz_session cookie set');
+        return true;
+    }
+    log.warn('session bootstrap failed', { error: res.error.message });
+    return false;
+}
+
+const _sessionReady: Promise<boolean> = _bootstrapSession();
+
 // ─── Scene init ────────────────────────────────────────────────────────────
 
 const container = document.getElementById('scene-container');
@@ -311,6 +333,12 @@ void (async () => {
     _switchPreset(_currentPresetKey);
     log.info(`heightmap installed ${sampler.width}×${sampler.height} DEM — terrain rebuilt`);
 
+    // Wait for the session cookie to land before issuing any authenticated
+    // request. Skipping the upload on bootstrap failure is fine — the
+    // procedural terrain is already in place; only drone-ground contact
+    // would be off, which is corrected once the user reconnects.
+    if (!await _sessionReady) return;
+
     // Ship the decoded grid to the backend so drone physics clamp to the
     // same DEM the viz renders. Payload is large (1024² ≈ 4 MB JSON) but
     // fires exactly once per page load; timeout bumped so the send has
@@ -351,8 +379,11 @@ document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
 // This makes repeat-switches to already-visited presets near-instant.
 void geoCache.init();
 
-// Sync backend terrain preset to alpine on first load.
-apiPostOrWarn('/api/sim/preset/alpine', undefined, 'initial preset');
+// Sync backend terrain preset to alpine on first load. Defer until the
+// session cookie is set so the call doesn't 401.
+void _sessionReady.then(ok => {
+    if (ok) apiPostOrWarn('/api/sim/preset/alpine', undefined, 'initial preset');
+});
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
@@ -812,6 +843,11 @@ async function start(): Promise<void> {
     if (_starting) return;
     _starting = true;
     try {
+        if (!await _sessionReady) {
+            hud.setStatus('disconnected');
+            setTimeout(() => { _starting = false; void start(); }, 5000);
+            return;
+        }
         if (!connection) {
             // Lazy-load the SignalR runtime. Triggers a ~54 KB chunk
             // fetch on first start; subsequent reconnects reuse the

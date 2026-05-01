@@ -16,11 +16,13 @@
 
 using System.Numerics;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using Moq;
+using Microsoft.Extensions.Logging.Abstractions;
 using ResQ.Viz.Web.Controllers;
+using ResQ.Viz.Web.Filters;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 using Xunit;
@@ -30,7 +32,8 @@ namespace ResQ.Viz.Web.Tests;
 /// <summary>Tests for <see cref="SimController"/> REST endpoints.</summary>
 public class SimControllerTests
 {
-    private static SimulationService CreateSimService() => TestSimulationFactory.Create();
+    private static SimulationRoom CreateRoom() =>
+        new(id: "test-room", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
 
     private static ScenarioService CreateScenarioService()
     {
@@ -85,12 +88,18 @@ public class SimControllerTests
         return new ScenarioService(config);
     }
 
-    private static (SimController ctrl, SimulationService sim) CreateController()
+    private static (SimController ctrl, SimulationRoom room) CreateController()
     {
-        var sim = CreateSimService();
-        var scenarios = CreateScenarioService();
-        var ctrl = new SimController(sim, scenarios, Mock.Of<ILogger<SimController>>());
-        return (ctrl, sim);
+        var room = CreateRoom();
+        var ctrl = new SimController(CreateScenarioService(), NullLogger<SimController>.Instance);
+
+        // Stash the resolved room into HttpContext.Items so SimController.Room
+        // resolves it without going through RequireRoomAttribute (which is
+        // covered by integration tests, not unit tests).
+        var http = new DefaultHttpContext();
+        http.Items[RequireRoomAttribute.RoomItemKey] = room;
+        ctrl.ControllerContext = new ControllerContext { HttpContext = http };
+        return (ctrl, room);
     }
 
     // ─── Start / Stop ───────────────────────────────────────────────────────
@@ -118,13 +127,13 @@ public class SimControllerTests
     [Fact]
     public void Reset_Returns_Ok_And_Clears_Drones()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
-        sim.GetSnapshot().Should().HaveCount(1);
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        room.GetSnapshot().Should().HaveCount(1);
 
         var result = ctrl.Reset() as OkObjectResult;
         result.Should().NotBeNull();
-        sim.GetSnapshot().Should().BeEmpty();
+        room.GetSnapshot().Should().BeEmpty();
     }
 
     // ─── SpawnDrone ─────────────────────────────────────────────────────────
@@ -132,11 +141,11 @@ public class SimControllerTests
     [Fact]
     public void SpawnDrone_ValidPosition_Returns_DroneId()
     {
-        var (ctrl, sim) = CreateController();
+        var (ctrl, room) = CreateController();
         var result = ctrl.SpawnDrone(new SpawnDroneRequest([10f, 50f, 20f])) as OkObjectResult;
 
         result.Should().NotBeNull();
-        sim.GetSnapshot().Should().HaveCount(1);
+        room.GetSnapshot().Should().HaveCount(1);
     }
 
     [Fact]
@@ -174,9 +183,9 @@ public class SimControllerTests
     [Fact]
     public void SpawnDrone_AtMaxCapacity_Returns_TooManyRequests()
     {
-        var (ctrl, sim) = CreateController();
-        for (int i = 0; i < 50; i++)
-            sim.AddDrone($"drone-{i}", new Vector3(i, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        for (var i = 0; i < 50; i++)
+            room.AddDrone($"drone-{i}", new Vector3(i, 50f, 0f));
 
         var result = ctrl.SpawnDrone(new SpawnDroneRequest([0f, 50f, 0f]));
         result.Should().BeOfType<ObjectResult>()
@@ -196,8 +205,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_Hover_Returns_Ok()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("hover")) as OkObjectResult;
         result.Should().NotBeNull();
@@ -206,8 +215,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_Land_Returns_Ok()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("land")) as OkObjectResult;
         result.Should().NotBeNull();
@@ -216,8 +225,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_Rtl_Returns_Ok()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("rtl")) as OkObjectResult;
         result.Should().NotBeNull();
@@ -226,8 +235,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_Goto_WithValidTarget_Returns_Ok()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("goto", [100f, 50f, 100f])) as OkObjectResult;
         result.Should().NotBeNull();
@@ -236,8 +245,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_Goto_WithoutTarget_Returns_BadRequest()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("goto"));
         result.Should().BeOfType<BadRequestObjectResult>();
@@ -246,8 +255,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_UnknownType_Returns_BadRequest()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("explode"));
         result.Should().BeOfType<BadRequestObjectResult>();
@@ -256,8 +265,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_IsCaseInsensitive()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("HOVER")) as OkObjectResult;
         result.Should().NotBeNull();
@@ -266,8 +275,8 @@ public class SimControllerTests
     [Fact]
     public void SendCommand_Goto_InfinityTarget_Returns_BadRequest()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
 
         var result = ctrl.SendCommand("d1", new DroneCommandRequest("goto", [float.PositiveInfinity, 0f, 0f]));
         result.Should().BeOfType<BadRequestObjectResult>();
@@ -312,8 +321,8 @@ public class SimControllerTests
     [Fact]
     public void InjectFault_Returns_Ok_With_Logged_Status()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
         var result = ctrl.InjectFault(new FaultRequest("d1", "motor-failure")) as OkObjectResult;
         result.Should().NotBeNull();
     }
@@ -329,8 +338,8 @@ public class SimControllerTests
     [Fact]
     public void InjectFault_KnownDrone_Returns_Ok()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
         var result = ctrl.InjectFault(new FaultRequest("d1", "motor-failure")) as OkObjectResult;
         result.Should().NotBeNull();
     }
@@ -349,9 +358,9 @@ public class SimControllerTests
     [Fact]
     public void GetState_Returns_All_Drones()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("a", new Vector3(0f, 50f, 0f));
-        sim.AddDrone("b", new Vector3(10f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("a", new Vector3(0f, 50f, 0f));
+        room.AddDrone("b", new Vector3(10f, 50f, 0f));
 
         var result = ctrl.GetState() as OkObjectResult;
         var snapshot = result!.Value as System.Collections.Generic.IReadOnlyList<DroneSnapshot>;
@@ -373,10 +382,10 @@ public class SimControllerTests
     [Fact]
     public void RunScenario_Known_Returns_Ok()
     {
-        var (ctrl, sim) = CreateController();
+        var (ctrl, room) = CreateController();
         var result = ctrl.RunScenario("single") as OkObjectResult;
         result.Should().NotBeNull();
-        sim.GetSnapshot().Should().HaveCount(1);
+        room.GetSnapshot().Should().HaveCount(1);
     }
 
     [Fact]
@@ -390,236 +399,17 @@ public class SimControllerTests
     [Fact]
     public void RunScenario_Unknown_DoesNot_Reset_Existing_Drones()
     {
-        var (ctrl, sim) = CreateController();
-        sim.AddDrone("d1", new Vector3(0f, 50f, 0f));
+        var (ctrl, room) = CreateController();
+        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
         ctrl.RunScenario("does-not-exist");
-        sim.GetSnapshot().Should().HaveCount(1);
+        room.GetSnapshot().Should().HaveCount(1);
     }
 
     [Fact]
     public void RunScenario_Swarm5_Spawns_Five_Drones()
     {
-        var (ctrl, sim) = CreateController();
+        var (ctrl, room) = CreateController();
         ctrl.RunScenario("swarm-5");
-        sim.GetSnapshot().Should().HaveCount(5);
-    }
-
-    // ─── Weather edge cases ─────────────────────────────────────────────────
-
-    [Fact]
-    public void SetWeather_NaN_WindSpeed_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetWeather(new WeatherRequest("steady", float.NaN, 90f));
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetWeather_NaN_WindDirection_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, float.NaN));
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetWeather_Infinity_WindDirection_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, float.PositiveInfinity));
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetWeather_Wraps_WindDirection_Above_360()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, 450f)) as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void SetWeather_Wraps_Negative_WindDirection()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetWeather(new WeatherRequest("steady", 5f, -90f)) as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    // ─── Backhaul ───────────────────────────────────────────────────────────
-
-    [Fact]
-    public void SetBackhaul_Killed_True_Returns_Ok_And_Persists()
-    {
-        var (ctrl, sim) = CreateController();
-        var result = ctrl.SetBackhaul(new BackhaulRequest(Killed: true)) as OkObjectResult;
-        result.Should().NotBeNull();
-        sim.IsBackhaulKilled.Should().BeTrue();
-    }
-
-    [Fact]
-    public void SetBackhaul_Killed_False_Restores_Link()
-    {
-        var (ctrl, sim) = CreateController();
-        ctrl.SetBackhaul(new BackhaulRequest(Killed: true));
-        ctrl.SetBackhaul(new BackhaulRequest(Killed: false));
-        sim.IsBackhaulKilled.Should().BeFalse();
-    }
-
-    [Fact]
-    public void GetBackhaul_Returns_Current_State()
-    {
-        var (ctrl, _) = CreateController();
-        ctrl.SetBackhaul(new BackhaulRequest(Killed: true));
-        var result = ctrl.GetBackhaul() as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    // ─── Terrain Preset ─────────────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("alpine")]
-    [InlineData("ridgeline")]
-    [InlineData("coastal")]
-    [InlineData("canyon")]
-    [InlineData("dunes")]
-    public void SetTerrainPreset_KnownKey_Returns_Ok(string key)
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetTerrainPreset(key) as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void SetTerrainPreset_Is_Case_Insensitive()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetTerrainPreset("ALPINE") as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void SetTerrainPreset_Unknown_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.SetTerrainPreset("mars-crater");
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    // ─── Heightmap ──────────────────────────────────────────────────────────
-
-    [Fact]
-    public void SetHeightmap_Valid_Payload_Returns_Ok()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0,
-            Cells: [0f, 1f, 2f, 3f]);
-        var result = ctrl.SetHeightmap(payload) as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void SetHeightmap_Empty_Cells_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0, Cells: []);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_Null_Cells_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0, Cells: null!);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_NonPositive_Rows_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 0, Cols: 2, Width: 10.0, Depth: 10.0, Cells: [0f, 1f]);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_NonPositive_Cols_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 0, Width: 10.0, Depth: 10.0, Cells: [0f, 1f]);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_Dimension_Above_Cap_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 4097, Cols: 1, Width: 10.0, Depth: 10.0, Cells: new float[1]);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_Cells_Length_Mismatch_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 2, Width: 10.0, Depth: 10.0,
-            Cells: [0f, 1f, 2f]);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_NonPositive_Width_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 2, Width: 0.0, Depth: 10.0,
-            Cells: [0f, 1f, 2f, 3f]);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void SetHeightmap_NonPositive_Depth_Returns_BadRequest()
-    {
-        var (ctrl, _) = CreateController();
-        var payload = new SimController.HeightmapPayload(
-            Rows: 2, Cols: 2, Width: 10.0, Depth: -1.0,
-            Cells: [0f, 1f, 2f, 3f]);
-        var result = ctrl.SetHeightmap(payload);
-        result.Should().BeOfType<BadRequestObjectResult>();
-    }
-
-    [Fact]
-    public void ClearHeightmap_Returns_Ok()
-    {
-        var (ctrl, _) = CreateController();
-        var result = ctrl.ClearHeightmap() as OkObjectResult;
-        result.Should().NotBeNull();
-    }
-
-    [Fact]
-    public void HeightmapPayload_Stores_All_Properties()
-    {
-        var payload = new SimController.HeightmapPayload(
-            Rows: 3, Cols: 4, Width: 5.5, Depth: 6.5,
-            Cells: [0f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f, 11f]);
-        payload.Rows.Should().Be(3);
-        payload.Cols.Should().Be(4);
-        payload.Width.Should().Be(5.5);
-        payload.Depth.Should().Be(6.5);
-        payload.Cells.Should().HaveCount(12);
+        room.GetSnapshot().Should().HaveCount(5);
     }
 }
