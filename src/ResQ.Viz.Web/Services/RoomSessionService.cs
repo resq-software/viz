@@ -188,15 +188,30 @@ public sealed class RoomSessionService
     }
 
     /// <summary>
-    /// Idempotent session bootstrap. Returns the existing valid session if the
-    /// caller already has one; otherwise issues a new session + new room.
+    /// Idempotent session bootstrap. If the caller already has a valid cookie
+    /// the underlying room is preserved but a freshly-protected blob is minted
+    /// with a bumped <c>ExpiresUnix</c>. This keeps the server-side expiry in
+    /// step with the browser's <c>Max-Age</c> reset; otherwise long-lived tabs
+    /// would fail validation server-side even though the browser still
+    /// presented the (now-stale) cookie. Bound to the same IP bucket as the
+    /// existing session — IP-bucket changes still force re-issuance via
+    /// <see cref="Issue"/>.
     /// </summary>
     public IssueResult IssueOrRefresh(HttpContext httpContext)
     {
         var ip = httpContext.Connection.RemoteIpAddress;
         var cookie = httpContext.Request.Cookies[CookieName];
-        if (TryValidate(cookie, ip, out _, out var existingRoom) && existingRoom is not null)
-            return new IssueResult(cookie, existingRoom, null);
+        if (TryValidate(cookie, ip, out var existing, out var existingRoom)
+            && existing is not null && existingRoom is not null)
+        {
+            var refreshed = new RoomSession(
+                RoomId: existing.RoomId,
+                IpBucket: existing.IpBucket,
+                ExpiresUnix: DateTimeOffset.UtcNow.Add(SessionTtl).ToUnixTimeSeconds());
+            var json = JsonSerializer.Serialize(refreshed);
+            var protectedValue = _protector.Protect(json);
+            return new IssueResult(protectedValue, existingRoom, null);
+        }
         return Issue(ip);
     }
 

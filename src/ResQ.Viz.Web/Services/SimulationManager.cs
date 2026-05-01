@@ -39,11 +39,22 @@ public sealed class SimulationManager : BackgroundService
     /// <summary>Cadence at which the reaper runs.</summary>
     private static readonly TimeSpan ReapInterval = TimeSpan.FromSeconds(10);
 
+    /// <summary>Tick period. 60 Hz = 16.6̄ ms; PeriodicTimer holds steady at this cadence.</summary>
+    private static readonly TimeSpan TickPeriod = TimeSpan.FromMilliseconds(1000.0 / 60.0);
+
     private readonly ConcurrentDictionary<string, SimulationRoom> _rooms = new(StringComparer.Ordinal);
     private readonly IHubContext<VizHub> _hubContext;
     private readonly VizFrameBuilder _frameBuilder;
     private readonly ILogger<SimulationManager> _logger;
     private readonly ILoggerFactory _loggerFactory;
+
+    /// <summary>
+    /// Held only while creating a brand-new room. Lock-free reads via
+    /// <see cref="ConcurrentDictionary{TKey,TValue}.TryGetValue"/> stay
+    /// uncontended; this only guards the count-check + insert sequence so
+    /// the <see cref="MaxRooms"/> cap is not racy under concurrent issuers.
+    /// </summary>
+    private readonly object _createLock = new();
     private DateTimeOffset _lastReap = DateTimeOffset.UtcNow;
 
     /// <summary>Initialises the manager.</summary>
@@ -75,24 +86,34 @@ public sealed class SimulationManager : BackgroundService
     /// </summary>
     public SimulationRoom? CreateOrGet(string roomId, string ipBucket)
     {
+        // Fast path — uncontended lookup for already-created rooms.
         if (_rooms.TryGetValue(roomId, out var existing))
         {
             existing.Touch();
             return existing;
         }
-        if (_rooms.Count >= MaxRooms)
+
+        // Slow path — gate the count-check + insert behind a lock so two
+        // concurrent issuers can't both observe `count == cap-1` and both
+        // insert, breaking the MaxRooms guarantee. Hot reads above stay
+        // lock-free; only first-time creates pay this cost.
+        lock (_createLock)
         {
-            _logger.LogWarning("Room cap ({Cap}) reached; rejecting new room {RoomId}.", MaxRooms, roomId);
-            return null;
-        }
-        var room = new SimulationRoom(roomId, ipBucket, _loggerFactory.CreateLogger<SimulationRoom>());
-        if (_rooms.TryAdd(roomId, room))
-        {
+            if (_rooms.TryGetValue(roomId, out existing))
+            {
+                existing.Touch();
+                return existing;
+            }
+            if (_rooms.Count >= MaxRooms)
+            {
+                _logger.LogWarning("Room cap ({Cap}) reached; rejecting new room {RoomId}.", MaxRooms, roomId);
+                return null;
+            }
+            var room = new SimulationRoom(roomId, ipBucket, _loggerFactory.CreateLogger<SimulationRoom>());
+            _rooms[roomId] = room;
             _logger.LogInformation("Room {RoomId} created (count={Count}).", roomId, _rooms.Count);
             return room;
         }
-        _rooms.TryGetValue(roomId, out var winner);
-        return winner;
     }
 
     /// <summary>Drops a room by id.</summary>
@@ -109,45 +130,62 @@ public sealed class SimulationManager : BackgroundService
     /// <inheritdoc/>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        // PeriodicTimer holds the cadence steady at TickPeriod regardless of
+        // loop body duration — Task.Delay(16) accumulates drift because it
+        // resets the wall-clock clock each iteration after work has run.
+        using var timer = new PeriodicTimer(TickPeriod);
+        try
         {
-            // Advance every room once. Step is microseconds per room — single
-            // loop scales to MaxRooms before per-room Tasks become worth the
-            // synchronisation overhead.
-            List<(SimulationRoom Room, double SimTime)>? toBroadcast = null;
-            foreach (var kv in _rooms)
+            while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                var (broadcast, simTime) = kv.Value.Tick();
-                if (broadcast)
+                List<(SimulationRoom Room, double SimTime)>? toBroadcast = null;
+                foreach (var kv in _rooms)
                 {
-                    toBroadcast ??= [];
-                    toBroadcast.Add((kv.Value, simTime));
-                }
-            }
-
-            if (toBroadcast is not null)
-            {
-                foreach (var (room, simTime) in toBroadcast)
-                {
-                    try
+                    var (broadcast, simTime) = kv.Value.Tick();
+                    if (broadcast)
                     {
-                        var snapshot = room.GetSnapshot();
-                        var frame = _frameBuilder.Build(snapshot, simTime, room.IsBackhaulKilled);
-                        await _hubContext.Clients
-                            .Group(VizHub.RoomGroupName(room.Id))
-                            .SendAsync("ReceiveFrame", frame, stoppingToken);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _logger.LogError(ex, "Broadcast failed for room {RoomId}.", room.Id);
+                        toBroadcast ??= [];
+                        toBroadcast.Add((kv.Value, simTime));
                     }
                 }
+
+                if (toBroadcast is not null)
+                {
+                    // Fan-out broadcasts in parallel so a slow client (or a
+                    // room with many connections) doesn't starve the next
+                    // tick. Each task wraps its own try/catch so a single
+                    // failure doesn't poison the others.
+                    var tasks = new Task[toBroadcast.Count];
+                    for (var i = 0; i < toBroadcast.Count; i++)
+                    {
+                        var (room, simTime) = toBroadcast[i];
+                        tasks[i] = BroadcastFrameAsync(room, simTime, stoppingToken);
+                    }
+                    await Task.WhenAll(tasks);
+                }
+
+                ReapIdleRooms();
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown.
+        }
+    }
 
-            ReapIdleRooms();
-
-            try { await Task.Delay(16, stoppingToken); }
-            catch (OperationCanceledException) { break; }
+    private async Task BroadcastFrameAsync(SimulationRoom room, double simTime, CancellationToken ct)
+    {
+        try
+        {
+            var snapshot = room.GetSnapshot();
+            var frame = _frameBuilder.Build(snapshot, simTime, room.IsBackhaulKilled);
+            await _hubContext.Clients
+                .Group(VizHub.RoomGroupName(room.Id))
+                .SendAsync("ReceiveFrame", frame, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Broadcast failed for room {RoomId}.", room.Id);
         }
     }
 
@@ -162,9 +200,24 @@ public sealed class SimulationManager : BackgroundService
             var room = kv.Value;
             if (room.ConnectionCount > 0) continue;
             if (now - room.LastActivityUtc <= IdleGrace) continue;
-            if (_rooms.TryRemove(kv.Key, out var removed))
-                _logger.LogInformation("Reaped idle room {RoomId} (idle {Seconds}s).",
-                    removed.Id, (int)(now - removed.LastActivityUtc).TotalSeconds);
+
+            // TryRemove(KeyValuePair) only succeeds when the value reference
+            // matches what we observed — protects against removing a fresh
+            // room that replaced an idle one with the same id.
+            if (!_rooms.TryRemove(KeyValuePair.Create(kv.Key, room))) continue;
+
+            // Race window between the connection-count check above and this
+            // remove: a hub handshake may have called IncrementConnections on
+            // the removed instance. If so, put it back; the hub already
+            // attached the connection to the (now-orphaned) room reference.
+            if (room.ConnectionCount > 0)
+            {
+                _rooms.TryAdd(kv.Key, room);
+                continue;
+            }
+
+            _logger.LogInformation("Reaped idle room {RoomId} (idle {Seconds}s).",
+                room.Id, (int)(now - room.LastActivityUtc).TotalSeconds);
         }
     }
 }

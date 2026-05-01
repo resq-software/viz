@@ -60,7 +60,26 @@ async function _bootstrapSession(): Promise<boolean> {
     return false;
 }
 
-const _sessionReady: Promise<boolean> = _bootstrapSession();
+// Latched promise — held while a bootstrap is in flight or has succeeded.
+// Cleared on failure so the next caller (start() retry, late preset POST)
+// gets a fresh attempt instead of being stuck with a permanently-failed
+// promise.
+let _sessionReadyPromise: Promise<boolean> | null = null;
+
+function _ensureSessionReady(): Promise<boolean> {
+    if (_sessionReadyPromise) return _sessionReadyPromise;
+    const p = _bootstrapSession().then(ok => {
+        if (!ok) _sessionReadyPromise = null;
+        return ok;
+    });
+    _sessionReadyPromise = p;
+    return p;
+}
+
+// Kick off the first bootstrap immediately so authenticated startup paths
+// (heightmap upload, initial preset sync, SignalR connect) can `await` it
+// in parallel rather than serializing.
+_ensureSessionReady();
 
 // ─── Scene init ────────────────────────────────────────────────────────────
 
@@ -337,7 +356,7 @@ void (async () => {
     // request. Skipping the upload on bootstrap failure is fine — the
     // procedural terrain is already in place; only drone-ground contact
     // would be off, which is corrected once the user reconnects.
-    if (!await _sessionReady) return;
+    if (!await _ensureSessionReady()) return;
 
     // Ship the decoded grid to the backend so drone physics clamp to the
     // same DEM the viz renders. Payload is large (1024² ≈ 4 MB JSON) but
@@ -381,7 +400,7 @@ void geoCache.init();
 
 // Sync backend terrain preset to alpine on first load. Defer until the
 // session cookie is set so the call doesn't 401.
-void _sessionReady.then(ok => {
+void _ensureSessionReady().then(ok => {
     if (ok) apiPostOrWarn('/api/sim/preset/alpine', undefined, 'initial preset');
 });
 
@@ -843,7 +862,7 @@ async function start(): Promise<void> {
     if (_starting) return;
     _starting = true;
     try {
-        if (!await _sessionReady) {
+        if (!await _ensureSessionReady()) {
             hud.setStatus('disconnected');
             setTimeout(() => { _starting = false; void start(); }, 5000);
             return;

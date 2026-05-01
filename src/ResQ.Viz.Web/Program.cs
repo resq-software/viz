@@ -3,6 +3,7 @@
 // (see https://www.apache.org/licenses/LICENSE-2.0)
 
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Vite.AspNetCore;
@@ -24,7 +25,15 @@ builder.Services.AddControllers();
 // for the legacy single-sim path is unused here: SimulationManager broadcasts
 // directly to per-room SignalR groups so it can fan out one frame per room
 // without an extra hop.
-builder.Services.AddDataProtection();
+// SetApplicationName fixes the data-protection purpose-string discriminator
+// across deployments: without it, two instances on the same host (rolling
+// upgrade, blue/green) generate different key rings and silently invalidate
+// each other's cookies. The framework still persists keys to the default
+// directory (~/.aspnet/DataProtection-Keys on Linux); production deployments
+// behind autoscaling should mount a shared volume there or call
+// `.PersistKeysToFileSystem(<shared-path>)` so warm starts survive restarts.
+builder.Services.AddDataProtection()
+    .SetApplicationName("ResQ.Viz.Web");
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
@@ -62,11 +71,15 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
-// Forwarded headers must run before any middleware that inspects the client
-// IP — otherwise IP-bucket session binding sees the proxy's address rather
-// than the real client's. Default trust list is loopback only; production
-// behind a non-local proxy must add KnownProxies/KnownNetworks via config.
-app.UseForwardedHeaders();
+// Gate ForwardedHeaders behind explicit configuration. When disabled (the
+// default), Connection.RemoteIpAddress reflects the actual TCP peer — safe
+// for direct exposure. When deployed behind a reverse proxy the operator
+// sets `ForwardedHeaders:Enabled=true` AND populates KnownProxies /
+// KnownNetworks via config; trusting forwarded headers without a known-proxy
+// allowlist lets any client spoof X-Forwarded-For and bypass IP-bucket
+// session binding.
+if (builder.Configuration.GetValue<bool>("ForwardedHeaders:Enabled", defaultValue: false))
+    app.UseForwardedHeaders();
 
 // Security headers must run BEFORE UseStaticFiles (which short-circuits for
 // physical assets) and UseRateLimiter (which can emit a 429 and skip the rest

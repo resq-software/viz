@@ -86,9 +86,12 @@ public sealed class SessionController : ControllerBase
     /// <summary>
     /// Destroys the caller's session cookie. Does not reap the room — that's
     /// the manager's job once connection count hits zero and the idle window
-    /// elapses.
+    /// elapses. Requires a valid session: callers without one have nothing to
+    /// clear and get the same 401 redirect every other authenticated endpoint
+    /// returns.
     /// </summary>
     [HttpDelete]
+    [RequireRoom]
     [EnableRateLimiting("destructive")]
     public IActionResult Delete()
     {

@@ -170,7 +170,12 @@ public sealed class SimulationRoom
             "turbulent" => WeatherMode.Turbulent,
             _ => WeatherMode.Calm,
         };
-        _weather.Update(new WeatherConfig(weatherMode, direction, windSpeed));
+        // Update under _lock so the 60 Hz Tick() loop can't sample a torn
+        // weather config (e.g. new mode, old speed) mid-update.
+        lock (_lock)
+        {
+            _weather.Update(new WeatherConfig(weatherMode, direction, windSpeed));
+        }
         Touch();
         _logger.LogInformation("[room {RoomId}] Weather updated: mode={Mode}, speed={Speed} m/s, direction={Dir}°.",
             Id, weatherMode, windSpeed, direction);
@@ -179,9 +184,12 @@ public sealed class SimulationRoom
     /// <summary>Switches the terrain preset.</summary>
     public void SetTerrainPreset(string key)
     {
-        _terrain.SetPreset(key);
+        // Both terrain mutation and swarm reconfigure must run under the
+        // same lock as Tick() — otherwise the world step can sample a half-
+        // applied terrain (preset switched, drones not yet re-routed).
         lock (_lock)
         {
+            _terrain.SetPreset(key);
             _swarm.SetTerrainPreset(key, _terrain, _world.Drones.ToList());
         }
         Touch();
@@ -270,7 +278,9 @@ public sealed class SimulationRoom
             _world.Step();
             _tickCount++;
             _swarmTick++;
-            _simTime += 1.0 / 60.0;
+            // Derive sim time from the tick count rather than accumulating
+            // 1/60 per tick: integer-counted divisions don't drift over hours.
+            _simTime = _tickCount / 60.0;
             if (_swarmTick % 30 == 0)
                 _swarm.Tick(_simTime, _world.Drones);
             return (_tickCount % BroadcastEveryNTicks == 0, _simTime);
