@@ -741,6 +741,12 @@ input[type='range'] {
   transform: scale(0.96) translateY(-6px);
 }
 
+/* When the keyboard-hints panel is open, hide HUD surfaces that share its
+   top-right column — telemetry strip rows have a higher z-index and a
+   translucent background, so they would otherwise render on top of the
+   help text. The strip is restored as soon as hints close. */
+body.hints-open .telemetry-strip { display: none; }
+
 .key-hints-header {
   display: flex;
   align-items: center;
