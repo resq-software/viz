@@ -741,6 +741,17 @@ input[type='range'] {
   transform: scale(0.96) translateY(-6px);
 }
 
+/* When the keyboard-hints panel is open, hide every other HUD surface
+   that sits at the same z-index ceiling (.telemetry-strip, .event-log,
+   .minimap are all at z-index 420; #key-hints is 250). Without this,
+   those surfaces render on top of the help text. The mobile-width rule
+   below also widens #key-hints across the full viewport — which would
+   otherwise collide with the event log on the left and the minimap at
+   the bottom. All three are restored as soon as hints close. */
+body.hints-open .telemetry-strip,
+body.hints-open .event-log,
+body.hints-open .minimap { display: none; }
+
 .key-hints-header {
   display: flex;
   align-items: center;

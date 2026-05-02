@@ -430,6 +430,12 @@ function _setHintsVisible(v: boolean): void {
     keyHints?.classList.toggle('hidden', !v);
     hintsToggle?.classList.toggle('active', v);
     hintsToggle?.setAttribute('aria-pressed', String(v));
+    // body.hints-open hides surfaces that share the top-right column with
+    // the hints panel (telemetry strip) so they don't render on top of
+    // the help text. The strip's z-index is higher than #key-hints, and
+    // its row backgrounds are translucent — without this, drone rows
+    // bleed through the hints panel.
+    document.body.classList.toggle('hints-open', v);
 }
 
 _setHintsVisible(hintsVisible);  // restore persisted state
