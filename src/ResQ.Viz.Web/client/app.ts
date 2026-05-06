@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import './styles/main.css';
+import { bootstrapAnalytics } from './analytics';
 import * as THREE from 'three';
+
+// Boot analytics first — it lazy-loads `posthog-js` via dynamic import,
+// so this returns immediately without blocking the Three.js / SignalR
+// init below. No-ops cleanly when env vars are unset.
+bootstrapAnalytics();
 // SignalR runtime is loaded lazily inside `start()` (see below) — keeps
 // ~54 KB of `@microsoft/signalr` out of the main bundle so the first
 // paint isn't blocked on parsing it. The type-only import is free at
