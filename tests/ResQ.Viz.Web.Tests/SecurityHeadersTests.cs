@@ -16,6 +16,7 @@
 
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ResQ.Viz.Web;
 using Xunit;
 
 namespace ResQ.Viz.Web.Tests;
@@ -89,10 +90,14 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         response.Headers.Should().ContainKey("Content-Security-Policy");
         var csp = string.Join(";", response.Headers.GetValues("Content-Security-Policy"));
 
-        // Cloudflare Web Analytics: script + bootstrap inline-script hash + beacon.
-        // Both the apex and the wildcard are required — CSP wildcards don't
-        // match the base domain that beacon ingest posts to.
-        csp.Should().Contain("'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE='");
+        // Cloudflare Web Analytics: script + bootstrap inline-script hashes +
+        // beacon. Both the apex and the wildcard are required — CSP wildcards
+        // don't match the base domain that beacon ingest posts to. The hash
+        // list is sourced from `SecurityConstants` so this test and the
+        // middleware can never drift out of sync when Cloudflare rotates the
+        // bootstrap script.
+        foreach (var hash in SecurityConstants.CloudflareBeaconScriptHashes)
+            csp.Should().Contain(hash);
         csp.Should().Contain("https://static.cloudflareinsights.com");
         csp.Should().Contain("https://cloudflareinsights.com");
         csp.Should().Contain("https://*.cloudflareinsights.com");
@@ -126,6 +131,18 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
 
         // Features the viz explicitly keeps available to itself.
         pp.Should().Contain("fullscreen=(self)");
+
+        // Tokens removed because Chromium logs "Unrecognized feature" for
+        // them — they pollute the console without adding any real protection.
+        // Adding any of them back must be a deliberate decision, not an
+        // accidental copy-paste from an outdated OWASP cheat sheet.
+        // Each pattern includes the trailing `=` so the assertion matches a
+        // feature directive (the only form a token takes inside a
+        // Permissions-Policy header) rather than a stray substring.
+        pp.Should().NotContain("ambient-light-sensor=");
+        pp.Should().NotContain("battery=");
+        pp.Should().NotContain("document-domain=");
+        pp.Should().NotContain("web-share=");
     }
 
     [Fact]

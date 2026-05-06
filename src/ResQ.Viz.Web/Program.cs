@@ -112,10 +112,19 @@ app.Use(async (context, next) =>
         //     bootstrap inline-script SHA-256 hash + connect-src for beacon ingest
         // If a deployment disables Cloudflare Web Analytics or strips a provider
         // from `@resq-sw/analytics`, prune the corresponding origins.
+        //
+        // The Cloudflare beacon inline-script hashes live in
+        // <see cref="SecurityConstants.CloudflareBeaconScriptHashes"/> so the
+        // middleware and the integration test stay in sync when Cloudflare
+        // rotates the bootstrap script. The cleanest long-term fix is to
+        // disable "Auto-inject" in the Cloudflare Web Analytics dashboard —
+        // the GA4 + PostHog providers already cover RUM and product analytics.
+        var cloudflareBeaconScriptHashes =
+            string.Join(' ', ResQ.Viz.Web.SecurityConstants.CloudflareBeaconScriptHashes);
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
             "script-src 'self' " +
-                "'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE=' " +
+                cloudflareBeaconScriptHashes + " " +
                 "https://static.cloudflareinsights.com " +
                 "https://www.googletagmanager.com " +
                 "https://us-assets.i.posthog.com; " +
@@ -142,13 +151,17 @@ app.Use(async (context, next) =>
         // Deny every Permissions-Policy feature the viz doesn't need. If a
         // future feature needs one (e.g. camera for AR overlay), relax the
         // specific entry here rather than dropping the header.
+        //
+        // Removed `ambient-light-sensor`, `battery`, `document-domain`, and
+        // `web-share` — current Chromium versions log "Unrecognized feature"
+        // for them (the spec dropped or never landed these tokens), which
+        // pollutes the console without adding any real protection.
         headers["Permissions-Policy"] =
-            "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), " +
-            "camera=(), display-capture=(), document-domain=(), encrypted-media=(), " +
-            "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), " +
-            "microphone=(), midi=(), payment=(), picture-in-picture=(), " +
-            "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), " +
-            "usb=(), web-share=(), xr-spatial-tracking=()";
+            "accelerometer=(), autoplay=(), camera=(), display-capture=(), " +
+            "encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), " +
+            "magnetometer=(), microphone=(), midi=(), payment=(), " +
+            "picture-in-picture=(), publickey-credentials-get=(), " +
+            "screen-wake-lock=(), sync-xhr=(), usb=(), xr-spatial-tracking=()";
         headers["Cross-Origin-Opener-Policy"] = "same-origin";
         headers["Cross-Origin-Resource-Policy"] = "same-site";
 
