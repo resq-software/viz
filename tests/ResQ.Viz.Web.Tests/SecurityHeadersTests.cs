@@ -16,6 +16,7 @@
 
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ResQ.Viz.Web;
 using Xunit;
 
 namespace ResQ.Viz.Web.Tests;
@@ -91,12 +92,12 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
 
         // Cloudflare Web Analytics: script + bootstrap inline-script hashes +
         // beacon. Both the apex and the wildcard are required — CSP wildcards
-        // don't match the base domain that beacon ingest posts to. Multiple
-        // hashes are listed because Cloudflare rotates the bootstrap inline
-        // script; each variant we've observed in production must remain
-        // allow-listed until auto-inject is disabled in the CF dashboard.
-        csp.Should().Contain("'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE='");
-        csp.Should().Contain("'sha256-XtmvLUr10hivmkrNKCgQcNREHptkg6tWqm9iZo3mlAc='");
+        // don't match the base domain that beacon ingest posts to. The hash
+        // list is sourced from `SecurityConstants` so this test and the
+        // middleware can never drift out of sync when Cloudflare rotates the
+        // bootstrap script.
+        foreach (var hash in SecurityConstants.CloudflareBeaconScriptHashes)
+            csp.Should().Contain(hash);
         csp.Should().Contain("https://static.cloudflareinsights.com");
         csp.Should().Contain("https://cloudflareinsights.com");
         csp.Should().Contain("https://*.cloudflareinsights.com");

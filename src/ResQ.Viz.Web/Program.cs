@@ -113,18 +113,18 @@ app.Use(async (context, next) =>
         // If a deployment disables Cloudflare Web Analytics or strips a provider
         // from `@resq-sw/analytics`, prune the corresponding origins.
         //
-        // Note on Cloudflare beacon hashes: Cloudflare rotates the inline
-        // bootstrap script content periodically (e.g. when the Web Analytics
-        // token changes), producing a new SHA-256. Each observed variant must
-        // be added below or the SPA will hit a CSP violation. The cleanest
-        // long-term fix is to disable "Auto-inject" in the Cloudflare Web
-        // Analytics dashboard — the GA4 + PostHog providers already cover RUM
-        // and product analytics, making CF Insights redundant here.
+        // The Cloudflare beacon inline-script hashes live in
+        // <see cref="SecurityConstants.CloudflareBeaconScriptHashes"/> so the
+        // middleware and the integration test stay in sync when Cloudflare
+        // rotates the bootstrap script. The cleanest long-term fix is to
+        // disable "Auto-inject" in the Cloudflare Web Analytics dashboard —
+        // the GA4 + PostHog providers already cover RUM and product analytics.
+        var cloudflareBeaconScriptHashes =
+            string.Join(' ', ResQ.Viz.Web.SecurityConstants.CloudflareBeaconScriptHashes);
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
             "script-src 'self' " +
-                "'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE=' " +
-                "'sha256-XtmvLUr10hivmkrNKCgQcNREHptkg6tWqm9iZo3mlAc=' " +
+                cloudflareBeaconScriptHashes + " " +
                 "https://static.cloudflareinsights.com " +
                 "https://www.googletagmanager.com " +
                 "https://us-assets.i.posthog.com; " +
