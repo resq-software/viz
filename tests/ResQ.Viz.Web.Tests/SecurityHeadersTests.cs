@@ -90,8 +90,11 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         var csp = string.Join(";", response.Headers.GetValues("Content-Security-Policy"));
 
         // Cloudflare Web Analytics: script + bootstrap inline-script hash + beacon.
+        // Both the apex and the wildcard are required — CSP wildcards don't
+        // match the base domain that beacon ingest posts to.
         csp.Should().Contain("'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE='");
         csp.Should().Contain("https://static.cloudflareinsights.com");
+        csp.Should().Contain("https://cloudflareinsights.com");
         csp.Should().Contain("https://*.cloudflareinsights.com");
 
         // PostHog (US cloud): config script + event ingest.
@@ -99,8 +102,10 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         csp.Should().Contain("https://us.i.posthog.com");
 
         // Google Analytics 4: gtag.js + collect endpoints + tagging pixel.
+        // GA4 uses regional subdomains (region1.google-analytics.com etc.),
+        // so the connect/img sources must wildcard the analytics domain.
         csp.Should().Contain("https://www.googletagmanager.com");
-        csp.Should().Contain("https://www.google-analytics.com");
+        csp.Should().Contain("https://*.google-analytics.com");
         csp.Should().Contain("https://*.analytics.google.com");
     }
 

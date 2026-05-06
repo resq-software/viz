@@ -121,14 +121,18 @@ app.Use(async (context, next) =>
                 "https://us-assets.i.posthog.com; " +
             "style-src 'self' 'unsafe-inline'; " +
             "connect-src 'self' ws: wss: " +
-                "https://*.cloudflareinsights.com " +
-                "https://www.google-analytics.com " +
+                // CSP wildcards don't match the apex; Cloudflare beacon ingest
+                // posts to the base `cloudflareinsights.com`, so list both.
+                "https://cloudflareinsights.com https://*.cloudflareinsights.com " +
+                // GA4 routes regional traffic to e.g. `region1.google-analytics.com`,
+                // so a wildcard (which subsumes `www.`) is required.
+                "https://*.google-analytics.com " +
                 "https://*.analytics.google.com " +
                 "https://*.googletagmanager.com " +
                 "https://us.i.posthog.com " +
                 "https://us-assets.i.posthog.com; " +
             "img-src 'self' data: " +
-                "https://www.google-analytics.com " +
+                "https://*.google-analytics.com " +
                 "https://*.googletagmanager.com; " +
             "frame-ancestors 'none'; " +
             "base-uri 'self'; " +
