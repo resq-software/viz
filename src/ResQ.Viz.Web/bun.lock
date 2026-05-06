@@ -5,7 +5,7 @@
       "name": "resq-viz-client",
       "dependencies": {
         "@microsoft/signalr": "^10.0.0",
-        "@resq-sw/analytics": "^0.2.0",
+        "@resq-sw/analytics": "^0.3.0",
         "@resq-sw/helpers": "^0.1.2",
         "effect": "^4.0.0-beta.60",
         "posthog-js": "^1.372.9",
@@ -98,7 +98,7 @@
 
     "@protobufjs/utf8": ["@protobufjs/utf8@1.1.1", "", {}, "sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg=="],
 
-    "@resq-sw/analytics": ["@resq-sw/analytics@0.2.0", "", { "peerDependencies": { "posthog-js": ">=1.180.0", "react": ">=19", "react-dom": ">=19" }, "optionalPeers": ["posthog-js", "react", "react-dom"] }, "sha512-9exKQtSOUJdTNVGYq40pHA8HNR/aj/WN9n1R5O4opBC+R3mFJQ2PWzfypkMrRWe2c+QkJUW2Gf/wZ6jOL3/PrQ=="],
+    "@resq-sw/analytics": ["@resq-sw/analytics@0.3.0", "", { "peerDependencies": { "posthog-js": ">=1.180.0", "react": ">=19", "react-dom": ">=19" }, "optionalPeers": ["posthog-js", "react", "react-dom"] }, "sha512-RK3Hjub3ghZ4W9qVhwt2dTB2UNcYiRVKAqIoP47vJJ5RV/YjTCaQknmNCDiskjuoatk2LzN4HVb1naMUScjYrQ=="],
 
     "@resq-sw/helpers": ["@resq-sw/helpers@0.1.2", "", { "dependencies": { "@resq-sw/logger": "^0.1.0", "tinyqueue": "^3.0.0" } }, "sha512-wwb35qE6hGwzqiWQR5Tf4Hfwh6hvA8yci0Cgs9Z+EqbrURuTuiq1+6HKxqZFpv45eUPOY1G93TSATGQfK5bR6A=="],
 
