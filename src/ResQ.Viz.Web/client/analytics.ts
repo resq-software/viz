@@ -45,6 +45,15 @@
 
 import { initAnalytics } from "@resq-sw/analytics";
 
+/**
+ * Cross-subdomain allow-list for the GA4 linker. Currently duplicated
+ * across `resq-software/landing`, `resq-software/research`, and this repo
+ * — the shared list of TS-surface subdomains lives in three places by
+ * accident of how the rollout shipped. Follow-up: hoist into
+ * `@resq-sw/analytics` as a `RESQ_SUBDOMAIN_ALLOWLIST` const export so
+ * adding a fourth subdomain is a single-package version bump instead of
+ * three coordinated edits. Tracked in operator notes.
+ */
 const SUBDOMAIN_ALLOWLIST = [
     "resq.software",
     "research.resq.software",
@@ -101,7 +110,7 @@ export function bootstrapAnalytics(): void {
 
     const cookieDomain = resolveCookieDomain();
 
-    void initAnalytics({
+    initAnalytics({
         ...(cookieDomain ? { cookieDomain } : {}),
         ...(posthogKey
             ? {
@@ -120,5 +129,15 @@ export function bootstrapAnalytics(): void {
                   },
               }
             : {}),
+    }).catch((err) => {
+        // `initAnalytics` returns a Promise (it dynamically imports
+        // `posthog-js`). The package fails soft internally — the
+        // singleton's track/identify exports stay safe no-ops on init
+        // failure — but surfacing the error here makes prod debugging
+        // tractable when, say, a CSP rule blocks the dynamic import.
+        // eslint-disable-next-line no-console -- intentional surface for
+        // ops visibility; gated by the early-return above so it only
+        // fires when at least one analytics key was actually configured.
+        console.warn("[analytics] initAnalytics failed:", err);
     });
 }
