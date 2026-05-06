@@ -136,10 +136,13 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         // them — they pollute the console without adding any real protection.
         // Adding any of them back must be a deliberate decision, not an
         // accidental copy-paste from an outdated OWASP cheat sheet.
-        pp.Should().NotContain("ambient-light-sensor");
+        // Each pattern includes the trailing `=` so the assertion matches a
+        // feature directive (the only form a token takes inside a
+        // Permissions-Policy header) rather than a stray substring.
+        pp.Should().NotContain("ambient-light-sensor=");
         pp.Should().NotContain("battery=");
-        pp.Should().NotContain("document-domain");
-        pp.Should().NotContain("web-share");
+        pp.Should().NotContain("document-domain=");
+        pp.Should().NotContain("web-share=");
     }
 
     [Fact]
