@@ -43,50 +43,12 @@
  * dev doesn't dirty production.
  */
 
-import { initAnalytics } from "@resq-sw/analytics";
-
-/**
- * Cross-subdomain allow-list for the GA4 linker. Currently duplicated
- * across `resq-software/landing`, `resq-software/research`, and this repo
- * — the shared list of TS-surface subdomains lives in three places by
- * accident of how the rollout shipped. Follow-up: hoist into
- * `@resq-sw/analytics` as a `RESQ_SUBDOMAIN_ALLOWLIST` const export so
- * adding a fourth subdomain is a single-package version bump instead of
- * three coordinated edits. Tracked in operator notes.
- */
-const SUBDOMAIN_ALLOWLIST = [
-    "resq.software",
-    "research.resq.software",
-    "viz.resq.software",
-];
-
-/**
- * GA4 Measurement IDs are `G-` followed by 6–32 alphanumerics. Anything
- * else returns null and the loader is skipped. Mirror of the resq.software
- * sanitiser that closed CodeQL alert #34 — even though the env value is
- * build-time controlled, the regex makes the taint flow into the inline
- * script provably safe.
- */
-const GA4_ID_PATTERN = /^G-[A-Z0-9]{6,32}$/;
-function sanitizeGa4Id(id: string | undefined): string | null {
-    if (!id) return null;
-    return GA4_ID_PATTERN.test(id) ? id : null;
-}
-
-/**
- * Resolve the production cookie domain only when the current host
- * actually lives under `resq.software`. Cloudflare preview / `localhost`
- * get `undefined` so the browser doesn't reject the cookie with a domain
- * mismatch.
- */
-function resolveCookieDomain(): string | undefined {
-    if (typeof window === "undefined") return undefined;
-    const host = window.location.hostname;
-    if (host === "resq.software" || host.endsWith(".resq.software")) {
-        return ".resq.software";
-    }
-    return undefined;
-}
+import {
+    initAnalytics,
+    RESQ_SUBDOMAIN_ALLOWLIST,
+    resolveResqCookieDomain,
+    sanitizeGa4Id,
+} from "@resq-sw/analytics";
 
 /**
  * Boot the analytics singleton once on app start. Safe to call before the
@@ -108,7 +70,10 @@ export function bootstrapAnalytics(): void {
         return;
     }
 
-    const cookieDomain = resolveCookieDomain();
+    const cookieDomain =
+        typeof window === "undefined"
+            ? undefined
+            : resolveResqCookieDomain(window.location.hostname);
 
     initAnalytics({
         ...(cookieDomain ? { cookieDomain } : {}),
@@ -125,7 +90,7 @@ export function bootstrapAnalytics(): void {
             ? {
                   ga4: {
                       measurementId: ga4Id,
-                      domains: SUBDOMAIN_ALLOWLIST,
+                      domains: [...RESQ_SUBDOMAIN_ALLOWLIST],
                   },
               }
             : {}),
