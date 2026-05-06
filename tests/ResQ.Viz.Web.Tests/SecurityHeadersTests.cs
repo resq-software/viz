@@ -73,6 +73,37 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         csp.Should().Contain("object-src 'none'");
     }
 
+    /// <summary>
+    /// Regression guard for the analytics integration (PR #97). The CSP must
+    /// allow the script + connect endpoints used by `@resq-sw/analytics`
+    /// (PostHog, Google Analytics 4) and the Cloudflare Web Analytics beacon
+    /// auto-injected by the edge proxy. Prior to this guard, the SPA crashed
+    /// at runtime with `script-src 'self'` blocks for posthog-js, gtag, and
+    /// the Cloudflare bootstrap inline script.
+    /// </summary>
+    [Fact]
+    public async Task CspAllowsAnalyticsOrigins()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/");
+        response.Headers.Should().ContainKey("Content-Security-Policy");
+        var csp = string.Join(";", response.Headers.GetValues("Content-Security-Policy"));
+
+        // Cloudflare Web Analytics: script + bootstrap inline-script hash + beacon.
+        csp.Should().Contain("'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE='");
+        csp.Should().Contain("https://static.cloudflareinsights.com");
+        csp.Should().Contain("https://*.cloudflareinsights.com");
+
+        // PostHog (US cloud): config script + event ingest.
+        csp.Should().Contain("https://us-assets.i.posthog.com");
+        csp.Should().Contain("https://us.i.posthog.com");
+
+        // Google Analytics 4: gtag.js + collect endpoints + tagging pixel.
+        csp.Should().Contain("https://www.googletagmanager.com");
+        csp.Should().Contain("https://www.google-analytics.com");
+        csp.Should().Contain("https://*.analytics.google.com");
+    }
+
     [Fact]
     public async Task PermissionsPolicyDeniesSensitiveFeatures()
     {
