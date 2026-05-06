@@ -33,5 +33,6 @@ public static class SecurityConstants
         "'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE='",
         "'sha256-XtmvLUr10hivmkrNKCgQcNREHptkg6tWqm9iZo3mlAc='",
         "'sha256-W6TA06UC0UF2YUyVLqmuSLDKr+EdUQmWuJVAeE7inQY='",
+        "'sha256-wzOq9WwKOqEF6KuUWlfNH+0sSsKDE6zLRou/Z2YSSZE='",
     ];
 }
