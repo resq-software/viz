@@ -105,12 +105,35 @@ app.Use(async (context, next) =>
         var headers = context.Response.Headers;
         headers["X-Content-Type-Options"] = "nosniff";
         headers["X-Frame-Options"] = "DENY";
+        // Analytics integration (PR #97) extends the baseline allow-list:
+        //   - PostHog (script, config, ingest)         → script-src + connect-src
+        //   - Google Analytics 4 (gtag.js + collect)   → script-src + connect-src + img-src
+        //   - Cloudflare Web Analytics (auto-injected) → script-src incl. the
+        //     bootstrap inline-script SHA-256 hash + connect-src for beacon ingest
+        // If a deployment disables Cloudflare Web Analytics or strips a provider
+        // from `@resq-sw/analytics`, prune the corresponding origins.
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
-            "script-src 'self'; " +
+            "script-src 'self' " +
+                "'sha256-ZlBaXTgBboiytLHGbGnTgT67kpRdxavJqMHVBSTxRaE=' " +
+                "https://static.cloudflareinsights.com " +
+                "https://www.googletagmanager.com " +
+                "https://us-assets.i.posthog.com; " +
             "style-src 'self' 'unsafe-inline'; " +
-            "connect-src 'self' ws: wss:; " +
-            "img-src 'self' data:; " +
+            "connect-src 'self' ws: wss: " +
+                // CSP wildcards don't match the apex; Cloudflare beacon ingest
+                // posts to the base `cloudflareinsights.com`, so list both.
+                "https://cloudflareinsights.com https://*.cloudflareinsights.com " +
+                // GA4 routes regional traffic to e.g. `region1.google-analytics.com`,
+                // so a wildcard (which subsumes `www.`) is required.
+                "https://*.google-analytics.com " +
+                "https://*.analytics.google.com " +
+                "https://*.googletagmanager.com " +
+                "https://us.i.posthog.com " +
+                "https://us-assets.i.posthog.com; " +
+            "img-src 'self' data: " +
+                "https://*.google-analytics.com " +
+                "https://*.googletagmanager.com; " +
             "frame-ancestors 'none'; " +
             "base-uri 'self'; " +
             "form-action 'self'; " +
