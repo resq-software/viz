@@ -260,6 +260,75 @@ public sealed class SimController : ControllerBase
         return Ok(new { cleared = true });
     }
 
+    private const int ErosionMaxResolution = 1025;
+    private const int ErosionMaxDroplets = 400_000;
+
+    // Eroded grids are deterministic in (preset, seed, iterations, res), so
+    // cache the bake across requests/rooms — re-toggling erosion is then free
+    // and every room that asks for the same parameters gets the identical DEM.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[,]> ErosionCache = new();
+
+    /// <summary>
+    /// Bakes hydraulic erosion onto a terrain preset, installs the eroded grid
+    /// as the authoritative DEM (so drone collision and brick-map sensors match
+    /// what the client renders), and returns the grid for the client mesh.
+    /// </summary>
+    [HttpGet("terrain/eroded")]
+    public IActionResult ErodedTerrain(
+        string preset = "alpine",
+        int seed = 1337,
+        int iterations = 60000,
+        int res = 513)
+    {
+        var validKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "alpine", "ridgeline", "coastal", "canyon", "dunes" };
+        if (!validKeys.Contains(preset))
+            return BadRequest(new { error = $"Unknown preset '{preset}'. Valid presets: alpine, ridgeline, coastal, canyon, dunes." });
+        if (res < 64 || res > ErosionMaxResolution)
+            return BadRequest(new { error = $"res must be between 64 and {ErosionMaxResolution}" });
+        if (iterations < 0 || iterations > ErosionMaxDroplets)
+            return BadRequest(new { error = $"iterations must be between 0 and {ErosionMaxDroplets}" });
+
+        var cacheKey = $"{preset.ToLowerInvariant()}|{seed}|{iterations}|{res}";
+        var grid = ErosionCache.GetOrAdd(cacheKey, _ => BakeErodedGrid(preset, seed, iterations, res));
+
+        const double extent = 4000.0;   // TerrainNoiseService.Width/Depth and client TERRAIN_SIZE
+        // Clone for install — the cached grid is shared and read-only.
+        Room.SetHeightmap((float[,])grid.Clone(), extent, extent);
+
+        var cells = new float[res * res];
+        for (var r = 0; r < res; r++)
+            for (var c = 0; c < res; c++)
+                cells[r * res + c] = grid[r, c];
+
+        _logger.LogInformation(
+            "Eroded terrain '{Preset}' (seed {Seed}, {Iterations} droplets, {Res}²) installed in room {RoomId}.",
+            preset, seed, iterations, res, Room.Id);
+        return Ok(new { rows = res, cols = res, width = extent, depth = extent, cells });
+    }
+
+    private static float[,] BakeErodedGrid(string preset, int seed, int iterations, int res)
+    {
+        var terrain = new TerrainNoiseService();
+        terrain.SetPreset(preset);
+
+        const double extent = 4000.0;
+        double step = extent / (res - 1);
+        var grid = new float[res, res];
+        for (var r = 0; r < res; r++)        // r → world Z
+        {
+            double z = -extent * 0.5 + r * step;
+            for (var c = 0; c < res; c++)    // c → world X
+            {
+                double x = -extent * 0.5 + c * step;
+                grid[r, c] = (float)terrain.GetElevation(x, z);
+            }
+        }
+
+        HydraulicErosion.Erode(grid, seed, iterations);
+        return grid;
+    }
+
     /// <summary>Wire payload for <see cref="SetHeightmap(HeightmapPayload)"/>.</summary>
     public sealed record HeightmapPayload(
         int Rows,

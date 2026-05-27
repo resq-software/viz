@@ -107,7 +107,10 @@ app.Use(async (context, next) =>
         headers["X-Frame-Options"] = "DENY";
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
-            "script-src 'self'; " +
+            // 'wasm-unsafe-eval' permits WebAssembly compilation only (NOT JS
+            // eval) — required by the Draco / meshopt glTF decoders that load a
+            // compressed quadrotor.glb. Narrow, modern allowance; no 'unsafe-eval'.
+            "script-src 'self' 'wasm-unsafe-eval'; " +
             "style-src 'self' 'unsafe-inline'; " +
             "connect-src 'self' ws: wss:; " +
             "img-src 'self' data:; " +
@@ -120,12 +123,12 @@ app.Use(async (context, next) =>
         // future feature needs one (e.g. camera for AR overlay), relax the
         // specific entry here rather than dropping the header.
         headers["Permissions-Policy"] =
-            "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), " +
-            "camera=(), display-capture=(), document-domain=(), encrypted-media=(), " +
+            "accelerometer=(), autoplay=(), " +
+            "camera=(), display-capture=(), encrypted-media=(), " +
             "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), " +
             "microphone=(), midi=(), payment=(), picture-in-picture=(), " +
             "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), " +
-            "usb=(), web-share=(), xr-spatial-tracking=()";
+            "usb=(), xr-spatial-tracking=()";
         headers["Cross-Origin-Opener-Policy"] = "same-origin";
         headers["Cross-Origin-Resource-Policy"] = "same-site";
 
@@ -144,7 +147,16 @@ app.Use(async (context, next) =>
 if (app.Environment.IsDevelopment())
     app.UseViteDevelopmentServer();
 
-app.UseStaticFiles();
+var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+provider.Mappings[".glb"] = "model/gltf-binary";
+provider.Mappings[".gltf"] = "model/gltf+json";
+provider.Mappings[".ktx2"] = "image/ktx2";
+provider.Mappings[".hdr"] = "image/vnd.radiance";
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = provider
+});
 app.UseRateLimiter();
 
 if (!app.Environment.IsDevelopment())

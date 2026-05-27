@@ -3,9 +3,9 @@
 
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostFx } from './postfx';
 import { UnityCamera } from './cameraControl';
+import { updateWaterSunDirection } from './water';
 
 // Leading-edge + trailing-edge throttle. `@resq-sw/rate-limiting` offers
 // this API but imports `@upstash/ratelimit` at module load for its
@@ -48,6 +48,15 @@ export class Scene {
     private readonly _tickCallbacks: Array<(dt: number) => void> = [];
     private _postFx!: PostFx;
     private _sky!: Sky;
+    private _sun!: THREE.DirectionalLight;
+    private _pmrem!: THREE.PMREMGenerator;
+    private _envRT: THREE.WebGLRenderTarget | null = null;
+    // Single source of truth for the sun. Sky, directional light, water glint,
+    // and the PBR environment map are all derived from this so the visible
+    // sun, the cast shadows, and the surface lighting stay in agreement.
+    private readonly _sunDir = new THREE.Vector3();
+    private _sunElevDeg   = 40;
+    private _sunAzimuthDeg = 135;
     private readonly _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     private _markerMesh: THREE.Mesh | null = null;
     private _markerTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -57,7 +66,7 @@ export class Scene {
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+        this.renderer.shadowMap.type      = THREE.PCFShadowMap;
         this.renderer.toneMapping         = THREE.ACESFilmicToneMapping;
         this.renderer.toneMappingExposure = 1.0;
         this.renderer.setClearColor(0x8ab8d4);
@@ -76,6 +85,7 @@ export class Scene {
 
         this._cam = new UnityCamera(this._camera, this.renderer.domElement);
 
+        this._computeSunDir();
         this._initSky();
         this._initLights();
         this._initHelpers();
@@ -93,45 +103,52 @@ export class Scene {
         window.addEventListener('resize', throttle(() => this._onResize(), 100));
     }
 
+    private _computeSunDir(): void {
+        // Spherical → cartesian using the Sky addon's convention (polar angle
+        // measured from +Y, azimuth around Y). One computation feeds every
+        // sun-dependent system; see {@link setSunPosition}.
+        const phi   = THREE.MathUtils.degToRad(90 - this._sunElevDeg);
+        const theta = THREE.MathUtils.degToRad(this._sunAzimuthDeg);
+        this._sunDir.setFromSphericalCoords(1, phi, theta).normalize();
+    }
+
     private _initSky(): void {
         const sky = new Sky();
         sky.scale.setScalar(40000);
         this.scene.add(sky);
         this._sky = sky;
 
-        const sun = new THREE.Vector3();
         const uniforms = sky.material.uniforms;
         uniforms['turbidity']!.value          = 4;
         uniforms['rayleigh']!.value           = 0.8;
         uniforms['mieCoefficient']!.value     = 0.005;
         uniforms['mieDirectionalG']!.value    = 0.92;
+        uniforms['sunPosition']!.value.copy(this._sunDir);
 
-        // Elevation ~30° → morning light angle
-        const phi   = THREE.MathUtils.degToRad(90 - 30);
-        const theta = THREE.MathUtils.degToRad(180);
-        sun.setFromSphericalCoords(1, phi, theta);
-        uniforms['sunPosition']!.value.copy(sun);
-
-        // Sync directional sun light direction to match sky
-        this.scene.traverse(obj => {
-            if (obj instanceof THREE.DirectionalLight && obj.castShadow) {
-                obj.position.set(
-                    sun.x * 500,
-                    sun.y * 500,
-                    sun.z * 500,
-                );
-            }
-        });
-
-        // Generate environment map from sky for PBR reflections
-        const pmrem = new THREE.PMREMGenerator(this.renderer);
-        pmrem.compileEquirectangularShader();
-        const envMap = pmrem.fromScene(new RoomEnvironment()).texture;
-        this.scene.environment = envMap;
-        pmrem.dispose();
+        // Environment map is baked FROM the Sky (not RoomEnvironment) so PBR
+        // reflections pick up the real sky colour and sun position — the
+        // RoomEnvironment had no relationship to the visible sky.
+        this._pmrem = new THREE.PMREMGenerator(this.renderer);
+        this._pmrem.compileEquirectangularShader();
+        this._bakeEnvFromSky();
 
         // Sky mesh handles background — ensure no solid color overwrites it
         this.scene.background = null;
+    }
+
+    /**
+     * Re-bake the PBR environment map from the current Sky state. The Sky mesh
+     * is temporarily reparented into a throwaway scene because
+     * `PMREMGenerator.fromScene` captures a whole scene — we want only the
+     * atmosphere reflected in surfaces, not terrain/drones/helpers.
+     */
+    private _bakeEnvFromSky(): void {
+        if (this._envRT) this._envRT.dispose();
+        const envScene = new THREE.Scene();
+        envScene.add(this._sky);            // detaches from the main scene
+        this._envRT = this._pmrem.fromScene(envScene);
+        this.scene.add(this._sky);          // re-attach to the main scene
+        this.scene.environment = this._envRT.texture;
     }
 
     private _initLights(): void {
@@ -139,7 +156,12 @@ export class Scene {
         this.scene.add(ambient);
 
         const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
-        sun.position.set(600, 1200, 350);
+        // Position derived from the shared sun direction so the light, the
+        // visible Sky sun, and the water glint all agree. 1500 m keeps it
+        // inside the shadow camera's 4000 m far plane at every elevation.
+        sun.position.copy(this._sunDir).multiplyScalar(1500);
+        this._sun = sun;
+        updateWaterSunDirection(sun.position);
         sun.castShadow = true;
         // 4096 × 4096 shadow map with a ±800 m frustum. Net near-camera texel
         // density is ~3.4× sharper than the prior 2048² / ±1200 m setup
@@ -258,6 +280,8 @@ export class Scene {
 
     setBloomEnabled(v: boolean): void  { this._postFx.setBloomEnabled(v); }
     setBloomStrength(v: number): void  { this._postFx.setBloomStrength(v); }
+    setSsaoEnabled(v: boolean): void   { this._postFx.setSsaoEnabled(v); }
+    setSsaoIntensity(v: number): void  { this._postFx.setSsaoIntensity(v); }
     setFogDensity(v: number): void {
         if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = v;
     }
@@ -281,7 +305,23 @@ export class Scene {
         });
     }
 
-    getTerrainIntersection(clientX: number, clientY: number): THREE.Vector3 | null {
+    /**
+     * Reposition the sun (degrees: elevation above horizon, azimuth around Y).
+     * Updates the Sky, the directional light, the water glint, and re-bakes the
+     * environment map in one shot so every lighting cue stays coherent.
+     */
+    setSunPosition(elevationDeg: number, azimuthDeg: number): void {
+        this._sunElevDeg    = elevationDeg;
+        this._sunAzimuthDeg = azimuthDeg;
+        this._computeSunDir();
+        this._sky.material.uniforms['sunPosition']!.value.copy(this._sunDir);
+        this._sun.position.copy(this._sunDir).multiplyScalar(1500);
+        this._sun.shadow.camera.updateProjectionMatrix();
+        updateWaterSunDirection(this._sun.position);
+        this._bakeEnvFromSky();
+    }
+
+    getTerrainIntersection(clientX: number, clientY: number, groundMesh?: THREE.Mesh | null): THREE.Vector3 | null {
         const rect   = this.renderer.domElement.getBoundingClientRect();
         const ndc    = new THREE.Vector2(
             ((clientX - rect.left) / rect.width)  * 2 - 1,
@@ -289,13 +329,21 @@ export class Scene {
         );
         const ray = new THREE.Raycaster();
         ray.setFromCamera(ndc, this._camera);
+
+        if (groundMesh) {
+            const hits = ray.intersectObject(groundMesh, false);
+            if (hits.length > 0 && hits[0]!.point) {
+                return hits[0]!.point;
+            }
+        }
+
         const target = new THREE.Vector3();
         const hit    = ray.ray.intersectPlane(this._groundPlane, target);
         return hit ? target : null;
     }
 
     showTargetMarker(pos: THREE.Vector3, alt: number): void {
-        void alt; // alt unused here — marker is always on ground plane
+        void alt;
         if (!this._markerMesh) {
             const geo = new THREE.RingGeometry(1.5, 2.5, 32);
             geo.rotateX(-Math.PI / 2);
@@ -305,7 +353,7 @@ export class Scene {
             this._markerMesh = new THREE.Mesh(geo, mat);
             this.scene.add(this._markerMesh);
         }
-        this._markerMesh.position.set(pos.x, 0.1, pos.z);
+        this._markerMesh.position.set(pos.x, pos.y + 0.2, pos.z);
         this._markerMesh.visible = true;
         (this._markerMesh.material as THREE.MeshBasicMaterial).opacity = 0.8;
 

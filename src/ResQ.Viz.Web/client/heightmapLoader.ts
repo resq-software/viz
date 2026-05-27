@@ -40,6 +40,51 @@ export interface HeightmapOptions {
     baseOffset?:  number;
 }
 
+/** Options for {@link buildSamplerFromGrid}. */
+export interface GridSamplerOptions {
+    /** Row-major elevation grid in metres. */
+    cells:     Float32Array;
+    /** Grid columns (maps to world X). */
+    width:     number;
+    /** Grid rows (maps to world Z). */
+    height:    number;
+    /** World extent the grid covers, centred on origin. */
+    worldSize: number;
+    /** Cache-key suffix so geoCache invalidates across distinct grids. */
+    key:       string;
+}
+
+/**
+ * Build a bilinear elevation sampler over a metres grid. Shared by the PNG-DEM
+ * path ({@link loadHeightmapSampler}) and the server-eroded-DEM path
+ * (`erosion.ts`), so both map world coordinates onto the grid identically —
+ * which is what keeps the rendered mesh aligned with the backend collision /
+ * brick-map sensor heights that sample the same installed DEM.
+ */
+export function buildSamplerFromGrid(o: GridSamplerOptions): HeightmapSampler {
+    const { cells, width, height, worldSize, key } = o;
+    return {
+        width, height, key, cells, worldSize,
+        sample(x, z) {
+            // World (-worldSize/2..+worldSize/2) → UV (0..1), clamped to edge.
+            const half = worldSize * 0.5;
+            const fx = Math.min(Math.max((x + half) / worldSize, 0), 1) * (width  - 1);
+            const fy = Math.min(Math.max((z + half) / worldSize, 0), 1) * (height - 1);
+            const x0 = Math.floor(fx), x1 = Math.min(x0 + 1, width  - 1);
+            const y0 = Math.floor(fy), y1 = Math.min(y0 + 1, height - 1);
+            const dx = fx - x0, dy = fy - y0;
+
+            const c00 = cells[y0 * width + x0]!;
+            const c10 = cells[y0 * width + x1]!;
+            const c01 = cells[y1 * width + x0]!;
+            const c11 = cells[y1 * width + x1]!;
+            const c0  = c00 * (1 - dx) + c10 * dx;
+            const c1  = c01 * (1 - dx) + c11 * dx;
+            return c0 * (1 - dy) + c1 * dy;
+        },
+    };
+}
+
 const _samplerCache = new Map<string, HeightmapSampler>();
 
 /**
@@ -74,48 +119,17 @@ export async function loadHeightmapSampler(
     const img = await _fetchImage(url);
     const { data, width, height } = _decodePixels(img);
 
-    // Store the red channel only — grayscale heightmaps use RGB = GGG, so
-    // red is canonical and RGB are equal. `grid` is the 0..1 normalised
-    // source for cheap bilinear sampling; `cells` is the pre-scaled
-    // metres-grid exposed to callers that forward the DEM to the backend.
-    const grid  = new Float32Array(width * height);
+    // Grayscale heightmaps store RGB = GGG, so the red channel is canonical.
+    // Decode straight to a metres grid; buildSamplerFromGrid handles the
+    // bilinear lookup (shared with the eroded-DEM path so both map world →
+    // grid identically). Bilinear over metres == bilinear over 0..1 then
+    // scaled — affine, so the result is unchanged from the old inline path.
     const cells = new Float32Array(width * height);
-    for (let i = 0; i < grid.length; i++) {
-        const n = data[i * 4]! / 255;
-        grid[i]  = n;
-        cells[i] = baseOffset + n * heightScale;
+    for (let i = 0; i < cells.length; i++) {
+        cells[i] = baseOffset + (data[i * 4]! / 255) * heightScale;
     }
 
-    const sampler: HeightmapSampler = {
-        width, height,
-        key:       cacheKey,
-        cells,
-        worldSize,
-        sample(x, z) {
-            // World (-worldSize/2..+worldSize/2) → UV (0..1)
-            const half = worldSize * 0.5;
-            const u    = (x + half) / worldSize;
-            const v    = (z + half) / worldSize;
-
-            // Bilinear sample with clamp-to-edge
-            const fx = Math.min(Math.max(u, 0), 1) * (width  - 1);
-            const fy = Math.min(Math.max(v, 0), 1) * (height - 1);
-            const x0 = Math.floor(fx), x1 = Math.min(x0 + 1, width  - 1);
-            const y0 = Math.floor(fy), y1 = Math.min(y0 + 1, height - 1);
-            const dx = fx - x0, dy = fy - y0;
-
-            const g00 = grid[y0 * width + x0]!;
-            const g10 = grid[y0 * width + x1]!;
-            const g01 = grid[y1 * width + x0]!;
-            const g11 = grid[y1 * width + x1]!;
-            const g0  = g00 * (1 - dx) + g10 * dx;
-            const g1  = g01 * (1 - dx) + g11 * dx;
-            const g   = g0  * (1 - dy) + g1  * dy;
-
-            return baseOffset + g * heightScale;
-        },
-    };
-
+    const sampler = buildSamplerFromGrid({ cells, width, height, worldSize, key: cacheKey });
     _samplerCache.set(cacheKey, sampler);
     return sampler;
 }

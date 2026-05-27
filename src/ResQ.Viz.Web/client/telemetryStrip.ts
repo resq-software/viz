@@ -13,6 +13,7 @@
 
 import type { DroneState } from './types';
 import { classifyLED, type LEDState } from './dronesLed';
+import { terrainHeight } from './terrain';
 
 // Display-order rank for telemetry rows. Lower = higher priority (top of
 // the strip). Mirrors the LED severity ladder from dronesLed.ts so the
@@ -216,8 +217,13 @@ export class TelemetryStrip {
                               : battery < 30 ? 'ts-bat-fill warn'
                               : 'ts-bat-fill';
 
-        const altM = d.pos?.[1] ?? 0;
-        row.alt.textContent = `${Math.round(altM)}m`;
+        // Altitude above ground (AGL) — more useful to an operator than MSL.
+        // Sampled from the same terrainHeight() the mesh and drones use, so it
+        // reflects the active preset / eroded DEM. Falls back to MSL if XZ is absent.
+        const x = d.pos?.[0] ?? 0;
+        const z = d.pos?.[2] ?? 0;
+        const altM = (d.pos?.[1] ?? 0) - terrainHeight(x, z);
+        row.alt.textContent = `${Math.round(altM)}m AGL`;
 
         const vx = d.vel?.[0] ?? 0;
         const vz = d.vel?.[2] ?? 0;

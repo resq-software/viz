@@ -7,12 +7,17 @@
 // runtime. Demo reliability: a network blip or 404 never blanks the
 // screen — the programmatic path is a one-promise-resolution away.
 //
-// DRACO and KTX2 loaders are deliberately deferred to the PR that first
-// needs them (bundle-cost discipline) — they pull wasm decoders that
-// want dedicated asset paths under client/public/.
+// Draco + meshopt decoders are wired so a compressed quadrotor.glb (run through
+// `gltf-transform optimize --compress draco`) loads without any call-site
+// change. Both are local — no CDN (per project standards): meshopt's decoder is
+// self-contained JS, and the Draco wasm/js helpers live in client/public/draco/
+// (copied from three/examples/jsm/libs/draco/gltf). KTX2 stays deferred until a
+// texture asset needs it.
 
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as THREE from 'three';
 import { getLogger } from './log';
 
@@ -22,7 +27,15 @@ let _gltf: GLTFLoader | null = null;
 let _tex:  THREE.TextureLoader | null = null;
 
 function gltfLoader(): GLTFLoader {
-    if (!_gltf) _gltf = new GLTFLoader();
+    if (!_gltf) {
+        _gltf = new GLTFLoader();
+        // No-op for uncompressed .glb; the decoders only engage when the file
+        // actually carries KHR_draco_mesh_compression / EXT_meshopt_compression.
+        const draco = new DRACOLoader();
+        draco.setDecoderPath('/draco/');
+        _gltf.setDRACOLoader(draco);
+        _gltf.setMeshoptDecoder(MeshoptDecoder);
+    }
     return _gltf;
 }
 
