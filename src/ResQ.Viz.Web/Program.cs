@@ -152,6 +152,8 @@ provider.Mappings[".glb"] = "model/gltf-binary";
 provider.Mappings[".gltf"] = "model/gltf+json";
 provider.Mappings[".ktx2"] = "image/ktx2";
 provider.Mappings[".hdr"] = "image/vnd.radiance";
+provider.Mappings[".webmanifest"] = "application/manifest+json";  // PWA manifest (SEO/installability)
+provider.Mappings[".wasm"] = "application/wasm";                  // Draco decoder — enables streaming compile
 
 app.UseStaticFiles(new StaticFileOptions
 {
