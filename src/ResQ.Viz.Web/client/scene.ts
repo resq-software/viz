@@ -146,7 +146,10 @@ export class Scene {
         if (this._envRT) this._envRT.dispose();
         const envScene = new THREE.Scene();
         envScene.add(this._sky);            // detaches from the main scene
-        this._envRT = this._pmrem.fromScene(envScene);
+        // Pass explicit far=50000 — the Sky mesh is scaled 40000 and the
+        // default fromScene far plane is 100, which clipped the entire dome
+        // and made the baked env map black. (sigma=0 keeps default blur.)
+        this._envRT = this._pmrem.fromScene(envScene, 0, 0.1, 50000);
         this.scene.add(this._sky);          // re-attach to the main scene
         this.scene.environment = this._envRT.texture;
     }

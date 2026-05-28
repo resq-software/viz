@@ -779,9 +779,16 @@ export class DroneManager {
     const entry = this._drones.get(d.id);
     if (!entry) return;
     entry.targetPos.set(d.pos[0], d.pos[1], d.pos[2]);
-    entry._q.set(d.rot[0], d.rot[1], d.rot[2], d.rot[3]);
-    if (!entry.targetRot) entry.targetRot = new THREE.Quaternion();
-    entry.targetRot.copy(entry._q);
+    // d.rot is optional on the wire — guard the read so a partial frame
+    // doesn't throw. When absent, leave targetRot null so tick() skips the
+    // slerp and the drone keeps its last rotation.
+    if (d.rot) {
+      entry._q.set(d.rot[0], d.rot[1], d.rot[2], d.rot[3]);
+      if (!entry.targetRot) entry.targetRot = new THREE.Quaternion();
+      entry.targetRot.copy(entry._q);
+    } else {
+      entry.targetRot = null;
+    }
 
     // Label visibility — independent of LED state.
     const labelVisible =
@@ -837,6 +844,14 @@ export class DroneManager {
     // Contact shadow shares geo + texture but owns its material — dispose that.
     this._threeScene.remove(entry.contactShadow);
     (entry.contactShadow.material as THREE.Material).dispose();
+    // The id label is a Sprite (not a Mesh), so the dispose traverse above
+    // skipped it — explicitly dispose its per-drone CanvasTexture + material
+    // to avoid GPU memory growth on repeated spawn/despawn.
+    const labelMat = entry.label.material;
+    if (labelMat instanceof THREE.SpriteMaterial) {
+      labelMat.map?.dispose();
+      labelMat.dispose();
+    }
     this._drones.delete(id);
     if (this._selectedId === id) this._selectedId = null;
     if (this._hoveredId === id) this._hoveredId = null;

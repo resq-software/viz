@@ -641,9 +641,13 @@ export class Terrain {
         const pos    = geo.attributes['position'] as THREE.BufferAttribute;
         // Include the heightmap key (if any) so procedural and DEM-sourced
         // geometries don't share cache entries.
+        // Include the mesh topology in the cache key so a sessionStorage hit
+        // from a build with a different TERRAIN_SEGS doesn't read past the end
+        // of the cached array (which would cascade to NaN vertex heights).
+        const topo = `segs:${TERRAIN_SEGS}`;
         const cacheK = _heightmapOverride
-            ? `${_activePreset.cacheKey}|hm:${_heightmapOverride.key}`
-            : _activePreset.cacheKey;
+            ? `${_activePreset.cacheKey}|${topo}|hm:${_heightmapOverride.key}`
+            : `${_activePreset.cacheKey}|${topo}`;
 
         const cached = geoCache.tryGet(cacheK);
         if (cached) {

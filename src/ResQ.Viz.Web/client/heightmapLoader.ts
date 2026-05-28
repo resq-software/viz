@@ -63,6 +63,19 @@ export interface GridSamplerOptions {
  */
 export function buildSamplerFromGrid(o: GridSamplerOptions): HeightmapSampler {
     const { cells, width, height, worldSize, key } = o;
+    // Guard against degenerate inputs — without this, an out-of-range grid
+    // produces undefined reads in the bilinear path, which cascades to NaN
+    // terrain heights (drones fall through the floor, sensors return NaN).
+    if (!Number.isInteger(width) || width <= 0 ||
+        !Number.isInteger(height) || height <= 0) {
+        throw new Error(`heightmap: invalid grid dimensions ${width}x${height}`);
+    }
+    if (!Number.isFinite(worldSize) || worldSize <= 0) {
+        throw new Error(`heightmap: worldSize must be positive and finite, got ${worldSize}`);
+    }
+    if (cells.length !== width * height) {
+        throw new Error(`heightmap: cells length ${cells.length} does not match width*height ${width * height}`);
+    }
     return {
         width, height, key, cells, worldSize,
         sample(x, z) {

@@ -40,6 +40,16 @@ public static class HydraulicErosion
         int erosionRadius = 3,
         int maxLifetime = 30)
     {
+        // Validate parameters that would otherwise corrupt the bake:
+        //   erosionRadius is the brush divisor → 0 produces NaN weights;
+        //   maxLifetime ≤ 0 skips erosion silently;
+        //   null heights would NPE inside GetLength.
+        ArgumentNullException.ThrowIfNull(heights);
+        if (erosionRadius <= 0)
+            throw new ArgumentOutOfRangeException(nameof(erosionRadius), "erosionRadius must be > 0.");
+        if (maxLifetime <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maxLifetime), "maxLifetime must be > 0.");
+
         int mapH = heights.GetLength(0);   // rows  (world Z)
         int mapW = heights.GetLength(1);   // cols  (world X)
         if (mapW < 3 || mapH < 3 || numDroplets <= 0) return;

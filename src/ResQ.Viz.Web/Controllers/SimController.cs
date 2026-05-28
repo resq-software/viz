@@ -17,6 +17,7 @@
 using System.Numerics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.Memory;
 using ResQ.Simulation.Engine.Physics;
 using ResQ.Viz.Web.Filters;
 using ResQ.Viz.Web.Models;
@@ -266,7 +267,12 @@ public sealed class SimController : ControllerBase
     // Eroded grids are deterministic in (preset, seed, iterations, res), so
     // cache the bake across requests/rooms — re-toggling erosion is then free
     // and every room that asks for the same parameters gets the identical DEM.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[,]> ErosionCache = new();
+    // Bounded MemoryCache (each grid is ~4 MB at the 1025² cap; 64-entry size
+    // limit caps RAM at ~256 MB worst case) with a 30-min sliding expiration.
+    // Lazy wraps the bake so concurrent requests for an already-cached key
+    // share a single result instead of triggering duplicate expensive bakes.
+    private static readonly MemoryCache ErosionCache =
+        new(new MemoryCacheOptions { SizeLimit = 64 });
 
     /// <summary>
     /// Bakes hydraulic erosion onto a terrain preset, installs the eroded grid
@@ -274,6 +280,7 @@ public sealed class SimController : ControllerBase
     /// what the client renders), and returns the grid for the client mesh.
     /// </summary>
     [HttpGet("terrain/eroded")]
+    [EnableRateLimiting("destructive")]
     public IActionResult ErodedTerrain(
         string preset = "alpine",
         int seed = 1337,
@@ -290,7 +297,14 @@ public sealed class SimController : ControllerBase
             return BadRequest(new { error = $"iterations must be between 0 and {ErosionMaxDroplets}" });
 
         var cacheKey = $"{preset.ToLowerInvariant()}|{seed}|{iterations}|{res}";
-        var grid = ErosionCache.GetOrAdd(cacheKey, _ => BakeErodedGrid(preset, seed, iterations, res));
+        var grid = ErosionCache.GetOrCreate(cacheKey, entry =>
+        {
+            entry.Size = 1;
+            entry.SlidingExpiration = TimeSpan.FromMinutes(30);
+            return new Lazy<float[,]>(
+                () => BakeErodedGrid(preset, seed, iterations, res),
+                System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+        })!.Value;
 
         const double extent = 4000.0;   // TerrainNoiseService.Width/Depth and client TERRAIN_SIZE
         // Clone for install — the cached grid is shared and read-only.
@@ -303,7 +317,7 @@ public sealed class SimController : ControllerBase
 
         _logger.LogInformation(
             "Eroded terrain '{Preset}' (seed {Seed}, {Iterations} droplets, {Res}²) installed in room {RoomId}.",
-            preset, seed, iterations, res, Room.Id);
+            Sanitize(preset), seed, iterations, res, Room.Id);
         return Ok(new { rows = res, cols = res, width = extent, depth = extent, cells });
     }
 
