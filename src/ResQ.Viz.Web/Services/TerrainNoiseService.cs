@@ -121,19 +121,46 @@ public sealed class TerrainNoiseService : ITerrain
     }
 
     private static double Ridged(double x, double z, int octaves,
-        double lacunarity = 2.17, double gain = 1.8)
+        double lacunarity = 2.0, double gain = 1.9)
     {
-        double value = 0, weight = 1;
+        // Spectral amplitude decay (amp halves per octave) so high-frequency
+        // octaves only add fine detail — without it the octaves stacked into a
+        // field of sharp spikes instead of coherent ridges. Mirrors `_ridged`
+        // in terrainPresets.ts (TS↔C# parity for the eroded-DEM bake + sensors).
+        double sum = 0, norm = 0, freq = 1, amp = 0.5, weight = 1;
         for (int i = 0; i < octaves; i++)
         {
-            double freq = Math.Pow(lacunarity, i);
             double n = Noise(x * freq, z * freq);
             double signal = 1 - Math.Abs(n * 2 - 1);
-            double s2 = signal * signal * weight;
-            value += s2;
+            signal *= signal;
+            signal *= weight;
             weight = Math.Min(signal * gain, 1.0);
+            sum += signal * amp;
+            norm += amp;
+            freq *= lacunarity;
+            amp *= 0.5;
         }
-        return value / octaves;
+        return sum / norm;
+    }
+
+    private static double SmoothStep(double edge0, double edge1, double x)
+    {
+        double t = Math.Clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+        return t * t * (3 - 2 * t);
+    }
+
+    private static double AsymmetricDune(double u)
+    {
+        if (u < 0.75)
+        {
+            double t = u / 0.75;
+            return t * t;
+        }
+        else
+        {
+            double t = (1.0 - u) / 0.25;
+            return t * t;
+        }
     }
 
     // ── Alpine — domain-warped FBM + 4 radial peaks ──────────────────────────
@@ -159,8 +186,15 @@ public sealed class TerrainNoiseService : ITerrain
         double peaks = 0;
         foreach (var (px, pz, ph, pr) in AlpinePeaks)
         {
-            double t = 1 - ((x - px) * (x - px) + (z - pz) * (z - pz)) / (pr * pr);
-            if (t > 0) peaks += ph * t * t;
+            double pWarpX = px + Fbm(x * 0.004, z * 0.004, 3) * 55;
+            double pWarpZ = pz + Fbm(x * 0.004 + 12.0, z * 0.004 + 12.0, 3) * 55;
+            double d = Math.Sqrt((x - pWarpX) * (x - pWarpX) + (z - pWarpZ) * (z - pWarpZ));
+            double t = 1 - d / pr;
+            if (t > 0)
+            {
+                double noiseFactor = 0.55 + 0.45 * Ridged(x * 0.006, z * 0.006, 4);
+                peaks += ph * Math.Pow(t, 1.75) * noiseFactor;
+            }
         }
         return 22 + large + medium + fine + peaks;
     }
@@ -169,7 +203,12 @@ public sealed class TerrainNoiseService : ITerrain
 
     private static double RidgelineHeight(double x, double z)
     {
-        double ridge = Ridged(x * 0.00075 + 1.1, z * 0.00075 + 0.8, 8) * 195;
+        double wx = (Fbm(x * 0.0008, z * 0.0008, 3) * 2 - 1) * 130;
+        double wz = (Fbm(x * 0.0008 + 6.3, z * 0.0008 + 2.4, 3) * 2 - 1) * 130;
+        // Lower base frequency → broader ranges; 5 octaves (higher ones decay
+        // away now); gentler pow so crests read as long ridges, not needles.
+        double rVal = Ridged((x + wx) * 0.00052 + 1.1, (z + wz) * 0.00052 + 0.8, 5);
+        double ridge = Math.Pow(rVal, 1.15) * 235;
         double baseH = (Fbm(x * 0.0022 + 3.1, z * 0.0022 + 7.4, 4) * 2 - 1) * 22;
         double fine = (Fbm(x * 0.011 + 2.2, z * 0.011 + 5.9, 3) * 2 - 1) * 4;
         return 8 + ridge + baseH + fine;
@@ -191,27 +230,47 @@ public sealed class TerrainNoiseService : ITerrain
         double mask = 0;
         foreach (var (ix, iz, ir) in Islands)
         {
-            double t = 1 - ((x - ix) * (x - ix) + (z - iz) * (z - iz)) / (ir * ir);
+            double dx = x - ix;
+            double dz = z - iz;
+            double angle = Math.Atan2(dz, dx);
+            double radWarp = Fbm(x * 0.006, z * 0.006, 3) * 0.22 +
+                            Math.Sin(angle * 5) * 0.05 +
+                            Math.Cos(angle * 9) * 0.02;
+            double d = Math.Sqrt(dx * dx + dz * dz) * (1.0 + radWarp);
+            double t = 1 - d / ir;
             if (t > 0) mask = Math.Max(mask, t);
         }
-        double perturbN = (Fbm(x * 0.005 + 2.1, z * 0.005 + 0.7, 4) * 2 - 1) * 0.28;
+        double perturbN = (Fbm(x * 0.005 + 2.1, z * 0.005 + 0.7, 4) * 2 - 1) * 0.25;
         double m = Math.Max(0, mask + perturbN);
-        double topo = (Fbm(x * 0.0040 + 1.3, z * 0.0040 + 5.2, 5) * 2 - 1) * 62;
-        return topo * Math.Pow(m, 1.3) - 4;
+        double baseHeight = m * 38;
+        double details = Fbm(x * 0.0035 + 1.3, z * 0.0035 + 5.2, 5) * 26 * m;
+        return baseHeight + details - 2.5;
     }
 
     // ── Canyon — terrace + threshold canyon cuts ──────────────────────────────
 
     private static double CanyonHeight(double x, double z)
     {
-        double baseH = (Fbm(x * 0.00095 + 1.3, z * 0.00095 + 2.7, 5) * 2 - 1) * 28 + 55;
-        const double T = 20;
+        // Mirrors _canyonHeight in terrainPresets.ts (TS↔C# parity). Taller
+        // plateau + subtle blended strata (12 m steps, 50 %-width sloped risers)
+        // instead of the old 20 m sheer-riser "stacked plates", plus a deeper,
+        // two-path branching gorge network.
+        double baseH = (Fbm(x * 0.00085 + 1.3, z * 0.00085 + 2.7, 5) * 2 - 1) * 45 + 72;
+
+        const double T = 12;
         double frac = (((baseH % T) + T) % T) / T;
-        double step = Math.Min(frac / 0.18, 1.0);
+        double step = Math.Min(frac / 0.5, 1.0);
         double sf = step * step * (3 - 2 * step);
-        double terraced = baseH - frac * T + sf * T;
-        double canyonN = Fbm(x * 0.0048 + 7.1, z * 0.0038 + 3.4, 4);
-        double depth = canyonN < 0.32 ? Math.Pow(1 - canyonN / 0.32, 2) * 80 : 0;
+        double terracedFull = baseH - frac * T + sf * T;
+        double terraced = baseH * 0.45 + terracedFull * 0.55;
+
+        double warpX = x + Fbm(x * 0.0018, z * 0.0018, 3) * 180;
+        double warpZ = z + Fbm(x * 0.0018 + 8.0, z * 0.0018 + 8.0, 3) * 180;
+        double c1 = Math.Abs(Noise(warpX * 0.0013, warpZ * 0.0013) - 0.5);
+        double c2 = Math.Abs(Noise(warpX * 0.0026 + 5.1, warpZ * 0.0026 + 2.3) - 0.5);
+        double carve = Math.Max(SmoothStep(0.10, 0.0, c1), SmoothStep(0.06, 0.0, c2) * 0.7);
+        double depth = carve * carve * 110;
+
         return terraced - depth;
     }
 
@@ -219,13 +278,14 @@ public sealed class TerrainNoiseService : ITerrain
 
     private static double DuneHeight(double x, double z)
     {
-        double d1n = Noise(x * 0.0028 + 0.0, z * 0.0145 + 0.0);
-        double d1 = Math.Pow(1 - Math.Abs(d1n * 2 - 1), 2.8) * 28;
+        double d1Warp = Noise(x * 0.001, z * 0.001) * 40;
+        double d1n = Noise((x + d1Warp) * 0.0028, z * 0.0145 + d1Warp * 0.1);
+        double d1 = AsymmetricDune(d1n) * 28;
         double ang = Math.PI * 0.15;
         double cx = x * Math.Cos(ang) + z * Math.Sin(ang);
         double cz = -x * Math.Sin(ang) + z * Math.Cos(ang);
         double d2n = Noise(cx * 0.0038 + 5.2, cz * 0.018 + 2.1);
-        double d2 = Math.Pow(1 - Math.Abs(d2n * 2 - 1), 2.2) * 14;
+        double d2 = AsymmetricDune(d2n) * 12;
         double baseH = (Fbm(x * 0.0010, z * 0.0010, 4) * 2 - 1) * 14;
         double field = Noise(x * 0.0018 + 1.7, z * 0.0018 + 3.3);
         return 4 + baseH + d1 * (0.5 + field * 0.5) + d2;

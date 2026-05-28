@@ -1,0 +1,21 @@
+{
+  "name": "ResQ Viz",
+  "short_name": "ResQ Viz",
+  "description": "Real-time 3D coordination for autonomous drone swarms — mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.",
+  "lang": "en-US",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["minimal-ui", "browser"],
+  "orientation": "landscape",
+  "theme_color": "#0A0E1A",
+  "background_color": "#0A0E1A",
+  "categories": ["productivity", "utilities", "security", "government"],
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" },
+    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ]
+}
