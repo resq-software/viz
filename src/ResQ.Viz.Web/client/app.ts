@@ -33,8 +33,10 @@ import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
 import { tickWind } from './treeSprites';
-import { setHeightmapOverride } from './terrain';
+import { setHeightmapOverride, setAntiTile } from './terrain';
 import { tickWater } from './water';
+import { DownwashFx } from './downwash';
+import { loadErodedTerrain } from './erosion';
 import { loadHeightmapFromLocation } from './heightmapLoader';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
@@ -95,6 +97,7 @@ if (!container) throw new Error('#scene-container not found');
 const viz          = new Scene(container);
 let   terrain      = new Terrain(viz.scene, 'alpine');
 const droneManager = new DroneManager(viz.scene);
+const downwashFx   = new DownwashFx(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
 const controlPanel = new ControlPanel();
@@ -302,6 +305,58 @@ shadowsChk?.addEventListener('change', () => {
     viz.setShadowsEnabled(v);
 });
 
+// Ambient occlusion (GTAO)
+const ssaoChk = document.getElementById('set-ssao') as HTMLInputElement | null;
+if (ssaoChk) ssaoChk.checked = settings.get('ssaoEnabled');
+ssaoChk?.addEventListener('change', () => {
+    const v = ssaoChk.checked;
+    settings.set('ssaoEnabled', v);
+    viz.setSsaoEnabled(v);
+});
+
+// Terrain anti-tiling (seamless stochastic albedo — heavier)
+const antiTileChk = document.getElementById('set-anti-tile') as HTMLInputElement | null;
+if (antiTileChk) antiTileChk.checked = settings.get('antiTile');
+antiTileChk?.addEventListener('change', () => {
+    const v = antiTileChk.checked;
+    settings.set('antiTile', v);
+    setAntiTile(v);
+});
+
+// Drone contact shadows
+const contactChk = document.getElementById('set-contact-shadow') as HTMLInputElement | null;
+if (contactChk) contactChk.checked = settings.get('contactShadowEnabled');
+contactChk?.addEventListener('change', () => {
+    const v = contactChk.checked;
+    settings.set('contactShadowEnabled', v);
+    droneManager.setContactShadowEnabled(v);
+});
+
+// Rotor downwash FX
+const downwashChk = document.getElementById('set-downwash') as HTMLInputElement | null;
+if (downwashChk) downwashChk.checked = settings.get('downwashEnabled');
+downwashChk?.addEventListener('change', () => {
+    const v = downwashChk.checked;
+    settings.set('downwashEnabled', v);
+    downwashFx.setEnabled(v);
+});
+
+// Hydraulic-erosion terrain (server-baked DEM). `_applyErosion` / `_rebuildTerrain`
+// are hoisted function declarations defined below near the preset switcher.
+let _erosionEnabled = settings.get('erosionEnabled');
+const erosionChk = document.getElementById('set-erosion') as HTMLInputElement | null;
+if (erosionChk) erosionChk.checked = _erosionEnabled;
+erosionChk?.addEventListener('change', () => {
+    _erosionEnabled = erosionChk.checked;
+    settings.set('erosionEnabled', _erosionEnabled);
+    if (_erosionEnabled) {
+        void _applyErosion(_currentPresetKey);
+    } else {
+        setHeightmapOverride(null);
+        _rebuildTerrain();
+    }
+});
+
 // Reset button
 settingsReset?.addEventListener('click', () => {
     localStorage.removeItem('resq-viz-settings');
@@ -320,6 +375,10 @@ droneManager.setDetectionRingVisible(settings.get('detectionRingShow'));
 droneManager.setBatteryWarnThreshold(settings.get('batteryWarnPct') / 100);
 effectsMgr.setTrailLength(settings.get('trailLength'));
 overlayMgr.showVelocity = settings.get('showVelocity');
+viz.setSsaoEnabled(settings.get('ssaoEnabled'));
+setAntiTile(settings.get('antiTile'));
+droneManager.setContactShadowEnabled(settings.get('contactShadowEnabled'));
+downwashFx.setEnabled(settings.get('downwashEnabled'));
 
 // ─── Terrain preset switching ──────────────────────────────────────────────
 
@@ -327,6 +386,9 @@ let _currentPresetKey: PresetKey = 'alpine';
 
 function _switchPreset(key: PresetKey): void {
     _currentPresetKey = key;
+    // Drop any previous preset's eroded DEM so the new preset builds from its
+    // own procedural shape; the eroded version swaps back in asynchronously.
+    if (_erosionEnabled) setHeightmapOverride(null);
     terrain.dispose(viz.scene);
     terrain = new Terrain(viz.scene, key);
     const p = PRESETS[key];
@@ -339,7 +401,38 @@ function _switchPreset(key: PresetKey): void {
     });
     // Notify backend so drone physics clamp to the correct terrain
     apiPostOrWarn(`/api/sim/preset/${key}`, undefined, `preset ${key}`);
+    if (_erosionEnabled) void _applyErosion(key);
 }
+
+/** Rebuild the terrain mesh for the current preset against the active heightmap
+ *  override (used after erosion installs/clears a DEM — mirrors how _switchPreset
+ *  rebuilds, minus the preset/atmosphere/backend churn). */
+function _rebuildTerrain(): void {
+    terrain.dispose(viz.scene);
+    terrain = new Terrain(viz.scene, _currentPresetKey);
+}
+
+/** Fetch the server-eroded DEM for `key`, install it, and rebuild the mesh.
+ *  Needs the session cookie (endpoint is room-scoped). No-ops if erosion was
+ *  toggled off or the preset changed during the async bake/fetch. */
+async function _applyErosion(key: PresetKey): Promise<void> {
+    if (!_erosionEnabled) return;
+    const ok = await _ensureSessionReady();
+    if (!ok) return;
+    try {
+        const sampler = await loadErodedTerrain({ preset: key });
+        if (_erosionEnabled && key === _currentPresetKey) {
+            setHeightmapOverride(sampler);
+            _rebuildTerrain();
+            log.info(`eroded terrain installed for '${key}' — mesh rebuilt`);
+        }
+    } catch (err) {
+        log.warn('eroded terrain load failed; keeping procedural', { err });
+    }
+}
+
+// Kick the initial erosion bake for the default preset (cached server-side).
+if (_erosionEnabled) void _applyErosion(_currentPresetKey);
 
 // ─── Heightmap import (optional real-world DEM source) ─────────────────────
 // Enabled via URL params:
@@ -354,6 +447,9 @@ function _switchPreset(key: PresetKey): void {
 void (async () => {
     const sampler = await loadHeightmapFromLocation();
     if (!sampler) return;
+    // An explicit URL DEM wins over erosion — disable erosion so the preset
+    // switcher doesn't clear the uploaded heightmap out from under it.
+    _erosionEnabled = false;
     setHeightmapOverride(sampler);
     _switchPreset(_currentPresetKey);
     log.info(`heightmap installed ${sampler.width}×${sampler.height} DEM — terrain rebuilt`);
@@ -411,6 +507,7 @@ void _ensureSessionReady().then(ok => {
 });
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
+viz.addTickCallback((dt) => downwashFx.tick(dt, droneManager.getDownwashSources()));
 viz.addTickCallback((dt) => effectsMgr.tick(dt));
 // Foliage wind — advances the shared uTime uniform used by every billboard's
 // vertex displacement (see treeSprites.ts buildBillboardMaterial).
@@ -488,7 +585,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
         if (droneId) {
             if (droneId === selectedId) {
                 // Clicking selected drone again → treat as terrain GoTo (pass-through)
-                const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
+                const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
                 if (terrainHit && selectedId) {
                     const alt = droneManager.getSelectedAltitude() ?? 15;
                     apiPostOrWarn(
@@ -508,7 +605,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
         }
     } else {
         if (selectedId) {
-            const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY);
+            const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
             if (terrainHit) {
                 const alt = droneManager.getSelectedAltitude() ?? 15;
                 apiPostOrWarn(

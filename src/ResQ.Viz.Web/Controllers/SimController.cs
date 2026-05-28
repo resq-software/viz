@@ -17,6 +17,7 @@
 using System.Numerics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.Memory;
 using ResQ.Simulation.Engine.Physics;
 using ResQ.Viz.Web.Filters;
 using ResQ.Viz.Web.Models;
@@ -258,6 +259,88 @@ public sealed class SimController : ControllerBase
     {
         Room.ClearHeightmap();
         return Ok(new { cleared = true });
+    }
+
+    private const int ErosionMaxResolution = 1025;
+    private const int ErosionMaxDroplets = 400_000;
+
+    // Eroded grids are deterministic in (preset, seed, iterations, res), so
+    // cache the bake across requests/rooms — re-toggling erosion is then free
+    // and every room that asks for the same parameters gets the identical DEM.
+    // Bounded MemoryCache (each grid is ~4 MB at the 1025² cap; 64-entry size
+    // limit caps RAM at ~256 MB worst case) with a 30-min sliding expiration.
+    // Lazy wraps the bake so concurrent requests for an already-cached key
+    // share a single result instead of triggering duplicate expensive bakes.
+    private static readonly MemoryCache ErosionCache =
+        new(new MemoryCacheOptions { SizeLimit = 64 });
+
+    /// <summary>
+    /// Bakes hydraulic erosion onto a terrain preset, installs the eroded grid
+    /// as the authoritative DEM (so drone collision and brick-map sensors match
+    /// what the client renders), and returns the grid for the client mesh.
+    /// </summary>
+    [HttpGet("terrain/eroded")]
+    [EnableRateLimiting("destructive")]
+    public IActionResult ErodedTerrain(
+        string preset = "alpine",
+        int seed = 1337,
+        int iterations = 60000,
+        int res = 513)
+    {
+        var validKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "alpine", "ridgeline", "coastal", "canyon", "dunes" };
+        if (!validKeys.Contains(preset))
+            return BadRequest(new { error = $"Unknown preset '{preset}'. Valid presets: alpine, ridgeline, coastal, canyon, dunes." });
+        if (res < 64 || res > ErosionMaxResolution)
+            return BadRequest(new { error = $"res must be between 64 and {ErosionMaxResolution}" });
+        if (iterations < 0 || iterations > ErosionMaxDroplets)
+            return BadRequest(new { error = $"iterations must be between 0 and {ErosionMaxDroplets}" });
+
+        var cacheKey = $"{preset.ToLowerInvariant()}|{seed}|{iterations}|{res}";
+        var grid = ErosionCache.GetOrCreate(cacheKey, entry =>
+        {
+            entry.Size = 1;
+            entry.SlidingExpiration = TimeSpan.FromMinutes(30);
+            return new Lazy<float[,]>(
+                () => BakeErodedGrid(preset, seed, iterations, res),
+                System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+        })!.Value;
+
+        const double extent = 4000.0;   // TerrainNoiseService.Width/Depth and client TERRAIN_SIZE
+        // Clone for install — the cached grid is shared and read-only.
+        Room.SetHeightmap((float[,])grid.Clone(), extent, extent);
+
+        var cells = new float[res * res];
+        for (var r = 0; r < res; r++)
+            for (var c = 0; c < res; c++)
+                cells[r * res + c] = grid[r, c];
+
+        _logger.LogInformation(
+            "Eroded terrain '{Preset}' (seed {Seed}, {Iterations} droplets, {Res}²) installed in room {RoomId}.",
+            Sanitize(preset), seed, iterations, res, Room.Id);
+        return Ok(new { rows = res, cols = res, width = extent, depth = extent, cells });
+    }
+
+    private static float[,] BakeErodedGrid(string preset, int seed, int iterations, int res)
+    {
+        var terrain = new TerrainNoiseService();
+        terrain.SetPreset(preset);
+
+        const double extent = 4000.0;
+        double step = extent / (res - 1);
+        var grid = new float[res, res];
+        for (var r = 0; r < res; r++)        // r → world Z
+        {
+            double z = -extent * 0.5 + r * step;
+            for (var c = 0; c < res; c++)    // c → world X
+            {
+                double x = -extent * 0.5 + c * step;
+                grid[r, c] = (float)terrain.GetElevation(x, z);
+            }
+        }
+
+        HydraulicErosion.Erode(grid, seed, iterations);
+        return grid;
     }
 
     /// <summary>Wire payload for <see cref="SetHeightmap(HeightmapPayload)"/>.</summary>
