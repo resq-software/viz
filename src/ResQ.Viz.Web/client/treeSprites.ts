@@ -111,7 +111,7 @@ export function buildBillboardMaterial(tex: THREE.CanvasTexture): THREE.MeshStan
 //   maps canvas-top → texture-V=0 → mesh-bottom, so we draw the trunk at
 //   CANVAS-TOP and the crown pointing DOWN in canvas space — Three.js flips it.
 
-export function buildPineTexture(): THREE.CanvasTexture {
+export function buildPineTexture(theme: 'lush' | 'arid' = 'lush'): THREE.CanvasTexture {
     const W = 64, H = 192;
     const cx = W / 2;
     const canvas = document.createElement('canvas');
@@ -125,13 +125,14 @@ export function buildPineTexture(): THREE.CanvasTexture {
     // Crown tiers (drawn bottom-to-top in canvas = top-to-bottom on screen after flip)
     //   Each tier: triangle from a wide base up to a narrower apex
     //   Overlap between tiers for a dense, layered look
+    const isArid = theme === 'arid';
     const tiers = [
         // { apexY, baseY, baseHalfW, fill, shadow }
-        { aY: 155, bY: H,   hw: 28, fill: '#14320f', shadow: '#0b200a' },
-        { aY: 110, bY: 165, hw: 22, fill: '#1a3d14', shadow: '#0f2a0d' },
-        { aY:  72, bY: 118, hw: 17, fill: '#204819', shadow: '#133011' },
-        { aY:  40, bY:  80, hw: 13, fill: '#265221', shadow: '#183814' },
-        { aY:  14, bY:  48, hw:  9, fill: '#2b5a26', shadow: '#1c3e19' },
+        { aY: 155, bY: H,   hw: 28, fill: isArid ? '#3d361c' : '#14320f', shadow: isArid ? '#242010' : '#0b200a' },
+        { aY: 110, bY: 165, hw: 22, fill: isArid ? '#4a4222' : '#1a3d14', shadow: isArid ? '#2d2814' : '#0f2a0d' },
+        { aY:  72, bY: 118, hw: 17, fill: isArid ? '#584e28' : '#204819', shadow: isArid ? '#383219' : '#133011' },
+        { aY:  40, bY:  80, hw: 13, fill: isArid ? '#665b2e' : '#265221', shadow: isArid ? '#413a1d' : '#183814' },
+        { aY:  14, bY:  48, hw:  9, fill: isArid ? '#746834' : '#2b5a26', shadow: isArid ? '#4a4220' : '#1c3e19' },
     ];
 
     for (const t of tiers) {
@@ -160,9 +161,15 @@ export function buildPineTexture(): THREE.CanvasTexture {
 
         // Sun-hit highlight streak (left-centre vertical)
         const hl = ctx.createLinearGradient(cx - t.hw * 0.2, t.aY, cx + t.hw * 0.15, t.bY);
-        hl.addColorStop(0,   'rgba(90,140,60,0)');
-        hl.addColorStop(0.4, 'rgba(90,140,60,0.22)');
-        hl.addColorStop(1.0, 'rgba(90,140,60,0)');
+        if (isArid) {
+            hl.addColorStop(0,   'rgba(150,135,70,0)');
+            hl.addColorStop(0.4, 'rgba(150,135,70,0.24)');
+            hl.addColorStop(1.0, 'rgba(150,135,70,0)');
+        } else {
+            hl.addColorStop(0,   'rgba(90,140,60,0)');
+            hl.addColorStop(0.4, 'rgba(90,140,60,0.22)');
+            hl.addColorStop(1.0, 'rgba(90,140,60,0)');
+        }
         ctx.fillStyle = hl;
         ctx.fill();   // same path still active
     }
@@ -182,13 +189,15 @@ export function buildPineTexture(): THREE.CanvasTexture {
 //   plus sub-lump circles for an organic silhouette.
 //   Drawn the same way (trunk at canvas-top, crown down — flipped by Three).
 
-export function buildDeciduousTexture(): THREE.CanvasTexture {
+export function buildDeciduousTexture(theme: 'lush' | 'arid' = 'lush'): THREE.CanvasTexture {
     const W = 64, H = 128;
     const cx = W / 2;
     const canvas = document.createElement('canvas');
     canvas.width  = W;
     canvas.height = H;
     const ctx = canvas.getContext('2d')!;
+
+    const isArid = theme === 'arid';
 
     // Trunk strip at canvas-top
     const tunkH = 22;
@@ -204,22 +213,35 @@ export function buildDeciduousTexture(): THREE.CanvasTexture {
     // Background shadow disc
     ctx.beginPath();
     ctx.arc(cx, canopyCY + 3, R + 4, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(10,30,5,0.55)';
+    ctx.fillStyle = isArid ? 'rgba(15,12,5,0.55)' : 'rgba(10,30,5,0.55)';
     ctx.fill();
 
     // Main radial gradient
     const grad = ctx.createRadialGradient(cx - R * 0.25, canopyCY - R * 0.25, R * 0.05, cx, canopyCY, R);
-    grad.addColorStop(0.00, '#5ba030');
-    grad.addColorStop(0.40, '#3a7020');
-    grad.addColorStop(0.75, '#264d14');
-    grad.addColorStop(1.00, '#172e0c');
+    if (isArid) {
+        grad.addColorStop(0.00, '#827840'); // dry dusty yellow-green
+        grad.addColorStop(0.40, '#5e5628');
+        grad.addColorStop(0.75, '#423d1c');
+        grad.addColorStop(1.00, '#2d2913');
+    } else {
+        grad.addColorStop(0.00, '#5ba030');
+        grad.addColorStop(0.40, '#3a7020');
+        grad.addColorStop(0.75, '#264d14');
+        grad.addColorStop(1.00, '#172e0c');
+    }
     ctx.beginPath();
     ctx.arc(cx, canopyCY, R, 0, Math.PI * 2);
     ctx.fillStyle = grad;
     ctx.fill();
 
     // Organic sub-lumps for silhouette variety
-    const lumps: [number, number, number, string][] = [
+    const lumps: [number, number, number, string][] = isArid ? [
+        [cx - 18, canopyCY + 4,  16, 'rgba(75,70,30,0.75)'],
+        [cx + 16, canopyCY + 2,  14, 'rgba(65,60,26,0.70)'],
+        [cx -  6, canopyCY - R + 8, 13, 'rgba(100,90,45,0.60)'],
+        [cx + 10, canopyCY - 12, 11, 'rgba(90,82,40,0.55)'],
+        [cx - 14, canopyCY - 14, 10, 'rgba(82,75,36,0.50)'],
+    ] : [
         [cx - 18, canopyCY + 4,  16, 'rgba(42,80,22,0.75)'],
         [cx + 16, canopyCY + 2,  14, 'rgba(38,72,20,0.70)'],
         [cx -  6, canopyCY - R + 8, 13, 'rgba(70,120,38,0.60)'],
@@ -238,8 +260,13 @@ export function buildDeciduousTexture(): THREE.CanvasTexture {
         cx - R * 0.5, canopyCY - R * 0.5, 0,
         cx - R * 0.5, canopyCY - R * 0.5, R * 0.65,
     );
-    fring.addColorStop(0.0, 'rgba(130,200,70,0.28)');
-    fring.addColorStop(1.0, 'rgba(130,200,70,0)');
+    if (isArid) {
+        fring.addColorStop(0.0, 'rgba(180,165,85,0.28)');
+        fring.addColorStop(1.0, 'rgba(180,165,85,0)');
+    } else {
+        fring.addColorStop(0.0, 'rgba(130,200,70,0.28)');
+        fring.addColorStop(1.0, 'rgba(130,200,70,0)');
+    }
     ctx.beginPath();
     ctx.arc(cx, canopyCY, R, 0, Math.PI * 2);
     ctx.fillStyle = fring;
