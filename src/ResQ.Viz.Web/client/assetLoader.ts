@@ -14,29 +14,40 @@
 // (copied from three/examples/jsm/libs/draco/gltf). KTX2 stays deferred until a
 // texture asset needs it.
 
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import type { GLTF, GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 import { getLogger } from './log';
 
 const log = getLogger('assetLoader');
 
 let _gltf: GLTFLoader | null = null;
+let _gltfPromise: Promise<GLTFLoader> | null = null;
 let _tex:  THREE.TextureLoader | null = null;
 
-function gltfLoader(): GLTFLoader {
-    if (!_gltf) {
-        _gltf = new GLTFLoader();
+// Dynamic-import the GLTFLoader + DRACOLoader + MeshoptDecoder so none of
+// them land in the main bundle — they're only needed once a drone spawns and
+// _ensureGlbProto() awaits loadGltf(). The meshopt decoder alone inlines
+// ~50 KB of WASM bootstrap, which kept us over the 800 KB client-budget.
+async function gltfLoader(): Promise<GLTFLoader> {
+    if (_gltf) return _gltf;
+    if (_gltfPromise) return _gltfPromise;
+    _gltfPromise = (async () => {
+        const [GLTFLoaderMod, DRACOLoaderMod, MeshoptMod] = await Promise.all([
+            import('three/addons/loaders/GLTFLoader.js'),
+            import('three/addons/loaders/DRACOLoader.js'),
+            import('three/addons/libs/meshopt_decoder.module.js'),
+        ]);
+        const g = new GLTFLoaderMod.GLTFLoader();
         // No-op for uncompressed .glb; the decoders only engage when the file
         // actually carries KHR_draco_mesh_compression / EXT_meshopt_compression.
-        const draco = new DRACOLoader();
+        const draco = new DRACOLoaderMod.DRACOLoader();
         draco.setDecoderPath('/draco/');
-        _gltf.setDRACOLoader(draco);
-        _gltf.setMeshoptDecoder(MeshoptDecoder);
-    }
-    return _gltf;
+        g.setDRACOLoader(draco);
+        g.setMeshoptDecoder(MeshoptMod.MeshoptDecoder);
+        _gltf = g;
+        return g;
+    })();
+    return _gltfPromise;
 }
 
 function textureLoader(): THREE.TextureLoader {
@@ -50,8 +61,8 @@ function textureLoader(): THREE.TextureLoader {
  * `/models/<name>.glb`, with Vite copying `client/public/models/` to
  * `wwwroot/` at build time.
  */
-export function loadGltf(path: string): Promise<GLTF> {
-    return gltfLoader().loadAsync(path);
+export async function loadGltf(path: string): Promise<GLTF> {
+    return (await gltfLoader()).loadAsync(path);
 }
 
 /**
