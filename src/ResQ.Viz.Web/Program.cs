@@ -105,15 +105,47 @@ app.Use(async (context, next) =>
         var headers = context.Response.Headers;
         headers["X-Content-Type-Options"] = "nosniff";
         headers["X-Frame-Options"] = "DENY";
+        // Analytics integration (PR #97) extends the baseline allow-list:
+        //   - PostHog (script, config, ingest)         → script-src + connect-src
+        //   - Google Analytics 4 (gtag.js + collect)   → script-src + connect-src + img-src
+        //   - Cloudflare Web Analytics (auto-injected) → script-src incl. the
+        //     bootstrap inline-script SHA-256 hash + connect-src for beacon ingest
+        // If a deployment disables Cloudflare Web Analytics or strips a provider
+        // from `@resq-sw/analytics`, prune the corresponding origins.
+        //
+        // The Cloudflare beacon inline-script hashes live in
+        // <see cref="SecurityConstants.CloudflareBeaconScriptHashes"/> so the
+        // middleware and the integration test stay in sync when Cloudflare
+        // rotates the bootstrap script. The cleanest long-term fix is to
+        // disable "Auto-inject" in the Cloudflare Web Analytics dashboard —
+        // the GA4 + PostHog providers already cover RUM and product analytics.
+        var cloudflareBeaconScriptHashes =
+            string.Join(' ', ResQ.Viz.Web.SecurityConstants.CloudflareBeaconScriptHashes);
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
             // 'wasm-unsafe-eval' permits WebAssembly compilation only (NOT JS
             // eval) — required by the Draco / meshopt glTF decoders that load a
             // compressed quadrotor.glb. Narrow, modern allowance; no 'unsafe-eval'.
-            "script-src 'self' 'wasm-unsafe-eval'; " +
+            "script-src 'self' 'wasm-unsafe-eval' " +
+                cloudflareBeaconScriptHashes + " " +
+                "https://static.cloudflareinsights.com " +
+                "https://www.googletagmanager.com " +
+                "https://us-assets.i.posthog.com; " +
             "style-src 'self' 'unsafe-inline'; " +
-            "connect-src 'self' ws: wss:; " +
-            "img-src 'self' data:; " +
+            "connect-src 'self' ws: wss: " +
+                // CSP wildcards don't match the apex; Cloudflare beacon ingest
+                // posts to the base `cloudflareinsights.com`, so list both.
+                "https://cloudflareinsights.com https://*.cloudflareinsights.com " +
+                // GA4 routes regional traffic to e.g. `region1.google-analytics.com`,
+                // so a wildcard (which subsumes `www.`) is required.
+                "https://*.google-analytics.com " +
+                "https://*.analytics.google.com " +
+                "https://*.googletagmanager.com " +
+                "https://us.i.posthog.com " +
+                "https://us-assets.i.posthog.com; " +
+            "img-src 'self' data: " +
+                "https://*.google-analytics.com " +
+                "https://*.googletagmanager.com; " +
             "frame-ancestors 'none'; " +
             "base-uri 'self'; " +
             "form-action 'self'; " +
@@ -122,13 +154,17 @@ app.Use(async (context, next) =>
         // Deny every Permissions-Policy feature the viz doesn't need. If a
         // future feature needs one (e.g. camera for AR overlay), relax the
         // specific entry here rather than dropping the header.
+        //
+        // Removed `ambient-light-sensor`, `battery`, `document-domain`, and
+        // `web-share` — current Chromium versions log "Unrecognized feature"
+        // for them (the spec dropped or never landed these tokens), which
+        // pollutes the console without adding any real protection.
         headers["Permissions-Policy"] =
-            "accelerometer=(), autoplay=(), " +
-            "camera=(), display-capture=(), encrypted-media=(), " +
-            "fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), " +
-            "microphone=(), midi=(), payment=(), picture-in-picture=(), " +
-            "publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), " +
-            "usb=(), xr-spatial-tracking=()";
+            "accelerometer=(), autoplay=(), camera=(), display-capture=(), " +
+            "encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), " +
+            "magnetometer=(), microphone=(), midi=(), payment=(), " +
+            "picture-in-picture=(), publickey-credentials-get=(), " +
+            "screen-wake-lock=(), sync-xhr=(), usb=(), xr-spatial-tracking=()";
         headers["Cross-Origin-Opener-Policy"] = "same-origin";
         headers["Cross-Origin-Resource-Policy"] = "same-site";
 

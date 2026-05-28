@@ -16,6 +16,7 @@
 
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using ResQ.Viz.Web;
 using Xunit;
 
 namespace ResQ.Viz.Web.Tests;
@@ -73,6 +74,46 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         csp.Should().Contain("object-src 'none'");
     }
 
+    /// <summary>
+    /// Regression guard for the analytics integration (PR #97). The CSP must
+    /// allow the script + connect endpoints used by `@resq-sw/analytics`
+    /// (PostHog, Google Analytics 4) and the Cloudflare Web Analytics beacon
+    /// auto-injected by the edge proxy. Prior to this guard, the SPA crashed
+    /// at runtime with `script-src 'self'` blocks for posthog-js, gtag, and
+    /// the Cloudflare bootstrap inline script.
+    /// </summary>
+    [Fact]
+    public async Task CspAllowsAnalyticsOrigins()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/");
+        response.Headers.Should().ContainKey("Content-Security-Policy");
+        var csp = string.Join(";", response.Headers.GetValues("Content-Security-Policy"));
+
+        // Cloudflare Web Analytics: script + bootstrap inline-script hashes +
+        // beacon. Both the apex and the wildcard are required — CSP wildcards
+        // don't match the base domain that beacon ingest posts to. The hash
+        // list is sourced from `SecurityConstants` so this test and the
+        // middleware can never drift out of sync when Cloudflare rotates the
+        // bootstrap script.
+        foreach (var hash in SecurityConstants.CloudflareBeaconScriptHashes)
+            csp.Should().Contain(hash);
+        csp.Should().Contain("https://static.cloudflareinsights.com");
+        csp.Should().Contain("https://cloudflareinsights.com");
+        csp.Should().Contain("https://*.cloudflareinsights.com");
+
+        // PostHog (US cloud): config script + event ingest.
+        csp.Should().Contain("https://us-assets.i.posthog.com");
+        csp.Should().Contain("https://us.i.posthog.com");
+
+        // Google Analytics 4: gtag.js + collect endpoints + tagging pixel.
+        // GA4 uses regional subdomains (region1.google-analytics.com etc.),
+        // so the connect/img sources must wildcard the analytics domain.
+        csp.Should().Contain("https://www.googletagmanager.com");
+        csp.Should().Contain("https://*.google-analytics.com");
+        csp.Should().Contain("https://*.analytics.google.com");
+    }
+
     [Fact]
     public async Task PermissionsPolicyDeniesSensitiveFeatures()
     {
@@ -90,6 +131,18 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
 
         // Features the viz explicitly keeps available to itself.
         pp.Should().Contain("fullscreen=(self)");
+
+        // Tokens removed because Chromium logs "Unrecognized feature" for
+        // them — they pollute the console without adding any real protection.
+        // Adding any of them back must be a deliberate decision, not an
+        // accidental copy-paste from an outdated OWASP cheat sheet.
+        // Each pattern includes the trailing `=` so the assertion matches a
+        // feature directive (the only form a token takes inside a
+        // Permissions-Policy header) rather than a stray substring.
+        pp.Should().NotContain("ambient-light-sensor=");
+        pp.Should().NotContain("battery=");
+        pp.Should().NotContain("document-domain=");
+        pp.Should().NotContain("web-share=");
     }
 
     [Fact]
