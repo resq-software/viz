@@ -38,7 +38,7 @@ jobs:
       contents: read
       security-events: write   # required.yml dispatches CodeQL + uploads SARIF
       pull-requests: read      # security-scan reads PR metadata for diff scans
-    uses: resq-software/.github/.github/workflows/required.yml@23ce94eabddf963835624451e89baca7ac9db541
+    uses: resq-software/.github/.github/workflows/required.yml@73b9edb8f4f28a99f70ee22eb5e2dd2bf7807c84
     with:
       lang: dotnet
       dotnet-solution: ResQ.Viz.sln
@@ -55,7 +55,7 @@ jobs:
   client:
     permissions:
       contents: read
-    uses: resq-software/.github/.github/workflows/node-ci.yml@23ce94eabddf963835624451e89baca7ac9db541
+    uses: resq-software/.github/.github/workflows/node-ci.yml@73b9edb8f4f28a99f70ee22eb5e2dd2bf7807c84
     with:
       package-manager: npm
       node-version: "22"
