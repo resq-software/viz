@@ -60,10 +60,14 @@ const _state = {
 
 let _installed = false;
 
+// One float, not a vec3. Terrain already carries `vTerrainWorld` and
+// `vWorldNormal` on top of the standard MeshStandardMaterial varying set, and
+// adding a vec3 to every material in the app risks exceeding
+// GL_MAX_VARYING_VECTORS on weaker stacks. Height fog only needs world Y.
 const FOG_PARS_VERTEX = /* glsl */`
 #ifdef USE_FOG
 	varying float vFogDepth;
-	varying vec3  vFogWorldPos;
+	varying float vFogWorldY;
 #endif
 `;
 
@@ -77,7 +81,7 @@ const FOG_VERTEX = /* glsl */`
 	#ifdef USE_INSTANCING
 		_fogLocal = instanceMatrix * _fogLocal;
 	#endif
-	vFogWorldPos = ( modelMatrix * _fogLocal ).xyz;
+	vFogWorldY = ( modelMatrix * _fogLocal ).y;
 #endif
 `;
 
@@ -85,7 +89,7 @@ const FOG_PARS_FRAGMENT = /* glsl */`
 #ifdef USE_FOG
 	uniform vec3  fogColor;
 	varying float vFogDepth;
-	varying vec3  vFogWorldPos;
+	varying float vFogWorldY;
 	#ifdef FOG_EXP2
 		uniform float fogDensity;
 	#else
@@ -93,9 +97,6 @@ const FOG_PARS_FRAGMENT = /* glsl */`
 		uniform float fogFar;
 	#endif
 	uniform float fogHeightFalloff;
-	uniform vec3  fogSunDirection;
-	uniform vec3  fogSunColor;
-	uniform float fogSunIntensity;
 #endif
 `;
 
@@ -104,7 +105,7 @@ const FOG_FRAGMENT = /* glsl */`
 	#ifdef FOG_EXP2
 		// Analytic integral of exp(-k·y) along the view ray, normalised so the
 		// k -> 0 limit is exactly 1 and the model degrades to stock FogExp2.
-		float _fogDy  = vFogWorldPos.y - cameraPosition.y;
+		float _fogDy  = vFogWorldY - cameraPosition.y;
 		float _fogKdy = fogHeightFalloff * _fogDy;
 		float _fogH;
 		// The integral is singular as the ray goes horizontal (_fogKdy -> 0),
@@ -120,12 +121,7 @@ const FOG_FRAGMENT = /* glsl */`
 	#else
 		float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
 	#endif
-	// Forward scattering: haze brightens toward the sun. Without this the model
-	// is just tinted uniform fog, not aerial perspective.
-	vec3  _fogView = normalize( vFogWorldPos - cameraPosition );
-	float _fogSun  = max( dot( _fogView, fogSunDirection ), 0.0 );
-	vec3  _fogCol  = mix( fogColor, fogSunColor, fogSunIntensity * pow( _fogSun, 4.0 ) );
-	gl_FragColor.rgb = mix( gl_FragColor.rgb, _fogCol, saturate( fogFactor ) );
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, saturate( fogFactor ) );
 #endif
 `;
 

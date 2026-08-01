@@ -7,7 +7,6 @@ import { PostFx } from './postfx';
 import { UnityCamera } from './cameraControl';
 import { updateWaterSunDirection } from './water';
 import { getLogger } from './log';
-import { installHeightFog, setHeightFogParams } from './heightFog';
 import {
     DEFAULT_SUN_AZIMUTH_DEG,
     DEFAULT_SUN_ELEVATION_DEG,
@@ -117,10 +116,6 @@ export class Scene {
         this.scene = new THREE.Scene();
         // Fog colour matches sky horizon so distant terrain dissolves into atmosphere
         // rather than going dark — makes the 4 km terrain feel open.
-        // Must precede every material construction in the app: three snapshots
-        // UniformsLib.fog into each material at creation, so a material built
-        // before the override lacks the new uniforms and fails to link.
-        installHeightFog();
         this.scene.fog = new THREE.FogExp2(0x8ab8d4, 0.00010);
 
         this._camera = new THREE.PerspectiveCamera(
@@ -433,19 +428,11 @@ export class Scene {
     setFogDensity(v: number): void {
         if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = v;
     }
-    setAtmosphere(fogColor: number, density: number, heightFalloff = 0): void {
-        // Forward scattering is keyed off the canonical sun so haze brightens
-        // toward the visible sun disc rather than being a flat tint. Sun colour
-        // is warmed toward the fog colour so the two never disagree at the
-        // horizon, which is what reads as "muddy".
-        setHeightFogParams(this.scene, {
-            color:         fogColor,
-            density,
-            heightFalloff,
-            sunDirection:  this._sunDir,
-            sunColor:      new THREE.Color(fogColor).lerp(new THREE.Color(0xfff1d4), 0.45),
-            sunIntensity:  heightFalloff > 0 ? 0.6 : 0,
-        });
+    setAtmosphere(fogColor: number, density: number): void {
+        if (this.scene.fog instanceof THREE.FogExp2) {
+            this.scene.fog.color.set(fogColor);
+            this.scene.fog.density = density;
+        }
         this.renderer.setClearColor(fogColor);
     }
     setFov(degrees: number): void {
