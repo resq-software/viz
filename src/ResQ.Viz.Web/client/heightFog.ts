@@ -105,8 +105,18 @@ const FOG_FRAGMENT = /* glsl */`
 	#ifdef FOG_EXP2
 		// Analytic integral of exp(-k·y) along the view ray, normalised so the
 		// k -> 0 limit is exactly 1 and the model degrades to stock FogExp2.
+		// Defensive: fogHeightFalloff is an active uniform that three does NOT
+		// upload for built-in materials — WebGLUniforms.seqWithValue filters the
+		// upload list to keys present in the material's own uniform object, and
+		// ShaderLib snapshots UniformsLib.fog at three's module init, before this
+		// override runs. An unset uniform is specified to read 0, but a stack
+		// that returns garbage instead poisons every downstream term, and mix()
+		// with a NaN weight renders black. The comparison below is false for NaN
+		// in both directions, so this catches NaN and out-of-range alike.
+		float _fogK = fogHeightFalloff;
+		if ( !( _fogK > -1.0 && _fogK < 1.0 ) ) _fogK = 0.0;
 		float _fogDy  = vFogWorldY - cameraPosition.y;
-		float _fogKdy = fogHeightFalloff * _fogDy;
+		float _fogKdy = _fogK * _fogDy;
 		float _fogH;
 		// The integral is singular as the ray goes horizontal (_fogKdy -> 0),
 		// which is precisely the overview shot. Series-expand through it.
