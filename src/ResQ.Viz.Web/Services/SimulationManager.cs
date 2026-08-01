@@ -178,10 +178,13 @@ public sealed class SimulationManager : BackgroundService
         try
         {
             var snapshot = room.GetSnapshot();
-            var frame = _frameBuilder.Build(snapshot, simTime, room.IsBackhaulKilled);
+            var transport = room.TransportSnapshot();
+            var frame = _frameBuilder.Build(
+                snapshot, simTime, room.IsBackhaulKilled, transport.Paused, transport.Speed, transport.Tick);
             await _hubContext.Clients
                 .Group(VizHub.RoomGroupName(room.Id))
                 .SendAsync("ReceiveFrame", frame, ct);
+            VizTelemetry.FramesBroadcast.Add(1);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

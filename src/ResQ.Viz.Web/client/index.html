@@ -27,11 +27,10 @@
     <meta name="category" content="technology">
     <meta name="robots" content="index, follow">
 
-    <!-- Theme color -->
-    <meta name="theme-color" content="#E8EAF0" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#0A0E1A" media="(prefers-color-scheme: dark)">
-    <meta name="color-scheme" content="dark light">
-    <meta name="msapplication-TileColor" content="#0A0E1A">
+    <!-- Theme color — dark-only ResQ console (oklch background ≈ #111319) -->
+    <meta name="theme-color" content="#111319">
+    <meta name="color-scheme" content="dark">
+    <meta name="msapplication-TileColor" content="#111319">
 
     <!-- Security -->
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
@@ -116,13 +115,14 @@
         <div class="hud-zone hud-zone-right">
             <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
             <div class="hud-toggle-group" role="group" aria-label="Layer visibility">
-                <button id="hud-vel-toggle"    class="hud-toggle active" type="button" aria-label="Velocity vectors" aria-pressed="true"  title="Velocity vectors (V)"><span aria-hidden="true">&#x21D2;</span></button>
+                <button id="hud-vel-toggle"    class="hud-toggle"        type="button" aria-label="Velocity vectors" aria-pressed="false" title="Velocity vectors (V)"><span aria-hidden="true">&#x21D2;</span></button>
                 <button id="hud-halo-toggle"   class="hud-toggle active" type="button" aria-label="Altitude halos"   aria-pressed="true"  title="Altitude halos (H)"><span aria-hidden="true">&#x25CB;</span></button>
-                <button id="hud-form-toggle"   class="hud-toggle active" type="button" aria-label="Formation lines"  aria-pressed="true"  title="Formation lines (G)"><span aria-hidden="true">&#x22EF;</span></button>
+                <button id="hud-form-toggle"   class="hud-toggle"        type="button" aria-label="Formation lines"  aria-pressed="false" title="Formation lines (G)"><span aria-hidden="true">&#x22EF;</span></button>
                 <button id="hud-follow-toggle" class="hud-toggle"        type="button" aria-label="Follow selected"  aria-pressed="false" title="Follow selected (F)"><span aria-hidden="true">&#x25CE;</span></button>
             </div>
             <div class="hud-action-group">
                 <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel"   title="Toggle panel [Tab]"><span aria-hidden="true">☰</span></button>
+                <button id="hud-cockpit-toggle"  class="hud-action" type="button" aria-label="Flight instruments"    aria-pressed="false" title="Flight instruments (I)"><span aria-hidden="true">◔</span></button>
                 <button id="hud-hints-toggle"    class="hud-action" type="button" aria-label="Keyboard shortcuts"    aria-pressed="false" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
                 <button id="hud-settings-toggle" class="hud-action" type="button" aria-label="Settings"              aria-expanded="false" aria-controls="settings-panel" title="Settings"><span aria-hidden="true">⚙</span></button>
             </div>
@@ -315,6 +315,7 @@
         <span><kbd>V</kbd> Velocity vectors</span>
         <span><kbd>H</kbd> Altitude halos</span>
         <span><kbd>G</kbd> Formation lines</span>
+        <span><kbd>I</kbd> Flight instruments</span>
         <span><kbd>Space</kbd> Stop sim</span>
         <span><kbd>R</kbd> Reset sim</span>
         <span><kbd>Tab</kbd> Sidebar</span>
@@ -413,7 +414,7 @@
 
         <label class="settings-row">
           <span>Velocity vectors (X/Y/Z)</span>
-          <input type="checkbox" id="set-show-velocity" checked>
+          <input type="checkbox" id="set-show-velocity">
         </label>
 
         <label class="settings-row">

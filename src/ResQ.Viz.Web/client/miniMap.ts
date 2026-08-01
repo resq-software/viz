@@ -14,6 +14,7 @@
 
 import type { DroneState, HazardState } from './types';
 import { classifyLED, LED_PROFILES } from './dronesLed';
+import { cssVar } from './dom';
 import { TERRAIN_SIZE } from './terrain';
 
 const CANVAS_SIZE = 200;
@@ -33,10 +34,17 @@ export class MiniMap {
     private _lastDrones:  DroneState[]  = [];
     private _lastHazards: HazardState[] = [];
     private _selectedId:  string | null = null;
+    // Palette pulled from tokens.css once at construction (dark-only, static).
+    private readonly _colInfo = cssVar('--info', '#3d9bf5');
+    private readonly _colPlot = cssVar('--background-deep', 'rgba(18, 20, 28, 0.82)');
 
     constructor() {
         this._root = document.createElement('div');
         this._root.className = 'minimap';
+        // role=img so the aria-label is permitted (a bare div's generic role
+        // prohibits a name — WCAG 4.1.2 / axe aria-prohibited-attr). The map is
+        // a canvas-drawn radar plot, i.e. an image with a text alternative.
+        this._root.setAttribute('role', 'img');
         this._root.setAttribute('aria-label', 'Swarm mini-map');
 
         this._canvas = document.createElement('canvas');
@@ -101,11 +109,12 @@ export class MiniMap {
         ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
         // Background with subtle grid — reads as a tactical plot.
-        ctx.fillStyle = 'rgba(13, 17, 23, 0.82)';
+        ctx.fillStyle = this._colPlot;
         ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-        ctx.strokeStyle = 'rgba(88, 166, 255, 0.10)';
+        ctx.strokeStyle = this._colInfo;
         ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.10;
         for (let i = 1; i < 4; i++) {
             const p = (i / 4) * CANVAS_SIZE;
             ctx.beginPath();
@@ -115,11 +124,12 @@ export class MiniMap {
         }
 
         // Centre crosshair
-        ctx.strokeStyle = 'rgba(88, 166, 255, 0.25)';
+        ctx.globalAlpha = 0.24;
         ctx.beginPath();
         ctx.moveTo(CANVAS_SIZE / 2, 0); ctx.lineTo(CANVAS_SIZE / 2, CANVAS_SIZE); ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(0, CANVAS_SIZE / 2); ctx.lineTo(CANVAS_SIZE, CANVAS_SIZE / 2); ctx.stroke();
+        ctx.globalAlpha = 1.0;
 
         // Hazards as filled discs, low opacity so drones read on top
         for (const h of this._lastHazards) {
@@ -146,12 +156,15 @@ export class MiniMap {
             const leftZ  = py + Math.sin(fwdAng - half) * len;
             const rightX = px + Math.cos(fwdAng + half) * len;
             const rightZ = py + Math.sin(fwdAng + half) * len;
-            ctx.fillStyle = 'rgba(88, 166, 255, 0.18)';
-            ctx.strokeStyle = 'rgba(88, 166, 255, 0.55)';
+            ctx.fillStyle = this._colInfo;
+            ctx.strokeStyle = this._colInfo;
             ctx.beginPath();
             ctx.moveTo(px, py); ctx.lineTo(leftX, leftZ); ctx.lineTo(rightX, rightZ); ctx.closePath();
+            ctx.globalAlpha = 0.18;
             ctx.fill();
+            ctx.globalAlpha = 0.6;
             ctx.stroke();
+            ctx.globalAlpha = 1.0;
         }
 
         // Drones — colour by LED state for severity-at-a-glance.

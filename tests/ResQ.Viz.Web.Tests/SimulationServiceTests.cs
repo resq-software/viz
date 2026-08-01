@@ -188,4 +188,91 @@ public class SimulationServiceTests
         room.DecrementConnections();
         room.ConnectionCount.Should().Be(0, "floor at zero — cookie replays must not drive the counter negative");
     }
+
+    // ─── Transport (pause / speed / step) ─────────────────────────────────────
+
+    [Fact]
+    public void Pause_Stops_World_Advancement()
+    {
+        var room = CreateRoom();
+        for (var i = 0; i < 6; i++) room.Tick();
+        room.Pause();
+        var before = room.TickCount;
+        for (var i = 0; i < 10; i++) room.Tick();
+        room.TickCount.Should().Be(before, "a paused world must not advance");
+        room.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resume_Continues_Advancement()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        room.Tick();
+        var paused = room.TickCount;
+        room.Resume();
+        room.Tick();
+        room.TickCount.Should().BeGreaterThan(paused);
+        room.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
+    public void SetSpeed_Multiplies_Steps_Per_Tick()
+    {
+        var room = CreateRoom();
+        room.SetSpeed(4);
+        room.Speed.Should().Be(4);
+        room.Tick();
+        room.TickCount.Should().Be(4, "speed 4 advances four world steps per real tick");
+    }
+
+    [Fact]
+    public void SetSpeed_Clamps_To_Valid_Range()
+    {
+        var room = CreateRoom();
+        room.SetSpeed(999);
+        room.Speed.Should().Be(8, "speed is clamped to the max multiplier");
+        room.SetSpeed(0);
+        room.Speed.Should().Be(1, "speed is clamped to the min multiplier");
+    }
+
+    [Fact]
+    public void StepFrames_Advances_Exactly_While_Paused()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        room.StepFrames(3);
+        // Each Tick consumes one queued step even though the world is paused.
+        room.Tick();
+        room.Tick();
+        room.Tick();
+        room.TickCount.Should().Be(3);
+        // Queue exhausted → the paused world holds.
+        room.Tick();
+        room.TickCount.Should().Be(3, "queued steps exhausted; paused world holds");
+    }
+
+    [Fact]
+    public void Tick_Broadcasts_At_10Hz_Even_While_Paused()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        var broadcasts = 0;
+        for (var i = 0; i < 12; i++)
+            if (room.Tick().ShouldBroadcast) broadcasts++;
+        broadcasts.Should().Be(2, "broadcast cadence is driven by real ticks, not sim steps");
+        room.TickCount.Should().Be(0, "paused world advanced no steps");
+    }
+
+    [Fact]
+    public void Reset_Clears_Transport_State()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        room.SetSpeed(4);
+        room.Reset();
+        room.IsPaused.Should().BeFalse();
+        room.Speed.Should().Be(1);
+        room.TickCount.Should().Be(0);
+    }
 }

@@ -252,7 +252,13 @@ export class DroneManager {
         });
     }
 
-    update(drones: DroneState[], detections: DetectionState[] = []): void {
+    /**
+     * Reconcile drones with a frame. <paramref name="snap"/> places each drone
+     * exactly at the frame's pose instead of lerping toward it — used for DVR
+     * replay/scrubbing so a scrubbed frame renders frame-accurately rather than
+     * smearing as the lerp catches up.
+     */
+    update(drones: DroneState[], detections: DetectionState[] = [], snap = false): void {
         // Stamp detection-flash deadlines for drones that just reported a new
         // detection. Dedupe by detection id so a long-lived detection doesn't
         // re-flash every frame. Trim `_seenDetections` to just the ids
@@ -276,6 +282,15 @@ export class DroneManager {
             seenIds.add(d.id);
             if (!this._drones.has(d.id)) this._add(d);
             this._updateDrone(d);
+            if (snap) {
+                // Replay/scrub: place the drone exactly at the frame's pose so
+                // the lerp in tick() has nothing left to smear.
+                const entry = this._drones.get(d.id);
+                if (entry) {
+                    entry.group.position.copy(entry.targetPos);
+                    if (entry.targetRot) entry.group.quaternion.copy(entry.targetRot);
+                }
+            }
         }
         for (const [id, entry] of this._drones) {
             if (!seenIds.has(id)) {

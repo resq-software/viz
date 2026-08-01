@@ -116,9 +116,17 @@ export class ControlPanel {
     }
 
     private _bindSidebarToggle(): void {
-        this._on('btn-sidebar-toggle', () => {
-            document.getElementById('sidebar')?.classList.toggle('collapsed');
-        });
+        const sidebar = document.getElementById('sidebar');
+        this._on('btn-sidebar-toggle', () => sidebar?.classList.toggle('collapsed'));
+        // On small viewports the sidebar is an on-demand overlay (styled in
+        // main.css): start collapsed so the scene + timeline own the full width,
+        // and re-apply the per-breakpoint default whenever the viewport crosses
+        // the mobile threshold. A manual toggle still overrides until the next
+        // crossing.
+        const mq = window.matchMedia('(max-width: 900px)');
+        const applyDefault = (mobile: boolean): void => { sidebar?.classList.toggle('collapsed', mobile); };
+        applyDefault(mq.matches);
+        mq.addEventListener('change', (e) => applyDefault(e.matches));
     }
 
     private _bindKeyboard(): void {
@@ -129,7 +137,7 @@ export class ControlPanel {
             // Shift+1 doesn't also run the `single` scenario.
             if (e.shiftKey && e.code.startsWith('Digit')) return;
             switch (e.code) {
-                case 'Space':  e.preventDefault(); await this._post('/api/sim/stop'); break;
+                // Space (play/pause) is owned by the editor Transport bar.
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
                 case 'Tab':    e.preventDefault(); document.getElementById('sidebar')?.classList.toggle('collapsed'); break;
                 case 'Digit1': await this._runScenario('single');   break;

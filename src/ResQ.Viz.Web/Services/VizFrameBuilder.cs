@@ -92,7 +92,13 @@ public sealed class VizFrameBuilder
     /// demonstrate mesh-only operation during the multi-agency-sar scenario.
     /// </param>
     /// <returns>A <see cref="VizFrame"/> ready for broadcast.</returns>
-    public VizFrame Build(IReadOnlyList<DroneSnapshot> drones, double simTime, bool partitioned = false)
+    public VizFrame Build(
+        IReadOnlyList<DroneSnapshot> drones,
+        double simTime,
+        bool partitioned = false,
+        bool paused = false,
+        int speed = 1,
+        long tick = 0)
     {
         var droneStates = drones
             .Select(d => new DroneVizState(d.Id, d.Position, d.Rotation, d.Velocity, d.Battery, d.Status, d.Armed, d.Vendor))
@@ -105,7 +111,10 @@ public sealed class VizFrameBuilder
             Drones: droneStates,
             Detections: BuildDetections(drones),
             Hazards: BuildHazards(),
-            Mesh: mesh);
+            Mesh: mesh,
+            Paused: paused,
+            Speed: speed,
+            Tick: tick);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

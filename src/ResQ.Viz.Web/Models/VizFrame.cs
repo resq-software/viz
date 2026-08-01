@@ -17,12 +17,21 @@
 namespace ResQ.Viz.Web.Models;
 
 /// <summary>Frame broadcast to SignalR clients at 10 Hz.</summary>
+/// <remarks>
+/// <paramref name="Paused"/>, <paramref name="Speed"/>, and <paramref name="Tick"/>
+/// carry authoritative transport state so the client's transport bar reflects
+/// the server rather than guessing from its own optimistic toggles. They are
+/// optional (defaulted) so existing builders/tests compile unchanged.
+/// </remarks>
 public record VizFrame(
     double Time,
     IReadOnlyList<DroneVizState> Drones,
     IReadOnlyList<DetectionVizState> Detections,
     IReadOnlyList<HazardVizState> Hazards,
-    MeshVizState? Mesh);
+    MeshVizState? Mesh,
+    bool Paused = false,
+    int Speed = 1,
+    long Tick = 0);
 
 /// <summary>Per-drone visual state in a VizFrame.</summary>
 /// <remarks>
