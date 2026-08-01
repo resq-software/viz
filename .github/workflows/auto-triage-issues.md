@@ -2,13 +2,20 @@
 name: Auto-Triage Issues
 description: >
   Automatically labels new and existing unlabeled issues based on content analysis.
-  Improves discoverability and reduces manual triage workload across the polyglot monorepo.
+  Improves discoverability and reduces manual triage workload.
 
 on:
   issues:
     types: [opened, edited]
   schedule: weekly
   workflow_dispatch:
+  # Without this, gh-aw's default issues gate is admin/maintainer/write, so
+  # issues opened by NONE / FIRST_TIME_CONTRIBUTOR / FIRST_TIMER / CONTRIBUTOR
+  # authors never activate the workflow — i.e. exactly the community issues
+  # that most need auto-triage. The agent only ever applies labels
+  # (`issues: read` plus the add-labels safe output), so widening activation
+  # does not grant untrusted authors any write capability.
+  roles: all
 
 permissions:
   contents: read
@@ -27,7 +34,10 @@ tools:
 safe-outputs:
   report-failure-as-issue: false
   add-labels:
-    max: 10
+    # This caps *total* label operations per run, not issues touched. Scheduled
+    # runs process up to 10 issues at 2-4 labels each, so 10 would exhaust the
+    # budget after ~3 issues and silently drop the rest.
+    max: 40
   create-discussion:
     expires: 1d
     title-prefix: "[Auto-Triage] "

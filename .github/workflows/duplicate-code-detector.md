@@ -1,6 +1,6 @@
 ---
 name: Duplicate Code Detector
-description: Identifies duplicate code patterns across the ResQ polyglot codebase and suggests refactoring opportunities
+description: Identifies duplicate code patterns across the ResQ Viz C#/TypeScript codebase and suggests refactoring opportunities
 on:
   workflow_dispatch:
   schedule: weekly
@@ -9,6 +9,11 @@ permissions:
   issues: read
   pull-requests: read
 engine: copilot
+# The prompt analyses "files changed in the last 7 days" via `git log --since`,
+# which needs real history. Without this the agent checkout is fetch-depth 1 and
+# the analysis silently degrades to a single commit.
+checkout:
+  fetch-depth: 0
 tools:
   bash: true
 safe-outputs:
@@ -24,7 +29,7 @@ strict: true
 
 # Duplicate Code Detection — ResQ Polyglot Monorepo
 
-You are the Duplicate Code Detector — an expert system that identifies meaningful code duplication across a polyglot disaster-response platform spanning Rust, TypeScript, Python, C++, and C#.
+You are the Duplicate Code Detector — an expert system that identifies meaningful code duplication in ResQ Viz, the 3D visualization app for ResQ drone simulations. It is a two-language codebase: C#/.NET 10 on the server and TypeScript/Three.js in the browser client.
 
 ## Task
 
@@ -38,59 +43,62 @@ Detect and report code duplication by:
 
 - **Repository**: ${{ github.repository }}
 
-### ResQ Service Map
+### ResQ Viz Component Map
 
-| Service | Language | Path |
-|---------|----------|------|
-| Infrastructure API | Rust | `services/infrastructure-api/` |
-| Coordination HCE | TypeScript (Bun/Elysia) | `services/coordination-hce/` |
-| Predictive Intelligence | Python | `services/intelligence-pdie/` |
-| Edge AEAI | C++/ROS2 | `services/edge-aeai/` |
-| Strategic DTSOP | C++ | `services/strategic-dtsop/` |
-| Simulation Harness | C#/.NET 9 | `services/simulation-harness/` |
-| Web Dashboard | Next.js/TypeScript | `services/web-dashboard/` |
+This repository is **not** the polyglot monorepo — it is the visualization app
+only, and contains just C# and TypeScript.
 
-### Shared Libraries
+| Component | Language | Path |
+|-----------|----------|------|
+| Web host (SignalR hub, REST API) | C#/.NET 10 | `src/ResQ.Viz.Web/` |
+| Services (SimulationManager, VizFrameBuilder) | C# | `src/ResQ.Viz.Web/Services/` |
+| Controllers | C# | `src/ResQ.Viz.Web/Controllers/` |
+| Frontend (Three.js viewer) | TypeScript | `src/ResQ.Viz.Web/client/` |
+| Tests | C#/xUnit | `tests/ResQ.Viz.Web.Tests/` |
+| Frontend tests | TypeScript/vitest | `src/ResQ.Viz.Web/client/__tests__/` |
 
-| Library | Language | Path |
-|---------|----------|------|
-| Protocols | Protobuf | `libs/protocols/` |
-| Rust libs | Rust | `libs/rust/` |
-| TS libs | TypeScript | `libs/ts/` |
-| Python libs | Python | `libs/python/` |
-| C++ libs | C++ | `libs/cpp/` |
-| .NET libs | C# | `libs/dotnet/` |
+### Vendored SDK (read-only)
+
+`lib/dotnet-sdk/` is a git submodule pinned to a release tag of
+`resq-software/dotnet-sdk` (`ResQ.Simulation.Engine`, `ResQ.Mavlink`,
+`ResQ.Mavlink.Dialect`, `ResQ.Mavlink.Mesh`). **Do not report duplication
+inside the submodule** — it is not editable from this repository.
 
 ## Analysis Workflow
 
 ### 1. Changed Files Analysis
 
 Identify and analyze modified files:
-- Determine files changed in recent commits (last 7 days).
-- Analyze **all source files** across the polyglot stack:
-  - **Rust**: `*.rs` files
-  - **TypeScript**: `*.ts`, `*.tsx` files
-  - **Python**: `*.py` files
-  - **C++**: `*.cpp`, `*.hpp`, `*.h` files
-  - **C#**: `*.cs` files
+- Determine files changed in recent commits (last 7 days) with
+  `git log --since="7 days ago" --name-only`. The workflow sets
+  `checkout.fetch-depth: 0` so the full history is available; if you see only
+  one commit, stop and report that the checkout was shallow rather than
+  silently analyzing a single commit.
+- Analyze **all source files** in the two languages this repo actually uses:
+  - **C#**: `*.cs` files under `src/` and `tests/`
+  - **TypeScript**: `*.ts` files under `src/ResQ.Viz.Web/client/`
+- Skip `lib/dotnet-sdk/` (read-only submodule), `wwwroot/`, `bin/`, `obj/`,
+  `node_modules/`, and `client/public/`.
 - Use `find`, `grep`, and language-aware tools to understand structure.
 
 ### 2. Duplicate Detection
 
 **Structural Analysis**:
-- Identify functions/methods with similar names across services.
+- Identify functions/methods with similar names across the C# services and the
+  TypeScript client modules.
 - Search for similar code patterns using `grep` and `diff`.
-- Look for near-identical code blocks across language boundaries (e.g., same validation logic implemented in Rust and TypeScript).
+- Look for near-identical logic duplicated across the C#/TypeScript boundary
+  (e.g. the same frame or telemetry shape validated independently on both
+  sides of the SignalR contract).
 
-**Cross-Service Patterns**:
-- Health check endpoints duplicated across services.
-- Error handling patterns repeated without shared utilities.
-- Configuration parsing logic duplicated between services.
-- Protobuf message handling boilerplate that should be in `libs/`.
+**Cross-Layer Patterns**:
+- Serialization/shape logic repeated between `Models/` (C#) and `client/types.ts`.
+- Error handling repeated across controllers without a shared helper.
+- Configuration parsing duplicated between `Program.cs` and client bootstrap.
 
-**Within-Service Patterns**:
-- Repeated utility functions within the same service.
-- Copy-pasted middleware or handler patterns.
+**Within-Layer Patterns**:
+- Repeated utility functions inside `client/` modules.
+- Copy-pasted middleware or handler patterns in `Controllers/`.
 - Duplicate test setup/fixture code (only flag if excessive).
 
 ### 3. Duplication Evaluation
@@ -99,41 +107,41 @@ Identify and analyze modified files:
 - **Exact Duplication**: Identical code blocks in multiple locations.
 - **Structural Duplication**: Same logic with minor variations (different variable names).
 - **Functional Duplication**: Different implementations of the same functionality.
-- **Cross-Language Duplication**: Same business logic reimplemented across languages instead of using Protobuf-driven generation.
+- **Cross-Language Duplication**: Same business logic implemented once in C# and again in TypeScript instead of being derived from a single shared contract.
 
 **Assessment Criteria**:
 - **Severity**: Lines of duplicated code, number of occurrences.
-- **Impact**: Whether duplication is in critical paths (drone control, blockchain Evidence, emergency coordination).
+- **Impact**: Whether duplication is in critical paths (simulation stepping, frame building, drone rendering, SignalR transport).
 - **Maintainability**: Risk of divergence as one copy gets updated but not others.
-- **Refactoring Opportunity**: Whether it can be extracted to `libs/` or generated from `.proto` definitions.
+- **Refactoring Opportunity**: Whether it can be extracted into a shared helper on either side of the C#/TypeScript boundary.
 
 ## Detection Scope
 
 ### Report These Issues
 
-- Identical or nearly identical functions across services.
-- Repeated code blocks that should be in shared `libs/` directories.
-- Similar validation logic across language boundaries.
-- Copy-pasted Protobuf handling that should use generated helpers.
-- Duplicated configuration/environment parsing across services.
+- Identical or nearly identical methods across the C# services/controllers.
+- Repeated code blocks in `client/` that belong in a shared module.
+- Similar validation logic implemented on both the C# and TypeScript sides.
+- Duplicated configuration/environment parsing.
 - Repeated error types and handling patterns.
 
 ### Skip These Patterns
 
-- Standard boilerplate (imports, module declarations, `main()` entry points).
+- Standard boilerplate (imports, `using` directives, `Program.cs` entry point).
 - Test setup/teardown code (acceptable unless egregious).
-- Generated code in `libs/protocols/gen/` — this is expected duplication.
+- Anything under `lib/dotnet-sdk/` — read-only submodule.
 - Generated `.lock.yml` workflow files.
-- Configuration files with similar structure (`Cargo.toml`, `package.json`).
-- Language-specific idioms (Rust `impl` blocks, TypeScript type definitions, C++ header guards).
+- Build output: `wwwroot/`, `bin/`, `obj/`, `node_modules/`.
+- Vendored third-party assets under `client/public/` (e.g. the draco decoder).
+- Configuration files with similar structure (`*.csproj`, `package.json`).
+- Language-specific idioms (C# partial classes, TypeScript type definitions).
 - Small code snippets (<5 lines) unless highly repetitive (10+ occurrences).
-- Protobuf `.proto` files themselves.
 
 ### Analysis Depth
 
 - **Primary Focus**: All source files changed in the last 7 days.
 - **Secondary Analysis**: Check for duplication with existing codebase.
-- **Cross-Reference**: Look for patterns across languages and services.
+- **Cross-Reference**: Look for patterns spanning the C#/TypeScript boundary.
 - **Historical Context**: Consider if duplication is new or pre-existing.
 
 ## Issue Template
@@ -143,11 +151,9 @@ For each distinct duplication pattern found, create a **separate issue**:
 ```markdown
 # Duplicate Code Detected: [Pattern Name]
 
-**Assignee**: @copilot
-
 ## Summary
 
-[Brief overview of this specific duplication pattern and which services/libraries are affected]
+[Brief overview of this specific duplication pattern and which components are affected]
 
 ## Duplication Details
 
@@ -165,21 +171,22 @@ For each distinct duplication pattern found, create a **separate issue**:
 
 ## Impact Analysis
 
-- **Maintainability**: [How this affects code maintenance across the polyglot stack]
+- **Maintainability**: [How this affects code maintenance across server and client]
 - **Bug Risk**: [Potential for inconsistent fixes across copies]
-- **Divergence Risk**: [Will these copies drift apart as services evolve?]
+- **Divergence Risk**: [Will these copies drift apart as the app evolves?]
 
 ## Refactoring Recommendations
 
 1. **[Recommendation]**
-   - Extract to: `libs/[language]/[suggested path]`
+   - Extract to: [e.g. a shared helper in `src/ResQ.Viz.Web/Services/` or a new
+     module under `src/ResQ.Viz.Web/client/`]
    - Estimated effort: [hours/complexity]
    - Benefits: [specific improvements]
 
-2. **[Alternative if cross-language]**
-   - Define in Protobuf: `libs/protocols/[suggested.proto]`
-   - Generate implementations for all consumers
-   - Run `make codegen` to propagate
+2. **[Alternative if the duplication spans C# and TypeScript]**
+   - Keep the shape defined once in `Models/` and mirror it in `client/types.ts`
+     with a note linking the two, or narrow the client type so drift is caught
+     by `tsc --noEmit`.
 
 ## Implementation Checklist
 
@@ -213,7 +220,10 @@ For each distinct duplication pattern found, create a **separate issue**:
 - Limit to the top 3 most significant patterns.
 - Only create issues if significant duplication is found (>10 lines or 3+ similar patterns).
 - Include sufficient detail for engineers or SWE agents to act on findings.
-- Assign to @copilot for automated remediation.
+- Do **not** claim an assignee in the issue body. The `create-issue` safe output
+  exposes no assignee field here, so any "Assignee: @copilot" line would be
+  cosmetic text that never assigns anyone. Triage happens via the
+  `refactor` / `needs-triage` labels configured in the frontmatter.
 - **If no significant duplication found, call `noop` tool** — never complete without calling either `create-issue` or `noop`.
 
 ```json

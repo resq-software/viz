@@ -18,10 +18,16 @@ engine: gemini
 network: defaults
 
 # Outputs - what APIs and tools can the AI use?
+# `report-failure-as-issue: false` only suppresses the *failure* report. The
+# compiler still wires up issue creation for noop, missing-tool and incomplete
+# runs, so this workflow would file issues despite `issues: read`. Disable each
+# one explicitly to keep the auditor comment-only.
 safe-outputs:
   report-failure-as-issue: false
   add-comment:
     max: 10
+  missing-tool: false
+  noop: false
 
 ---
 

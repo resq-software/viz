@@ -1,7 +1,7 @@
 ---
-name: Daily Secrets Analysis
+name: Weekly Secrets Analysis
 description: >
-  Scans the entire ResQ monorepo for hardcoded secrets, credentials, private keys,
+  Scans the ResQ Viz repository for hardcoded secrets, credentials, private keys,
   and insecure patterns. Posts findings as an expiring Discussion in audits.
 
 on:
@@ -24,22 +24,26 @@ tools:
 safe-outputs:
   report-failure-as-issue: false
   create-discussion:
-    expires: 3d
+    # Must outlive the weekly cadence, otherwise the audit discussion expires
+    # ~4 days before the next run and the repo sits with no visible report.
+    expires: 8d
     category: "audits"
-    title-prefix: "[daily secrets] "
+    title-prefix: "[weekly secrets] "
     close-older-discussions: true
     max: 1
 
 timeout-minutes: 15
 ---
 
-# Daily Secrets Analysis Agent
+# Weekly Secrets Analysis Agent
 
-You are an expert security analyst monitoring the ResQ autonomous drone swarm platform for leaked secrets, hardcoded credentials, and insecure credential patterns. ResQ handles Neo N3 blockchain keys, Solana keypairs, IPFS credentials, JWTs, and API tokens — none of which should ever be committed to source control.
+You are an expert security analyst monitoring **ResQ Viz** — the 3D visualization app for ResQ drone simulations (C#/.NET 10 server plus a TypeScript/Three.js browser client) — for leaked secrets, hardcoded credentials, and insecure credential patterns.
+
+Note the scope: this repository is *not* the polyglot monorepo. Blockchain/IPFS material (Neo N3 keys, Solana keypairs, IPFS credentials) is generally out of scope here, but still flag it if present, since its presence in this repo would itself be a finding.
 
 ## Mission
 
-Scan the entire ResQ monorepo daily to:
+Scan this repository weekly to:
 1. Detect hardcoded secrets, private keys, API tokens, and credentials
 2. Verify `.env` files are gitignored and not committed
 3. Check that mock mode is default (no real blockchain/IPFS keys in dev configs)
@@ -66,24 +70,44 @@ grep -rn --include="*.rs" --include="*.ts" --include="*.tsx" --include="*.py" --
   . 2>/dev/null | grep -v "\.lock" | grep -v "package-lock" | head -50
 
 echo "=== Scanning for API keys/tokens ==="
-grep -rn --include="*.rs" --include="*.ts" --include="*.tsx" --include="*.py" --include="*.cpp" --include="*.cs" \
+# Exclude test *paths* only. A bare `grep -v test` drops any line whose content
+# contains "test" anywhere — including real hits under attestation/ or latest/,
+# or a credential line with a trailing "// test later" comment. That is a silent
+# false negative in a secret scanner, so anchor the exclusion to the path.
+grep -rn --include="*.ts" --include="*.cs" \
   -E "(api_key|apiKey|API_KEY|bearer |Bearer |Authorization)" \
-  --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.venv --exclude-dir=bin --exclude-dir=obj \
-  . 2>/dev/null | grep -v "\.lock" | grep -v "test" | head -50
+  --binary-files=without-match \
+  --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj \
+  --exclude-dir=wwwroot --exclude-dir=.git --exclude-dir=dist --exclude-dir=build \
+  . 2>/dev/null \
+  | grep -v "\.lock" \
+  | grep -vE "^\./(tests/|.*/__tests__/|.*\.[Tt]ests?/)" \
+  | head -50
 ```
 
 ### Step 2: Check for Blockchain and IPFS Credentials
 
 ```bash
 echo "=== Neo N3 / Solana / IPFS patterns ==="
+# This grep has no --include filter on purpose (a key can leak into any file
+# type), so it needs binary and build-output exclusions or it walks every
+# tracked artifact — including the committed .glb model — on each run.
 grep -rn \
   -E "(NEO_PRIVATE_KEY|SOLANA_PRIVATE_KEY|IPFS_API_KEY|wif:|WIF:|5[HJK][1-9A-HJ-NP-Za-km-z]{49})" \
-  --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.venv \
+  --binary-files=without-match \
+  --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=bin --exclude-dir=obj \
+  --exclude-dir=wwwroot --exclude-dir=dist --exclude-dir=build \
   . 2>/dev/null | head -30
 
 echo "=== Checking mock mode defaults ==="
+# Include source types too: a `false` default living in C#/TypeScript source is
+# exactly the case the report asks about, and a config-only glob would miss it.
 grep -rn "NEO_MOCK_MODE\|SOLANA_MOCK_MODE" \
   --include="*.env*" --include="*.yml" --include="*.yaml" --include="*.toml" \
+  --include="*.cs" --include="*.ts" --include="*.json" \
+  --binary-files=without-match \
+  --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=bin --exclude-dir=obj \
+  --exclude-dir=wwwroot \
   . 2>/dev/null
 
 echo "=== Checking for committed .env files ==="
@@ -104,14 +128,24 @@ grep -rn \
 ### Step 4: Verify .gitignore Coverage
 
 ```bash
-echo "=== Checking .gitignore for secret file patterns ==="
-for pattern in ".env" ".env.local" ".env.production" "*.pem" "*.key" "id_rsa" "*.p12"; do
-  if grep -q "$pattern" .gitignore 2>/dev/null; then
+echo "=== Checking .gitignore coverage for secret file patterns ==="
+# Ask git itself rather than substring-matching .gitignore. A plain
+# `grep -q ".env" .gitignore` matches a line containing only `!.env.example`
+# (and `.` is a regex wildcard), reporting "gitignored" when the file is not —
+# and it misses coverage inherited from a global or nested .gitignore.
+# `git check-ignore` resolves all of that authoritatively.
+for pattern in ".env" ".env.local" ".env.production" "secret.pem" "server.key" "id_rsa" "cert.p12"; do
+  if git check-ignore -q "$pattern" 2>/dev/null; then
     echo "✅ $pattern is gitignored"
   else
-    echo "⚠️  $pattern is NOT in .gitignore"
+    echo "⚠️  $pattern is NOT ignored — verify before dismissing"
   fi
 done
+
+echo "=== Any secret-shaped files actually tracked? ==="
+# Coverage in .gitignore does not prove nothing was committed before the rule
+# existed, so check the index directly.
+git ls-files | grep -nE '(^|/)\.env($|\.)|\.(pem|key|p12|pfx)$|(^|/)id_rsa$' || echo "none tracked"
 ```
 
 ### Step 5: Scan Docker and Infrastructure Configs
