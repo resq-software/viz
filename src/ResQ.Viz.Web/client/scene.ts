@@ -6,6 +6,44 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { PostFx } from './postfx';
 import { UnityCamera } from './cameraControl';
 import { updateWaterSunDirection } from './water';
+import { getLogger } from './log';
+import { installHeightFog, setHeightFogParams } from './heightFog';
+import {
+    DEFAULT_SUN_AZIMUTH_DEG,
+    DEFAULT_SUN_ELEVATION_DEG,
+    shadowBiasFor,
+    shadowDepthRange,
+    shadowExtentFor,
+    snapToShadowTexel,
+    sunDirection,
+    sunDistance,
+    viewGroundFootprint,
+} from './lighting';
+
+/**
+ * Tallest shadow caster in the world, metres. Measured — not guessed — by the
+ * `caster envelope` test in `__tests__/lighting.test.ts`, which sweeps every
+ * preset's height function on a 10 m grid. Current maxima: ridgeline 235.7,
+ * alpine 132.2, canyon 106.3, coastal 49.4, dunes 43.3. Trees do not raise it
+ * (each preset's `maxTreeH` is a *planting altitude ceiling* well below its
+ * peak, so summits are bare). The headroom above 235.7 covers structures.
+ *
+ * Raising a preset's terrain past this sinks the directional light into the
+ * terrain at low sun elevation — re-run that test and bump this if you do.
+ */
+const CASTER_ENVELOPE_M = 260;
+
+/**
+ * Distance cap, metres, for the view-frustum ground projection the shadow
+ * frustum is fitted to. Beyond this, cast shadow is below the perceptual
+ * threshold anyway and widening only costs texel density.
+ */
+const MAX_SHADOW_DISTANCE_M = 3400;
+
+/** Shadow map resolution per axis. */
+const SHADOW_MAP_SIZE = 4096;
+
+const log = getLogger('scene');
 
 // Leading-edge + trailing-edge throttle. `@resq-sw/rate-limiting` offers
 // this API but imports `@upstash/ratelimit` at module load for its
@@ -55,8 +93,12 @@ export class Scene {
     // and the PBR environment map are all derived from this so the visible
     // sun, the cast shadows, and the surface lighting stay in agreement.
     private readonly _sunDir = new THREE.Vector3();
-    private _sunElevDeg   = 40;
-    private _sunAzimuthDeg = 135;
+    private _sunElevDeg    = DEFAULT_SUN_ELEVATION_DEG;
+    private _sunAzimuthDeg = DEFAULT_SUN_AZIMUTH_DEG;
+    // Current shadow-frustum rung. Tracked so bias/extent are only rewritten on
+    // a ladder step, not every frame — see `_updateShadowFrustum`.
+    private _shadowExtent = 0;
+    private readonly _shadowCenter = new THREE.Vector3();
     private readonly _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     private _markerMesh: THREE.Mesh | null = null;
     private _markerTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -75,6 +117,10 @@ export class Scene {
         this.scene = new THREE.Scene();
         // Fog colour matches sky horizon so distant terrain dissolves into atmosphere
         // rather than going dark — makes the 4 km terrain feel open.
+        // Must precede every material construction in the app: three snapshots
+        // UniformsLib.fog into each material at creation, so a material built
+        // before the override lacks the new uniforms and fails to link.
+        installHeightFog();
         this.scene.fog = new THREE.FogExp2(0x8ab8d4, 0.00010);
 
         this._camera = new THREE.PerspectiveCamera(
@@ -104,12 +150,86 @@ export class Scene {
     }
 
     private _computeSunDir(): void {
-        // Spherical → cartesian using the Sky addon's convention (polar angle
-        // measured from +Y, azimuth around Y). One computation feeds every
-        // sun-dependent system; see {@link setSunPosition}.
-        const phi   = THREE.MathUtils.degToRad(90 - this._sunElevDeg);
-        const theta = THREE.MathUtils.degToRad(this._sunAzimuthDeg);
-        this._sunDir.setFromSphericalCoords(1, phi, theta).normalize();
+        // Spherical → cartesian using the Sky addon's convention. The maths
+        // lives in ./lighting so it is unit-testable without a WebGL context;
+        // one computation feeds every sun-dependent system. See
+        // {@link setSunPosition}.
+        sunDirection(this._sunElevDeg, this._sunAzimuthDeg, this._sunDir);
+    }
+
+    /**
+     * Place the directional light along the sun vector far enough out to clear
+     * the tallest caster.
+     *
+     * A fixed 1500 m fails at low sun: 1500·sin(6°) ≈ 157 m puts the light
+     * *below* ridgeline's 235.7 m peaks, so the terrain that should cast is
+     * behind the light and the shadow set is wrong. Distance scales as
+     * 1/sin(elevation) — see {@link sunDistance}.
+     */
+    private _positionSun(): void {
+        const d = sunDistance(this._sunElevDeg, CASTER_ENVELOPE_M);
+        this._sun.position.copy(this._sunDir).multiplyScalar(d);
+        this._sun.target.position.copy(this._shadowCenter);
+        this._sun.target.updateMatrixWorld();
+        updateWaterSunDirection(this._sun.position);
+    }
+
+    /**
+     * Resize the ortho shadow frustum to a ladder rung and rescale depth range
+     * and bias to match. Only called on a rung change, never per-frame.
+     */
+    private _applyShadowExtent(extent: number): void {
+        this._shadowExtent = extent;
+        const cam = this._sun.shadow.camera;
+        cam.left   = -extent;
+        cam.right  =  extent;
+        cam.top    =  extent;
+        cam.bottom = -extent;
+
+        // far=4000 is only correct while distance is pinned at 1500. Once
+        // distance scales with elevation, a fixed far silently clips the far
+        // half of the caster set at exactly the low sun angles that make relief
+        // legible.
+        const d = sunDistance(this._sunElevDeg, CASTER_ENVELOPE_M);
+        const { near, far } = shadowDepthRange(d, extent, CASTER_ENVELOPE_M);
+        cam.near = near;
+        cam.far  = far;
+
+        // Acne amplitude tracks texel world size, so bias tuned at ±800 m
+        // under-corrects by 4× at the ±3200 m rung.
+        const { bias, normalBias } = shadowBiasFor(extent, SHADOW_MAP_SIZE);
+        this._sun.shadow.bias       = bias;
+        this._sun.shadow.normalBias = normalBias;
+
+        // Mutating ortho bounds without this leaves Three.js rendering the
+        // shadow map at the default ±5 bounds — nothing outside that tiny
+        // footprint casts at all.
+        cam.updateProjectionMatrix();
+    }
+
+    /**
+     * Refit the shadow frustum to the current view, once per frame.
+     *
+     * Fitted to the view frustum's ground projection rather than to the orbit
+     * target: in free-fly the target sits behind the camera when you look at a
+     * distant ridge, so a target-fitted frustum excludes the geometry that most
+     * needs to cast. The centre is snapped to the shadow-texel grid to stop
+     * texels crawling over static terrain, which is only meaningful because the
+     * extent is quantised to rungs — a continuously-varying extent changes texel
+     * size every frame and makes snapping a no-op.
+     */
+    private _updateShadowFrustum(): void {
+        if (!this.renderer.shadowMap.enabled) return;
+
+        const { center, radius } = viewGroundFootprint(this._camera, MAX_SHADOW_DISTANCE_M);
+        const extent = shadowExtentFor(radius);
+        if (extent !== this._shadowExtent) this._applyShadowExtent(extent);
+
+        snapToShadowTexel(center, extent, SHADOW_MAP_SIZE, this._sunDir, this._shadowCenter);
+        this._sun.position.copy(this._shadowCenter)
+            .addScaledVector(this._sunDir, sunDistance(this._sunElevDeg, CASTER_ENVELOPE_M));
+        this._sun.target.position.copy(this._shadowCenter);
+        this._sun.target.updateMatrixWorld();
     }
 
     private _initSky(): void {
@@ -152,6 +272,46 @@ export class Scene {
         this._envRT = this._pmrem.fromScene(envScene, 0, 0.1, 50000);
         this.scene.add(this._sky);          // re-attach to the main scene
         this.scene.environment = this._envRT.texture;
+        this._warnIfEnvBlack();
+    }
+
+    /**
+     * Fail loudly when the PBR environment probe bakes to black.
+     *
+     * A black env map is indistinguishable by eye from a lighting regression —
+     * every PBR surface just goes flat and dark — so it must be detected, not
+     * observed. The usual cause is `PMREMGenerator` defaulting to
+     * `HalfFloatType` on stacks whose `OES_texture_half_float_linear` support is
+     * unreliable (SwiftShader, i.e. every headless screenshot). If this fires,
+     * force `FloatType` or gate the bake behind a flag — do not "fix" the
+     * lighting.
+     */
+    private _warnIfEnvBlack(): void {
+        const rt = this._envRT;
+        if (!rt) return;
+        try {
+            const w = Math.min(8, rt.width);
+            const h = Math.min(8, rt.height);
+            const n = w * h * 4;
+            const type = rt.texture.type;
+            const buf =
+                type === THREE.UnsignedByteType ? new Uint8Array(n)   :
+                type === THREE.FloatType        ? new Float32Array(n) :
+                                                  new Uint16Array(n);
+            this.renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+            // Half-float 0.0 is all-zero bits, so a plain truthiness scan is a
+            // valid nonzero-luminance test for every buffer type above.
+            for (let i = 0; i < n; i += 4) {
+                if (buf[i] || buf[i + 1] || buf[i + 2]) return;
+            }
+            log.warn(
+                'environment probe baked black — PBR surfaces will render unlit. ' +
+                'Likely half-float render-target support, not a lighting bug.',
+                { textureType: type, renderer: this.renderer.getContext().getParameter(0x1F01) },
+            );
+        } catch (err) {
+            log.debug('env probe readback unavailable', { err });
+        }
     }
 
     private _initLights(): void {
@@ -159,38 +319,20 @@ export class Scene {
         this.scene.add(ambient);
 
         const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
-        // Position derived from the shared sun direction so the light, the
-        // visible Sky sun, and the water glint all agree. 1500 m keeps it
-        // inside the shadow camera's 4000 m far plane at every elevation.
-        sun.position.copy(this._sunDir).multiplyScalar(1500);
         this._sun = sun;
-        updateWaterSunDirection(sun.position);
+        this._positionSun();
         sun.castShadow = true;
-        // 4096 × 4096 shadow map with a ±800 m frustum. Net near-camera texel
-        // density is ~3.4× sharper than the prior 2048² / ±1200 m setup
-        // (0.39 m/texel vs 1.17 m/texel). Drone shadows at mid-camera range
-        // gain the crispness CSM would deliver without any shader-chunk
-        // mutation or material-registration plumbing. 64 MB shadow RAM on
-        // modern GPUs is trivial; the ±800 m frustum still covers the
-        // active drone area in every shipped scenario — the spawn radii
-        // top out at ~520 m in multi-agency-sar.
-        sun.shadow.mapSize.set(4096, 4096);
-        sun.shadow.camera.near   =   10;
-        sun.shadow.camera.far    = 4000;
-        sun.shadow.camera.left   = -800;
-        sun.shadow.camera.right  =  800;
-        sun.shadow.camera.top    =  800;
-        sun.shadow.camera.bottom = -800;
-        // Tighter frustum halves shadow-acne amplitude; bias can relax
-        // from -0.0018 to -0.0010 without re-introducing the edge artifact.
-        sun.shadow.bias          = -0.0010;
-        sun.shadow.normalBias    =  0.02;     // reduce peter-panning on trees
-        // After mutating the orthographic frustum bounds the projection
-        // matrix must be recomputed — otherwise Three.js renders the shadow
-        // map using the default ±5 bounds and drones outside that tiny
-        // footprint cast no shadow at all.
-        sun.shadow.camera.updateProjectionMatrix();
+        sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+        // The frustum is not fixed. A ±800 m box on a 4000 m world leaves ~84 %
+        // of the map with no cast shadow at all, which is why relief read flat
+        // at overview distance regardless of heightfield quality. `_updateShadow
+        // Frustum` refits it to the view every frame; this just seeds a rung so
+        // the first frame before any camera update is already valid.
+        this._applyShadowExtent(shadowExtentFor(0));
+        // The shadow camera is a child of the light, so its target must be in
+        // the scene graph for the light's matrix to resolve.
         this.scene.add(sun);
+        this.scene.add(sun.target);
 
         const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);
         this.scene.add(hemi);
@@ -215,6 +357,9 @@ export class Scene {
             }
             for (const cb of this._tickCallbacks) cb(dt);
             this._cam.update(dt);
+            // After the camera moves, before anything renders — the shadow
+            // frustum follows the view.
+            this._updateShadowFrustum();
             this._postFx.render();
         };
         requestAnimationFrame(loop);
@@ -288,11 +433,19 @@ export class Scene {
     setFogDensity(v: number): void {
         if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = v;
     }
-    setAtmosphere(fogColor: number, density: number): void {
-        if (this.scene.fog instanceof THREE.FogExp2) {
-            this.scene.fog.color.set(fogColor);
-            this.scene.fog.density = density;
-        }
+    setAtmosphere(fogColor: number, density: number, heightFalloff = 0): void {
+        // Forward scattering is keyed off the canonical sun so haze brightens
+        // toward the visible sun disc rather than being a flat tint. Sun colour
+        // is warmed toward the fog colour so the two never disagree at the
+        // horizon, which is what reads as "muddy".
+        setHeightFogParams(this.scene, {
+            color:         fogColor,
+            density,
+            heightFalloff,
+            sunDirection:  this._sunDir,
+            sunColor:      new THREE.Color(fogColor).lerp(new THREE.Color(0xfff1d4), 0.45),
+            sunIntensity:  heightFalloff > 0 ? 0.6 : 0,
+        });
         this.renderer.setClearColor(fogColor);
     }
     setFov(degrees: number): void {
@@ -318,10 +471,20 @@ export class Scene {
         this._sunAzimuthDeg = azimuthDeg;
         this._computeSunDir();
         this._sky.material.uniforms['sunPosition']!.value.copy(this._sunDir);
-        this._sun.position.copy(this._sunDir).multiplyScalar(1500);
-        this._sun.shadow.camera.updateProjectionMatrix();
-        updateWaterSunDirection(this._sun.position);
+        this._positionSun();
+        // Light distance and therefore the depth range both moved; re-derive the
+        // frustum at the current rung rather than only updating the projection.
+        this._applyShadowExtent(this._shadowExtent || shadowExtentFor(0));
         this._bakeEnvFromSky();
+    }
+
+    /**
+     * Scene exposure. Per-environment because ACES flattens high-albedo scenes:
+     * snow blows out to featureless white at 1.0, destroying exactly the relief
+     * an alpine scenario exists to show.
+     */
+    setToneMappingExposure(v: number): void {
+        this.renderer.toneMappingExposure = v;
     }
 
     getTerrainIntersection(clientX: number, clientY: number, groundMesh?: THREE.Mesh | null): THREE.Vector3 | null {
