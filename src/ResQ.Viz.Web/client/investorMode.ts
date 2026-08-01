@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import type { UnityCamera } from './cameraControl';
+import { prefersReducedMotion } from './reducedMotion';
 
 /**
  * A keyframe on the scripted path.
@@ -88,7 +89,12 @@ export class InvestorMode {
         this._closeOpenPanels();
         this._mountWordmark();
 
-        this._camera.setScripted((dt) => this._updateScripted(dt));
+        // Skip the sweeping 90s dolly for reduced-motion users (WCAG 2.3.3):
+        // keep the cinematic chrome (hidden panels + wordmark) but leave the
+        // camera static rather than driving a continuous scripted move.
+        if (!prefersReducedMotion()) {
+            this._camera.setScripted((dt) => this._updateScripted(dt));
+        }
     }
 
     private _uninstall(): void {

@@ -16,6 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <PackageReference Include="Vite.AspNetCore" Version="2.4.1" />
   </ItemGroup>
 
@@ -28,19 +33,11 @@
     NpmInstall: reinstalls only when package.json changes (keyed on lockfile).
     ViteBuild:  runs only in Release; skipped in Debug (dotnet run uses Vite dev server).
   -->
-  <Target Name="NpmInstall"
-          BeforeTargets="Build"
-          Inputs="package.json"
-          Outputs="node_modules\.package-lock.json">
+  <Target Name="NpmInstall" BeforeTargets="Build" Inputs="package.json" Outputs="node_modules\.package-lock.json">
     <Exec Command="npm install" />
   </Target>
 
-  <Target Name="ViteBuild"
-          BeforeTargets="Build"
-          DependsOnTargets="NpmInstall"
-          Condition="'$(Configuration)' == 'Release'"
-          Inputs="@(ClientSource)"
-          Outputs="wwwroot\index.html">
+  <Target Name="ViteBuild" BeforeTargets="Build" DependsOnTargets="NpmInstall" Condition="'$(Configuration)' == 'Release'" Inputs="@(ClientSource)" Outputs="wwwroot\index.html">
     <Exec Command="npm run build" />
   </Target>
 

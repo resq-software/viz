@@ -40,3 +40,11 @@ public record FaultRequest(string DroneId, string Type);
 /// <summary>Request body for toggling the simulated backhaul link.</summary>
 /// <param name="Killed">Set to <see langword="true"/> to simulate backhaul failure (mesh-only mode).</param>
 public record BackhaulRequest(bool Killed);
+
+/// <summary>Request body for advancing the simulation by a number of frames.</summary>
+/// <param name="Frames">Number of single steps to advance (1–600). Works while paused.</param>
+public record StepRequest(int Frames = 1);
+
+/// <summary>Request body for setting the simulation run-speed multiplier.</summary>
+/// <param name="Factor">Speed multiplier: 1, 2, 4, or 8.</param>
+public record SpeedRequest(int Factor);

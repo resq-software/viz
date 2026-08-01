@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { loadTexture } from './assetLoader';
+import { sunDirection, SUN_COLOR } from './lighting';
 import { getLogger } from './log';
 
 const log = getLogger('water');
@@ -69,15 +70,26 @@ export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: bo
     geo.rotateX(-Math.PI / 2);
 
     const water = new Water(geo, {
-        textureWidth:    256,   // keep the reflection render cheap (vs 512/1024)
-        textureHeight:   256,
+        // 512² reflection (was 256²) — sharper mirror, cheap on a modern GPU.
+        textureWidth:    512,
+        textureHeight:   512,
         waterNormals:    _cachedNormals ?? _normalsPlaceholder,
-        sunDirection:    _sunDir.clone(),   // shared canonical sun (scene.ts)
-        sunColor:        0xfff8e7,   // match the directional sun in scene.ts
-        waterColor:      opts.waterColor ?? 0x102838,   // cooler than the old MeshStandardMaterial hex
-        distortionScale: 2.2,
+        // Shared canonical sun so the water's specular glint lands where the
+        // visible Sky sun and terrain shadows say it should (see ./lighting).
+        sunDirection:    sunDirection(),
+        sunColor:        SUN_COLOR,
+        // Caller override kept from main; default is the WIP's deep teal.
+        waterColor:      opts.waterColor ?? 0x0e2a3d,
+        // More distortion so the broken-up reflection actually shimmers.
+        distortionScale: 3.6,
         fog:             opts.fog,
     });
+    // `size` sets ripple frequency (normal map tiles every ~103/size world-m).
+    // The addon reads it as a uniform but omits it from its TS options type, so
+    // set it directly. Default 1.0 = ~103 m swells (a mirror at altitude);
+    // 6.0 → ~17 m chop that breaks the reflection into believable surface.
+    const _size = water.material.uniforms['size'];
+    if (_size) _size.value = 6.0;
     water.position.y = opts.waterLevel;
     _instance = water;
     if (!_cachedNormals) void _loadNormals();

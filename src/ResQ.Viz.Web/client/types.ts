@@ -1,8 +1,10 @@
 // ResQ Viz - Shared VizFrame type definitions
 // SPDX-License-Identifier: Apache-2.0
 
+import type { UnitInterval } from '@resq-systems/types';
+
 /** Position as [X, Y, Z] metres. */
-type Vec3 = [number, number, number];
+export type Vec3 = [number, number, number];
 
 /** Rotation quaternion as [X, Y, Z, W]. */
 export type Quat = [number, number, number, number];
@@ -42,7 +44,7 @@ export interface DetectionState {
     type:       string;        // "survivor" | "object" | etc.
     pos?:       Vec3;
     droneId:    string;
-    confidence: number;        // 0–1
+    confidence: UnitInterval;  // branded 0–1 (validated at construction via toUnitInterval)
 }
 
 export interface MeshState {
@@ -56,4 +58,10 @@ export interface VizFrame {
     detections:  DetectionState[];
     mesh?:       MeshState;
     time?:       number;
+    /** Authoritative transport state (set by the server). */
+    paused?:     boolean;
+    /** Run-speed multiplier: world steps per real tick (1, 2, 4, …). */
+    speed?:      number;
+    /** Total world steps advanced since the last reset. */
+    tick?:       number;
 }

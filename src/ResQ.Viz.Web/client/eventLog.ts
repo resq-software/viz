@@ -37,6 +37,12 @@ function clockStamp(d: Date = new Date()): string {
 
 export class EventLog {
     private readonly _el: HTMLDivElement;
+    // Visually-hidden ASSERTIVE region for life-safety hazard entries only.
+    // The visual ticker (`_el`) is polite so routine detections don't interrupt
+    // a screen-reader operator mid-sentence — but a new fire/high-wind hazard is
+    // time-critical for someone directing drones, so it gets its own role="alert"
+    // channel (implicitly assertive) that announces immediately. WCAG 4.1.3.
+    private readonly _alertEl: HTMLDivElement;
 
     constructor() {
         this._el = document.createElement('div');
@@ -45,6 +51,12 @@ export class EventLog {
         this._el.setAttribute('aria-live', 'polite');
         this._el.setAttribute('aria-relevant', 'additions');
         document.body.appendChild(this._el);
+
+        this._alertEl = document.createElement('div');
+        this._alertEl.className = 'sr-only';
+        this._alertEl.setAttribute('role', 'alert');       // implies aria-live=assertive
+        this._alertEl.setAttribute('aria-atomic', 'true');
+        document.body.appendChild(this._alertEl);
 
         document.addEventListener('resq:scenario-start', (ev) => {
             const name = (ev as CustomEvent<{ name: string }>).detail?.name;
@@ -126,5 +138,14 @@ export class EventLog {
         const verb  = kind === 'enter' ? 'detected' : 'cleared';
         const level: EventLevel = kind === 'enter' ? 'alert' : 'mesh';
         this.push(`${type} ${verb}`, { level, tag: 'HAZ' });
+        // Escalate hazard *entries* to the assertive channel so a screen reader
+        // announces the danger immediately. Clear-then-set on the next frame so
+        // an identical consecutive hazard type still re-announces (role="alert"
+        // only fires on a content change).
+        if (kind === 'enter') {
+            this._alertEl.textContent = '';
+            const msg = `Hazard: ${type} detected`;
+            requestAnimationFrame(() => { this._alertEl.textContent = msg; });
+        }
     }
 }

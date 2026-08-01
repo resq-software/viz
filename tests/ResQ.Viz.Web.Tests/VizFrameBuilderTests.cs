@@ -176,4 +176,22 @@ public class VizFrameBuilderTests
 
         frame.Detections.Should().BeEmpty();
     }
+
+    [Fact]
+    public void Build_Includes_Transport_State()
+    {
+        var frame = _builder.Build([], simTime: 1.0, partitioned: false, paused: true, speed: 4, tick: 123);
+        frame.Paused.Should().BeTrue();
+        frame.Speed.Should().Be(4);
+        frame.Tick.Should().Be(123);
+    }
+
+    [Fact]
+    public void Build_Defaults_Transport_State_To_Running()
+    {
+        var frame = _builder.Build([], simTime: 0.0);
+        frame.Paused.Should().BeFalse();
+        frame.Speed.Should().Be(1);
+        frame.Tick.Should().Be(0);
+    }
 }

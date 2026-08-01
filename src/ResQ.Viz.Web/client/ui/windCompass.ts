@@ -1,12 +1,16 @@
 // ResQ Viz - Wind compass widget
 // SPDX-License-Identifier: Apache-2.0
 
-import { getEl } from '../dom';
+import { cssVar, getEl } from '../dom';
 
 export class WindCompass {
     private readonly _canvas: HTMLCanvasElement;
     private readonly _label: HTMLElement;
     private readonly _ctx: CanvasRenderingContext2D;
+    // Palette pulled from tokens.css once at construction (dark-only, static).
+    private readonly _colInfo   = cssVar('--info', '#3d9bf5');
+    private readonly _colMuted  = cssVar('--muted-foreground', '#8891a8');
+    private readonly _colBorder = cssVar('--border-hover', '#39415a');
     private _degrees = 0;
     private _speed = 0;
 
@@ -43,15 +47,15 @@ export class WindCompass {
         ctx.clearRect(0, 0, w, h);
 
         // Outer ring
-        ctx.strokeStyle = 'rgba(48, 54, 61, 0.7)';
+        ctx.strokeStyle = this._colBorder;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.stroke();
 
         // Cardinal labels
-        ctx.fillStyle = 'rgba(139, 148, 158, 0.7)';
-        ctx.font = '8px system-ui, sans-serif';
+        ctx.fillStyle = this._colMuted;
+        ctx.font = '8px "DM Mono", ui-monospace, monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const labels: [string, number, number][] = [
@@ -67,7 +71,7 @@ export class WindCompass {
         const ax  = cx + Math.cos(rad) * r * 0.6;
         const ay  = cy + Math.sin(rad) * r * 0.6;
 
-        ctx.strokeStyle = '#58a6ff';
+        ctx.strokeStyle = this._colInfo;
         ctx.lineWidth = 2;
         ctx.lineCap = 'round';
         ctx.beginPath();
@@ -92,7 +96,7 @@ export class WindCompass {
         ctx.stroke();
 
         // Center dot
-        ctx.fillStyle = '#58a6ff';
+        ctx.fillStyle = this._colInfo;
         ctx.beginPath();
         ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
         ctx.fill();
