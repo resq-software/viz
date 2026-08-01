@@ -6,3 +6,16 @@
 *.ktx2  filter=lfs diff=lfs merge=lfs -text
 *.hdr   filter=lfs diff=lfs merge=lfs -text
 *.exr   filter=lfs diff=lfs merge=lfs -text
+
+# Compiled gh-aw workflows. This line is written and re-asserted by
+# `gh aw compile` — edits to it do not survive a recompile.
+#
+# On `merge=ours`: it is inert unless someone runs
+# `git config merge.ours.driver true`, because git ships no built-in `ours`
+# low-level driver. Do NOT configure that driver in this repo: with it enabled,
+# a merge bringing in recompiled lock files (including refreshed action SHAs)
+# would be silently discarded while reporting success.
+#
+# Correct way to resolve any conflict in these files: re-run `gh aw compile`
+# and commit the regenerated output, never hand-merge.
+.github/workflows/*.lock.yml linguist-generated=true merge=ours
