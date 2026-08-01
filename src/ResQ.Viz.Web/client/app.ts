@@ -898,8 +898,9 @@ document.addEventListener('resq:scenario-start', (e) => {
             viz.setSkyProfile(skyProfileFor(env));
         },
         switchPreset: (key, waterLevel) => _switchPreset(key, waterLevel),
-        setCamera: (preset: CameraPresetKey) => {
+        setCamera: (preset: CameraPresetKey, env) => {
             const jump = {
+                survey:   () => cameraPresets.terrainSurvey(env.sunAzimuthDeg),
                 overview: () => cameraPresets.overview(),
                 tactical: () => cameraPresets.tactical(),
                 cockpit:  () => cameraPresets.cockpit(),

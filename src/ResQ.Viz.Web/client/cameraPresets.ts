@@ -72,6 +72,33 @@ export class CameraPresets {
         this._d.viz.cameraController.setPose(pos, target);
     }
 
+    /**
+     * SURVEY: frame the terrain, not the swarm.
+     *
+     * Every other preset fits to drone positions, so with spawn radii of
+     * 90-220 m at 35-60 m altitude the camera parks low and close on a cluster
+     * of aircraft and the landscape falls outside the frame entirely. That makes
+     * scenario environments impossible to tell apart, because the thing that
+     * differs between them is never on screen.
+     *
+     * The camera is placed CROSS-LIT — 90 deg off the sun azimuth — because
+     * raking light across the view direction is what makes ridges and valleys
+     * read as relief. Looking down-sun flattens them; looking up-sun silhouettes
+     * them. Derived from the environment's own sun angle, so no per-scenario
+     * tuning is required.
+     */
+    terrainSurvey(sunAzimuthDeg: number, distance = 1750, height = 560): void {
+        const theta = THREE.MathUtils.degToRad(sunAzimuthDeg + 90);
+        const pos = new THREE.Vector3(
+            Math.sin(theta) * distance,
+            height,
+            Math.cos(theta) * distance,
+        );
+        // Aim slightly above the ground plane so the horizon sits high in frame
+        // and terrain fills the lower two-thirds.
+        this._d.viz.cameraController.setPose(pos, new THREE.Vector3(0, 40, 0));
+    }
+
     /** INVESTOR: toggle the scripted cinematic dolly (same as Ctrl+Shift+R). */
     investor(): void {
         this._d.investorMode.toggle(() => {

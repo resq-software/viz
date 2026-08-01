@@ -19,7 +19,7 @@ import type { PresetKey } from './terrainPresets';
 import type { SceneEnvironment } from './scene';
 
 /** Named camera framings bound in app.ts to Shift+1..6. */
-export type CameraPresetKey = 'overview' | 'tactical' | 'cockpit' | 'ground';
+export type CameraPresetKey = 'survey' | 'overview' | 'tactical' | 'cockpit' | 'ground';
 
 /**
  * Atmospheric class. The three.js `Sky` shader is a clear-sky Preetham model and
@@ -100,7 +100,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         waterLevel: -15,
         // Framed away from the 285° sun: low sun straight down the barrel
         // silhouettes the ridge and hides the relief the scenario is about.
-        defaultCameraPreset: 'tactical',
+        defaultCameraPreset: 'survey',
     },
     'hurricane-melissa': {
         key: 'hurricane-melissa',
@@ -113,7 +113,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogDensity: 0.00035,
         toneMappingExposure: 1.15,
         waterLevel: 6,          // storm surge
-        defaultCameraPreset: 'tactical',
+        defaultCameraPreset: 'survey',
     },
     'flood-riverine': {
         key: 'flood-riverine',
@@ -126,7 +126,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogDensity: 0.00012,
         toneMappingExposure: 1.0,
         waterLevel: 18,         // risen; turbidity deferred (new shader feature)
-        defaultCameraPreset: 'overview',
+        defaultCameraPreset: 'survey',
     },
     'urban-collapse': {
         key: 'urban-collapse',
@@ -139,7 +139,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogDensity: 0.00028,
         toneMappingExposure: 1.05,
         waterLevel: -60,
-        defaultCameraPreset: 'tactical',
+        defaultCameraPreset: 'survey',
     },
     'alpine-sar': {
         key: 'alpine-sar',
@@ -154,7 +154,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         // ACES at 1.0, destroying exactly the relief this scenario exists to show.
         toneMappingExposure: 0.85,
         waterLevel: -3,
-        defaultCameraPreset: 'overview',
+        defaultCameraPreset: 'survey',
     },
     'canyon-sar': {
         key: 'canyon-sar',
@@ -170,7 +170,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogDensity: 0.00010,
         toneMappingExposure: 1.0,
         waterLevel: -60,
-        defaultCameraPreset: 'overview',
+        defaultCameraPreset: 'survey',
     },
 };
 
@@ -191,7 +191,7 @@ export interface EnvironmentDeps {
     /** Rebuild terrain for a preset, with an optional water-level override. */
     switchPreset: (key: PresetKey, waterLevel?: number) => void;
     /** Jump to a named camera framing. */
-    setCamera: (preset: CameraPresetKey) => void;
+    setCamera: (preset: CameraPresetKey, env: ScenarioEnvironment) => void;
     /** True when the operator has manually overridden terrain from the sidebar. */
     isTerrainOverridden: () => boolean;
 }
@@ -217,6 +217,6 @@ export function applyScenarioEnvironment(deps: EnvironmentDeps, scenarioKey: str
         deps.switchPreset(env.terrainPreset, env.waterLevel);
     }
     deps.applyScene(env);
-    deps.setCamera(env.defaultCameraPreset);
+    deps.setCamera(env.defaultCameraPreset, env);
     return true;
 }

@@ -326,10 +326,19 @@ export class Scene {
                 type === THREE.FloatType        ? new Float32Array(n) :
                                                   new Uint16Array(n);
             this.renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
-            // Half-float 0.0 is all-zero bits, so a plain truthiness scan is a
-            // valid nonzero-luminance test for every buffer type above.
+            // Half-float 0.0 is all-zero bits, so a plain magnitude scan is a
+            // valid nonzero-luminance test for every buffer type above. Report
+            // the peak rather than returning on first hit: "no warning" is only
+            // evidence the check ran, whereas a number is evidence the probe is
+            // actually lit. Screenshot verification depends on this distinction.
+            let peak = 0;
             for (let i = 0; i < n; i += 4) {
-                if (buf[i] || buf[i + 1] || buf[i + 2]) return;
+                const m = Math.max(buf[i] ?? 0, buf[i + 1] ?? 0, buf[i + 2] ?? 0);
+                if (m > peak) peak = m;
+            }
+            if (peak > 0) {
+                log.info('env probe lit', { peakChannel: peak, textureType: type, samples: n / 4 });
+                return;
             }
             log.warn(
                 'environment probe baked black — PBR surfaces will render unlit. ' +
@@ -386,6 +395,7 @@ export class Scene {
             this._cam.update(dt);
             // After the camera moves, before anything renders — the shadow
             // frustum follows the view.
+
             this._updateShadowFrustum();
             this._postFx.render();
         };
