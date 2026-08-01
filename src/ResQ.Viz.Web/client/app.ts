@@ -31,6 +31,7 @@ import * as geoCache from './geoCache';
 import { InvestorMode } from './investorMode';
 import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
+import { applyScenarioEnvironment, skyProfileFor, type CameraPresetKey } from './scenarioEnvironments';
 import { LoadingOverlay } from './loadingOverlay';
 import { tickWind } from './treeSprites';
 import { setHeightmapOverride, setAntiTile } from './terrain';
@@ -384,13 +385,23 @@ downwashFx.setEnabled(settings.get('downwashEnabled'));
 
 let _currentPresetKey: PresetKey = 'alpine';
 
-function _switchPreset(key: PresetKey): void {
+/**
+ * Single override flag, shared by the terrain picker and the settings
+ * write-through. Once the operator touches either, scenario load stops
+ * overwriting their choice. One mechanism, deliberately — two would drift.
+ */
+let _operatorOverride = false;
+
+/** Marks operator intent. Called from the sidebar controls, never from scenario load. */
+function _markOperatorOverride(): void { _operatorOverride = true; }
+
+function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
     _currentPresetKey = key;
     // Drop any previous preset's eroded DEM so the new preset builds from its
     // own procedural shape; the eroded version swaps back in asynchronously.
     if (_erosionEnabled) setHeightmapOverride(null);
     terrain.dispose(viz.scene);
-    terrain = new Terrain(viz.scene, key);
+    terrain = new Terrain(viz.scene, key, waterLevelOverride);
     const p = PRESETS[key];
     viz.setAtmosphere(p.fogColor, p.fogDensity);
     // Update active card highlight + AT-visible pressed state
@@ -484,7 +495,7 @@ void (async () => {
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
     el.addEventListener('click', () => {
         const key = el.dataset['preset'] as PresetKey | undefined;
-        if (key && key in PRESETS) _switchPreset(key);
+        if (key && key in PRESETS) { _markOperatorOverride(); _switchPreset(key); }
     });
 });
 
@@ -871,9 +882,33 @@ const _seenHazardIds    = new Map<string, string>();   // id → type
 // the first `det-1` of scenario B; same for hazards. Without this the
 // event log stays silent for the first few seconds after a preset change
 // if the two scenarios happen to share ids.
-document.addEventListener('resq:scenario-start', () => {
+document.addEventListener('resq:scenario-start', (e) => {
     _seenDetectionIds.clear();
     _seenHazardIds.clear();
+
+    // Bind the scenario to its full environmental presentation. Applied HERE,
+    // on scenario-start, because scenarioIntro.ts:73 listens on the same event
+    // and raises a title card — the terrain rebuild happens behind it and the
+    // hitch is masked for free. Do NOT move this earlier.
+    const name = (e as CustomEvent<{ name?: string }>).detail?.name;
+    if (!name) return;
+    applyScenarioEnvironment({
+        applyScene: (env) => {
+            viz.applyEnvironment(env);
+            viz.setSkyProfile(skyProfileFor(env));
+        },
+        switchPreset: (key, waterLevel) => _switchPreset(key, waterLevel),
+        setCamera: (preset: CameraPresetKey) => {
+            const jump = {
+                overview: () => cameraPresets.overview(),
+                tactical: () => cameraPresets.tactical(),
+                cockpit:  () => cameraPresets.cockpit(),
+                ground:   () => cameraPresets.ground(),
+            }[preset];
+            jump?.();
+        },
+        isTerrainOverridden: () => _operatorOverride,
+    }, name);
 });
 
 function _wireConnection(c: HubConnection): void {

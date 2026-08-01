@@ -42,7 +42,39 @@ const MAX_SHADOW_DISTANCE_M = 3400;
 /** Shadow map resolution per axis. */
 const SHADOW_MAP_SIZE = 4096;
 
+/**
+ * Base intensity of the directional sun at `sunIntensity = 1.0`. Atmospheric
+ * classes scale this — see {@link Scene.setSkyProfile}.
+ */
+const BASE_SUN_INTENSITY = 1.8;
+
 const log = getLogger('scene');
+
+/**
+ * The Scene-owned subset of an environment descriptor.
+ *
+ * `ScenarioEnvironment` in ./scenarioEnvironments extends this with the facets
+ * Scene does not own (terrain preset, water level, camera framing), so the two
+ * layers share one vocabulary without Scene importing the scenario table.
+ */
+export interface SceneEnvironment {
+    /** Sun elevation above the horizon, degrees. */
+    readonly sunElevationDeg: number;
+    /** Sun compass azimuth, degrees (three.js convention: 0 → +Z, 90 → +X). */
+    readonly sunAzimuthDeg: number;
+    /** Fog colour; also the renderer clear colour. */
+    readonly fogColor: number;
+    /** Base extinction, `FogExp2.density` units. */
+    readonly fogDensity: number;
+    /**
+     * Vertical fog falloff, 1/metres. Carried for contract stability but
+     * currently INERT — height fog is written (`./heightFog`) but unwired
+     * pending the black-terrain root cause. Setting this has no effect yet.
+     */
+    readonly fogHeightFalloff?: number;
+    /** ACES exposure. Below 1.0 for high-albedo scenes so snow keeps relief. */
+    readonly toneMappingExposure: number;
+}
 
 // Leading-edge + trailing-edge throttle. `@resq-sw/rate-limiting` offers
 // this API but imports `@upstash/ratelimit` at module load for its
@@ -313,7 +345,7 @@ export class Scene {
         const ambient = new THREE.AmbientLight(0x3a4a5a, 0.8);
         this.scene.add(ambient);
 
-        const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
+        const sun = new THREE.DirectionalLight(0xfff8e7, BASE_SUN_INTENSITY);
         this._sun = sun;
         this._positionSun();
         sun.castShadow = true;
@@ -472,6 +504,48 @@ export class Scene {
      */
     setToneMappingExposure(v: number): void {
         this.renderer.toneMappingExposure = v;
+    }
+
+    /**
+     * Apply every Scene-owned facet of an environment in one call.
+     *
+     * This is the INNER seam. It owns only what `Scene` owns — sun, fog,
+     * exposure — and deliberately knows nothing about terrain presets, water
+     * level, or camera framing. The OUTER orchestrator,
+     * `applyScenarioEnvironment` in ./scenarioEnvironments, wraps this and adds
+     * those layers. The two have different names on purpose: an earlier plan
+     * had both called `applyEnvironment`, which would have let a Scene-level
+     * and a scenario-level function drift apart under one identifier.
+     *
+     * Ordering matters. Sun goes first because `setSunPosition` re-bakes the
+     * environment probe, and the fog colour is chosen to match the sky horizon
+     * that bake produces.
+     */
+    applyEnvironment(env: SceneEnvironment): void {
+        this.setSunPosition(env.sunElevationDeg, env.sunAzimuthDeg);
+        this.setAtmosphere(env.fogColor, env.fogDensity);
+        this.setToneMappingExposure(env.toneMappingExposure);
+    }
+
+    /**
+     * Atmospheric class: Sky shader parameters plus a direct-sun multiplier.
+     *
+     * `mieG` is the load-bearing one at low sun. The Preetham sky keeps a hard
+     * sun disc at any turbidity, so a 6° hurricane reads as a sunset unless the
+     * aureole is spread wide — and "looks like a sunset" is a scenario-
+     * distinctness failure, not a cosmetic one.
+     *
+     * Re-bakes the environment probe because the sky it is derived from changed.
+     */
+    setSkyProfile(p: {
+        turbidity: number; rayleigh: number; mieG: number; sunIntensity: number;
+    }): void {
+        const u = this._sky.material.uniforms;
+        u['turbidity']!.value       = p.turbidity;
+        u['rayleigh']!.value        = p.rayleigh;
+        u['mieDirectionalG']!.value = p.mieG;
+        this._sun.intensity = BASE_SUN_INTENSITY * p.sunIntensity;
+        this._bakeEnvFromSky();
     }
 
     getTerrainIntersection(clientX: number, clientY: number, groundMesh?: THREE.Mesh | null): THREE.Vector3 | null {
