@@ -56,18 +56,31 @@ to the `canyon` preset.
 frames (which kept sky), suggesting the rebuild leaves the renderer or camera in
 a bad state rather than merely unlit geometry.
 
-**Next test.** Narrow within `_switchPreset`, in this order:
+**Narrowing within `_switchPreset` — further eliminations:**
 
-1. Is it canyon-specific, or does any preset switch do it? Switch to `ridgeline`
-   via the same path. (Phase 1 clicked a terrain card to `ridgeline` and it
-   rendered LIT — so a card-driven switch works, which points at the *new*
-   argument rather than the switch itself.)
-2. Is it the `waterLevelOverride` parameter I added? Call `_switchPreset(key)`
-   with it `undefined` versus `-60`.
-3. Is it `_applyErosion(key)`, which `_switchPreset` fires asynchronously and
-   which re-enters `setHeightmapOverride` + a second rebuild?
-4. Is the camera being clamped into/below terrain by `TERRAIN_MIN_ABOVE` after
-   the heightfield changes under it?
+| suspect | how tested | result |
+|---|---|---|
+| `waterLevelOverride` param (new in Phase 2) | canyon preset's own `waterLevel` is `-60` (`terrainPresets.ts:552`) and `canyon-sar` passes `-60` — a **no-op**. Same for wildfire/urban-collapse/alpine-sar. | cannot be the cause |
+| `_applyErosion` async re-entry | `?erosion=off` gate, backend running | still black |
+| `Terrain.dispose` removing lights or sky | code read: only removes objects it tracked via `_sceneAdd`; never touches lights or Sky | clean |
+
+**IMPORTANT correction to the earlier "correlated variable".** The note previously
+said every lit frame was taken without a scenario applied. Sharper version: every
+lit frame was taken against a **static file server** (python `http.server`), where
+`/api/sim/terrain/eroded` 404s; every black frame had the **real backend** up.
+That looked decisive, but disabling erosion with the backend running is still
+black — so backend-presence is correlated but erosion is not the mechanism.
+
+**Next suspect (untested): PBR texture rebinding across a terrain rebuild.**
+`dispose()` calls `material.dispose()` on the ground mesh, and `_buildGround`
+comments that `_loadPbrTextures()` is *"a no-op inside the loader"* on subsequent
+rebuilds. If the rebuilt material never gets its maps re-applied — or references
+textures disposed with the old material — the ground renders unlit/black while
+the Sky (which uses no maps) stays fine. That matches the symptom precisely.
+
+**Test:** after a preset switch, inspect the ground mesh's material for `map`,
+`normalMap`, `roughnessMap` being non-null, and check whether `_loadPbrTextures`
+re-applies to the *new* material or only to the one that existed at first load.
 
 ---
 
