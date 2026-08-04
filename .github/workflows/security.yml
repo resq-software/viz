@@ -27,9 +27,10 @@ permissions:
 
 jobs:
   scan:
-    # Skip on Dependabot PRs: a cross-repo reusable workflow called with `secrets: inherit`
-    # startup-fails for Dependabot's restricted context, which blocks Dependabot's own security
-    # PRs. Dependabot already vetted the bump; push/schedule still scan the default branch.
+    # Skip on Dependabot PRs: Dependabot's restricted context resolves Actions
+    # secrets to empty, so semgrep would fail to authenticate on every one of
+    # its PRs. Dependabot already vetted the bump; push/schedule still scan the
+    # default branch, and `gates` in ci.yml still runs CodeQL on the PR itself.
     if: ${{ github.actor != 'dependabot[bot]' }}
     uses: resq-software/.github/.github/workflows/security-scan.yml@44987ffd6eb5b1aa9d0a0d39e8dde9d669fe1d84 # main
     with:
@@ -41,4 +42,9 @@ jobs:
       # ubuntu-latest, which is fine here — this caller does not route to the
       # self-hosted runners, which is the constraint that makes landing opt out.
       enable-semgrep: true
-    secrets: inherit
+    # Forward by name instead of `secrets: inherit` (zizmor secrets-inherit):
+    # the reusable declares every secret it can consume, and semgrep is the only
+    # optional scanner enabled here, so SEMGREP_APP_TOKEN is the only one it
+    # needs. gitleaks / snyk / vet stay off, so their secrets stay unshared.
+    secrets:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
