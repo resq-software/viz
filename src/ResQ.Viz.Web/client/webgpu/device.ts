@@ -4,14 +4,14 @@
 // discriminated union so callers can degrade gracefully when WebGPU is
 // unavailable.
 
-export type InitOk = {
+type InitOk = {
   ok: true;
   adapter: GPUAdapter;
   device: GPUDevice;
   hasTimestamp: boolean;
 };
 
-export type InitErr = {
+type InitErr = {
   ok: false;
   reason: string;
 };

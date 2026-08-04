@@ -29,16 +29,24 @@ export class ControlPanel {
         const sel = document.getElementById(selectId) as HTMLSelectElement | null;
         if (!sel) return;
         const current = sel.value;
+        // Set membership instead of `ids.includes` / `options.some`: the old
+        // form rebuilt `Array.from(sel.options)` once per id, so syncing n
+        // drones against m options cost O(n·m) with a fresh array copy each
+        // time the roster changed.
+        const wanted = new Set(ids);
         // Iterate in reverse so index-shifting from removal doesn't skip elements
-        Array.from(sel.options).reverse().forEach(o => { if (o.value && !ids.includes(o.value)) sel.remove(o.index); });
-        for (const id of ids) {
-            if (!Array.from(sel.options).some(o => o.value === id)) {
-                const opt = document.createElement('option');
-                opt.value = opt.textContent = id;
-                sel.appendChild(opt);
-            }
+        for (let i = sel.options.length - 1; i >= 0; i--) {
+            const o = sel.options[i]!;
+            if (o.value && !wanted.has(o.value)) sel.remove(o.index);
         }
-        if (ids.includes(current)) sel.value = current;
+        const present = new Set(Array.from(sel.options, o => o.value));
+        for (const id of ids) {
+            if (present.has(id)) continue;
+            const opt = document.createElement('option');
+            opt.value = opt.textContent = id;
+            sel.appendChild(opt);
+        }
+        if (wanted.has(current)) sel.value = current;
     }
 
     private _bindSimButtons(): void {

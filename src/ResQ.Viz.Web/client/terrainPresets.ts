@@ -8,11 +8,9 @@
 //   canyon   — Terrace function + threshold canyon cuts — SW mesa landscape
 //   dunes    — Directional ridge noise — wind-driven sand dunes
 
-import * as THREE from 'three';
-
 // ── Shared value-noise utilities ─────────────────────────────────────────────
 
-export function _h(ix: number, iz: number): number {
+function _h(ix: number, iz: number): number {
     // Wang hash — stable at large integer coords, good distribution
     let n = (((ix * 374761393) ^ (iz * 668265263)) | 0);
     n = Math.imul(n ^ (n >>> 13), 1274126177);
@@ -31,7 +29,7 @@ export function _noise(x: number, z: number): number {
          + _h(ix+1, iz+1) *    ux  *    uz;
 }
 
-export function _fbm(x: number, z: number, octaves: number): number {
+function _fbm(x: number, z: number, octaves: number): number {
     let v = 0, a = 0.5, s = 1;
     for (let i = 0; i < octaves; i++) {
         v += a * _noise(x * s, z * s);
@@ -40,7 +38,7 @@ export function _fbm(x: number, z: number, octaves: number): number {
     return v;  // ≈ [0, 1]
 }
 
-export function _smoothstep(edge0: number, edge1: number, x: number): number {
+function _smoothstep(edge0: number, edge1: number, x: number): number {
     const t = Math.min(Math.max((x - edge0) / (edge1 - edge0), 0), 1);
     return t * t * (3 - 2 * t);
 }
@@ -49,7 +47,7 @@ export function _smoothstep(edge0: number, edge1: number, x: number): number {
 //   Signal at each octave: 1 - |2n-1|  (ridge peaks where noise ≈ 0.5)
 //   Each octave weighted by previous signal — ridges reinforce across scales.
 
-export function _ridged(
+function _ridged(
     x: number, z: number, octaves: number,
     lacunarity = 2.0, gain = 1.9,
 ): number {
@@ -77,7 +75,7 @@ export function _ridged(
 
 export type PresetKey = 'alpine' | 'ridgeline' | 'coastal' | 'canyon' | 'dunes';
 
-export interface Settlement {
+interface Settlement {
     cx: number; cz: number; r: number; count: number;
 }
 
@@ -594,8 +592,3 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         ],
     },
 };
-
-// Provides the THREE.Color for renderer clearColor per preset
-export function presetSkyColor(key: PresetKey): THREE.Color {
-    return new THREE.Color(PRESETS[key].fogColor);
-}

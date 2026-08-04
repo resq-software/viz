@@ -15,7 +15,7 @@
 const MAX_ROWS = 8;
 const FADE_MS  = 600;
 
-export type EventLevel = 'info' | 'mesh' | 'sar' | 'alert';
+type EventLevel = 'info' | 'mesh' | 'sar' | 'alert';
 
 interface EventOptions {
     level?: EventLevel;
@@ -128,6 +128,3 @@ export class EventLog {
         this.push(`${type} ${verb}`, { level, tag: 'HAZ' });
     }
 }
-
-// Re-export helpers for tests / future callers that want stamps.
-export { clockStamp, FADE_MS };

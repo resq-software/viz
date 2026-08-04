@@ -65,7 +65,9 @@ jobs:
       typecheck-cmd: npx tsc --noEmit
       build-cmd: npx vite build
       timeout-minutes: 10
-    secrets: inherit
+    # No `secrets:` block on purpose (zizmor secrets-inherit): node-ci.yml
+    # declares no `workflow_call` secrets and reads none, so `secrets: inherit`
+    # handed it every secret this repo can see in exchange for nothing.
 
   # ── Bundle-size budget + artifact upload (companion) ─────────────────
   # The reusable node-ci doesn't expose bundle outputs or artifact

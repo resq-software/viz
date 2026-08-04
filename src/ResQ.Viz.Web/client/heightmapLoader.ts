@@ -31,7 +31,7 @@ export interface HeightmapSampler {
     readonly worldSize: number;
 }
 
-export interface HeightmapOptions {
+interface HeightmapOptions {
     /** World extent in metres the image covers (centred on origin). Default 4000. */
     worldSize?:   number;
     /** Elevation scale: pixel value 0..1 → 0..heightScale metres. Default 400. */
@@ -107,7 +107,7 @@ const _samplerCache = new Map<string, HeightmapSampler>();
  * fall back to the procedural heightFn. Samples outside image bounds clamp to
  * the nearest edge — terrain never blanks at the world border.
  */
-export async function loadHeightmapSampler(
+async function loadHeightmapSampler(
     url: string,
     opts: HeightmapOptions = {},
 ): Promise<HeightmapSampler> {

@@ -14,15 +14,24 @@ export const RAY_HIT_BYTES = 32;
 
 // Mask flags — combine into Ray.mask. Reserve bits for future shader work
 // so the wire format stays stable as we add density/SDF support.
+//
+// The reserved bits below deliberately have no TypeScript caller yet: they pin
+// bit positions that march.wgsl must agree with, so a later feature cannot
+// silently reuse one and shift the wire format. `@public` marks them as
+// intentional surface so knip stops reporting them as unused exports.
 export const MASK_OBSTACLES   = 1 << 0;  // 0x01
-export const MASK_DENSITY     = 1 << 1;  // 0x02 — reserved (PR #4 weather)
-export const MASK_TERRAIN_SDF = 1 << 2;  // 0x04 — reserved (PR #5 SDF terrain)
+/** @public Reserved (PR #4 weather) — 0x02, pinned for volumetric density. */
+export const MASK_DENSITY     = 1 << 1;
+/** @public Reserved (PR #5 SDF terrain) — 0x04, pinned for terrain SDF. */
+export const MASK_TERRAIN_SDF = 1 << 2;
 
 // Hit flags — bits set on RayHit.flags by the marcher.
 export const HIT_HIT      = 1 << 0;   // any hit was found within max_t
 export const HIT_OBSTACLE = 1 << 1;   // hit a hard voxel obstacle
-export const HIT_VOLUME   = 1 << 2;   // ray traversed volumetric density (reserved)
-export const HIT_TERRAIN  = 1 << 3;   // hit terrain SDF zero-crossing (reserved)
+/** @public Reserved — set when a ray traversed volumetric density. */
+export const HIT_VOLUME   = 1 << 2;
+/** @public Reserved — set on a terrain SDF zero-crossing. */
+export const HIT_TERRAIN  = 1 << 3;
 
 export type Vec3 = [number, number, number];
 

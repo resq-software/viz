@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** Position as [X, Y, Z] metres. */
-export type Vec3 = [number, number, number];
+type Vec3 = [number, number, number];
 
 /** Rotation quaternion as [X, Y, Z, W]. */
 export type Quat = [number, number, number, number];
