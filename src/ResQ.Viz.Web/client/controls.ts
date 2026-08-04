@@ -42,6 +42,11 @@ export class ControlPanel {
         const present = new Set(Array.from(sel.options, o => o.value));
         for (const id of ids) {
             if (present.has(id)) continue;
+            // Record before appending: the old `options.some(...)` re-scanned the
+            // live list each pass and so saw options added earlier in this loop.
+            // A snapshot Set does not, so without this a duplicate id in `ids`
+            // would append a second <option> for the same drone.
+            present.add(id);
             const opt = document.createElement('option');
             opt.value = opt.textContent = id;
             sel.appendChild(opt);

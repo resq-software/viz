@@ -14,12 +14,13 @@ export const RAY_HIT_BYTES = 32;
 
 // Mask flags — combine into Ray.mask. Reserve bits for future shader work
 // so the wire format stays stable as we add density/SDF support.
-//
-// The reserved bits below deliberately have no TypeScript caller yet: they pin
-// bit positions that march.wgsl must agree with, so a later feature cannot
+export const MASK_OBSTACLES   = 1 << 0;  // 0x01
+// The two bits below are reserved and deliberately have no TypeScript caller:
+// they pin positions that march.wgsl must agree with, so a later feature cannot
 // silently reuse one and shift the wire format. `@public` marks them as
 // intentional surface so knip stops reporting them as unused exports.
-export const MASK_OBSTACLES   = 1 << 0;  // 0x01
+// (MASK_OBSTACLES above is not reserved — it is used by sensors.ts, effects.ts,
+// lidar.ts and rays.test.ts.)
 /** @public Reserved (PR #4 weather) — 0x02, pinned for volumetric density. */
 export const MASK_DENSITY     = 1 << 1;
 /** @public Reserved (PR #5 SDF terrain) — 0x04, pinned for terrain SDF. */
