@@ -64,7 +64,7 @@ function _fireTerrainChange(): void {
     }
 }
 
-export function setActivePreset(key: PresetKey): void {
+function setActivePreset(key: PresetKey): void {
     _activePresetKey = key;
     _activePreset = PRESETS[key];
     WATER_LEVEL   = _activePreset.waterLevel;
@@ -260,10 +260,6 @@ let _heightmapOverride: HeightmapSampler | null = null;
 export function setHeightmapOverride(sampler: HeightmapSampler | null): void {
     _heightmapOverride = sampler;
     _fireTerrainChange();
-}
-
-export function getHeightmapOverride(): HeightmapSampler | null {
-    return _heightmapOverride;
 }
 
 /**

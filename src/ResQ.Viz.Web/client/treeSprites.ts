@@ -46,7 +46,7 @@ export function buildCrossGeo(): THREE.BufferGeometry {
 // the existing MeshStandardMaterial via onBeforeCompile so the auto-generated
 // shadow depth pass still works — swapping to a custom ShaderMaterial would
 // break shadow reception.
-export const WIND_UNIFORMS = {
+const WIND_UNIFORMS = {
     uTime:     { value: 0 },
     // Horizontal sway amplitude in world units. Kept small so alpha-test
     // seams don't crack between neighbouring instances.
