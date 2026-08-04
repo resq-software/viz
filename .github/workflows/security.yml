@@ -31,8 +31,14 @@ jobs:
     # startup-fails for Dependabot's restricted context, which blocks Dependabot's own security
     # PRs. Dependabot already vetted the bump; push/schedule still scan the default branch.
     if: ${{ github.actor != 'dependabot[bot]' }}
-    uses: resq-software/.github/.github/workflows/security-scan.yml@73b9edb8f4f28a99f70ee22eb5e2dd2bf7807c84  # main
+    uses: resq-software/.github/.github/workflows/security-scan.yml@44987ffd6eb5b1aa9d0a0d39e8dde9d669fe1d84 # main
     with:
       languages: '["csharp","actions"]'
       submodules: recursive
+      # This repo has no SAST otherwise: unlike landing and crates it is not a
+      # project in the Semgrep managed app, so no `semgrep-cloud-platform/scan`
+      # check runs on its PRs. The reusable's semgrep runs in a container on
+      # ubuntu-latest, which is fine here — this caller does not route to the
+      # self-hosted runners, which is the constraint that makes landing opt out.
+      enable-semgrep: true
     secrets: inherit
