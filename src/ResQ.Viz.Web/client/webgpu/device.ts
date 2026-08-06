@@ -4,6 +4,10 @@
 // discriminated union so callers can degrade gracefully when WebGPU is
 // unavailable.
 
+import { getLogger } from '../log';
+
+const log = getLogger('webgpu');
+
 type InitOk = {
   ok: true;
   adapter: GPUAdapter;
@@ -49,7 +53,7 @@ export async function initDevice(): Promise<InitResult> {
   }
 
   void device.lost.then(info => {
-    console.warn('[webgpu] device lost:', info.reason, info.message);
+    log.warn('[webgpu] device lost', { reason: info.reason, message: info.message });
   });
 
   return { ok: true, adapter, device, hasTimestamp };
