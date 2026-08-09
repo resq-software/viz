@@ -78,9 +78,39 @@ rebuilds. If the rebuilt material never gets its maps re-applied — or referenc
 textures disposed with the old material — the ground renders unlit/black while
 the Sky (which uses no maps) stays fine. That matches the symptom precisely.
 
-**Test:** after a preset switch, inspect the ground mesh's material for `map`,
-`normalMap`, `roughnessMap` being non-null, and check whether `_loadPbrTextures`
-re-applies to the *new* material or only to the one that existed at first load.
+**Test result: PBR rebinding is CLEAN — eliminated.** Textures are not per-material
+`map` properties; they live in module-level `_tierAlbedo`/`_tierRoughness`/
+`_tierNormal` and reach the shader through a shared `_pbrUniforms` object.
+`terrain.ts:703` does `Object.assign(shader.uniforms, _pbrUniforms)`, copying the
+uniform objects **by reference**, so a rebuilt material shares the already-loaded
+textures. `dispose()` disposes geometry and material but never textures.
+
+**Console during rebuild is CLEAN — eliminated.** Full unfiltered capture across a
+canyon-sar scenario dispatch with the real backend shows **no context loss, no
+WebGL error, no shader error, no page error**. The eroded DEM loads (513x513) and
+`eroded terrain installed for 'canyon' — mesh rebuilt` succeeds. So the render
+pipeline is healthy: the terrain is *genuinely dark*, not failing to draw.
+
+---
+
+## BLOCKER ON DIAGNOSIS: the app exposes no debug handle
+
+Every diagnostic in this investigation has been a screenshot, because `viz`,
+`terrain` and the scene graph are all module-scoped in `app.ts` with nothing on
+`window`. That is why 10+ hypotheses have been tested by rebuild-and-look instead
+of by reading state directly.
+
+**Do this before continuing P0.** Add a dev-gated handle, e.g.
+`if (import.meta.env.DEV || location.search.includes('debug')) window.__resq = { viz, terrain, scene: viz.scene };`
+Then the remaining questions become single `page.evaluate` reads rather than builds:
+
+- ground material: is `uUsePbrTiles.value` true, and are the tier textures non-null?
+- lights: `_sun.intensity`, `ambient.intensity`, `hemi.intensity`, `scene.environment`
+- is the ground mesh actually in `scene.children`, and what is its world Y vs the camera?
+- sample the rendered pixel under the terrain with `preserveDrawingBuffer` or a
+  one-off `readRenderTargetPixels`.
+
+This is the highest-leverage next action for P0 by a wide margin.
 
 ---
 
