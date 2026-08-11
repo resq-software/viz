@@ -41,6 +41,10 @@ export class UnityCamera {
     // ── Follow ─────────────────────────────────────────────────────────────
     private _followTarget: THREE.Object3D | null = null;
     private _followOffset = new THREE.Vector3(0, 15, 40);
+    // World-space pan offset applied to the follow ORBIT centre. Lets the operator
+    // slide the view off the drone (MMB drag) while it keeps tracking. Reset each
+    // time a new follow begins. Only used by plain (non-chase) follow.
+    private _followPan = new THREE.Vector3();
     // Chase mode: the offset is interpreted in the target's local frame.
     private _chase = false;
     // How far ahead of the target the chase/FPV camera looks (metres).
@@ -147,13 +151,27 @@ export class UnityCamera {
         this._syncCameraFromOrbit();
     }
 
-    /** Follow an Object3D (drone group) with a fixed world offset. Pass null to stop. */
+    /**
+     * Follow an Object3D (drone group): the camera orbits the drone and the
+     * operator can orbit (LMB), pan off it (MMB), and zoom (wheel) while it keeps
+     * tracking. Pass null to stop. Orbit state is seeded to reproduce the classic
+     * behind-and-above framing so the initial view is unchanged.
+     */
     followObject(obj: THREE.Object3D | null): void {
         this._tween = null;
         this._followTarget = obj;
         this._chase = false;
-        if (obj) this._followOffset.set(0, 15, 40);
-        else this._resyncOrbitFromCamera();
+        this._fpv = false;
+        if (obj) {
+            this._followPan.set(0, 0, 0);
+            // Derive orbit yaw/pitch/distance from the classic (0,15,40) offset:
+            // 0 yaw = behind (+Z), a gentle downward pitch, ~42.7 m out.
+            const off = this._v0.set(0, 15, 40);
+            this._distance = Math.max(_MIN_DIST, off.length());
+            this._targetDistance = this._distance;
+            this._yaw   = Math.atan2(off.x, off.z);
+            this._pitch = Math.asin(off.y / this._distance);
+        } else this._resyncOrbitFromCamera();
     }
 
     /**
@@ -330,10 +348,19 @@ export class UnityCamera {
             this.camera.lookAt(look);
             return;
         }
-        this._v0.copy(t.position).add(this._followOffset);
-        this.camera.position.lerp(this._v0, alpha);
-        this._v1.lerp(t.position, alpha);
-        this.camera.lookAt(this._v1);
+        // Orbit-follow: the camera orbits the drone using the shared yaw/pitch/
+        // distance state, so LMB-orbit, wheel-zoom, and MMB-pan all work while it
+        // keeps tracking. The orbit centre rides the drone plus the user pan.
+        this._distance = THREE.MathUtils.damp(this._distance, this._targetDistance, 14, dt);
+        const center = this._v0.copy(t.position).add(this._followPan);
+        const desired = this._v1.set(
+            center.x + this._distance * Math.sin(this._yaw) * Math.cos(this._pitch),
+            center.y + this._distance * Math.sin(this._pitch),
+            center.z + this._distance * Math.cos(this._yaw) * Math.cos(this._pitch),
+        );
+        this.camera.position.lerp(desired, alpha);
+        this._target.copy(center);
+        this.camera.lookAt(center);
     }
 
     // ── Private: fly mode ──────────────────────────────────────────────────
@@ -451,8 +478,11 @@ export class UnityCamera {
         } else if (this._mmbDown || e.buttons === 4) {
             const panFactor = this._distance * 0.0008;
             const right = new THREE.Vector3(Math.cos(this._yaw), 0, -Math.sin(this._yaw));
-            this._target.addScaledVector(right,                   -dx * panFactor);
-            this._target.addScaledVector(new THREE.Vector3(0,1,0),  dy * panFactor);
+            // While following a drone, pan its orbit centre (it keeps tracking);
+            // in free orbit, pan the world target as before.
+            const pan = (this._followTarget && !this._chase) ? this._followPan : this._target;
+            pan.addScaledVector(right,                   -dx * panFactor);
+            pan.addScaledVector(new THREE.Vector3(0,1,0),  dy * panFactor);
         }
     };
 

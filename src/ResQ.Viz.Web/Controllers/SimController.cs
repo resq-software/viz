@@ -150,13 +150,26 @@ public sealed class SimController : ControllerBase
         if (!snapshot.Any(d => d.Id == id))
             return NotFound(new { error = $"Drone '{id}' not found." });
 
+        // "auto" is a coordinator hand-back, not a flight command: return the drone
+        // to autonomous swarm flight instead of building a FlightCommand.
+        if (request.Type.ToLowerInvariant() == "auto")
+        {
+            room.ResumeAuto(id);
+            _logger.LogInformation("Resumed autonomous flight for drone {DroneId} in room {RoomId}.",
+                Sanitize(id), room.Id);
+            return Ok(new { droneId = id, command = "auto" });
+        }
+
+        if (request.Yaw is { } yaw && (float.IsNaN(yaw) || float.IsInfinity(yaw)))
+            return BadRequest(new { error = "Yaw contains an invalid value." });
+
         FlightCommand command = request.Type.ToLowerInvariant() switch
         {
-            "hover" => FlightCommand.Hover(),
+            "hover" => FlightCommand.Hover(request.Yaw),
             "rtl" => FlightCommand.RTL(),
             "land" => FlightCommand.Land(),
             "goto" when request.Target is { Length: 3 } =>
-                FlightCommand.GoTo(new Vector3(request.Target[0], request.Target[1], request.Target[2])),
+                FlightCommand.GoTo(new Vector3(request.Target[0], request.Target[1], request.Target[2]), yaw: request.Yaw),
             "goto" => default,
             _ => default,
         };

@@ -17,10 +17,11 @@ import type {
 const EMPTY = '—'; // em dash
 
 /** Drone command buttons surfaced in the inspector (match server cmd types). */
-const DRONE_COMMANDS: ReadonlyArray<{ label: string; cmd: string }> = [
-    { label: 'Hover', cmd: 'hover' },
-    { label: 'RTL', cmd: 'rtl' },
-    { label: 'Land', cmd: 'land' },
+const DRONE_COMMANDS: ReadonlyArray<{ label: string; cmd: string; title?: string }> = [
+    { label: 'Hover', cmd: 'hover', title: 'Stop and hold position' },
+    { label: 'RTL', cmd: 'rtl', title: 'Return to launch point' },
+    { label: 'Land', cmd: 'land', title: 'Descend and land' },
+    { label: 'Auto', cmd: 'auto', title: 'Resume autonomous swarm flight' },
 ];
 
 // ─── Pure formatters (exported for unit tests) ──────────────────────────────
@@ -247,11 +248,12 @@ export class Inspector {
         this._actionsEl.replaceChildren();
         this._moveBtn = null;
         if (sel.kind !== 'drone') return;
-        for (const { label, cmd } of DRONE_COMMANDS) {
+        for (const { label, cmd, title } of DRONE_COMMANDS) {
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'ri-cmd';
             b.textContent = label;
+            if (title) b.title = title;
             b.addEventListener('click', () => this._onCommandFn?.(sel.id, cmd));
             this._actionsEl.append(b);
         }
