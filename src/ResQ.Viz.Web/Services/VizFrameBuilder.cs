@@ -91,6 +91,15 @@ public sealed class VizFrameBuilder
     /// is set so the client can render a degraded-link banner. Used to
     /// demonstrate mesh-only operation during the multi-agency-sar scenario.
     /// </param>
+    /// <param name="paused">
+    /// Whether the simulation loop is currently paused. Surfaced so the client's
+    /// transport bar reflects server state rather than tracking its own guess.
+    /// </param>
+    /// <param name="speed">Server-side speed multiplier currently in effect (1 = real time).</param>
+    /// <param name="tick">
+    /// Monotonic simulation tick counter. Lets the client tell a genuinely new
+    /// frame from a repeat of the same one while paused or stepping.
+    /// </param>
     /// <returns>A <see cref="VizFrame"/> ready for broadcast.</returns>
     public VizFrame Build(
         IReadOnlyList<DroneSnapshot> drones,

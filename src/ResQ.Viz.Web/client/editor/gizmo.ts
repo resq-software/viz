@@ -101,9 +101,12 @@ export class TransformGizmo {
         });
 
         opts.store.subscribe(() => {
-            // Deselecting, or selecting a non-drone, always tears down move mode
-            // so re-selecting a drone never silently re-shows the gizmo.
-            if (opts.store.current?.kind !== 'drone') this._moveMode = false;
+            // Any selection change tears down move mode — including drone to
+            // drone. The Inspector rebuilds its Move button as aria-pressed=false
+            // on every selection, so resetting only for non-drones left the two
+            // disagreeing after a drone-to-drone switch: the gizmo stayed live
+            // while the button read "off", and the next click inverted.
+            this._moveMode = false;
             this._refresh();
         });
         opts.addTick(() => this._tick());
@@ -150,6 +153,11 @@ export class TransformGizmo {
         } else {
             this._control.detach();
             this._control.enabled = false;
+            // mouseDown disabled the orbit camera for the drag. If the selection
+            // changes mid-drag — the [ and ] bracket keys stay live while a handle
+            // is held — dragging-end never fires, so hand the camera back here or
+            // it stays disabled with no way to restore it.
+            if (this._interacting) this._opts.setCameraEnabled(true);
             this._interacting = false;
         }
     }

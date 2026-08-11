@@ -175,7 +175,7 @@ async function _initEditorSuite(): Promise<void> {
     // Transform gizmo — translate handles on the selected drone. Server-authority
     // safe: it drags a client-owned proxy and sends a goto (with altitude) on
     // release, then tracks the drone between drags. Reuses the goto endpoint.
-    const gizmo        = new m_gizmo.TransformGizmo({
+    gizmo = new m_gizmo.TransformGizmo({
         scene: viz.scene,
         camera: viz.cameraController.camera,
         domElement: viz.renderer.domElement,
@@ -245,7 +245,7 @@ async function _initEditorSuite(): Promise<void> {
     recorder = new m_rec.FrameRecorder(3000);
     // Unified bottom bar: at the live edge the controls drive the server sim; scrub
     // back and the same controls play back the buffer (snap-applied via _renderFrame).
-    const dvr          = new m_dvr.Dvr({
+    dvr = new m_dvr.Dvr({
         recorder,
         onApply: (frame) => _renderFrame(frame, true),
         onServerPause: (paused) =>
@@ -264,7 +264,23 @@ async function _initEditorSuite(): Promise<void> {
         applyTerrain: (key) => { if (key in PRESETS) _switchPreset(key as PresetKey); },
         applyScenario: (name) => {
             if (!name) return;
-            apiPostOrWarn(`/api/sim/scenario/${name}`, undefined, `scene:${name}`);
+            // The name arrives from an imported scene-config file, and
+            // parseSceneConfig only validates structure — it explicitly leaves
+            // "is this a real scenario" to the caller. Interpolated raw, a value
+            // like `../../reset` would resolve to a different same-origin
+            // endpoint, so check it against the scenarios this build actually
+            // offers before building a path, and encode the segment regardless.
+            const known = new Set(
+                Array.from(
+                    document.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]'),
+                    (el) => el.dataset['scenario'] ?? '',
+                ).filter(Boolean),
+            );
+            if (!known.has(name)) {
+                log.warn('ignoring unknown scenario from imported scene config', { name });
+                return;
+            }
+            apiPostOrWarn(`/api/sim/scenario/${encodeURIComponent(name)}`, undefined, `scene:${name}`);
             document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
         },
     });

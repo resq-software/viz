@@ -103,7 +103,14 @@ export class Transport {
     private _bindKeyboard(): void {
         document.addEventListener('keydown', (e: KeyboardEvent) => {
             const t = e.target as Element | null;
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT') return;
+            // BUTTON matters as much as INPUT/SELECT here: Space is the browser's
+            // activation key for a focused button, and preventDefault() below
+            // would swallow it — so a keyboard user on rt-step / rt-speed /
+            // rt-reset would toggle play instead of pressing the control they are
+            // actually on. TEXTAREA and contenteditable get the same exemption.
+            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT'
+                || t?.tagName === 'BUTTON' || t?.tagName === 'TEXTAREA'
+                || (t as HTMLElement | null)?.isContentEditable) return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;
             if (e.code === 'Space') {
                 e.preventDefault();
