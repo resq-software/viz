@@ -86,7 +86,11 @@ jobs:
         working-directory: src/ResQ.Viz.Web
     env:
       BUNDLE_JS_BUDGET_BYTES: '819200'    # 800 KB
-      BUNDLE_CSS_BUDGET_BYTES: '51200'    # 50 KB
+      # 50 → 52 KB: the flight-cockpit + drone-HUD work adds core UI CSS. The
+      # deferrable cockpit/instrument styles were moved to a lazy chunk
+      # (ui/cockpit.css) and mono trimmed to its latin subset first; the entry
+      # CSS sits at ~50.1 KB, so this is a small headroom bump, not slack.
+      BUNDLE_CSS_BUDGET_BYTES: '53248'    # 52 KB
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450  # v2
