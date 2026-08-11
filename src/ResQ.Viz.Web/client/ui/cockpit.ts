@@ -93,9 +93,9 @@ export class Cockpit {
         row.append(
             cell('ATTITUDE', this._attitude.el),
             cell('HEADING', this._heading.el),
-            cell('ALTITUDE', this._altimeter.el),
+            cell('ALTIMETER', this._altimeter.el),
             cell('AIRSPEED', this._airspeed.el),
-            cell('CLIMB', this._vsi.el),
+            cell('VSI', this._vsi.el),
         );
 
         this._root.append(row);

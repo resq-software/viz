@@ -49,6 +49,14 @@ public sealed class SwarmCoordinator
     /// <summary>Per-drone route state, keyed by drone ID.</summary>
     private readonly Dictionary<string, DroneRole> _roles = new();
 
+    /// <summary>
+    /// IDs of drones under manual (user) control. The coordinator issues no
+    /// waypoints to these, so a user GoTo/hover/land isn't overwritten on the
+    /// next 2 Hz tick. Populated by <see cref="DetachManual"/>; cleared on a new
+    /// scenario or a full <see cref="ResetState"/>.
+    /// </summary>
+    private readonly HashSet<string> _manual = new(StringComparer.Ordinal);
+
     private sealed class DroneRole
     {
         public Vector3[] Route { get; }
@@ -99,7 +107,39 @@ public sealed class SwarmCoordinator
     {
         _scenario = scenarioName.ToLowerInvariant();
         _roles.Clear();
+        // A new scenario re-conscripts every drone into the swarm, including any
+        // that were previously flown by hand.
+        _manual.Clear();
         RegenerateAllRoutes(drones);
+    }
+
+    /// <summary>
+    /// Marks a drone as manually controlled so the coordinator stops steering it.
+    /// Drops any existing route immediately, so a user command issued this tick
+    /// survives the coordinator's next pass. Call whenever a user sends a direct
+    /// flight command to a drone.
+    /// </summary>
+    public void DetachManual(string droneId)
+    {
+        _manual.Add(droneId);
+        _roles.Remove(droneId);
+    }
+
+    /// <summary>
+    /// Hands a manually-controlled drone back to the coordinator. On the next tick
+    /// it is re-assigned a patrol route and resumes autonomous flight from wherever
+    /// the operator left it. No-op if the drone was never detached.
+    /// </summary>
+    public void AttachAuto(string droneId) => _manual.Remove(droneId);
+
+    /// <summary>Whether the coordinator currently considers this drone manually controlled.</summary>
+    public bool IsManual(string droneId) => _manual.Contains(droneId);
+
+    /// <summary>Clears all per-drone route and manual-control state (used on world reset).</summary>
+    public void ResetState()
+    {
+        _roles.Clear();
+        _manual.Clear();
     }
 
     /// <summary>
@@ -110,11 +150,12 @@ public sealed class SwarmCoordinator
     {
         if (drones.Count == 0) return;
 
-        // Ensure every drone has a role (handles late-spawned drones)
+        // Ensure every drone has a role (handles late-spawned drones), except
+        // those a user has taken over — they must not be re-captured.
         for (int i = 0; i < drones.Count; i++)
         {
             var drone = drones[i];
-            if (!_roles.ContainsKey(drone.Id) && !drone.FlightModel.HasLanded)
+            if (!_roles.ContainsKey(drone.Id) && !drone.FlightModel.HasLanded && !_manual.Contains(drone.Id))
                 AssignRole(drone, drones, i, simTime);
         }
 
@@ -129,6 +170,7 @@ public sealed class SwarmCoordinator
         foreach (var drone in drones)
         {
             if (drone.FlightModel.HasLanded) continue;
+            if (_manual.Contains(drone.Id)) continue;   // user-controlled — hands off
             if (!_roles.TryGetValue(drone.Id, out var role)) continue;
             if (role.Retiring) continue;
 
@@ -191,7 +233,7 @@ public sealed class SwarmCoordinator
         for (int i = 0; i < drones.Count; i++)
         {
             var drone = drones[i];
-            if (!drone.FlightModel.HasLanded)
+            if (!drone.FlightModel.HasLanded && !_manual.Contains(drone.Id))
             {
                 var route = BuildRoute(i, drones.Count, drone.FlightModel.State.Position);
                 _roles[drone.Id] = new DroneRole(route, 0, 0, false);

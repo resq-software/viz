@@ -22,9 +22,13 @@ namespace ResQ.Viz.Web.Models;
 public record SpawnDroneRequest(float[] Position, string? Model = "quadrotor");
 
 /// <summary>Request body for sending a flight command to an existing drone.</summary>
-/// <param name="Type">Command type: "hover", "goto", "rtl", or "land".</param>
+/// <param name="Type">Command type: "hover", "goto", "rtl", "land", or "auto".</param>
 /// <param name="Target">Target position [X, Y, Z] in metres; required for "goto".</param>
-public record DroneCommandRequest(string Type, float[]? Target = null);
+/// <param name="Yaw">
+/// Optional commanded heading in radians about +Y (0 = facing +Z). Applies to "hover" and
+/// "goto"; when omitted the drone faces its direction of travel.
+/// </param>
+public record DroneCommandRequest(string Type, float[]? Target = null, float? Yaw = null);
 
 /// <summary>Request body for updating the weather simulation parameters.</summary>
 /// <param name="Mode">Weather mode string: "calm", "steady", or "turbulent".</param>

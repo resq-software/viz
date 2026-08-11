@@ -231,7 +231,29 @@ public sealed class SimulationRoom
                 _logger.LogWarning("[room {RoomId}] SendCommand: drone {DroneId} not found.", Id, LogSafe(droneId));
                 return;
             }
+            // Manual control wins: detach the drone from the swarm coordinator so
+            // its 2 Hz pass stops overwriting this command on the next tick.
+            _swarm.DetachManual(droneId);
             drone.SendCommand(command);
+        }
+        Touch();
+    }
+
+    /// <summary>
+    /// Returns a manually-controlled drone to autonomous swarm flight. The
+    /// coordinator re-assigns it a patrol route on its next tick. No-op if the
+    /// drone is unknown or was never taken over.
+    /// </summary>
+    public void ResumeAuto(string droneId)
+    {
+        lock (_lock)
+        {
+            if (_world.Drones.All(d => d.Id != droneId))
+            {
+                _logger.LogWarning("[room {RoomId}] ResumeAuto: drone {DroneId} not found.", Id, LogSafe(droneId));
+                return;
+            }
+            _swarm.AttachAuto(droneId);
         }
         Touch();
     }
@@ -313,6 +335,7 @@ public sealed class SimulationRoom
             _simTime = 0;
             _tickCount = 0;
             _swarmTick = 0;
+            _swarm.ResetState();
             _droneVendors.Clear();
             _backhaulKilled = false;
             _paused = false;

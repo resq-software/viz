@@ -703,7 +703,10 @@ input[type='range'] {
    the bottom. All three are restored as soon as hints close. */
 body.hints-open .telemetry-strip,
 body.hints-open .event-log,
-body.hints-open .minimap { display: none; }
+body.hints-open .minimap,
+body.hints-open #wind-compass,
+body.hints-open .resq-pip,
+body.hints-open .cam-mode-pill { display: none; }
 
 .key-hints-header {
   display: flex;
@@ -1764,6 +1767,10 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   user-select: none;
 }
 .instrument svg { display: block; width: 100%; height: 100%; }
+/* The attitude indicator fills its viewBox with sky/ground rects, so unlike the
+   other dials (whose circular tick rings leave transparent corners) it needs an
+   explicit round clip to match them. */
+.instrument--attitude { border-radius: 50%; overflow: hidden; }
 
 /* Cockpit responsive rules — these MUST come after the base .cockpit /
    .instrument rules above; at equal specificity the later rule wins, so placing

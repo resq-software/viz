@@ -845,6 +845,12 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
 // post drone commands. (The bottom DronePanel was retired to remove the
 // duplicate drone-detail surface; its close is already routed to _deselectAll.)
 
+// Client-side piloted heading (radians about +Y) for WASD control, seeded from the
+// drone's real facing on first key and accumulated thereafter. `_pilotHeadingFor`
+// tracks which drone it belongs to so re-selecting re-seeds from the new facing.
+let _pilotHeading = 0;
+let _pilotHeadingFor: string | null = null;
+
 // Unified selection: any surface (scene click, telemetry strip, minimap, bracket
 // cycle) routes here so the Inspector, selection ring, and HUD update identically.
 function _selectFromAnySurface(droneId: string): void {
@@ -852,6 +858,7 @@ function _selectFromAnySurface(droneId: string): void {
     hud.setSelectedDrone(droneId);
     miniMap.setSelected(droneId);
     selection.set('drone', droneId);
+    _pilotHeadingFor = null; // re-seed piloted heading from the new drone's facing
 }
 // Symmetric deselect — clears every legacy selection surface plus the editor
 // SelectionStore, so the Inspector hides in lockstep with the drone ring/panel.
@@ -860,6 +867,7 @@ function _deselectAll(): void {
     hud.setSelectedDrone(null);
     miniMap.setSelected(null);
     selection.clear();
+    _pilotHeadingFor = null;
 }
 // Select any entity kind from the editor layer (outliner rows). Drones light up
 // the legacy HUD surfaces; hazards/detections drive only the editor store +
@@ -1055,7 +1063,9 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             _selectFromAnySurface(next);
             break;
         }
-        // Drone nudge — only when a drone is selected and camera is NOT in free-fly mode
+        // Drone piloting — heading-relative, only when a drone is selected and the
+        // camera is NOT in free-fly mode. A/D yaw (rotate in place), W/S fly
+        // forward/back along the drone's heading, Q/E climb/descend.
         case 'KeyW': case 'KeyS': case 'KeyA': case 'KeyD':
         case 'KeyQ': case 'KeyE': {
             const nudgeId = droneManager.selectedId;
@@ -1063,19 +1073,32 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
                 e.preventDefault();
                 const pos = droneManager.getSelectedPosition();
                 if (pos) {
-                    const step = e.shiftKey ? 50 : 10;
-                    if (e.code === 'KeyW') pos.z -= step;
-                    if (e.code === 'KeyS') pos.z += step;
-                    if (e.code === 'KeyA') pos.x -= step;
-                    if (e.code === 'KeyD') pos.x += step;
-                    if (e.code === 'KeyQ') pos.y += step;
-                    if (e.code === 'KeyE') pos.y -= step;
-                    apiPostOrWarn(
-                        `/api/sim/drone/${nudgeId}/cmd`,
-                        { type: 'goto', target: [pos.x, pos.y, pos.z] },
-                        'Nudge',
-                    );
-                    viz.showTargetMarker(pos, pos.y);
+                    // Seed the piloted heading from the drone's real facing when we
+                    // start controlling it, then accumulate turns client-side (the
+                    // sim slews toward the command, so we can't re-read it each key).
+                    if (_pilotHeadingFor !== nudgeId) {
+                        _pilotHeading = droneManager.getSelectedHeading() ?? 0;
+                        _pilotHeadingFor = nudgeId;
+                    }
+                    const moveStep = e.shiftKey ? 50 : 10;
+                    const yawStep  = e.shiftKey ? 0.35 : 0.12;
+                    if (e.code === 'KeyA') _pilotHeading -= yawStep; // turn left
+                    if (e.code === 'KeyD') _pilotHeading += yawStep; // turn right
+                    const fx = Math.sin(_pilotHeading), fz = Math.cos(_pilotHeading);
+                    if (e.code === 'KeyW') { pos.x += fx * moveStep; pos.z += fz * moveStep; }
+                    if (e.code === 'KeyS') { pos.x -= fx * moveStep; pos.z -= fz * moveStep; }
+                    if (e.code === 'KeyQ') pos.y += moveStep;
+                    if (e.code === 'KeyE') pos.y -= moveStep;
+
+                    if (e.code === 'KeyA' || e.code === 'KeyD') {
+                        // Rotate in place: hold position, face the new heading.
+                        apiPostOrWarn(`/api/sim/drone/${nudgeId}/cmd`,
+                            { type: 'hover', yaw: _pilotHeading }, 'Rotate');
+                    } else {
+                        apiPostOrWarn(`/api/sim/drone/${nudgeId}/cmd`,
+                            { type: 'goto', target: [pos.x, pos.y, pos.z], yaw: _pilotHeading }, 'Nudge');
+                        viz.showTargetMarker(pos, pos.y);
+                    }
                 }
             }
             break;
