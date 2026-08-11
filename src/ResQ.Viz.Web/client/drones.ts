@@ -410,6 +410,16 @@ export class DroneManager {
         return entry ? entry.group.position.clone() : null;
     }
 
+    /** Heading of the selected drone in radians about +Y (0 = facing +Z), or null.
+     *  Matches the server's `atan2(vx, vz)` convention so client and sim agree. */
+    getSelectedHeading(): number | null {
+        if (!this._selectedId) return null;
+        const entry = this._drones.get(this._selectedId);
+        if (!entry) return null;
+        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(entry.group.quaternion);
+        return Math.atan2(fwd.x, fwd.z);
+    }
+
     setLabelMode(mode: 'always' | 'hover' | 'off'): void {
         this._labelMode = mode;
         for (const entry of this._drones.values()) {
