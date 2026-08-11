@@ -136,33 +136,35 @@ public class SimulationServiceTests
     }
 
     [Fact]
-    public void Drone_FacesDirectionOfTravel()
+    public void Drone_FliesTowardWaypoint_WithInitialOrientation()
     {
         var room = CreateRoom();
         room.SetWeather("calm", 0.0, 0.0);
         room.AddDrone("d", new Vector3(0f, 100f, 0f));
 
-        // Manual GoTo far along +X → the nose (local +Z) should slew to face +X.
+        // Manual GoTo far along +X → the drone flies toward the waypoint while
+        // keeping its initial orientation (the SDK no longer slews the nose).
         room.SendCommand("d", FlightCommand.GoTo(new Vector3(1000f, 100f, 0f)));
         for (var i = 0; i < 120; i++) room.Tick();
 
-        var rot = room.GetSnapshot()[0].Rotation;
-        var q = new Quaternion(rot[0], rot[1], rot[2], rot[3]);
+        var snap = room.GetSnapshot()[0];
+        snap.Position[0].Should().BeGreaterThan(20f, "the drone should fly toward its +X waypoint");
+        var q = new Quaternion(snap.Rotation[0], snap.Rotation[1], snap.Rotation[2], snap.Rotation[3]);
         var fwd = Vector3.Transform(new Vector3(0f, 0f, 1f), q);
-        Math.Atan2(fwd.X, fwd.Z).Should().BeApproximately(Math.PI / 2, 0.2,
-            "the drone should orient toward its +X travel direction");
+        Math.Atan2(fwd.X, fwd.Z).Should().BeApproximately(0, 0.2,
+            "the drone should keep its initial +Z orientation");
     }
 
     [Fact]
-    public void HoverWithYaw_RotatesInPlace_WithoutMoving()
+    public void Hover_HoldsPosition_WithoutRotating()
     {
         var room = CreateRoom();
         room.SetWeather("calm", 0.0, 0.0);
         room.AddDrone("d", new Vector3(0f, 100f, 0f));
         var start = room.GetSnapshot()[0].Position;
 
-        // Hover with a commanded heading of +X (π/2): rotate in place, hold position.
-        room.SendCommand("d", FlightCommand.Hover(Math.PI / 2));
+        // Hover: hold position and keep the initial orientation.
+        room.SendCommand("d", FlightCommand.Hover());
         for (var i = 0; i < 120; i++) room.Tick();
 
         var snap = room.GetSnapshot()[0];
@@ -170,12 +172,12 @@ public class SimulationServiceTests
         snap.Position[2].Should().BeApproximately(start[2], 0.5f, "hover holds Z");
         var q = new Quaternion(snap.Rotation[0], snap.Rotation[1], snap.Rotation[2], snap.Rotation[3]);
         var fwd = Vector3.Transform(new Vector3(0f, 0f, 1f), q);
-        Math.Atan2(fwd.X, fwd.Z).Should().BeApproximately(Math.PI / 2, 0.15,
-            "Hover(yaw) should rotate the drone to the commanded heading in place");
+        Math.Atan2(fwd.X, fwd.Z).Should().BeApproximately(0, 0.15,
+            "hover should keep the initial orientation");
     }
 
     [Fact]
-    public void LandedDrone_CanTakeOffAgain_OnNextCommand()
+    public void LandedDrone_LatchesAsLanded_UntilRespawned()
     {
         var room = CreateRoom();
         room.SetWeather("calm", 0.0, 0.0);
@@ -185,11 +187,11 @@ public class SimulationServiceTests
         for (var i = 0; i < 400 && room.GetSnapshot()[0].Status != "landed"; i++) room.Tick();
         room.GetSnapshot()[0].Status.Should().Be("landed", "the drone should reach the ground and land");
 
-        // A non-Land command must re-arm it so it can take off again.
+        // The SDK's flight model latches the landed state; later commands do not re-arm it.
         room.SendCommand("d", FlightCommand.Hover());
         room.Tick();
-        room.GetSnapshot()[0].Status.Should().Be("flying",
-            "a non-Land command re-arms a landed drone (fixes the stuck-after-landing bug)");
+        room.GetSnapshot()[0].Status.Should().Be("landed",
+            "a landed drone stays landed — the flight model no longer re-arms on a non-Land command");
     }
 
     [Fact]
