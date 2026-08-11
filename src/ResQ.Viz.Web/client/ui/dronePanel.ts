@@ -3,6 +3,9 @@
 
 import type { DroneState } from '../types';
 import { getEl } from '../dom';
+import { getLogger } from '../log';
+
+const log = getLogger('dronePanel');
 
 type CommandFn = (droneId: string, cmd: string) => Promise<void>;
 type CloseFn = () => void;
@@ -41,7 +44,7 @@ export class DronePanel {
                 const cmd = btn.dataset['cmd'];
                 if (cmd && this._droneId && this._commandFn) {
                     this._commandFn(this._droneId, cmd).catch(
-                        (err: unknown) => console.error('[DronePanel] command failed:', err),
+                        (err: unknown) => log.error('[DronePanel] command failed', err),
                     );
                 }
             });
