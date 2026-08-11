@@ -43,8 +43,15 @@ public record DroneSnapshot(
 /// </summary>
 public sealed class SimulationRoom
 {
-    /// <summary>Broadcast a viz frame every N simulation ticks (60 Hz / 6 = 10 Hz).</summary>
+    /// <summary>Broadcast a viz frame every N real ticks (60 Hz / 6 = 10 Hz).</summary>
     private const int BroadcastEveryNTicks = 6;
+
+    /// <summary>Lowest and highest run-speed multipliers (world steps per real tick).</summary>
+    private const int MinSpeed = 1;
+    private const int MaxSpeed = 8;
+
+    /// <summary>Upper bound on queued single-steps, so a runaway caller can't stall the loop.</summary>
+    private const int MaxQueuedSteps = 600;
 
     private readonly object _lock = new();
     private readonly ILogger _logger;
@@ -54,12 +61,22 @@ public sealed class SimulationRoom
     private readonly Dictionary<string, string> _droneVendors = new(StringComparer.Ordinal);
 
     private SimulationWorld _world;
-    private int _tickCount;
+    // long, not int: at 8x speed this advances 480/s and would overflow int in
+    // ~51 days, turning _simTime (and the frame's Tick/Time) negative.
+    private long _tickCount;
     private int _swarmTick;
     private double _simTime;
     private volatile bool _backhaulKilled;
     private long _lastActivityTicks;
     private int _connectionCount;
+
+    // ── Transport state (guarded by _lock) ──────────────────────────────────
+    private bool _paused;
+    private int _speed = 1;
+    private int _pendingSteps;
+    // Drives broadcast cadence independently of sim steps, so frames keep
+    // flowing at 10 Hz while paused (steps == 0) or sped up (steps > 1).
+    private long _broadcastTick;
 
     /// <summary>Opaque, server-issued room id (256-bit hex).</summary>
     public string Id { get; }
@@ -86,6 +103,25 @@ public sealed class SimulationRoom
 
     /// <summary>Current simulation time in seconds.</summary>
     public double SimTime { get { lock (_lock) return _simTime; } }
+
+    /// <summary>Whether world advancement is paused. Frames still broadcast while paused.</summary>
+    public bool IsPaused { get { lock (_lock) return _paused; } }
+
+    /// <summary>Current run-speed multiplier (world steps per real tick).</summary>
+    public int Speed { get { lock (_lock) return _speed; } }
+
+    /// <summary>Total world steps advanced since the last reset.</summary>
+    public long TickCount { get { lock (_lock) return _tickCount; } }
+
+    /// <summary>
+    /// Atomic read of the transport triple (paused / speed / tick) under a single
+    /// lock, so a broadcast frame can't report a mix of pre- and post-mutation
+    /// values from three separate locked getters.
+    /// </summary>
+    public (bool Paused, int Speed, long Tick) TransportSnapshot()
+    {
+        lock (_lock) return (_paused, _speed, _tickCount);
+    }
 
     /// <summary>Initialises the room with a flat terrain and calm weather using default settings.</summary>
     public SimulationRoom(string id, string ipBucket, ILogger logger)
@@ -118,6 +154,45 @@ public sealed class SimulationRoom
         Touch();
         var v = Interlocked.Decrement(ref _connectionCount);
         return v < 0 ? Interlocked.Exchange(ref _connectionCount, 0) : v;
+    }
+
+    /// <summary>Pauses world advancement. Frames keep broadcasting so the client reflects the paused state.</summary>
+    public void Pause()
+    {
+        lock (_lock) { _paused = true; }
+        Touch();
+        _logger.LogInformation("[room {RoomId}] Simulation paused.", Id);
+    }
+
+    /// <summary>Resumes world advancement at the current speed.</summary>
+    public void Resume()
+    {
+        lock (_lock) { _paused = false; }
+        Touch();
+        _logger.LogInformation("[room {RoomId}] Simulation resumed.", Id);
+    }
+
+    /// <summary>Sets the run-speed multiplier (world steps per real tick), clamped to [<see cref="MinSpeed"/>, <see cref="MaxSpeed"/>].</summary>
+    public void SetSpeed(int multiplier)
+    {
+        var clamped = Math.Clamp(multiplier, MinSpeed, MaxSpeed);
+        lock (_lock) { _speed = clamped; }
+        Touch();
+        _logger.LogInformation("[room {RoomId}] Speed set to {Speed}x.", Id, clamped);
+    }
+
+    /// <summary>
+    /// Queues <paramref name="frames"/> single steps that advance even while paused
+    /// (clamped to [1, <see cref="MaxQueuedSteps"/>]). Each consumes one real tick.
+    /// </summary>
+    public void StepFrames(int frames)
+    {
+        var n = Math.Clamp(frames, 1, MaxQueuedSteps);
+        // Cap the TOTAL queue, not just the per-call count, so repeated calls
+        // can't bank thousands of steps that keep advancing while the bar reads
+        // paused.
+        lock (_lock) { _pendingSteps = Math.Min(_pendingSteps + n, MaxQueuedSteps); }
+        Touch();
     }
 
     /// <summary>Adds a drone to the simulation world at the specified start position.</summary>
@@ -240,6 +315,10 @@ public sealed class SimulationRoom
             _swarmTick = 0;
             _droneVendors.Clear();
             _backhaulKilled = false;
+            _paused = false;
+            _speed = 1;
+            _pendingSteps = 0;
+            _broadcastTick = 0;
         }
         Touch();
         _logger.LogInformation("[room {RoomId}] Simulation reset.", Id);
@@ -275,15 +354,31 @@ public sealed class SimulationRoom
     {
         lock (_lock)
         {
-            _world.Step();
-            _tickCount++;
-            _swarmTick++;
-            // Derive sim time from the tick count rather than accumulating
-            // 1/60 per tick: integer-counted divisions don't drift over hours.
-            _simTime = _tickCount / 60.0;
-            if (_swarmTick % 30 == 0)
-                _swarm.Tick(_simTime, _world.Drones);
-            return (_tickCount % BroadcastEveryNTicks == 0, _simTime);
+            // World steps to advance this real (60 Hz) tick: a queued single-step
+            // always advances exactly one (even while paused); otherwise paused
+            // means zero, and running means the speed multiplier.
+            int steps;
+            if (_pendingSteps > 0) { steps = 1; _pendingSteps--; }
+            else if (_paused) { steps = 0; }
+            else { steps = _speed; }
+
+            for (var i = 0; i < steps; i++)
+            {
+                _world.Step();
+                _tickCount++;
+                _swarmTick++;
+                // Derive sim time from the tick count rather than accumulating
+                // 1/60 per tick: integer-counted divisions don't drift over hours.
+                _simTime = _tickCount / 60.0;
+                if (_swarmTick % 30 == 0)
+                    _swarm.Tick(_simTime, _world.Drones);
+            }
+
+            // Broadcast cadence is driven by REAL ticks, not sim steps, so the
+            // client keeps receiving 10 Hz frames while paused (to reflect the
+            // paused state) or sped up (without multiplying network traffic).
+            _broadcastTick++;
+            return (_broadcastTick % BroadcastEveryNTicks == 0, _simTime);
         }
     }
 

@@ -76,7 +76,7 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
 
     /// <summary>
     /// Regression guard for the analytics integration (PR #97). The CSP must
-    /// allow the script + connect endpoints used by `@resq-sw/analytics`
+    /// allow the script + connect endpoints used by `@resq-systems/analytics`
     /// (PostHog, Google Analytics 4) and the Cloudflare Web Analytics beacon
     /// auto-injected by the edge proxy. Prior to this guard, the SPA crashed
     /// at runtime with `script-src 'self'` blocks for posthog-js, gtag, and

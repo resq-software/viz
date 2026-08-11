@@ -1,6 +1,11 @@
 // ResQ Viz - Entry point
 // SPDX-License-Identifier: Apache-2.0
 
+// Self-hosted brand fonts (no CDN): Syne (display), DM Sans (body), DM Mono (data).
+import '@fontsource-variable/syne';
+import '@fontsource-variable/dm-sans';
+import '@fontsource/dm-mono/400.css';
+import '@fontsource/dm-mono/500.css';
 import './styles/main.css';
 import { bootstrapAnalytics } from './analytics';
 import * as THREE from 'three';
@@ -19,10 +24,12 @@ import { Terrain }        from './terrain';
 import { DroneManager }   from './drones';
 import { EffectsManager }  from './effects';
 import { OverlayManager }  from './overlays';
+import { FireSmoke }        from './smoke';
+import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
 import { Hud }            from './ui/hud';
 import { WindCompass }    from './ui/windCompass';
-import { DronePanel }     from './ui/dronePanel';
+import { Cockpit }        from './ui/cockpit';
 import type { VizFrame }  from './types';
 import { isDroneReady }   from './types';
 import { Settings }       from './settings';
@@ -33,18 +40,32 @@ import { ScenarioIntro } from './scenarioIntro';
 import { CameraPresets } from './cameraPresets';
 import { LoadingOverlay } from './loadingOverlay';
 import { tickWind } from './treeSprites';
-import { setHeightmapOverride, setAntiTile } from './terrain';
+import { setHeightmapOverride, setAntiTile, tickTerrainClouds } from './terrain';
+import { prefersReducedMotion } from './reducedMotion';
 import { tickWater } from './water';
 import { DownwashFx } from './downwash';
 import { loadErodedTerrain } from './erosion';
 import { loadHeightmapFromLocation } from './heightmapLoader';
 import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
-import { TelemetryStrip } from './telemetryStrip';
 import { MiniMap } from './miniMap';
 import { SensorStatsOverlay } from './sensorStatsOverlay';
 import { apiPost, apiGet, apiPostOrWarn } from './api';
 import { getLogger } from './log';
+// SelectionStore stays static: it is the selection source of truth that legacy
+// HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
+import { SelectionStore, type SelectionKind } from './editor/selection';
+// Everything else in the editor suite is loaded on demand — see
+// `_initEditorSuite` below. These are TYPE-ONLY imports, erased at build time,
+// so they create no static edge into the editor chunk.
+import type { Inspector } from './editor/inspector';
+import type { Outliner } from './editor/outliner';
+import type { EditorDock } from './editor/dock';
+import type { TransformGizmo } from './editor/gizmo';
+import type { FpvOsd } from './sensors/fpvOsd';
+import type { CameraModeControl } from './cameraMode';
+import type { FrameRecorder } from './editor/recorder';
+import type { Dvr } from './editor/dvr';
 
 const log = getLogger('app');
 
@@ -100,10 +121,194 @@ const droneManager = new DroneManager(viz.scene);
 const downwashFx   = new DownwashFx(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
+const fireSmoke    = new FireSmoke(viz.scene);
 const controlPanel = new ControlPanel();
 const hud          = new Hud();
 const windCompass  = new WindCompass();
-const dronePanel   = new DronePanel();
+// Selected-drone glass cockpit — flight instruments driven by live telemetry.
+const cockpit      = new Cockpit();
+
+// ── Editor suite (deferred) ──────────────────────────────────────────────────
+// The dock, outliner, inspector, gizmo, DVR and onboard sensors pull in the
+// heavy three/addons controls and the whole editor stylesheet. Loading them
+// with the entry chunk delayed first paint for every visitor, so they are
+// fetched after the scene has rendered its first frame instead. Total bytes
+// downloaded are unchanged — the editor is still always initialised — but the
+// terrain and drones appear without waiting on it.
+let editorDock = null as EditorDock | null;
+let outliner = null as Outliner | null;
+let inspector = null as Inspector | null;
+let gizmo = null as TransformGizmo | null;
+let fpvOsd = null as FpvOsd | null;
+let cameraMode = null as CameraModeControl | null;
+let recorder = null as FrameRecorder | null;
+let dvr = null as Dvr | null;
+
+const selection = new SelectionStore();
+let _currentScenario: string | null = null;
+
+async function _initEditorSuite(): Promise<void> {
+    const [m_dock, m_outliner, m_inspector, m_gizmo, m_pip, m_osd, m_cam, m_rec, m_dvr, m_cfg] =
+        await Promise.all([
+            import('./editor/dock'),
+            import('./editor/outliner'),
+            import('./editor/inspector'),
+            import('./editor/gizmo'),
+            import('./sensors/onboardPip'),
+            import('./sensors/fpvOsd'),
+            import('./cameraMode'),
+            import('./editor/recorder'),
+            import('./editor/dvr'),
+            import('./editor/sceneConfig'),
+        ]);
+
+    // Editor selection layer — SelectionStore is the editor's single source of
+    // truth (Inspector now; outliner / gizmos later). Legacy HUD surfaces publish
+    // to it at their selection chokepoints (`_selectFromAnySurface` / `_deselectAll`).
+    // Editor dock — one managed, collapsible left column hosting the editor panels
+    // (Outliner on top, Inspector below); toggle with the ☰ button or the `\` key.
+    editorDock = new m_dock.EditorDock();
+    outliner = new m_outliner.Outliner(selection, editorDock.host());
+    outliner.onSelect(_selectEntity);
+    inspector = new m_inspector.Inspector(selection, () => _lastFrame, editorDock.host());
+    inspector.onClose(() => _deselectAll());
+    // Transform gizmo — translate handles on the selected drone. Server-authority
+    // safe: it drags a client-owned proxy and sends a goto (with altitude) on
+    // release, then tracks the drone between drags. Reuses the goto endpoint.
+    gizmo = new m_gizmo.TransformGizmo({
+        scene: viz.scene,
+        camera: viz.cameraController.camera,
+        domElement: viz.renderer.domElement,
+        store: selection,
+        setCameraEnabled: (v) => { viz.cameraController.enabled = v; },
+        getDronePosition: () => droneManager.getSelectedPosition(),
+        sendGoto: (target) => {
+            const id = droneManager.selectedId;
+            if (!id) return;
+            apiPostOrWarn(`/api/sim/drone/${id}/cmd`, { type: 'goto', target }, 'Gizmo');
+            viz.showTargetMarker(new THREE.Vector3(target[0], target[1], target[2]), target[1]);
+        },
+        addTick: (fn) => viz.addTickCallback(fn),
+    });
+    // The main camera renders the gizmo's dedicated layer; the FPV PiP camera
+    // (layer 0 only) does not, so the move handles never clutter the onboard window.
+    viz.cameraController.camera.layers.enable(m_gizmo.GIZMO_LAYER);
+    // Onboard FPV picture-in-picture — the selected drone's camera, scissor-rendered
+    // into a corner of the canvas. Self-wires via the selection store + post-render
+    // hook (no retained binding); toggle with `P`.
+    new m_pip.OnboardPip({
+        scene: viz.scene,
+        renderer: viz.renderer,
+        store: selection,
+        getSelectedGroup: () => droneManager.selectedGroup,
+        getSelectedId: () => droneManager.selectedId,
+        addPostRender: (fn) => viz.addPostRenderCallback(fn),
+    });
+    // FPV onboard OSD — a real-FPV-style heads-up overlay (crosshair + telemetry),
+    // shown only in the FPV camera mode below.
+    const osd = new m_osd.FpvOsd();
+    fpvOsd = osd;
+    // Camera view modes (AirSim-style): FREE / CHASE / FPV, cycled with `C`. A HUD
+    // pill shows the active mode; CHASE/FPV ride the selected drone, else fall back
+    // to FREE. The OSD is shown only in FPV.
+    // FPV uses a wide, immersive field of view; other modes restore the default.
+    const _baseFov = viz.cameraController.camera.fov;
+    // The onboard drone's own model is hidden in FPV (real FPV — you never see your
+    // own airframe); track the hidden group so it's restored on exit / target change.
+    let _fpvHiddenGroup: THREE.Object3D | null = null;
+    cameraMode = new m_cam.CameraModeControl({
+        apply: (mode) => {
+            const g = droneManager.selectedGroup;
+            const fpv = mode === 'fpv' && !!g;
+            document.body.classList.toggle('fpv-mode', fpv); // immersive: hides editor chrome
+            viz.setCameraFov(fpv ? 100 : _baseFov);
+            // Hide the onboard drone's model; restore whichever was hidden once it's
+            // no longer the FPV target.
+            const toHide = fpv ? g : null;
+            if (_fpvHiddenGroup && _fpvHiddenGroup !== toHide) {
+                _fpvHiddenGroup.visible = true;
+                _fpvHiddenGroup = null;
+            }
+            if (toHide) { toHide.visible = false; _fpvHiddenGroup = toHide; }
+            if (mode === 'free' || !g) { viz.followObject(null); osd.hide(); return; }
+            if (mode === 'chase') { viz.chaseObject(g); osd.hide(); }
+            else { viz.fpvObject(g); osd.show(); }
+        },
+    });
+    // Keep chase/FPV locked to the newly-selected drone (and drop to FREE if cleared).
+    const cam = cameraMode;
+    selection.subscribe(() => { if (cam.mode !== 'free') cam.reapply(); });
+    // DVR — rolling recorder + scrub timeline over the frame stream. Live frames
+    // always record; scrubbing replays buffered frames via _renderFrame, and live
+    // application is gated on `dvr.isLive` in the ReceiveFrame handler.
+    // 3000 frames ≈ 5 min at 10 Hz (was 60 s, which read as "stuck at 0:59").
+    recorder = new m_rec.FrameRecorder(3000);
+    // Unified bottom bar: at the live edge the controls drive the server sim; scrub
+    // back and the same controls play back the buffer (snap-applied via _renderFrame).
+    dvr = new m_dvr.Dvr({
+        recorder,
+        onApply: (frame) => _renderFrame(frame, true),
+        onServerPause: (paused) =>
+            void apiPostOrWarn(paused ? '/api/sim/pause' : '/api/sim/resume', undefined, 'transport'),
+        onServerStep: () => void apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'),
+        onServerSpeed: (factor) => void apiPostOrWarn('/api/sim/speed', { factor }, 'speed'),
+        onServerReset: () => void apiPostOrWarn('/api/sim/reset', undefined, 'reset'),
+    });
+    // Declarative scene config — export/import the terrain + scenario setup as a
+    // shareable JSON descriptor (AirSim settings.json analog). `_currentScenario`
+    // tracks the last explicitly-started scenario (set by the resq:scenario-start
+    // listener below).
+    new m_cfg.SceneConfigPanel({
+        getTerrain: () => _currentPresetKey,
+        getScenario: () => _currentScenario,
+        applyTerrain: (key) => { if (key in PRESETS) _switchPreset(key as PresetKey); },
+        applyScenario: (name) => {
+            if (!name) return;
+            // The name arrives from an imported scene-config file, and
+            // parseSceneConfig only validates structure — it explicitly leaves
+            // "is this a real scenario" to the caller. Interpolated raw, a value
+            // like `../../reset` would resolve to a different same-origin
+            // endpoint, so check it against the scenarios this build actually
+            // offers before building a path, and encode the segment regardless.
+            const known = new Set(
+                Array.from(
+                    document.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]'),
+                    (el) => el.dataset['scenario'] ?? '',
+                ).filter(Boolean),
+            );
+            if (!known.has(name)) {
+                log.warn('ignoring unknown scenario from imported scene config', { name });
+                return;
+            }
+            apiPostOrWarn(`/api/sim/scenario/${encodeURIComponent(name)}`, undefined, `scene:${name}`);
+            document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
+        },
+    });
+
+    // Inspector wiring lives here so the callbacks register with the instance
+    // that was just created — attaching them at module scope would run before
+    // the suite exists and silently never fire.
+    inspector.onCommand(async (droneId: string, cmd: string) => {
+        const res = await apiPost(`/api/sim/drone/${droneId}/cmd`, { type: cmd });
+        if (!res.success) log.warn(`command ${cmd} on ${droneId} failed`, { error: res.error.message });
+    });
+    // "Move" button → toggle the reposition gizmo for the selected drone. The
+    // gizmo owns the on/off truth, so the M key and this button stay in sync.
+    const _insp = inspector, _giz = gizmo;
+    inspector.onMove(() => { _insp.setMoveActive(_giz.toggleMoveMode()); });
+}
+
+// Kick the editor suite off once the browser has actually painted a frame.
+// Two rAFs: the first fires before the upcoming paint, the second after it, so
+// the fetch/parse of the editor chunk never competes with first render. The
+// scene is fully interactive (orbit, telemetry, HUD) throughout; the dock,
+// inspector and DVR transport appear a beat later.
+requestAnimationFrame(() => requestAnimationFrame(() => {
+    void _initEditorSuite().catch((err: unknown) => {
+        log.error('editor suite failed to load', err);
+    });
+}));
+
 const investorMode = new InvestorMode(viz.cameraController);
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
@@ -126,10 +331,6 @@ const missionChrome = new MissionChrome();
 // Event log — left-edge SIGINT-style ticker. Self-wires scenario-starts;
 // app.ts pushes partition transitions explicitly since it owns that state.
 const eventLog = new EventLog();
-
-// Telemetry strip — right-edge per-drone HUD. Complements DronePanel
-// (selected drone detail) with a live roster of every unit's status.
-const telemetryStrip = new TelemetryStrip();
 
 // Mini-map — bottom-right 2D top-down radar plot. Complements the 3D
 // scene by showing global spatial relationships at a glance. Click a
@@ -171,6 +372,8 @@ function _setSettingsVisible(v: boolean): void {
     // see the panel as permanently hidden (it ships with aria-hidden="true").
     settingsPanel?.setAttribute('aria-hidden', String(!v));
     settingsToggle?.setAttribute('aria-expanded', String(v));
+    // The overlapped widgets are hidden purely in CSS via
+    // `body:has(#settings-panel.open)` in main.css — no body-class needed.
 }
 
 settingsToggle?.addEventListener('click', () => {
@@ -515,6 +718,12 @@ viz.addTickCallback((dt) => tickWind(dt));
 // Water — advances the Water addon's time uniform so the reflective surface
 // ripples rather than sitting static (see terrain.ts _buildWater).
 viz.addTickCallback((dt) => tickWater(dt));
+// Cloud shadows — drifts the terrain's cloud-shadow field for atmospheric mood.
+// Frozen under prefers-reduced-motion: large-area moving shadows can trigger
+// vestibular discomfort (WCAG 2.3.3). The shadows stay, they just stop drifting.
+viz.addTickCallback((dt) => { if (!prefersReducedMotion()) tickTerrainClouds(dt); });
+// Fire smoke plumes rise + drift every frame (idles cheaply when no fires).
+viz.addTickCallback((dt) => fireSmoke.tick(dt));
 
 // ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 
@@ -542,6 +751,20 @@ function _setHintsVisible(v: boolean): void {
 }
 
 _setHintsVisible(hintsVisible);  // restore persisted state
+
+// Flight-instrument cockpit — opt-in overlay (off by default so it never covers
+// the console). Shows only while enabled AND a drone is selected. Toggle via the
+// ◔ HUD button or the `I` key; state persists across sessions.
+const cockpitToggle = document.getElementById('hud-cockpit-toggle');
+const COCKPIT_KEY = 'resq-viz-cockpit-visible';
+function _setCockpitEnabled(v: boolean): void {
+    if (cockpit.isEnabled() !== v) cockpit.toggle();
+    localStorage.setItem(COCKPIT_KEY, String(v));
+    cockpitToggle?.classList.toggle('active', v);
+    cockpitToggle?.setAttribute('aria-pressed', String(v));
+}
+cockpitToggle?.addEventListener('click', () => _setCockpitEnabled(!cockpit.isEnabled()));
+_setCockpitEnabled(localStorage.getItem(COCKPIT_KEY) === 'true');  // default: off
 
 hintsToggle?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -576,6 +799,7 @@ viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
 });
 
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
+    if (gizmo?.swallowClick()) return;   // ignore the click that ends a gizmo handle drag
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     const first = hit[0];
     const selectedId = droneManager.selectedId;
@@ -596,11 +820,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                     viz.showTargetMarker(terrainHit, alt);
                 }
             } else {
-                droneManager.setSelected(droneId);
-                dronePanel.show(droneId);
-                hud.setSelectedDrone(droneId);
-                telemetryStrip.setSelected(droneId);
-                miniMap.setSelected(droneId);
+                _selectFromAnySurface(droneId);
             }
         }
     } else {
@@ -616,38 +836,44 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                 viz.showTargetMarker(terrainHit, alt);
             }
         } else {
-            droneManager.setSelected(null);
-            dronePanel.hide();
-            hud.setSelectedDrone(null);
-            telemetryStrip.setSelected(null);
-            miniMap.setSelected(null);
+            _deselectAll();
         }
     }
 });
 
-dronePanel.onCommand(async (droneId, cmd) => {
-    const res = await apiPost(`/api/sim/drone/${droneId}/cmd`, { type: cmd });
-    if (!res.success) log.warn(`command ${cmd} on ${droneId} failed`, { error: res.error.message });
-});
+// The Inspector is the single selected-drone panel; its Hover/RTL/Land buttons
+// post drone commands. (The bottom DronePanel was retired to remove the
+// duplicate drone-detail surface; its close is already routed to _deselectAll.)
 
-dronePanel.onClose(() => {
-    droneManager.setSelected(null);
-    hud.setSelectedDrone(null);
-    telemetryStrip.setSelected(null);
-    miniMap.setSelected(null);
-});
-
-// Telemetry strip row click → same selection path as the scene click-through,
-// so the DronePanel opens and the 3D ring highlights identically regardless
-// of which surface the operator used to pick a drone.
+// Unified selection: any surface (scene click, telemetry strip, minimap, bracket
+// cycle) routes here so the Inspector, selection ring, and HUD update identically.
 function _selectFromAnySurface(droneId: string): void {
     droneManager.setSelected(droneId);
-    dronePanel.show(droneId);
     hud.setSelectedDrone(droneId);
-    telemetryStrip.setSelected(droneId);
     miniMap.setSelected(droneId);
+    selection.set('drone', droneId);
 }
-telemetryStrip.onSelect(_selectFromAnySurface);
+// Symmetric deselect — clears every legacy selection surface plus the editor
+// SelectionStore, so the Inspector hides in lockstep with the drone ring/panel.
+function _deselectAll(): void {
+    droneManager.setSelected(null);
+    hud.setSelectedDrone(null);
+    miniMap.setSelected(null);
+    selection.clear();
+}
+// Select any entity kind from the editor layer (outliner rows). Drones light up
+// the legacy HUD surfaces; hazards/detections drive only the editor store +
+// Inspector and clear any stale drone selection so the surfaces never disagree.
+function _selectEntity(kind: SelectionKind, id: string): void {
+    if (kind === 'drone') {
+        _selectFromAnySurface(id);
+        return;
+    }
+    droneManager.setSelected(null);
+    hud.setSelectedDrone(null);
+    miniMap.setSelected(null);
+    selection.set(kind, id);
+}
 miniMap.onSelect(_selectFromAnySurface);
 
 let _fittedToSwarm = false;
@@ -695,8 +921,11 @@ const emptyStateEl = document.getElementById('empty-state');
 function _bindHudToggle(id: string, getter: () => boolean, setter: (v: boolean) => void): void {
     const btn = document.getElementById(id);
     if (!btn) return;
-    // Mirror initial visual state into aria-pressed so screen readers see it.
-    btn.setAttribute('aria-pressed', String(getter()));
+    // Sync both the .active class and aria-pressed to the real overlay state on
+    // init, so a default-off overlay doesn't leave its button looking lit.
+    const on = getter();
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
     btn.addEventListener('click', () => {
         setter(!getter());
         const next = getter();
@@ -758,6 +987,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             case 'Digit3': e.preventDefault(); cameraPresets.cockpit();  return;
             case 'Digit4': e.preventDefault(); cameraPresets.ground();   return;
             case 'Digit5': e.preventDefault(); cameraPresets.investor(); return;
+            case 'Digit6': e.preventDefault(); cameraPresets.chase();    return;
         }
     }
 
@@ -781,6 +1011,16 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
+        case 'KeyC': cameraMode?.cycle(); break; // FREE → CHASE → FPV
+        case 'KeyI': _setCockpitEnabled(!cockpit.isEnabled()); break; // flight-instrument cockpit
+        case 'KeyM': {
+            // Toggle the drone reposition gizmo ("move mode") — opt-in, so a
+            // plain selection no longer obscures the scene with handles.
+            if (selection.current?.kind === 'drone') {
+                if (inspector && gizmo) inspector.setMoveActive(gizmo.toggleMoveMode());
+            }
+            break;
+        }
         case 'KeyF': {
             if (viz.isFollowing) {
                 viz.followObject(null);
@@ -798,12 +1038,11 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             viz.fitToPositions(positions);
             break;
         }
-        // [ / ] — cycle selection through the telemetry strip's severity-sorted
-        // drone list. Matches what the operator sees top-to-bottom on the strip
-        // so CRITICAL drones come first when nothing is selected.
+        // [ / ] — cycle selection through the current drones (frame order),
+        // matching the Outliner's Drones list.
         case 'BracketLeft':
         case 'BracketRight': {
-            const ids = telemetryStrip.getOrderedIds();
+            const ids = (_lastFrame?.drones ?? []).map(d => d.id);
             if (ids.length === 0) break;
             e.preventDefault();
             const current = droneManager.selectedId;
@@ -813,11 +1052,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             const next    = idx === -1
                 ? (step === 1 ? ids[0]! : ids[ids.length - 1]!)
                 : ids[(idx + step + ids.length) % ids.length]!;
-            droneManager.setSelected(next);
-            dronePanel.show(next);
-            hud.setSelectedDrone(next);
-            telemetryStrip.setSelected(next);
-            miniMap.setSelected(next);
+            _selectFromAnySurface(next);
             break;
         }
         // Drone nudge — only when a drone is selected and camera is NOT in free-fly mode
@@ -871,28 +1106,53 @@ const _seenHazardIds    = new Map<string, string>();   // id → type
 // the first `det-1` of scenario B; same for hazards. Without this the
 // event log stays silent for the first few seconds after a preset change
 // if the two scenarios happen to share ids.
-document.addEventListener('resq:scenario-start', () => {
+document.addEventListener('resq:scenario-start', (e) => {
+    _currentScenario = (e as CustomEvent<{ name?: string }>).detail?.name ?? _currentScenario;
     _seenDetectionIds.clear();
     _seenHazardIds.clear();
 });
 
+// Apply a frame to every visual surface. Shared by the live SignalR path and
+// the DVR replay path (scrubbing) — pure rendering, NO live-only side effects
+// (event log, partition banner, auto-fit) which stay in the ReceiveFrame handler.
+function _renderFrame(frame: VizFrame, snap = false): void {
+    _lastFrame = frame;
+    missionChrome.update(frame.time ?? 0);
+    const drones = frame.drones ?? [];
+    droneManager.update(drones, frame.detections, snap);
+    // FPV OSD + cockpit read the selected drone's telemetry (no-ops when nothing
+    // is selected / FPV mode is off).
+    const _selId = droneManager.selectedId;
+    const _selDrone = _selId ? (drones.find((d) => d.id === _selId) ?? null) : null;
+    fpvOsd?.update(_selDrone, frame.time ?? 0);
+    cockpit.update(_selDrone);
+    effectsMgr.update(frame);
+    // Feed the fire hazards to the smoke plumes (center = ground position).
+    const fires: SmokeSource[] = (frame.hazards ?? [])
+        .filter((h) => h.type === 'fire' && h.center)
+        .map((h) => ({ x: h.center![0], z: h.center![2], radius: h.radius ?? 30 }));
+    fireSmoke.setSources(fires);
+    miniMap.update(drones, frame.hazards);
+    overlayMgr.update(drones);
+    controlPanel.updateDroneList(drones);
+    hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
+    inspector?.update(frame);
+    outliner?.update(frame);
+    windCompass.updateFromWeatherSliders();
+    sensorStats.update();
+    _updateA11yTelemetry(drones, frame.time ?? 0);
+}
+
 function _wireConnection(c: HubConnection): void {
     c.on('ReceiveFrame', (frame: VizFrame) => {
-        _lastFrame = frame;
         loadingOverlay.onFrame();
-        missionChrome.update(frame.time ?? 0);
+        dvr?.record(frame);
+        // While scrubbing/replaying, buffered frames drive the scene; live
+        // frames keep recording (above) but must not overwrite the view.
+        if (dvr && !dvr.isLive) return;   // no DVR yet ⇒ always live
+        _renderFrame(frame);
+        dvr?.updateServer(frame);
         const drones = frame.drones ?? [];
-        droneManager.update(drones, frame.detections);
-        effectsMgr.update(frame);
-        telemetryStrip.update(drones);
-        miniMap.update(drones, frame.hazards);
-        overlayMgr.update(drones);
-        controlPanel.updateDroneList(drones);
-        hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
-        dronePanel.update(drones);
-        windCompass.updateFromWeatherSliders();
-        sensorStats.update();
-        _updateA11yTelemetry(drones, frame.time ?? 0);
 
         // Detection events — fire once per new detection.id.
         for (const det of frame.detections) {

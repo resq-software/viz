@@ -39,9 +39,9 @@ updates:
         patterns: ["*"]
     labels: [chore, deps]
     open-pull-requests-limit: 5
-  # Frontend (Three.js + Vite + SignalR + @resq-sw/*). Lives under
+  # Frontend (Three.js + Vite + SignalR + @resq-systems/*). Lives under
   # src/ResQ.Viz.Web alongside the ASP.NET Core project; Dependabot
-  # discovers package.json + package-lock.json there. `@resq-sw/*` are
+  # discovers package.json + package-lock.json there. `@resq-systems/*` are
   # grouped so fleet-wide library bumps arrive as one PR instead of
   # five separate ones.
   - package-ecosystem: npm
@@ -51,11 +51,11 @@ updates:
       day: monday
       time: "06:17"
     groups:
-      resq-sw:
-        patterns: ["@resq-sw/*"]
+      resq-systems:
+        patterns: ["@resq-systems/*"]
       frontend:
         patterns: ["*"]
-        exclude-patterns: ["@resq-sw/*"]
+        exclude-patterns: ["@resq-systems/*"]
     labels: [chore, deps]
     open-pull-requests-limit: 5
   # lib/dotnet-sdk is a git submodule pinned to a release tag; this

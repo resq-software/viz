@@ -17,7 +17,7 @@
 /**
  * Analytics bootstrap for the viz SPA.
  *
- * Vanilla TS (not React) so we use `@resq-sw/analytics`'s framework-
+ * Vanilla TS (not React) so we use `@resq-systems/analytics`'s framework-
  * agnostic `initAnalytics()` directly instead of the `<AnalyticsProvider>`
  * we wired into landing + research. The package's lazy `posthog-js`
  * import + GA4 script injection still happen exactly the same way.
@@ -48,7 +48,7 @@ import {
     RESQ_SUBDOMAIN_ALLOWLIST,
     resolveResqCookieDomain,
     sanitizeGa4Id,
-} from "@resq-sw/analytics";
+} from "@resq-systems/analytics";
 import { getLogger } from "./log";
 
 const log = getLogger("analytics");

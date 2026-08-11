@@ -72,6 +72,21 @@ function setActivePreset(key: PresetKey): void {
     _fireTerrainChange();
 }
 
+// ── Cloud shadows (atmospheric mood) ─────────────────────────────────────────
+// The terrain material samples a slow-drifting cloud field and darkens its
+// diffuse under the clouds. These share the module-level `_pbrUniforms`, so a
+// single ground mesh (rebuilt per preset) always picks them up.
+
+/** Advance the drifting cloud-shadow field. Call once per render-loop tick. */
+export function tickTerrainClouds(dt: number): void {
+    _pbrUniforms.uCloudTime.value += dt;
+}
+
+/** Cloud cover: 0 = clear sky, 1 = heavy overcast. Clamped. */
+export function setCloudCover(cover: number): void {
+    _pbrUniforms.uCloudCover.value = Math.min(1, Math.max(0, cover));
+}
+
 // ── PBR terrain texture state (PR 2 of the visual upgrade roadmap) ───────────
 // Four CC0 albedo tiers (grass / rock / snow / sand) are loaded once and
 // shared across preset switches. Each preset picks which tier fills the
@@ -105,6 +120,11 @@ interface PbrUniforms {
     uAntiTile:             { value: boolean }; // seamless stochastic albedo sampling (opt-in, ~9× taps)
     uDetailScale:          { value: number };  // high-freq detail-normal tile multiplier
     uDetailNormalStrength: { value: number };  // micro-relief strength (0 = off)
+    // Drifting cloud shadows — the biggest atmospheric-mood cue. Applied to the
+    // terrain diffuse in both the PBR and constant-color paths.
+    uCloudTime:    { value: number };
+    uCloudCover:   { value: number };          // 0 = clear sky, 1 = heavy overcast
+    uCloudWind:    { value: THREE.Vector2 };   // drift per second in cloud-UV space
 }
 
 const _pbrUniforms: PbrUniforms = {
@@ -140,6 +160,13 @@ const _pbrUniforms: PbrUniforms = {
     // surface grain, not a second obvious tile.
     uDetailScale:          { value: 7.0 },
     uDetailNormalStrength: { value: 0.35 },
+    uCloudTime:   { value: 0 },
+    // Moderate cover by default — enough to sweep mood across the terrain
+    // without plunging the whole scene into gloom.
+    uCloudCover:  { value: 0.5 },
+    // Slow drift: ~1 cloud-cell every ~90 s. Wind direction roughly matches the
+    // sun's azimuth side so shadows travel across, not straight at, the camera.
+    uCloudWind:   { value: new THREE.Vector2(0.010, 0.006) },
 };
 
 const _tierAlbedo: Record<TierName, THREE.Texture | null> = {
@@ -222,7 +249,7 @@ async function _loadPbrTextures(): Promise<void> {
             a.wrapS = THREE.RepeatWrapping;
             a.wrapT = THREE.RepeatWrapping;
             a.colorSpace = THREE.SRGBColorSpace;
-            a.anisotropy = 4;
+            a.anisotropy = 16;
             _tierAlbedo[tier] = a;
 
             const r = roughness[i]!;
@@ -230,7 +257,7 @@ async function _loadPbrTextures(): Promise<void> {
             r.wrapT = THREE.RepeatWrapping;
             // Roughness is a linear data map — not sRGB.
             r.colorSpace = THREE.NoColorSpace;
-            r.anisotropy = 4;
+            r.anisotropy = 16;
             _tierRoughness[tier] = r;
 
             const n = normal[i]!;
@@ -238,7 +265,7 @@ async function _loadPbrTextures(): Promise<void> {
             n.wrapT = THREE.RepeatWrapping;
             // Normal maps are linear tangent-space data — never sRGB.
             n.colorSpace = THREE.NoColorSpace;
-            n.anisotropy = 4;
+            n.anisotropy = 16;
             _tierNormal[tier] = n;
         }
         _applyPresetTiers();
@@ -573,6 +600,30 @@ const GLSL_FRAG_PBR_OVERRIDE = `
     }
 `;
 
+// Drifting cloud shadows. A low-frequency scrolling FBM field defines where
+// clouds sit; the terrain diffuse is darkened under them. Runs after the biome
+// / PBR colour is chosen (constant-color OR textured) so both paths get it.
+// `_fbm` comes from GLSL_FRAG_NOISE, `vTerrainWorld` from the vertex stage.
+const GLSL_FRAG_CLOUD = `
+uniform float uCloudTime;
+uniform float uCloudCover;
+uniform vec2  uCloudWind;
+
+float _cloudShadow(vec2 xz) {
+    vec2 p = xz * 0.00085 + uCloudWind * uCloudTime;
+    float n = _fbm(p) * 0.62 + _fbm(p * 2.3 + 5.0) * 0.38;   // soft cloud field
+    // uCloudCover both lowers the threshold (more sky in shadow) and deepens it.
+    float shadow = smoothstep(0.62 - uCloudCover * 0.34, 0.80, n);
+    return 1.0 - shadow * (0.15 + uCloudCover * 0.55);        // 1 = full sun
+}
+`;
+
+// Applied inside each biome block after the PBR override — unconditional so the
+// constant-color fallback is shadowed too.
+const GLSL_FRAG_CLOUD_APPLY = `
+    diffuseColor.rgb *= _cloudShadow(vTerrainWorld.xz);
+`;
+
 // ── Terrain class ──────────────────────────────────────────────────────────────
 
 export class Terrain {
@@ -675,7 +726,7 @@ export class Terrain {
         // before the biome block's closing brace.
         const biomeGlsl = _activePreset.glslBiome.replace(
             /}\s*$/,
-            `${GLSL_FRAG_PBR_OVERRIDE}\n}`,
+            `${GLSL_FRAG_PBR_OVERRIDE}\n${GLSL_FRAG_CLOUD_APPLY}\n}`,
         );
 
         mat.onBeforeCompile = (shader) => {
@@ -697,7 +748,7 @@ export class Terrain {
             );
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <common>',
-                `#include <common>\n${GLSL_VARYING}\n${GLSL_FRAG_NOISE}\n${GLSL_FRAG_PBR}`,
+                `#include <common>\n${GLSL_VARYING}\n${GLSL_FRAG_NOISE}\n${GLSL_FRAG_PBR}\n${GLSL_FRAG_CLOUD}`,
             );
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <color_fragment>',

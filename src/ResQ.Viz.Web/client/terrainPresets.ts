@@ -71,6 +71,39 @@ function _ridged(
     return sum / norm;   // ≈ [0, 1]
 }
 
+// ── Erosion detail ────────────────────────────────────────────────────────────
+//   Mid-scale ridged carving that the terrain mesh can actually resolve. The
+//   ground plane is 4 km across TERRAIN_SEGS quads (~12.5 m/quad), so detail below
+//   ~25 m wavelength just aliases; this layer works at ~35–75 m — sharp enough to
+//   read as drainage gullies and rocky ribs on slopes, coarse enough to render.
+//   Returns a signed value in ≈[-0.5, 0.5]: positive on crest lines, negative in
+//   the gullies between them. Presets scale it by a few metres.
+
+export function _erosion(x: number, z: number): number {
+    // Two ridge octaves: `1 - |2n-1|` peaks where the base noise crosses 0.5,
+    // giving thin crest lines with valleys between — the skeleton of a drainage
+    // network. Second octave adds finer tributaries.
+    const f = 0.014;
+    const a = 1 - Math.abs(_noise(x * f       + 12.3, z * f       +  4.7) * 2 - 1);
+    const b = 1 - Math.abs(_noise(x * f * 2.2 +  1.1, z * f * 2.2 +  8.9) * 2 - 1);
+    return (a * 0.7 + b * 0.3) - 0.5;
+}
+
+/**
+ * Blend {@link _erosion} into a base height, but only above `startH` (ramping to
+ * full effect by `fullH`) so low flats and valley floors stay smooth while
+ * higher ground gains gullies and ribs. Keeps the preset's designed macro
+ * silhouette intact — this is additive surface detail, not a new landform.
+ */
+function _erode(
+    x: number, z: number, h: number,
+    amp: number, startH: number, fullH: number,
+): number {
+    const t    = Math.min(1, Math.max(0, (h - startH) / (fullH - startH)));
+    const gate = t * t * (3 - 2 * t);   // smoothstep
+    return h + _erosion(x, z) * amp * gate;
+}
+
 // ── Preset type ───────────────────────────────────────────────────────────────
 
 export type PresetKey = 'alpine' | 'ridgeline' | 'coastal' | 'canyon' | 'dunes';
@@ -173,7 +206,9 @@ function _alpineHeight(x: number, z: number): number {
             peaks += ph * Math.pow(t, 1.75) * noiseFactor;
         }
     }
-    return 22 + large + medium + fine + peaks;
+    const base = 22 + large + medium + fine + peaks;
+    // Drainage gullies + ribs on the hillsides and up toward the peaks.
+    return _erode(x, z, base, 9, 28, 130);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +262,9 @@ function _ridgelineHeight(x: number, z: number): number {
     const ridge  = Math.pow(rVal, 1.15) * 235;
     const base   = (_fbm(x * 0.0022 + 3.1, z * 0.0022 + 7.4, 4) * 2 - 1) * 22;
     const fine   = (_fbm(x * 0.011  + 2.2, z * 0.011  + 5.9, 3) * 2 - 1) *  4;
-    return 8 + ridge + base + fine;
+    // Lighter erosion here — the ridged multifractal already carves valleys;
+    // this just adds ribbing to the flanks.
+    return _erode(x, z, 8 + ridge + base + fine, 6, 20, 120);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -303,8 +340,9 @@ function _coastalHeight(x: number, z: number): number {
 
     const baseHeight = m * 38;
     const details    = _fbm(x * 0.0035 + 1.3, z * 0.0035 + 5.2, 5) * 26 * m;
-    
-    return baseHeight + details - 2.5;
+    const base       = baseHeight + details - 2.5;
+    // Erode the hillsides but leave beaches/shallows smooth (starts at +8 m).
+    return _erode(x, z, base, 5, 8, 55);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -382,7 +420,9 @@ function _canyonHeight(x: number, z: number): number {
     const carve = Math.max(_smoothstep(0.10, 0.0, c1), _smoothstep(0.06, 0.0, c2) * 0.7);
     const depth = carve * carve * 110;
 
-    return terraced - depth;
+    // Weather the mesa tops and upper walls; canyon floors (deep, below 0) and
+    // lower slopes stay clean so the terrace reads as intentional geology.
+    return _erode(x, z, terraced - depth, 5, 0, 70);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -477,7 +517,7 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000100,
         heightFn:   _alpineHeight,
         glslBiome:  _ALPINE_BIOME,
-        cacheKey:   'biome-alpine-v2',
+        cacheKey:   'biome-alpine-v3',
         waterColor: 0x102c3d,
         tileScale:  1 / 20,
         normalStrength: 0.70,
@@ -503,7 +543,7 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000080,
         heightFn:   _ridgelineHeight,
         glslBiome:  _RIDGELINE_BIOME,
-        cacheKey:   'biome-ridgeline-v3',
+        cacheKey:   'biome-ridgeline-v4',
         waterColor: 0x0a1822,
         tileScale:  1 / 18,
         normalStrength: 0.80,
@@ -527,7 +567,7 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000060,
         heightFn:   _coastalHeight,
         glslBiome:  _COASTAL_BIOME,
-        cacheKey:   'biome-coastal-v1',
+        cacheKey:   'biome-coastal-v2',
         waterColor: 0x0a5e77,
         tileScale:  1 / 22,
         normalStrength: 0.60,
@@ -552,7 +592,7 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000120,
         heightFn:   _canyonHeight,
         glslBiome:  _CANYON_BIOME,
-        cacheKey:   'biome-canyon-v2',
+        cacheKey:   'biome-canyon-v3',
         waterColor: 0x5c3820,
         tileScale:  1 / 20,
         normalStrength: 0.85,

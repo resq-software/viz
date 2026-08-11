@@ -51,20 +51,20 @@ public sealed class SimController : ControllerBase
 
     private SimulationRoom Room => HttpContext.Room();
 
-    /// <summary>Resumes/starts the simulation (no-op).</summary>
+    /// <summary>Resumes the simulation (alias of <see cref="Resume"/>, kept for the legacy start button).</summary>
     [HttpPost("start")]
     public IActionResult Start()
     {
-        _logger.LogInformation("Simulation start requested for room {RoomId}.", Room.Id);
-        return Ok(new { status = "running" });
+        Room.Resume();
+        return Ok(new { paused = false });
     }
 
-    /// <summary>Pauses the simulation (no-op).</summary>
+    /// <summary>Pauses the simulation (alias of <see cref="Pause"/>, kept for the legacy stop button).</summary>
     [HttpPost("stop")]
     public IActionResult Stop()
     {
-        _logger.LogInformation("Simulation stop requested for room {RoomId}.", Room.Id);
-        return Ok(new { status = "running" });
+        Room.Pause();
+        return Ok(new { paused = true });
     }
 
     /// <summary>Resets the simulation world by clearing all drones.</summary>
@@ -75,6 +75,48 @@ public sealed class SimController : ControllerBase
         Room.Reset();
         return Ok(new { status = "reset" });
     }
+
+    /// <summary>Pauses world advancement. Frames keep streaming so the client reflects the paused state.</summary>
+    [HttpPost("pause")]
+    public IActionResult Pause()
+    {
+        Room.Pause();
+        return Ok(new { paused = true });
+    }
+
+    /// <summary>Resumes world advancement at the current speed.</summary>
+    [HttpPost("resume")]
+    public IActionResult Resume()
+    {
+        Room.Resume();
+        return Ok(new { paused = false });
+    }
+
+    /// <summary>Advances the simulation by N frames (default 1, sent as an empty or omitted body); works while paused.</summary>
+    [HttpPost("step")]
+    public IActionResult Step([FromBody] StepRequest? request = null)
+    {
+        var frames = request?.Frames ?? 1;
+        if (frames is < 1 or > 600)
+            return BadRequest(new { error = "frames must be between 1 and 600." });
+        Room.StepFrames(frames);
+        return Ok(new { stepped = frames });
+    }
+
+    /// <summary>Sets the run-speed multiplier. Allowed values: 1, 2, 4, 8.</summary>
+    [HttpPost("speed")]
+    public IActionResult SetSpeed([FromBody] SpeedRequest request)
+    {
+        if (request.Factor is not (1 or 2 or 4 or 8))
+            return BadRequest(new { error = "factor must be one of 1, 2, 4, 8." });
+        Room.SetSpeed(request.Factor);
+        return Ok(new { speed = request.Factor });
+    }
+
+    /// <summary>Returns the current transport state (paused / speed / tick).</summary>
+    [HttpGet("transport")]
+    public IActionResult GetTransport() =>
+        Ok(new { paused = Room.IsPaused, speed = Room.Speed, tick = Room.TickCount });
 
     /// <summary>Spawns a new drone at the specified position.</summary>
     [HttpPost("drone")]
@@ -202,9 +244,12 @@ public sealed class SimController : ControllerBase
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
         var room = Room;
+        using var activity = VizTelemetry.ActivitySource.StartActivity("scenario.run");
+        activity?.SetTag("scenario.name", name);
         room.Reset();
         _scenarios.TryRun(name, room);
         room.NotifyScenario(name);
+        VizTelemetry.ScenariosRun.Add(1);
         _logger.LogInformation("Scenario '{Name}' started in room {RoomId}.", Sanitize(name), room.Id);
         return Ok(new { scenario = name, status = "started" });
     }

@@ -412,4 +412,71 @@ public class SimControllerTests
         ctrl.RunScenario("swarm-5");
         room.GetSnapshot().Should().HaveCount(5);
     }
+
+    // ─── Transport ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Pause_Then_Resume_Toggles_Room_Paused()
+    {
+        var (ctrl, room) = CreateController();
+        (ctrl.Pause() as OkObjectResult).Should().NotBeNull();
+        room.IsPaused.Should().BeTrue();
+        (ctrl.Resume() as OkObjectResult).Should().NotBeNull();
+        room.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Stop_Pauses_And_Start_Resumes()
+    {
+        var (ctrl, room) = CreateController();
+        ctrl.Stop();
+        room.IsPaused.Should().BeTrue();
+        ctrl.Start();
+        room.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Step_DefaultFrames_Returns_Ok_And_Queues_One()
+    {
+        var (ctrl, room) = CreateController();
+        room.Pause();
+        (ctrl.Step(new StepRequest()) as OkObjectResult).Should().NotBeNull();
+        room.Tick();
+        room.TickCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void Step_OutOfRange_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        ctrl.Step(new StepRequest(0)).Should().BeOfType<BadRequestObjectResult>();
+        ctrl.Step(new StepRequest(601)).Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void SetSpeed_Valid_Returns_Ok_And_Sets_Room()
+    {
+        var (ctrl, room) = CreateController();
+        (ctrl.SetSpeed(new SpeedRequest(4)) as OkObjectResult).Should().NotBeNull();
+        room.Speed.Should().Be(4);
+    }
+
+    [Fact]
+    public void SetSpeed_Invalid_Returns_BadRequest()
+    {
+        var (ctrl, _) = CreateController();
+        ctrl.SetSpeed(new SpeedRequest(3)).Should().BeOfType<BadRequestObjectResult>();
+        ctrl.SetSpeed(new SpeedRequest(16)).Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void GetTransport_Returns_Ok()
+    {
+        var (ctrl, room) = CreateController();
+        room.Pause();
+        room.SetSpeed(2);
+        var result = ctrl.GetTransport() as OkObjectResult;
+        result.Should().NotBeNull();
+        result!.StatusCode.Should().Be(200);
+    }
 }
