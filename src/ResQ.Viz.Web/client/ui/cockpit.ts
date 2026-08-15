@@ -15,6 +15,7 @@
 
 import * as THREE from 'three';
 
+import './cockpit.css';
 import type { DroneState } from '../types';
 import { isDroneReady } from '../types';
 import {

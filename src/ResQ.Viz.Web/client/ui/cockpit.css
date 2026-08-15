@@ -1,0 +1,97 @@
+/* Selected-drone cockpit (flight instruments) styles.
+ *
+ * Lives with the cockpit module (imported by ui/cockpit.ts) rather than in the
+ * global stylesheet, so it ships in the lazy cockpit chunk — the cockpit is an
+ * opt-in overlay (default off), and keeping its CSS out of the entry bundle
+ * holds the index-*.css within the CI bundle budget. Design tokens (var(--*))
+ * resolve globally from tokens.css regardless of which chunk defines them.
+ */
+
+/* Compact strip of dials for the selected drone. No id/status header — the
+   Inspector already carries that — so it stays a slim instrument row. */
+.cockpit {
+  position: fixed;
+  /* Transparent band spanning the free lane between the left stack (sidebar +
+     dock + event log) and the right stack (compass + minimap). It only lays out
+     and centres the panel — the panel (.cockpit-row) carries the chrome — so the
+     band edges clear both clusters at every width without over-constraining. */
+  left: calc(var(--sidebar-w) + 316px);
+  right: 336px;
+  bottom: calc(var(--dvr-h) + 16px);
+  z-index: 430;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transition: left var(--t-mid) var(--ease);
+}
+.cockpit.hidden { display: none; }
+
+.cockpit-row {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 100%;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}
+.cockpit:not(.hidden) .cockpit-row { animation: cockpit-in var(--t-mid) var(--ease); }
+@keyframes cockpit-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cockpit-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+.cockpit-cap {
+  font-family: var(--mono);
+  font-size: 7.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+/* Instrument dial wrapper (SVG sized by CSS; see ui/instruments.ts). */
+.instrument {
+  width: 64px;
+  height: 64px;
+  display: block;
+  user-select: none;
+}
+.instrument svg { display: block; width: 100%; height: 100%; }
+/* The attitude indicator fills its viewBox with sky/ground rects, so unlike the
+   other dials (whose circular tick rings leave transparent corners) it needs an
+   explicit round clip to match them. */
+.instrument--attitude { border-radius: 50%; overflow: hidden; }
+
+/* Cockpit responsive rules — these MUST come after the base .cockpit /
+   .instrument rules above; at equal specificity the later rule wins, so placing
+   them before the base rules would be a no-op. */
+@media (max-width: 1280px) {
+  .cockpit { right: 236px; }            /* wind compass hidden → widen the lane */
+  .instrument { width: 52px; height: 52px; }
+  .cockpit-row { gap: 9px; }
+}
+@media (max-width: 1080px) {
+  /* Lane too tight beside the sidebar — float the opt-in cockpit centred over
+     the scene, lifted above the event log so it doesn't cover it. */
+  .cockpit { left: 12px; right: 12px; bottom: calc(var(--dvr-h) + 118px); }
+  .instrument { width: 48px; height: 48px; }
+}
+@media (max-width: 720px) {
+  .cockpit-row { padding: 7px 9px; gap: 8px; }
+  .instrument { width: 44px; height: 44px; }
+}
