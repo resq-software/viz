@@ -3,8 +3,10 @@
 
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostFx } from './postfx';
 import { UnityCamera } from './cameraControl';
+<<<<<<< HEAD
 import { updateWaterSunDirection } from './water';
 import { getLogger } from './log';
 import {
@@ -43,13 +45,16 @@ const MAX_SHADOW_DISTANCE_M = 3400;
 const SHADOW_MAP_SIZE = 4096;
 
 const log = getLogger('scene');
+=======
+import { sunDirection, SUN_COLOR } from './lighting';
+>>>>>>> origin/main
 
-// Leading-edge + trailing-edge throttle. `@resq-sw/rate-limiting` offers
+// Leading-edge + trailing-edge throttle. `@resq-systems/rate-limiting` offers
 // this API but imports `@upstash/ratelimit` at module load for its
 // rate-limiter code path (not used here — viz only needs throttle). That
 // peer would bundle ~420 KB of unused code or require a resolve-alias
 // shim. 15 lines of local throttle is the right trade for one call site.
-// `effect@beta` stays installed so future `@resq-sw/*` adoptions that
+// `effect@beta` stays installed so future `@resq-systems/*` adoptions that
 // don't pull `@upstash/*` can import directly.
 function throttle<A extends unknown[]>(fn: (...args: A) => void, waitMs: number): (...args: A) => void {
     let lastCall  = 0;
@@ -83,14 +88,16 @@ export class Scene {
     private _fps: number = 0;
     private _fpsAccum: number = 0;
     private readonly _tickCallbacks: Array<(dt: number) => void> = [];
+    // Run after the main composer render each frame — for overlays that draw
+    // directly onto the canvas (e.g. the onboard-camera picture-in-picture,
+    // which scissor-renders the scene from a second camera into a corner).
+    private readonly _postRenderCallbacks: Array<() => void> = [];
     private _postFx!: PostFx;
     private _sky!: Sky;
-    private _sun!: THREE.DirectionalLight;
-    private _pmrem!: THREE.PMREMGenerator;
-    private _envRT: THREE.WebGLRenderTarget | null = null;
     // Single source of truth for the sun. Sky, directional light, water glint,
     // and the PBR environment map are all derived from this so the visible
     // sun, the cast shadows, and the surface lighting stay in agreement.
+<<<<<<< HEAD
     private readonly _sunDir = new THREE.Vector3();
     private _sunElevDeg    = DEFAULT_SUN_ELEVATION_DEG;
     private _sunAzimuthDeg = DEFAULT_SUN_AZIMUTH_DEG;
@@ -98,6 +105,8 @@ export class Scene {
     // a ladder step, not every frame — see `_updateShadowFrustum`.
     private _shadowExtent = 0;
     private readonly _shadowCenter = new THREE.Vector3();
+=======
+>>>>>>> origin/main
     private readonly _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     private _markerMesh: THREE.Mesh | null = null;
     private _markerTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -109,7 +118,10 @@ export class Scene {
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type      = THREE.PCFShadowMap;
         this.renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = 1.0;
+        // Lifted from 1.0: with the flat fill ambient dropped and the env-probe
+        // IBL + a stronger directional sun now carrying the scene, a touch more
+        // exposure keeps midtones bright without blowing the snow highlights.
+        this.renderer.toneMappingExposure = 1.12;
         this.renderer.setClearColor(0x8ab8d4);
         container.appendChild(this.renderer.domElement);
 
@@ -126,7 +138,6 @@ export class Scene {
 
         this._cam = new UnityCamera(this._camera, this.renderer.domElement);
 
-        this._computeSunDir();
         this._initSky();
         this._initLights();
         this._initHelpers();
@@ -144,6 +155,7 @@ export class Scene {
         window.addEventListener('resize', throttle(() => this._onResize(), 100));
     }
 
+<<<<<<< HEAD
     private _computeSunDir(): void {
         // Spherical → cartesian using the Sky addon's convention. The maths
         // lives in ./lighting so it is unit-testable without a WebGL context;
@@ -227,6 +239,8 @@ export class Scene {
         this._sun.target.updateMatrixWorld();
     }
 
+=======
+>>>>>>> origin/main
     private _initSky(): void {
         const sky = new Sky();
         sky.scale.setScalar(40000);
@@ -234,23 +248,45 @@ export class Scene {
         this._sky = sky;
 
         const uniforms = sky.material.uniforms;
-        uniforms['turbidity']!.value          = 4;
-        uniforms['rayleigh']!.value           = 0.8;
+        // Bluer, deeper sky than the prior pale (turbidity 4 / rayleigh 0.8)
+        // wash. Lower turbidity clears the horizon haze; higher rayleigh
+        // deepens the zenith blue so the terrain sits under a real sky, not a
+        // flat grey dome. mieG keeps a soft (not pinpoint) sun disc + glow.
+        // Bluer, deeper sky than the prior pale wash. NOTE: turbidity above ~4
+        // blows the sky out to a milky white-out that the pale terrain washes
+        // into — keep it low. Atmospheric depth comes from fog + cloud shadows,
+        // not from cranking sky haze.
+        uniforms['turbidity']!.value          = 3.2;
+        uniforms['rayleigh']!.value           = 1.6;
         uniforms['mieCoefficient']!.value     = 0.005;
-        uniforms['mieDirectionalG']!.value    = 0.92;
-        uniforms['sunPosition']!.value.copy(this._sunDir);
+        uniforms['mieDirectionalG']!.value    = 0.86;
 
-        // Environment map is baked FROM the Sky (not RoomEnvironment) so PBR
-        // reflections pick up the real sky colour and sun position — the
-        // RoomEnvironment had no relationship to the visible sky.
-        this._pmrem = new THREE.PMREMGenerator(this.renderer);
-        this._pmrem.compileEquirectangularShader();
-        this._bakeEnvFromSky();
+        // One canonical sun direction, shared with the DirectionalLight and the
+        // Water specular via ./lighting — see that module for why this used to
+        // be three disagreeing vectors.
+        const sun = sunDirection();
+        uniforms['sunPosition']!.value.copy(sun);
+
+        // Image-based lighting probe. Rendered from RoomEnvironment (a neutral
+        // studio box), NOT from the Sky mesh: running the PMREM pass over the
+        // procedural Sky shader corrupts GL state on software-GL stacks and
+        // leaves the live sky rendering solid black. RoomEnvironment gives every
+        // PBR surface (terrain, rock, buildings, drones, water) soft specular
+        // fill and works everywhere. The sky's *colour* still reaches the scene
+        // through the retuned hemisphere + ambient fill in _initLights.
+        const pmrem = new THREE.PMREMGenerator(this.renderer);
+        const envRT = pmrem.fromScene(new RoomEnvironment());
+        this.scene.environment = envRT.texture;
+        // Scale the probe's contribution so it fills shadows without flattening
+        // the directional sun's contrast (default 1.0 washed everything out).
+        this.scene.environmentIntensity = 0.55;
+        pmrem.dispose();
 
         // Sky mesh handles background — ensure no solid color overwrites it
         this.scene.background = null;
     }
 
+<<<<<<< HEAD
     /**
      * Re-bake the PBR environment map from the current Sky state. The Sky mesh
      * is temporarily reparented into a throwaway scene because
@@ -309,13 +345,29 @@ export class Scene {
         }
     }
 
+=======
+>>>>>>> origin/main
     private _initLights(): void {
-        const ambient = new THREE.AmbientLight(0x3a4a5a, 0.8);
+        // FILL now comes mostly from the environment IBL probe
+        // (scene.environment) set in _initSky, so the heavy flat fill ambient —
+        // the main cause of the washed-out, contrast-free look — is cut right
+        // back. A whisker of cool ambient just keeps deep shadows off pure
+        // black; the env probe + hemisphere do the real shadow fill.
+        const ambient = new THREE.AmbientLight(0x5b6a7a, 0.22);
         this.scene.add(ambient);
 
+<<<<<<< HEAD
         const sun = new THREE.DirectionalLight(0xfff8e7, 1.8);
         this._sun = sun;
         this._positionSun();
+=======
+        // Directional sun aligned to the visible Sky disc and Water specular.
+        // Intensity lifted 1.8 → 2.6 to carry the scene now that flat ambient
+        // no longer floods every surface — this is what puts the light/shadow
+        // contrast back into the terrain relief.
+        const sun = new THREE.DirectionalLight(SUN_COLOR, 2.6);
+        sun.position.copy(sunDirection()).multiplyScalar(1500);
+>>>>>>> origin/main
         sun.castShadow = true;
         sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
         // The frustum is not fixed. A ±800 m box on a 4000 m world leaves ~84 %
@@ -329,7 +381,11 @@ export class Scene {
         this.scene.add(sun);
         this.scene.add(sun.target);
 
-        const hemi = new THREE.HemisphereLight(0x224488, 0x1a2e1a, 0.5);
+        // Sky/ground hemisphere adds a directional tint to the fill the IBL
+        // probe can't (cool sky-blue from above, warm earth bounce from below).
+        // Trimmed well down so it complements rather than competes with the
+        // env probe.
+        const hemi = new THREE.HemisphereLight(0x8fb2d8, 0x4a4030, 0.45);
         this.scene.add(hemi);
     }
 
@@ -356,12 +412,23 @@ export class Scene {
             // frustum follows the view.
             this._updateShadowFrustum();
             this._postFx.render();
+            for (const cb of this._postRenderCallbacks) cb();
         };
         requestAnimationFrame(loop);
     }
 
     addTickCallback(fn: (dt: number) => void): void {
         this._tickCallbacks.push(fn);
+    }
+
+    /**
+     * Register a callback that runs after the main composer render each frame.
+     * Use for canvas overlays drawn with the renderer directly (scissor views);
+     * such a callback must restore renderer viewport/scissor state before
+     * returning so the next frame's composer renders full-screen.
+     */
+    addPostRenderCallback(fn: () => void): void {
+        this._postRenderCallbacks.push(fn);
     }
 
     getIntersections(clientX: number, clientY: number, objects: THREE.Object3D[]): THREE.Intersection[] {
@@ -388,6 +455,21 @@ export class Scene {
     /** Attach camera follow to a scene object (pass null to release). */
     followObject(obj: THREE.Object3D | null): void {
         this._cam.followObject(obj);
+    }
+
+    /** Chase-follow an object (camera behind its heading, looking forward). Pass null to release. */
+    chaseObject(obj: THREE.Object3D | null): void {
+        this._cam.chaseObject(obj);
+    }
+
+    /** FPV / onboard view: ride at the object's nose looking forward. Pass null to release. */
+    fpvObject(obj: THREE.Object3D | null): void {
+        this._cam.fpvObject(obj);
+    }
+
+    /** Set the camera's vertical field of view (deg) — FPV widens it for an immersive feed. */
+    setCameraFov(deg: number): void {
+        this._cam.setFov(deg);
     }
 
     get isFollowing(): boolean { return this._cam.isFollowing; }
@@ -448,6 +530,7 @@ export class Scene {
         });
     }
 
+<<<<<<< HEAD
     /**
      * Reposition the sun (degrees: elevation above horizon, azimuth around Y).
      * Updates the Sky, the directional light, the water glint, and re-bakes the
@@ -474,6 +557,8 @@ export class Scene {
         this.renderer.toneMappingExposure = v;
     }
 
+=======
+>>>>>>> origin/main
     getTerrainIntersection(clientX: number, clientY: number, groundMesh?: THREE.Mesh | null): THREE.Vector3 | null {
         const rect   = this.renderer.domElement.getBoundingClientRect();
         const ndc    = new THREE.Vector2(

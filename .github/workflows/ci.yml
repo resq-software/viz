@@ -44,7 +44,17 @@ jobs:
       dotnet-solution: ResQ.Viz.sln
       codeql-languages: '["csharp"]'
       submodules: recursive
-    secrets: inherit
+    # No `secrets:` block on purpose (zizmor secrets-inherit). required.yml
+    # declares no `workflow_call` secrets, so they cannot be forwarded by name;
+    # it only relays them to security-scan.yml, where each is gated behind an
+    # `enable-*` input. This call leaves enable-semgrep / enable-gitleaks /
+    # enable-snyk / enable-vet at their `false` defaults — those jobs report
+    # "skipping" on every run — so nothing downstream reads a secret. CodeQL,
+    # osv-scanner, dependency-review, zizmor and actionlint need none; they use
+    # the automatic GITHUB_TOKEN, which `permissions:` above grants directly.
+    # Semgrep runs on this repo via security.yml, which forwards its token by
+    # name. Enabling a secret-backed scanner here means declaring the secret in
+    # required.yml upstream first.
 
   # ── Frontend (TypeScript / Vite) — via org reusable ──────────────────
   # Consumes node-ci.yml directly (not via required.yml) because
@@ -65,7 +75,9 @@ jobs:
       typecheck-cmd: npx tsc --noEmit
       build-cmd: npx vite build
       timeout-minutes: 10
-    secrets: inherit
+    # No `secrets:` block on purpose (zizmor secrets-inherit): node-ci.yml
+    # declares no `workflow_call` secrets and reads none, so `secrets: inherit`
+    # handed it every secret this repo can see in exchange for nothing.
 
   # ── Bundle-size budget + artifact upload (companion) ─────────────────
   # The reusable node-ci doesn't expose bundle outputs or artifact
@@ -89,7 +101,7 @@ jobs:
       BUNDLE_CSS_BUDGET_BYTES: '51200'    # 50 KB
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2
         with:
           egress-policy: audit
 

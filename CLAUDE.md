@@ -17,16 +17,16 @@
 ## Commands
 ```bash
 # Backend (.NET 10)
-dotnet run   --project src/ResQ.Viz.Web/         # Run the viz server (Vite dev server proxied in Debug)
+dotnet run   --project src/ResQ.Viz.Web/         # Run the viz server (auto-starts & proxies Vite when ASPNETCORE_ENVIRONMENT=Development)
 dotnet build --project src/ResQ.Viz.Web/         # Build
 dotnet test  tests/ResQ.Viz.Web.Tests/           # Run tests
 dotnet format ResQ.Viz.sln --verify-no-changes   # Format check (CI parity)
 
-# Frontend (TS + Vite)
-cd src/ResQ.Viz.Web/client && npm install        # Install client deps
-npm run dev                                      # Standalone Vite dev server
-npm run build                                    # tsc --noEmit + vite build → ../wwwroot
-npm run typecheck                                # tsc --noEmit
+# Frontend (TS + Vite) — npm root is src/ResQ.Viz.Web/; vite.config sets root:'client', outDir:'../wwwroot'
+cd src/ResQ.Viz.Web && npm install               # Install client deps
+npm run dev                                       # Standalone Vite dev server (usually unneeded — dotnet run in Development launches & proxies it)
+npm run build                                     # tsc --noEmit + vite build → src/ResQ.Viz.Web/wwwroot
+npm run typecheck                                 # tsc --noEmit
 
 # Submodule
 git submodule update --init --recursive          # Init SDK submodule
@@ -38,11 +38,11 @@ git submodule update --init --recursive          # Init SDK submodule
 - `VizHub` (SignalR) broadcasts frames to connected browsers at 10 Hz
 - Frontend: Three.js renders drones, trails, hazards, mesh links, procedural terrain
 - REST API (`/api/sim/*`) for spawning drones, sending commands, changing weather
-- In Release builds, `Vite.AspNetCore` runs `npm run build` as an MSBuild target and serves `wwwroot/index.html` as the SPA fallback; in Debug, `UseViteDevelopmentServer()` proxies to a live Vite dev process.
+- In Release builds, `Vite.AspNetCore` runs `npm run build` as an MSBuild target and serves `wwwroot/index.html` as the SPA fallback; when `ASPNETCORE_ENVIRONMENT=Development`, `UseViteDevelopmentServer()` starts a Vite child process and proxies to it. This is gated on the **environment**, not the build config — a Debug build launched in Production still serves the prebuilt `wwwroot`.
 
 ## Standards
 - .NET 10, ASP.NET Core
-- Frontend: TypeScript 6 + Vite 8, Three.js 0.184 (npm), `@microsoft/signalr` 10 (npm; lazy-loaded chunk — see `client/app.ts`) — no CDN
+- Frontend: TypeScript 7 + Vite 8, Three.js 0.185 (npm), `@microsoft/signalr` 10 (npm; lazy-loaded chunk — see `client/app.ts`) — no CDN
 - Tests: xUnit + FluentAssertions
 - All C# files: Apache-2.0 license header, XML doc comments on public APIs
 

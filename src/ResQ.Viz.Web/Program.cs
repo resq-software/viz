@@ -6,6 +6,10 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Vite.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -39,6 +43,34 @@ builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
+
+// ── OpenTelemetry ────────────────────────────────────────────────────────────
+// Traces (ASP.NET Core requests + HttpClient + our ActivitySource) and metrics
+// (ASP.NET Core + runtime + our Meter), exported via OTLP. The OTLP exporter is
+// added ONLY when OTEL_EXPORTER_OTLP_ENDPOINT is set, so dev/CI runs collect but
+// don't export (no dead-localhost retry spam); on the host, set that env to ship
+// to an OTel collector / Tempo (traces) + Prometheus-OTLP (metrics).
+var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: ResQ.Viz.Web.Services.VizTelemetry.ServiceName))
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddSource(ResQ.Viz.Web.Services.VizTelemetry.ServiceName)
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation();
+        if (!string.IsNullOrEmpty(otlpEndpoint)) tracing.AddOtlpExporter();
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddMeter(ResQ.Viz.Web.Services.VizTelemetry.ServiceName)
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddRuntimeInstrumentation();
+        if (!string.IsNullOrEmpty(otlpEndpoint)) metrics.AddOtlpExporter();
+    });
 
 // Forwarded headers: when deployed behind a reverse proxy (nginx, Cloudflare,
 // load balancer), the proxy MUST be added to KnownProxies/KnownNetworks via
@@ -111,7 +143,7 @@ app.Use(async (context, next) =>
         //   - Cloudflare Web Analytics (auto-injected) → script-src incl. the
         //     bootstrap inline-script SHA-256 hash + connect-src for beacon ingest
         // If a deployment disables Cloudflare Web Analytics or strips a provider
-        // from `@resq-sw/analytics`, prune the corresponding origins.
+        // from `@resq-systems/analytics`, prune the corresponding origins.
         //
         // The Cloudflare beacon inline-script hashes live in
         // <see cref="SecurityConstants.CloudflareBeaconScriptHashes"/> so the

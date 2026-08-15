@@ -221,7 +221,13 @@ export class DroneManager {
     void _ensureGlbProto();
   }
 
-  update(drones: DroneState[], detections: DetectionState[] = []): void {
+  /**
+   * Reconcile drones with a frame. <paramref name="snap"/> places each drone
+   * exactly at the frame's pose instead of lerping toward it — used for DVR
+   * replay/scrubbing so a scrubbed frame renders frame-accurately rather than
+   * smearing as the lerp catches up.
+   */
+  update(drones: DroneState[], detections: DetectionState[] = [], snap = false): void {
     // Stamp detection-flash deadlines for drones that just reported a new
     // detection. Dedupe by detection id so a long-lived detection doesn't
     // re-flash every frame. Trim `_seenDetections` to just the ids
@@ -245,6 +251,15 @@ export class DroneManager {
       seenIds.add(d.id);
       if (!this._drones.has(d.id)) this._add(d);
       this._updateDrone(d);
+      if (snap) {
+        // Replay/scrub: place the drone exactly at the frame's pose so the
+        // lerp in tick() has nothing left to smear.
+        const entry = this._drones.get(d.id);
+        if (entry) {
+          entry.group.position.copy(entry.targetPos);
+          if (entry.targetRot) entry.group.quaternion.copy(entry.targetRot);
+        }
+      }
     }
     for (const [id, entry] of this._drones) {
       if (!seenIds.has(id)) {
@@ -397,6 +412,16 @@ export class DroneManager {
   /** Altitude above ground (m) for a specific drone, or null if unknown. */
   getAglFor(id: string): number | null {
     return this._drones.get(id)?._agl ?? null;
+  }
+
+  /** Heading of the selected drone in radians about +Y (0 = facing +Z), or null.
+   *  Matches the server's `atan2(vx, vz)` convention so client and sim agree. */
+  getSelectedHeading(): number | null {
+    if (!this._selectedId) return null;
+    const entry = this._drones.get(this._selectedId);
+    if (!entry) return null;
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(entry.group.quaternion);
+    return Math.atan2(fwd.x, fwd.z);
   }
 
   /**

@@ -24,6 +24,15 @@ src/ResQ.Viz.Web/wwwroot/
 src/ResQ.Viz.Web/node_modules/
 src/ResQ.Viz.Web/client/node_modules/
 
+# bun. package-lock.json is the authoritative lockfile: CI installs with
+# `npm ci --legacy-peer-deps`, and Dependabot's npm ecosystem only ever updates
+# the npm one. A tracked bun.lock therefore goes stale on every dependency bump
+# with nothing to catch it — it silently drifted through #145 and #146, and
+# `bun install --frozen-lockfile` failed on main. Enforcing it in CI is not an
+# option either: that would fail every Dependabot PR. Local `bun install` still
+# works and regenerates this file; it just is not version-controlled.
+src/ResQ.Viz.Web/bun.lock
+
 # NuGet scratch/cache directories that can appear when restore/build tools run
 NuGetScratch*/
 dotnet-sdk-advertising-temp/

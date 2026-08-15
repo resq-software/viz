@@ -1,4 +1,4 @@
-// ResQ Viz - Structured logger wrapper around @resq-sw/logger
+// ResQ Viz - Structured logger wrapper around @resq-systems/logger
 // SPDX-License-Identifier: Apache-2.0
 //
 // Single entry point for viz client logging. Each module requests a
@@ -10,7 +10,7 @@
 // that forwards warn/error to the backend) happens here without touching
 // the 15+ call sites.
 
-import { Logger, LogLevel } from '@resq-sw/logger';
+import { Logger, LogLevel } from '@resq-systems/logger';
 
 // URL-param override for verbosity. `?log=debug` (and trace, info, warn,
 // error, none) bump the threshold at load time so demos can be quiet and

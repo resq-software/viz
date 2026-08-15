@@ -16,69 +16,16 @@
 
 /* ──────────────────────────────────────────────────────────────────────────
    ResQ Viz · Mission console
-   Industrial dark glass HUD over a live 3D scene. Confident chrome,
-   restrained density, mono numerics. The 3D scene is the hero — surfaces
-   recede behind the data they carry.
+   ResQ Systems design language over a live 3D scene: dark oklch surfaces,
+   ResQ-red brand + primary action, signal-blue for selection/info, Syne
+   display + DM Mono data. Confident chrome, restrained density, no decorative
+   gradients. The 3D scene is the hero — surfaces recede behind the data.
+   Tokens live in tokens.css (vendored from @resq-systems/ui).
    ────────────────────────────────────────────────────────────────────────── */
 
-:root {
-  /* base palette */
-  --bg:           #07090d;
-  --bg-deep:      #04060a;
-  --surface-1:    rgba(13, 17, 23, 0.62);
-  --surface-2:    rgba(15, 21, 30, 0.78);
-  --surface-3:    rgba(20, 27, 38, 0.92);
-  --inset:        rgba(255, 255, 255, 0.04);
-
-  /* lines */
-  --line:         rgba(120, 140, 170, 0.14);
-  --line-strong:  rgba(120, 140, 170, 0.26);
-  --line-accent:  rgba(92, 182, 255, 0.45);
-
-  /* text */
-  --text:         #e6edf3;
-  --text-dim:     #b3bcc8;
-  --text-muted:   #7a8593;
-  --text-faint:   #6b7480;  /* lifted from #4f5866 (2.77:1) to meet WCAG 1.4.3 AA on --bg */
-
-  /* semantic */
-  --accent:       #5cb6ff;
-  --accent-soft:  rgba(92, 182, 255, 0.16);
-  --accent-glow:  rgba(92, 182, 255, 0.45);
-  --success:      #4ed694;
-  --warning:      #f5b53b;
-  --danger:       #ff5d5d;
-  --danger-glow:  rgba(255, 93, 93, 0.4);
-
-  /* effects */
-  --blur-strong:  blur(18px) saturate(1.4);
-  --blur-soft:    blur(10px) saturate(1.2);
-  --shadow-1:     0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-2:     0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 36px rgba(0, 0, 0, 0.55);
-  --ring:         0 0 0 1px var(--line);
-  --ring-strong:  0 0 0 1px var(--line-strong);
-
-  /* radii */
-  --r-1:          4px;
-  --r-2:          8px;
-  --r-3:          12px;
-  --r-4:          16px;
-
-  /* layout */
-  --sidebar-w:    320px;
-  --hud-h:        52px;
-  --gutter:       16px;
-
-  /* type */
-  --mono:         'JetBrains Mono', 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
-  --sans:         'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-
-  /* motion */
-  --ease:         cubic-bezier(0.22, 1, 0.36, 1);
-  --t-fast:       120ms;
-  --t-mid:        220ms;
-  --t-slow:       360ms;
-}
+/* Design tokens (dark oklch palette, fonts, radii) — single source of truth.
+   @import must precede every style rule, so this stays at the top of the sheet. */
+@import './tokens.css';
 
 ::selection { background: var(--accent-soft); color: var(--text); }
 
@@ -139,9 +86,7 @@ button { font-family: inherit; }
   align-items: center;
   gap: 12px;
   padding: 0 16px;
-  background: linear-gradient(180deg,
-    rgba(7, 9, 13, 0.9) 0%,
-    rgba(7, 9, 13, 0.72) 100%);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
@@ -154,17 +99,17 @@ button { font-family: inherit; }
 .hud-zone-right  { justify-self: end; gap: 10px; }
 
 #hud-logo {
-  font-family: var(--sans);
-  font-size: 13px;
+  font-family: var(--display);
+  font-size: 15px;
   font-weight: 800;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   color: var(--text);
   white-space: nowrap;
   user-select: none;
 }
 #hud-logo span {
-  color: var(--accent);
-  margin-left: 2px;
+  color: var(--primary-text);
+  margin-left: 3px;
 }
 
 #hud-conn {
@@ -188,11 +133,11 @@ button { font-family: inherit; }
   box-shadow: 0 0 0 0 transparent;
   transition: background var(--t-mid), box-shadow var(--t-mid);
 }
-.conn-dot.connected    { background: var(--success); box-shadow: 0 0 8px rgba(78, 214, 148, 0.6); }
+.conn-dot.connected    { background: var(--success); box-shadow: 0 0 8px var(--success-glow); }
 .conn-dot.reconnecting { background: var(--warning); animation: pulse-warn 1.4s ease-in-out infinite; }
 @keyframes pulse-warn {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 181, 59, 0.4); }
-  50%      { box-shadow: 0 0 0 6px rgba(245, 181, 59, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 var(--warning-glow); }
+  50%      { box-shadow: 0 0 0 6px transparent; }
 }
 
 /* ── Live stats (drones · fps · t · battery) ───────────────────────────── */
@@ -249,12 +194,12 @@ button { font-family: inherit; }
 #battery-fill {
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, var(--success), #2ee68f);
+  background: var(--success);
   border-radius: 3px;
   transition: width var(--t-slow), background var(--t-slow);
 }
-#battery-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
-#battery-fill.crit { background: linear-gradient(90deg, var(--danger), #ff8a8a); }
+#battery-fill.warn { background: var(--warning); }
+#battery-fill.crit { background: var(--primary); }
 
 #battery-pct {
   font-family: var(--mono);
@@ -275,9 +220,9 @@ button { font-family: inherit; }
   letter-spacing: 0.04em;
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 999px;
+  border-radius: var(--radius-token);
   padding: 4px 12px;
-  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.32), 0 0 12px rgba(92, 182, 255, 0.16);
+  box-shadow: 0 0 0 1px var(--info-glow), 0 0 12px var(--info-soft);
   white-space: nowrap;
   transition: opacity var(--t-mid);
   cursor: default;
@@ -330,7 +275,7 @@ button { font-family: inherit; }
 .hud-toggle.active {
   background: var(--accent-soft);
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px rgba(92, 182, 255, 0.32);
+  box-shadow: inset 0 0 0 1px var(--info-glow);
 }
 
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
@@ -342,9 +287,7 @@ button { font-family: inherit; }
   bottom: 0;
   width: var(--sidebar-w);
   z-index: 100;
-  background: linear-gradient(180deg,
-    rgba(10, 13, 19, 0.78) 0%,
-    rgba(10, 13, 19, 0.68) 100%);
+  background: var(--surface-1);
   border-right: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
@@ -444,9 +387,11 @@ button { font-family: inherit; }
   padding: 7px 12px;
   border-radius: var(--r-1);
   cursor: pointer;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
   white-space: nowrap;
   display: inline-flex;
@@ -458,29 +403,32 @@ button { font-family: inherit; }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Primary action — solid ResQ red, the one loud button on the surface. */
 .btn-primary {
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.32);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: inset 0 0 0 1px var(--primary), 0 6px 18px var(--primary-glow);
 }
 .btn-primary:hover {
-  background: rgba(92, 182, 255, 0.24);
-  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.52), 0 0 12px rgba(92, 182, 255, 0.18);
+  background: oklch(63% 0.1877 24.72);
+  box-shadow: inset 0 0 0 1px var(--primary), 0 8px 22px var(--primary-glow);
 }
 
+/* Go / start — calm green tint. */
 .btn-success {
-  background: rgba(78, 214, 148, 0.14);
+  background: var(--success-soft);
   color: var(--success);
-  box-shadow: 0 0 0 1px rgba(78, 214, 148, 0.32);
+  box-shadow: inset 0 0 0 1px var(--success-soft);
 }
-.btn-success:hover { background: rgba(78, 214, 148, 0.22); }
+.btn-success:hover { background: oklch(73.39% 0.1538 161.68 / 0.24); }
 
+/* Destructive — red outline that stays quiet until hovered (ResQ outline action). */
 .btn-danger {
-  background: rgba(255, 93, 93, 0.12);
-  color: var(--danger);
-  box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.32);
+  background: transparent;
+  color: var(--primary-text);
+  box-shadow: inset 0 0 0 1px var(--primary);
 }
-.btn-danger:hover { background: rgba(255, 93, 93, 0.2); }
+.btn-danger:hover { background: var(--primary-soft); box-shadow: inset 0 0 0 1px var(--primary); }
 
 .btn-block { width: 100%; }
 .btn-row   { display: flex; gap: 6px; }
@@ -520,9 +468,14 @@ input[type='number']:focus,
 input[type='text']:focus,
 select:focus,
 .field-select:focus {
-  outline: none;
+  /* Transparent outline is invisible normally (the box-shadow ring shows the
+     focus), but forced-colors / Windows High Contrast mode strips box-shadow
+     and paints this outline in the system highlight colour — so these inputs
+     keep a visible focus indicator there instead of losing it entirely. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   background: rgba(0, 0, 0, 0.45);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px rgba(92, 182, 255, 0.16);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--info-soft);
 }
 select,
 .field-select {
@@ -561,7 +514,7 @@ input[type='range'] {
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-token);
   font-family: var(--mono);
   font-size: 9px;
   font-weight: 600;
@@ -575,10 +528,10 @@ input[type='range'] {
   border-radius: 50%;
   background: currentColor;
 }
-.badge-flying    { background: rgba(78, 214, 148, 0.14);  color: var(--success);     box-shadow: 0 0 0 1px rgba(78, 214, 148, 0.3); }
-.badge-landed    { background: rgba(120, 140, 170, 0.14); color: var(--text-muted);  box-shadow: 0 0 0 1px rgba(120, 140, 170, 0.3); }
-.badge-emergency { background: rgba(255, 93, 93, 0.14);   color: var(--danger);      box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.32); }
-.badge-armed     { background: var(--accent-soft);        color: var(--accent);      box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.32); }
+.badge-flying    { background: var(--success-soft);      color: var(--success);        box-shadow: inset 0 0 0 1px var(--success-soft); }
+.badge-landed    { background: oklch(100% 0 0 / 0.05);   color: var(--text-muted);     box-shadow: inset 0 0 0 1px var(--border); }
+.badge-emergency { background: var(--primary-soft);      color: var(--primary-text);   box-shadow: inset 0 0 0 1px var(--primary-glow); }
+.badge-armed     { background: var(--info-soft);         color: var(--info);           box-shadow: inset 0 0 0 1px var(--info-glow); }
 
 /* ── Drone detail panel ─────────────────────────────────────────────────── */
 
@@ -647,12 +600,12 @@ input[type='range'] {
 }
 #dp-bat-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--success), #2ee68f);
+  background: var(--success);
   border-radius: 3px;
   transition: width var(--t-slow), background var(--t-slow);
 }
-#dp-bat-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
-#dp-bat-fill.crit { background: linear-gradient(90deg, var(--danger),  #ff8a8a); }
+#dp-bat-fill.warn { background: var(--warning); }
+#dp-bat-fill.crit { background: var(--primary); }
 
 #dp-cmds { display: flex; flex-direction: column; gap: 6px; }
 #dp-cmds .btn { padding: 6px 12px; font-size: 11px; }
@@ -677,7 +630,7 @@ input[type='range'] {
 
 #wind-compass {
   position: fixed;
-  bottom: 18px;
+  bottom: calc(var(--dvr-h) + 14px);
   right: 240px;
   z-index: 150;
   text-align: center;
@@ -750,7 +703,10 @@ input[type='range'] {
    the bottom. All three are restored as soon as hints close. */
 body.hints-open .telemetry-strip,
 body.hints-open .event-log,
-body.hints-open .minimap { display: none; }
+body.hints-open .minimap,
+body.hints-open #wind-compass,
+body.hints-open .resq-pip,
+body.hints-open .cam-mode-pill { display: none; }
 
 .key-hints-header {
   display: flex;
@@ -830,7 +786,7 @@ kbd {
 .terrain-card:hover  { background: rgba(255, 255, 255, 0.05); box-shadow: var(--ring-strong); }
 .terrain-card.active {
   background: var(--accent-soft);
-  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.45), 0 0 14px rgba(92, 182, 255, 0.16);
+  box-shadow: 0 0 0 1px var(--info-glow), 0 0 14px var(--info-soft);
 }
 .terrain-card .tc-icon { font-size: 16px; line-height: 1.1; filter: saturate(0.9); }
 .terrain-card .tc-name {
@@ -855,7 +811,7 @@ kbd {
 .scenario-card:hover  { background: rgba(255, 255, 255, 0.05); box-shadow: var(--ring-strong); }
 .scenario-card.active {
   background: var(--accent-soft);
-  box-shadow: 0 0 0 1px rgba(92, 182, 255, 0.45), 0 0 14px rgba(92, 182, 255, 0.16);
+  box-shadow: 0 0 0 1px var(--info-glow), 0 0 14px var(--info-soft);
 }
 .scenario-card .sc-name {
   font-family: var(--sans);
@@ -898,11 +854,11 @@ kbd {
 #empty-state.hidden { opacity: 0; }
 .es-icon  { font-size: 3rem; opacity: 0.15; }
 .es-title {
-  font-family: var(--sans);
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
 }
 .es-sub   {
   font-family: var(--mono);
@@ -920,19 +876,36 @@ kbd {
   top: var(--hud-h);
   right: 0;
   width: 320px;
-  max-height: calc(100vh - var(--hud-h));
+  /* Stop above the timeline bar so the DVR controls stay usable and don't poke
+     through the panel's lower edge. */
+  max-height: calc(100vh - var(--hud-h) - var(--dvr-h));
   overflow-y: auto;
   background: var(--surface-3);
   border-left: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
-  z-index: 220;
+  /* Above every floating widget (dock 431, minimap/telemetry 420, cockpit 430)
+     so — even before the hide rules apply — nothing pokes through the panel. */
+  z-index: 470;
   transform: translateX(100%);
   transition: transform var(--t-mid) var(--ease);
   padding-bottom: 1rem;
   box-shadow: -16px 0 36px rgba(0, 0, 0, 0.45);
 }
 .settings-panel.open { transform: translateX(0); }
+
+/* While Settings is open, hide the floating widgets the right-edge panel would
+   sit on top of — they carry higher z-indexes and would poke through it.
+   Reacts to the panel's own `.open` class (like the sidebar-collapse rule), so
+   it can't be defeated by a body-class being cleared elsewhere. */
+body:has(#settings-panel.open) .telemetry-strip,
+body:has(#settings-panel.open) .event-log,
+body:has(#settings-panel.open) .minimap,
+body:has(#settings-panel.open) #wind-compass,
+body:has(#settings-panel.open) .resq-pip,
+body:has(#settings-panel.open) .cam-mode-pill,
+body:has(#settings-panel.open) .mission-chrome,
+body:has(#settings-panel.open) .cockpit { display: none; }
 
 .settings-header {
   display: flex;
@@ -946,11 +919,10 @@ kbd {
   z-index: 1;
 }
 .settings-title {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   color: var(--text);
 }
 .settings-close {
@@ -1049,7 +1021,7 @@ kbd {
 }
 .settings-reset-btn:hover {
   color: var(--danger);
-  box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.5);
+  box-shadow: 0 0 0 1px var(--primary-glow);
 }
 
 /* ── Investor mode (screen-recording preset) ────────────────────────────── */
@@ -1150,16 +1122,16 @@ body.partitioned .partition-banner {
   font-weight: 500;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--primary-text);
   margin-bottom: 14px;
   opacity: 0.95;
 }
 .scenario-intro-title {
   display: block;
-  font-family: var(--sans);
+  font-family: var(--display);
   font-weight: 800;
   font-size: clamp(42px, 7vw, 96px);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.01em;
   line-height: 1.02;
   color: var(--text);
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
@@ -1203,10 +1175,10 @@ body.partitioned .partition-banner {
   text-align: center;
 }
 .loading-title {
-  font-family: var(--sans);
+  font-family: var(--display);
   font-weight: 800;
-  font-size: 24px;
-  letter-spacing: 0.22em;
+  font-size: 26px;
+  letter-spacing: 0.04em;
   color: var(--text);
   margin-top: 8px;
 }
@@ -1253,7 +1225,7 @@ body.partitioned .partition-banner {
   box-shadow: 0 0 0 1px var(--danger);
 }
 .loading-overlay.disconnected .loading-retry:hover {
-  background: rgba(255, 93, 93, 0.08);
+  background: var(--primary-soft);
 }
 
 .loading-overlay.disconnected .loading-overlay-inner {
@@ -1276,8 +1248,8 @@ body.partitioned .partition-banner {
   border-radius: 50%;
   animation: resq-ring-spin 1.6s linear infinite;
 }
-.loading-ring-mid   { inset: 10px; border-top-color: rgba(92, 182, 255, 0.55); animation-duration: 2.2s; animation-direction: reverse; }
-.loading-ring-inner { inset: 20px; border-top-color: rgba(92, 182, 255, 0.35); animation-duration: 1.0s; }
+.loading-ring-mid   { inset: 10px; border-top-color: var(--info-glow); animation-duration: 2.2s; animation-direction: reverse; }
+.loading-ring-inner { inset: 20px; border-top-color: var(--info-glow); animation-duration: 1.0s; }
 .loading-overlay.disconnected .loading-ring {
   border-top-color: var(--danger);
   animation-play-state: paused;
@@ -1326,13 +1298,18 @@ body.partitioned .mc-phase { color: var(--danger); }
 
 .event-log {
   position: fixed;
-  top: calc(var(--hud-h) + 16px);
+  /* Bottom-left console — the lowest tier of the left stack: it sits just above
+     the timeline bar, with the sensor-stats overlay tier above it and the
+     height-bounded editor dock above that. Capped so the three never collide. */
+  bottom: calc(var(--dvr-h) + 14px);
   left: calc(var(--sidebar-w) + 16px);
   z-index: 420;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  max-width: 380px;
+  max-width: 300px;
+  max-height: 92px;
+  overflow: hidden;
   pointer-events: none;
   font-family: var(--mono);
   font-size: 11px;
@@ -1341,8 +1318,15 @@ body.partitioned .mc-phase { color: var(--danger); }
   line-height: 1.45;
   transition: left var(--t-mid) var(--ease);
 }
-/* When sidebar is collapsed, hug the canvas edge instead */
-body:has(#sidebar.collapsed) .event-log { left: 16px; }
+/* When the sidebar is collapsed, every surface anchored to its width slides
+   left to reclaim the freed column — not just the event log. */
+body:has(#sidebar.collapsed) .event-log,
+body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
+/* Cockpit lane only exists above the mobile breakpoint (≤1080 it centres over
+   the scene), so scope its collapse-shift there to avoid fighting that rule. */
+@media (min-width: 1081px) {
+  body:has(#sidebar.collapsed) .cockpit { left: 332px; }
+}
 
 .el-row {
   display: flex;
@@ -1382,7 +1366,10 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
 
 .telemetry-strip {
   position: fixed;
-  top: calc(var(--hud-h) + 16px);
+  /* Below the camera-mode pill (which owns the top-right corner). Height is
+     bounded to the upper-right band so a long roster can't spill onto the
+     centred FPV PiP or the bottom-right minimap. */
+  top: calc(var(--hud-h) + 52px);
   right: 16px;
   z-index: 420;
   display: flex;
@@ -1390,7 +1377,7 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
   gap: 4px;
   min-width: 280px;
   max-width: 320px;
-  max-height: calc(100vh - var(--hud-h) - 220px);
+  max-height: calc(45vh - var(--hud-h));
   overflow-y: auto;
   pointer-events: none;
   font-family: var(--mono);
@@ -1428,7 +1415,7 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
 .ts-row.ts-row-selected {
   background: var(--accent-soft);
   border-left-color: var(--accent);
-  box-shadow: inset 0 0 0 1px rgba(92, 182, 255, 0.35), 0 4px 14px rgba(0, 0, 0, 0.32);
+  box-shadow: inset 0 0 0 1px var(--info-glow), 0 4px 14px rgba(0, 0, 0, 0.32);
 }
 
 .ts-chip {
@@ -1449,11 +1436,11 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
 }
 .ts-bat-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--success), #2ee68f);
+  background: var(--success);
   transition: width 0.25s ease, background 0.25s ease;
 }
-.ts-bat-fill.warn { background: linear-gradient(90deg, var(--warning), #ffd166); }
-.ts-bat-fill.crit { background: linear-gradient(90deg, var(--danger),  #ff8a8a); }
+.ts-bat-fill.warn { background: var(--warning); }
+.ts-bat-fill.crit { background: var(--primary); }
 
 .ts-metric {
   color: var(--text-dim);
@@ -1481,7 +1468,7 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
 
 .minimap {
   position: fixed;
-  bottom: 18px;
+  bottom: calc(var(--dvr-h) + 14px);
   right: 16px;
   z-index: 420;
   padding: 7px;
@@ -1502,10 +1489,16 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
 
 .sensor-stats-overlay {
   position: fixed;
-  bottom: 18px;
+  /* Middle tier of the left stack — above the event log, below the dock. */
+  bottom: calc(var(--dvr-h) + 116px);
   left: calc(var(--sidebar-w) + 16px);
   z-index: 420;
   min-width: 220px;
+  max-width: 300px;
+  max-height: 108px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
   padding: 10px 12px;
   background: var(--surface-2);
   border-radius: var(--r-2);
@@ -1552,32 +1545,76 @@ body:has(#sidebar.collapsed) .event-log { left: 16px; }
 .sensor-stats-value.warn { color: var(--warning); font-weight: 600; }
 body.investor-mode .sensor-stats-overlay { display: none !important; }
 
-/* ── Responsive ─────────────────────────────────────────────────────────── */
+/* ── Responsive ─────────────────────────────────────────────────────────────
+   Breakpoint ladder (widest first so narrower rules override): each step sheds
+   the least-essential floating surfaces so the remaining ones keep clear lanes.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Large-desktop → laptop: drop the diagnostic sensor-stats tier and narrow the
+   editor dock (it reclaims the freed vertical space above the event log). The
+   cockpit's centre lane tightens here, so shrink its dials to keep them whole. */
+@media (max-width: 1280px) {
+  .sensor-stats-overlay,
+  #wind-compass { display: none; }
+  /* Editor-dock resize lives in editor.css (that file loads after this one, so
+     its base rules would otherwise win at equal specificity). */
+}
+
+/* Small laptop: the two-column left (sidebar + editor dock) plus the per-drone
+   roster no longer leave a usable centre lane. The editor dock is dropped in
+   editor.css; here we drop the per-drone roster. (Cockpit responsive rules live
+   after its base definition below.) */
+@media (max-width: 1080px) {
+  .telemetry-strip { display: none; }
+}
 
 @media (max-width: 960px) {
   #drone-panel { left: 16px; right: 16px; width: auto; max-width: none; }
-  #wind-compass { right: 16px; }
   .event-log { max-width: calc(100vw - var(--sidebar-w) - 32px); }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   :root { --sidebar-w: 280px; }
-  #sidebar { transform: translateX(-100%); }
+  /* Sidebar becomes an on-demand DRAWER: off-canvas by default (controls.ts
+     collapses it at this breakpoint) and a raised overlay when opened, so it
+     covers the full-width surfaces cleanly instead of sharing the row with them
+     or being poked through (z 460 sits above the DVR/event log/etc.). */
+  #sidebar { transform: translateX(-100%); z-index: 460; }
   #sidebar:not(.collapsed) { transform: translateX(0); }
   #scene-container { left: 0 !important; width: 100% !important; }
 
+  /* Scene + core HUD are the experience; drop the extra floating widgets. */
+  .minimap { display: none; }
+
+  /* Every bottom-left surface spans the full width — the drawer overlays them
+     when open rather than pushing them into a narrow lane. */
   .event-log,
-  .sensor-stats-overlay { left: 16px; }
+  .sensor-stats-overlay { left: 16px; right: 16px; max-width: none; }
 
   #key-hints { width: auto; left: 16px; right: 16px; top: calc(var(--hud-h) + 8px); }
   #key-hints::before { display: none; }
   #key-hints.hidden { transform: scale(0.98) translateY(-6px); }
   .key-hints-grid { grid-template-columns: 1fr; }
 
+  /* HUD sheds low-priority items so its three zones never collide: no connection
+     label, selected-drone chip, sim clock, battery meter, or layer toggles. */
   #hud-stats { gap: 0; }
   .hud-stat { padding: 4px 8px; }
-  .hud-stat-bat #battery-track { width: 40px; }
+  #conn-label,
+  #hud-selected-drone,
+  .hud-stat-bat,
+  .hud-stat:has(#sim-time),
   .hud-zone-right .hud-toggle-group { display: none; }
+}
+
+/* Small phone: the HUD keeps only the wordmark, drone count, and action buttons
+   — drop the connection pill and FPS, and tighten the wordmark + buttons. */
+@media (max-width: 560px) {
+  #hud-conn,
+  .hud-stat:has(#fps) { display: none; }
+  #hud-logo { font-size: 13px; letter-spacing: 0.08em; }
+  .hud-action { width: 26px; }
+  #hud-top { gap: 6px; padding: 0 10px; }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1660,5 +1697,144 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   }
   /* Conn dot reconnect pulse is informational — replace flash with steady dim. */
   .conn-dot.reconnecting { animation: none; opacity: 0.7; }
+  .cockpit:not(.hidden) { animation: none; }
+}
+
+/* ── Selected-drone cockpit (flight instruments) ────────────────────────── */
+
+/* Compact strip of dials for the selected drone. No id/status header — the
+   Inspector already carries that — so it stays a slim instrument row. */
+.cockpit {
+  position: fixed;
+  /* Transparent band spanning the free lane between the left stack (sidebar +
+     dock + event log) and the right stack (compass + minimap). It only lays out
+     and centres the panel — the panel (.cockpit-row) carries the chrome — so the
+     band edges clear both clusters at every width without over-constraining. */
+  left: calc(var(--sidebar-w) + 316px);
+  right: 336px;
+  bottom: calc(var(--dvr-h) + 16px);
+  z-index: 430;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transition: left var(--t-mid) var(--ease);
+}
+.cockpit.hidden { display: none; }
+
+.cockpit-row {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 100%;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}
+.cockpit:not(.hidden) .cockpit-row { animation: cockpit-in var(--t-mid) var(--ease); }
+@keyframes cockpit-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cockpit-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+.cockpit-cap {
+  font-family: var(--mono);
+  font-size: 7.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+/* Instrument dial wrapper (SVG sized by CSS; see ui/instruments.ts). */
+.instrument {
+  width: 64px;
+  height: 64px;
+  display: block;
+  user-select: none;
+}
+.instrument svg { display: block; width: 100%; height: 100%; }
+/* The attitude indicator fills its viewBox with sky/ground rects, so unlike the
+   other dials (whose circular tick rings leave transparent corners) it needs an
+   explicit round clip to match them. */
+.instrument--attitude { border-radius: 50%; overflow: hidden; }
+
+/* Cockpit responsive rules — these MUST come after the base .cockpit /
+   .instrument rules above; at equal specificity the later rule wins, so placing
+   them in the main responsive section (before the base) would be a no-op. */
+@media (max-width: 1280px) {
+  .cockpit { right: 236px; }            /* wind compass hidden → widen the lane */
+  .instrument { width: 52px; height: 52px; }
+  .cockpit-row { gap: 9px; }
+}
+@media (max-width: 1080px) {
+  /* Lane too tight beside the sidebar — float the opt-in cockpit centred over
+     the scene, lifted above the event log so it doesn't cover it. */
+  .cockpit { left: 12px; right: 12px; bottom: calc(var(--dvr-h) + 118px); }
+  .instrument { width: 48px; height: 48px; }
+}
+@media (max-width: 720px) {
+  .cockpit-row { padding: 7px 9px; gap: 8px; }
+  .instrument { width: 44px; height: 44px; }
+}
+
+/* ── Accessibility hardening ─────────────────────────────────────────────────
+   Added by the 2026-08-01 WCAG 2.1 AA audit. */
+
+/* WCAG 2.2 §2.5.8 Target Size (min 24×24). The dismiss/close icon buttons were
+   sized only by font + small padding, landing under 24px tall. Give them a hard
+   floor without changing their glyph or position. */
+#dp-close,
+.key-hints-close,
+.settings-close {
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* WCAG §1.4.11 / §2.4.7 in forced-colors (Windows High Contrast) mode. The glass
+   UI leans on translucency, subtle borders, and box-shadows — all overridden by
+   the OS there — so panels can lose definition and box-shadow focus rings vanish.
+   Restore solid surfaces, system-coloured borders, and a real focus outline. */
+@media (forced-colors: active) {
+  .hud, #hud-top, #sidebar, .settings-panel, #drone-panel, #key-hints,
+  .event-log, .el-row, .minimap, #wind-compass, .cockpit-row, .ro-row,
+  .scenario-card, .terrain-card {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    backdrop-filter: none;
+  }
+  :focus-visible,
+  input:focus, select:focus, .field-select:focus,
+  .scenario-card:focus-visible, .terrain-card:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  /* Pressed/active toggles must stay distinguishable without colour alone. */
+  [aria-pressed="true"], .active { forced-color-adjust: none; outline: 2px solid Highlight; }
+}
+
+/* WCAG §1.4.6 (advisory): give low-vision users who ask for more contrast a
+   brighter dim-text tier and stronger borders. */
+@media (prefers-contrast: more) {
+  :root {
+    --text-faint: var(--muted-foreground);
+    --line: var(--line-strong);
+  }
 }
 

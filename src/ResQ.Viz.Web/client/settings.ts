@@ -31,7 +31,7 @@ const DEFAULTS: SettingsData = {
     batteryWarnPct:     20,
     detectionRingShow:  false,
     shadowsEnabled:     true,
-    showVelocity:       true,
+    showVelocity:       false,
     ssaoEnabled:        true,
     antiTile:           false,   // opt-in: ~9× albedo taps
     contactShadowEnabled: true,
@@ -40,6 +40,8 @@ const DEFAULTS: SettingsData = {
 };
 
 const KEY = 'resq-viz-settings';
+/** Bumped when a persisted default changes; drives the one-time migration below. */
+const SCHEMA_VERSION = 2;
 
 export class Settings {
     private _data: SettingsData;
@@ -49,7 +51,17 @@ export class Settings {
         this._data = { ...DEFAULTS };
         try {
             const raw = localStorage.getItem(KEY);
-            if (raw) Object.assign(this._data, JSON.parse(raw));
+            if (raw) {
+                const { _v, ...stored } = JSON.parse(raw) as Partial<SettingsData> & { _v?: number };
+                Object.assign(this._data, stored);
+                // v2 migration: the X/Y/Z velocity vectors now default OFF (they're
+                // an analysis overlay, not everyday chrome). Clear a stale persisted
+                // `showVelocity: true` once, then respect the user's choice again.
+                if ((_v ?? 1) < SCHEMA_VERSION) {
+                    this._data.showVelocity = DEFAULTS.showVelocity;
+                    this._persist();
+                }
+            }
         } catch { /* ignore */ }
     }
 
@@ -70,6 +82,8 @@ export class Settings {
     }
 
     private _persist(): void {
-        try { localStorage.setItem(KEY, JSON.stringify(this._data)); } catch { /* ignore */ }
+        try {
+            localStorage.setItem(KEY, JSON.stringify({ ...this._data, _v: SCHEMA_VERSION }));
+        } catch { /* ignore */ }
     }
 }

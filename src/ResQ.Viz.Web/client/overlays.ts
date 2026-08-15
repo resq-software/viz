@@ -13,10 +13,11 @@ const _Y_NEG = Object.freeze(new THREE.Vector3( 0, -1,  0));
 const _Z_POS = Object.freeze(new THREE.Vector3( 0,  0,  1));
 const _Z_NEG = Object.freeze(new THREE.Vector3( 0,  0, -1));
 
-/** World units per m/s. */
-const VEL_SCALE     = 3.0;
-/** Maximum arrow length in world units. */
-const VEL_MAX       = 50;
+/** World units per m/s. Kept small so the arrow reads as a vector on the drone
+ *  (body ≈ 6 u) rather than a long streak across the terrain. */
+const VEL_SCALE     = 1.2;
+/** Maximum arrow length in world units (≈ 2.5× the drone body). */
+const VEL_MAX       = 16;
 /** Minimum component magnitude (m/s) to show the arrow. */
 const VEL_THRESHOLD = 0.3;
 
@@ -35,7 +36,9 @@ export class OverlayManager {
 
     // ── Velocity vectors ─────────────────────────────────────────────────
     private readonly _velArrows = new Map<string, VelAxes>();
-    showVelocity = true;
+    // Off by default — the X/Y/Z velocity arrows are an analysis overlay, not
+    // everyday chrome. Re-enabled from persisted settings (app.ts) or the V key.
+    showVelocity = false;
 
     // ── Altitude halos ────────────────────────────────────────────────────
     private readonly _halos = new Map<string, HaloRing>();
@@ -45,7 +48,9 @@ export class OverlayManager {
     private _formLines!: THREE.LineSegments;
     private _formPositions!: Float32Array;
     private readonly MAX_PAIRS = 256;
-    private _showFormation = true;
+    // Off by default — the inter-drone formation lines clutter the scene. Toggle
+    // via the HUD button or the G key.
+    private _showFormation = false;
     get showFormation(): boolean { return this._showFormation; }
     set showFormation(v: boolean) { this._showFormation = v; if (this._formLines) this._formLines.visible = v; }
 
@@ -147,7 +152,7 @@ export class OverlayManager {
     /** Apply scaled length to an ArrowHelper without letting headLength exceed shaft. */
     private _applyLength(arrow: THREE.ArrowHelper, speed: number): void {
         const len     = Math.min(speed * VEL_SCALE, VEL_MAX);
-        const headLen = Math.min(len * 0.3, 5);
+        const headLen = Math.min(len * 0.3, 3);
         const headW   = headLen * 0.5;
         arrow.setLength(len, headLen, headW);
     }

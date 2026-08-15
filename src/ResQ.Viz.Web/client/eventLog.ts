@@ -15,7 +15,7 @@
 const MAX_ROWS = 8;
 const FADE_MS  = 600;
 
-export type EventLevel = 'info' | 'mesh' | 'sar' | 'alert';
+type EventLevel = 'info' | 'mesh' | 'sar' | 'alert';
 
 interface EventOptions {
     level?: EventLevel;
@@ -37,6 +37,16 @@ function clockStamp(d: Date = new Date()): string {
 
 export class EventLog {
     private readonly _el: HTMLDivElement;
+    // Visually-hidden ASSERTIVE region for life-safety hazard entries only.
+    // The visual ticker (`_el`) is polite so routine detections don't interrupt
+    // a screen-reader operator mid-sentence — but a new fire/high-wind hazard is
+    // time-critical for someone directing drones, so it gets its own role="alert"
+    // channel (implicitly assertive) that announces immediately. WCAG 4.1.3.
+    private readonly _alertEl: HTMLDivElement;
+    /** Hazard types seen in the current synchronous pass, flushed as one announcement. */
+    private _pendingAlerts: string[] = [];
+    /** rAF handle for the pending flush, or null when none is scheduled. */
+    private _alertFlush: number | null = null;
 
     constructor() {
         this._el = document.createElement('div');
@@ -45,6 +55,12 @@ export class EventLog {
         this._el.setAttribute('aria-live', 'polite');
         this._el.setAttribute('aria-relevant', 'additions');
         document.body.appendChild(this._el);
+
+        this._alertEl = document.createElement('div');
+        this._alertEl.className = 'sr-only';
+        this._alertEl.setAttribute('role', 'alert');       // implies aria-live=assertive
+        this._alertEl.setAttribute('aria-atomic', 'true');
+        document.body.appendChild(this._alertEl);
 
         document.addEventListener('resq:scenario-start', (ev) => {
             const name = (ev as CustomEvent<{ name: string }>).detail?.name;
@@ -126,8 +142,29 @@ export class EventLog {
         const verb  = kind === 'enter' ? 'detected' : 'cleared';
         const level: EventLevel = kind === 'enter' ? 'alert' : 'mesh';
         this.push(`${type} ${verb}`, { level, tag: 'HAZ' });
+        // Escalate hazard *entries* to the assertive channel so a screen reader
+        // announces the danger immediately. Clear-then-set on the next frame so
+        // an identical consecutive hazard type still re-announces (role="alert"
+        // only fires on a content change).
+        if (kind === 'enter') {
+            // app.ts walks frame.hazards and calls this once per newly-seen hazard
+            // in a single synchronous pass. Scheduling one rAF write per call made
+            // them all land in the same frame, each clobbering the previous, so
+            // only the last hazard was ever announced — dropping information on
+            // the life-safety channel. Buffer the pass and flush it as one message.
+            this._pendingAlerts.push(type);
+            this._alertEl.textContent = '';
+            if (this._alertFlush !== null) return;
+            this._alertFlush = requestAnimationFrame(() => {
+                this._alertFlush = null;
+                const types = this._pendingAlerts;
+                this._pendingAlerts = [];
+                if (types.length === 0) return;
+                this._alertEl.textContent =
+                    types.length === 1
+                        ? `Hazard: ${types[0]} detected`
+                        : `Hazards: ${types.join(', ')} detected`;
+            });
+        }
     }
 }
-
-// Re-export helpers for tests / future callers that want stamps.
-export { clockStamp, FADE_MS };

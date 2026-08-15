@@ -8,6 +8,7 @@
 //   3 COCKPIT   — FPV follow of the selected drone
 //   4 GROUND    — operator eye-level (1.8 m), looking up at the swarm
 //   5 INVESTOR  — delegates to InvestorMode (90s scripted dolly)
+//   6 CHASE     — follow behind the selected drone's heading, looking forward
 
 import * as THREE from 'three';
 import type { Scene } from './scene';
@@ -15,6 +16,9 @@ import type { DroneManager } from './drones';
 import type { InvestorMode } from './investorMode';
 import type { DroneState } from './types';
 import { isDroneReady } from './types';
+
+/** Eased-transition duration when jumping to a framing preset. */
+const PRESET_TWEEN_MS = 600;
 
 interface Deps {
     viz: Scene;
@@ -35,7 +39,7 @@ export class CameraPresets {
         const { center, extent } = this._bounds(positions);
         const dist = Math.max(extent * 2.0, 80);
         const pos = new THREE.Vector3(center.x, center.y + dist * 0.85, center.z + dist * 0.4);
-        this._d.viz.cameraController.setPose(pos, center);
+        this._d.viz.cameraController.setPose(pos, center, { tweenMs: PRESET_TWEEN_MS });
     }
 
     /** TACTICAL: oblique 45° roughly at mesh altitude. */
@@ -50,7 +54,7 @@ export class CameraPresets {
             center.y + dist * 0.55,
             center.z + dist * 0.65,
         );
-        this._d.viz.cameraController.setPose(pos, center);
+        this._d.viz.cameraController.setPose(pos, center, { tweenMs: PRESET_TWEEN_MS });
     }
 
     /** COCKPIT: follow the currently-selected drone. No-op if nothing selected. */
@@ -58,6 +62,13 @@ export class CameraPresets {
         const entry = this._d.droneManager.selectedGroup;
         if (!entry) return;
         this._d.viz.followObject(entry);
+    }
+
+    /** CHASE: follow behind the selected drone's heading, looking forward. No-op if none selected. */
+    chase(): void {
+        const entry = this._d.droneManager.selectedGroup;
+        if (!entry) return;
+        this._d.viz.chaseObject(entry);
     }
 
     /** GROUND: operator eye-level, peering up at the swarm from 1.8 m. */
@@ -69,7 +80,7 @@ export class CameraPresets {
         const offset = Math.max(extent * 1.1, 40);
         const pos = new THREE.Vector3(center.x, 1.8, center.z + offset);
         const target = new THREE.Vector3(center.x, center.y + 8, center.z);
-        this._d.viz.cameraController.setPose(pos, target);
+        this._d.viz.cameraController.setPose(pos, target, { tweenMs: PRESET_TWEEN_MS });
     }
 
     /** INVESTOR: toggle the scripted cinematic dolly (same as Ctrl+Shift+R). */

@@ -17,7 +17,7 @@
 /**
  * Analytics bootstrap for the viz SPA.
  *
- * Vanilla TS (not React) so we use `@resq-sw/analytics`'s framework-
+ * Vanilla TS (not React) so we use `@resq-systems/analytics`'s framework-
  * agnostic `initAnalytics()` directly instead of the `<AnalyticsProvider>`
  * we wired into landing + research. The package's lazy `posthog-js`
  * import + GA4 script injection still happen exactly the same way.
@@ -48,7 +48,10 @@ import {
     RESQ_SUBDOMAIN_ALLOWLIST,
     resolveResqCookieDomain,
     sanitizeGa4Id,
-} from "@resq-sw/analytics";
+} from "@resq-systems/analytics";
+import { getLogger } from "./log";
+
+const log = getLogger("analytics");
 
 /**
  * Boot the analytics singleton once on app start. Safe to call before the
@@ -100,9 +103,8 @@ export function bootstrapAnalytics(): void {
         // singleton's track/identify exports stay safe no-ops on init
         // failure — but surfacing the error here makes prod debugging
         // tractable when, say, a CSP rule blocks the dynamic import.
-        // eslint-disable-next-line no-console -- intentional surface for
-        // ops visibility; gated by the early-return above so it only
-        // fires when at least one analytics key was actually configured.
-        console.warn("[analytics] initAnalytics failed:", err);
+        // Gated by the early-return above so it only fires when at least
+        // one analytics key was actually configured.
+        log.warn("[analytics] initAnalytics failed", { error: err });
     });
 }

@@ -1,43 +1,49 @@
 // ResQ Viz - Typed REST wrapper for /api/sim/*
 // SPDX-License-Identifier: Apache-2.0
 //
-// Thin wrapper over `fetch()` that returns `Result<T, Error>` from
-// `@resq-sw/helpers`. Every REST call in the viz frontend goes through
-// `apiPost` / `apiGet`, so error-handling is uniform and testable.
+// Thin wrapper over `fetch()` that returns a local `Result<T, Error>`. Every
+// REST call in the viz frontend goes through `apiPost` / `apiGet`, so
+// error-handling is uniform and testable.
 //
 // Previously each call site inline-threaded its own `.then(r => if(!r.ok)
 // console.warn(...))` check; this module consolidates that into a single
 // ladder that callers can branch on via `if (res.success) …`.
 
-import { success, failure } from '@resq-sw/helpers';
 import { getLogger } from './log';
 
 const log = getLogger('api');
 
-// Result is the discriminated union the `@resq-sw/helpers` `success` /
-// `failure` constructors return. The upstream package doesn't re-export
-// the type, so we mirror its shape locally — callers branch on
-// `res.success` exactly as with the upstream Result.
+// Result is the discriminated union callers branch on via `res.success`.
+// Kept local rather than imported from `@resq-systems/helpers`: that barrel
+// drags ~73 KB of lodash-backed utilities into the entry chunk just for two
+// one-line constructors (it has no `sideEffects: false` and no result-only
+// subpath), and its 0.5.0 `.d.ts` references an `Awaitable` type its published
+// `@resq-systems/types` dep doesn't export. Re-adopt if/when both are fixed.
 export type Result<T, E> =
     | { readonly success: true;  readonly value: T }
     | { readonly success: false; readonly error: E };
 
-// Thin local wrapper that mirrors `@resq-sw/helpers::catchError` but types
-// cleanly for zero-arg async functions (the upstream generic inference
-// resolves `ExtractAsyncArgs<[]>` to `[never]` and rejects the call with
-// "Expected 2 arguments, but got 1"). Uses the `success` / `failure`
-// constructors from the upstream package so the Result shape is identical.
+// Runs a zero-arg async fn and normalises the outcome into a `Result`,
+// constructing the discriminated union inline. (`catchError` from
+// `@resq-systems/helpers` can't type a zero-arg call anyway — its generic
+// inference resolves `ExtractAsyncArgs<[]>` to `[never]` and rejects with
+// "Expected 2 arguments, but got 1".)
 async function _catch<T>(fn: () => Promise<T>): Promise<Result<T, Error>> {
     try {
-        return success(await fn()) as Result<T, Error>;
+        return { success: true, value: await fn() };
     } catch (err) {
-        return failure(err instanceof Error ? err : new Error(String(err))) as Result<T, Error>;
+        return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
     }
 }
 
 /** HTTP error — thrown by the wrappers when the server returns non-2xx.
  *  `_catch` converts it to a `Failure<Error>` so callers see a uniform
- *  Result shape whether the failure was network-level or HTTP-level. */
+ *  Result shape whether the failure was network-level or HTTP-level.
+ *
+ *  @public Stays exported although no module imports it today: `apiGet` and
+ *  `apiPost` throw it, so a caller that wants to branch on HTTP status needs
+ *  `instanceof ApiHttpError` to narrow. Un-exporting would leave the thrown
+ *  type unnameable outside this module. */
 export class ApiHttpError extends Error {
     constructor(
         readonly status: number,

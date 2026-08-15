@@ -111,6 +111,126 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    public void ManualCommand_IsNotOverridden_ByTheSwarmCoordinator()
+    {
+        // Regression: a user GoTo used to be silently overwritten by the swarm
+        // coordinator's 2 Hz pass, so manual moves changed the drone state only
+        // "briefly and non-lasting". A manual command must now win.
+        var room = CreateRoom();
+        room.SetWeather("calm", 0.0, 0.0);                     // no wind → deterministic drift-free path
+        room.AddDrone("manual", new Vector3(0f, 100f, 500f));
+
+        // GoTo straight along +Z. The coordinator's default patrol waypoint for a
+        // lone drone sits at +X (an octagon vertex), so a drone that keeps heading
+        // +Z with ~zero X proves the coordinator isn't re-commanding it.
+        room.SendCommand("manual", FlightCommand.GoTo(new Vector3(0f, 100f, 1500f)));
+
+        // Advance well past the coordinator's first tick (every 30 steps at 1x).
+        for (var i = 0; i < 120; i++) room.Tick();
+
+        var pos = room.GetSnapshot()[0].Position;
+        pos[0].Should().BeApproximately(0f, 2f,
+            "the manual GoTo is along +Z; the swarm must not pull the drone toward its +X patrol waypoint");
+        pos[2].Should().BeGreaterThan(510f,
+            "the drone should keep progressing toward the manual +Z target");
+    }
+
+    [Fact]
+    public void Drone_FacesDirectionOfTravel()
+    {
+        var room = CreateRoom();
+        room.SetWeather("calm", 0.0, 0.0);
+        room.AddDrone("d", new Vector3(0f, 100f, 0f));
+
+        // Manual GoTo far along +X → the nose (local +Z) should slew to face +X.
+        room.SendCommand("d", FlightCommand.GoTo(new Vector3(1000f, 100f, 0f)));
+        for (var i = 0; i < 120; i++) room.Tick();
+
+        var rot = room.GetSnapshot()[0].Rotation;
+        var q = new Quaternion(rot[0], rot[1], rot[2], rot[3]);
+        var fwd = Vector3.Transform(new Vector3(0f, 0f, 1f), q);
+        Math.Atan2(fwd.X, fwd.Z).Should().BeApproximately(Math.PI / 2, 0.2,
+            "the drone should orient toward its +X travel direction");
+    }
+
+    [Fact]
+    public void HoverWithYaw_RotatesInPlace_WithoutMoving()
+    {
+        var room = CreateRoom();
+        room.SetWeather("calm", 0.0, 0.0);
+        room.AddDrone("d", new Vector3(0f, 100f, 0f));
+        var start = room.GetSnapshot()[0].Position;
+
+        // Hover with a commanded heading of +X (π/2): rotate in place, hold position.
+        room.SendCommand("d", FlightCommand.Hover(Math.PI / 2));
+        for (var i = 0; i < 120; i++) room.Tick();
+
+        var snap = room.GetSnapshot()[0];
+        snap.Position[0].Should().BeApproximately(start[0], 0.5f, "hover holds X");
+        snap.Position[2].Should().BeApproximately(start[2], 0.5f, "hover holds Z");
+        var q = new Quaternion(snap.Rotation[0], snap.Rotation[1], snap.Rotation[2], snap.Rotation[3]);
+        var fwd = Vector3.Transform(new Vector3(0f, 0f, 1f), q);
+        Math.Atan2(fwd.X, fwd.Z).Should().BeApproximately(Math.PI / 2, 0.15,
+            "Hover(yaw) should rotate the drone to the commanded heading in place");
+    }
+
+    [Fact]
+    public void LandedDrone_CanTakeOffAgain_OnNextCommand()
+    {
+        var room = CreateRoom();
+        room.SetWeather("calm", 0.0, 0.0);
+        room.AddDrone("d", new Vector3(0f, 5f, 0f)); // low so it lands quickly
+
+        room.SendCommand("d", FlightCommand.Land());
+        for (var i = 0; i < 400 && room.GetSnapshot()[0].Status != "landed"; i++) room.Tick();
+        room.GetSnapshot()[0].Status.Should().Be("landed", "the drone should reach the ground and land");
+
+        // A non-Land command must re-arm it so it can take off again.
+        room.SendCommand("d", FlightCommand.Hover());
+        room.Tick();
+        room.GetSnapshot()[0].Status.Should().Be("flying",
+            "a non-Land command re-arms a landed drone (fixes the stuck-after-landing bug)");
+    }
+
+    [Fact]
+    public void ResumeAuto_ReturnsAManualDrone_ToSwarmFlight()
+    {
+        // After the operator guides a drone (which detaches it from the swarm),
+        // ResumeAuto must hand it back so it flies autonomously again.
+        var room = CreateRoom();
+        room.SetWeather("calm", 0.0, 0.0);
+        room.AddDrone("d", new Vector3(0f, 100f, 500f));
+
+        // Take manual control along +Z, confirm it's detached (holds the +Z line).
+        room.SendCommand("d", FlightCommand.GoTo(new Vector3(0f, 100f, 1500f)));
+        for (var i = 0; i < 60; i++) room.Tick();
+        room.GetSnapshot()[0].Position[0].Should().BeApproximately(0f, 2f,
+            "still manual — the swarm should not be steering it yet");
+
+        // Hand back to autonomy; the coordinator should re-capture and fly it.
+        room.ResumeAuto("d");
+        for (var i = 0; i < 120; i++) room.Tick();
+        room.GetSnapshot()[0].Position[0].Should().BeGreaterThan(5f,
+            "after ResumeAuto the swarm flies it toward its +X patrol waypoint again");
+    }
+
+    [Fact]
+    public void UnmanagedDrone_IsStillFlown_ByTheSwarmCoordinator()
+    {
+        // The manual-override fix must not disable autonomous flight: a drone that
+        // was never hand-commanded should still be driven along its patrol route.
+        var room = CreateRoom();
+        room.SetWeather("calm", 0.0, 0.0);
+        room.AddDrone("auto", new Vector3(0f, 100f, 500f));
+
+        for (var i = 0; i < 120; i++) room.Tick();
+
+        var pos = room.GetSnapshot()[0].Position;
+        pos[0].Should().BeGreaterThan(5f,
+            "the swarm coordinator should fly an un-commanded drone toward its +X patrol waypoint");
+    }
+
+    [Fact]
     public void Tick_Returns_Broadcast_Flag_Every_Sixth_Step()
     {
         var room = CreateRoom();
@@ -187,5 +307,99 @@ public class SimulationServiceTests
         room.DecrementConnections();
         room.DecrementConnections();
         room.ConnectionCount.Should().Be(0, "floor at zero — cookie replays must not drive the counter negative");
+    }
+
+    // ─── Transport (pause / speed / step) ─────────────────────────────────────
+
+    [Fact]
+    /// <summary>Pausing halts world advancement: ticking a paused room leaves simulation time unchanged.</summary>
+    public void Pause_Stops_World_Advancement()
+    {
+        var room = CreateRoom();
+        for (var i = 0; i < 6; i++) room.Tick();
+        room.Pause();
+        var before = room.TickCount;
+        for (var i = 0; i < 10; i++) room.Tick();
+        room.TickCount.Should().Be(before, "a paused world must not advance");
+        room.IsPaused.Should().BeTrue();
+    }
+
+    [Fact]
+    /// <summary>Resuming after a pause returns the room to advancing simulation time on each tick.</summary>
+    public void Resume_Continues_Advancement()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        room.Tick();
+        var paused = room.TickCount;
+        room.Resume();
+        room.Tick();
+        room.TickCount.Should().BeGreaterThan(paused);
+        room.IsPaused.Should().BeFalse();
+    }
+
+    [Fact]
+    /// <summary>The speed multiplier scales how many fixed steps a single tick advances.</summary>
+    public void SetSpeed_Multiplies_Steps_Per_Tick()
+    {
+        var room = CreateRoom();
+        room.SetSpeed(4);
+        room.Speed.Should().Be(4);
+        room.Tick();
+        room.TickCount.Should().Be(4, "speed 4 advances four world steps per real tick");
+    }
+
+    [Fact]
+    /// <summary>Out-of-range speeds clamp to the supported bounds instead of being applied verbatim.</summary>
+    public void SetSpeed_Clamps_To_Valid_Range()
+    {
+        var room = CreateRoom();
+        room.SetSpeed(999);
+        room.Speed.Should().Be(8, "speed is clamped to the max multiplier");
+        room.SetSpeed(0);
+        room.Speed.Should().Be(1, "speed is clamped to the min multiplier");
+    }
+
+    [Fact]
+    /// <summary>Single-stepping a paused room advances exactly the requested number of frames and no more.</summary>
+    public void StepFrames_Advances_Exactly_While_Paused()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        room.StepFrames(3);
+        // Each Tick consumes one queued step even though the world is paused.
+        room.Tick();
+        room.Tick();
+        room.Tick();
+        room.TickCount.Should().Be(3);
+        // Queue exhausted → the paused world holds.
+        room.Tick();
+        room.TickCount.Should().Be(3, "queued steps exhausted; paused world holds");
+    }
+
+    [Fact]
+    /// <summary>Broadcasts continue at 10 Hz while paused, so a paused client still receives frames and does not appear disconnected.</summary>
+    public void Tick_Broadcasts_At_10Hz_Even_While_Paused()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        var broadcasts = 0;
+        for (var i = 0; i < 12; i++)
+            if (room.Tick().ShouldBroadcast) broadcasts++;
+        broadcasts.Should().Be(2, "broadcast cadence is driven by real ticks, not sim steps");
+        room.TickCount.Should().Be(0, "paused world advanced no steps");
+    }
+
+    [Fact]
+    /// <summary>Reset returns pause and speed to their defaults along with the world itself.</summary>
+    public void Reset_Clears_Transport_State()
+    {
+        var room = CreateRoom();
+        room.Pause();
+        room.SetSpeed(4);
+        room.Reset();
+        room.IsPaused.Should().BeFalse();
+        room.Speed.Should().Be(1);
+        room.TickCount.Should().Be(0);
     }
 }

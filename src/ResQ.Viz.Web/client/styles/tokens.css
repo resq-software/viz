@@ -1,0 +1,148 @@
+/**
+ * Copyright 2026 ResQ Systems, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ResQ Viz · Design tokens
+   Vendored from @resq-systems/ui (design/STYLE_GUIDE.md). Dark-only, oklch.
+   ONE role per accent — red leads the brand, blue carries information.
+   The legacy-bridge block re-drives the console's original token names onto
+   this palette so the whole HUD retints from a single source of truth.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Canonical ResQ tokens ────────────────────────────────────────────── */
+
+  /* Surfaces — deep blue-charcoal, perceptually layered. */
+  --background:        oklch(16.63% 0.0262 269.37);
+  --background-deep:   oklch(12.80% 0.0220 269.00);
+  --surface:          oklch(19.72% 0.0231 268.80);
+  --card:             oklch(22.90% 0.0302 269.75);
+  --popover:          oklch(19.72% 0.0231 268.80);
+
+  /* Borders — visible, non-decorative. */
+  --border:           oklch(26.45% 0.0386 270.81);
+  --border-hover:     oklch(33.52% 0.0487 272.42);
+
+  /* Text tiers — all WCAG AA on background/surface/card. */
+  --foreground:       oklch(96.19% 0.0109 274.89);
+  --muted-foreground: oklch(64.00% 0.0535 266.82);
+  /* Lightness carries extra headroom (was 61.50%): these dim tiers sit on
+     TRANSLUCENT panels (--surface-1, 0.55α) over a bright 3D scene, so the
+     effective background lightens over pale terrain. 68% clears ~5.9:1 on card
+     (vs a bare 4.55:1) so it stays >=4.5 AA even with the glass show-through. */
+  --hint:             oklch(68.00% 0.0478 269.20);
+  --mono-fg:          oklch(68.62% 0.0471 261.10);
+
+  /* Semantic accents — one role each. */
+  --primary:            oklch(58.50% 0.1877 24.72);   /* ResQ Red — brand + primary action */
+  --primary-foreground: oklch(100% 0 0);
+  --primary-text:       oklch(70.00% 0.1877 24.72);   /* red text on dark — 70% L clears ~5.8:1 on card so it holds AA over translucent panels (was 63.5%/4.52:1) */
+  --primary-soft:       oklch(58.50% 0.1877 24.72 / 0.14);
+  --primary-glow:       oklch(58.50% 0.1877 24.72 / 0.45);
+  --destructive:        oklch(58.50% 0.1877 24.72);   /* converges with primary red */
+
+  --info:               oklch(64.20% 0.1560 252.61);  /* Signal Blue — selection / info */
+  --info-soft:          oklch(64.20% 0.1560 252.61 / 0.16);
+  --info-glow:          oklch(64.20% 0.1560 252.61 / 0.45);
+
+  --success:            oklch(73.39% 0.1538 161.68);  /* Status Green */
+  --success-soft:       oklch(73.39% 0.1538 161.68 / 0.16);
+  --success-glow:       oklch(73.39% 0.1538 161.68 / 0.55);
+  --warning:            oklch(78.37% 0.1587 72.99);   /* Warning Amber */
+  --warning-soft:       oklch(78.37% 0.1587 72.99 / 0.16);
+  --warning-glow:       oklch(78.37% 0.1587 72.99 / 0.45);
+
+  /* Data-viz series (charts, multi-series overlays). */
+  --chart-1: var(--primary);
+  --chart-2: var(--info);
+  --chart-3: var(--success);
+  --chart-4: var(--warning);
+  --chart-5: var(--mono-fg);
+
+  /* Radii — ResQ scale: 3px badges, 4px controls, 6px panels. */
+  --radius-token:    3px;
+  --radius-control:  4px;
+  --radius-panel:    6px;
+  --radius-panel-lg: 10px;
+  --radius-overlay:  12px;
+
+  /* Typography — three fonts, one role each. */
+  --font-display: "Syne", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    "DM Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+
+  /* ── Legacy bridge — original console token names, retinted to ResQ ────── */
+
+  /* base palette — surfaces keep light translucency so the 3D scene reads
+     through the chrome (functional, not decorative). */
+  --bg:           var(--background);
+  --bg-deep:      var(--background-deep);
+  --surface-1:    oklch(19.72% 0.0231 268.80 / 0.55);
+  --surface-2:    oklch(20.80% 0.0262 269.00 / 0.80);
+  --surface-3:    oklch(22.90% 0.0302 269.75 / 0.94);
+  --inset:        oklch(100% 0 0 / 0.04);
+
+  /* lines */
+  --line:         oklch(30.00% 0.0400 270.00 / 0.55);
+  --line-strong:  oklch(40.00% 0.0500 271.00 / 0.70);
+  --line-accent:  var(--info-glow);
+
+  /* text */
+  --text:         var(--foreground);
+  --text-dim:     oklch(82.00% 0.0280 270.00);
+  --text-muted:   var(--muted-foreground);
+  --text-faint:   var(--hint);
+
+  /* semantic — blue demoted to "info/interactive"; red is the brand. */
+  --accent:       var(--info);
+  --accent-soft:  var(--info-soft);
+  --accent-glow:  var(--info-glow);
+  --danger:       var(--destructive);
+  --danger-glow:  var(--primary-glow);
+
+  /* effects — trimmed blur, ResQ shadows. */
+  --blur-strong:  blur(16px) saturate(1.3);
+  --blur-soft:    blur(9px) saturate(1.15);
+  --shadow-1:     0 1px 0 oklch(100% 0 0 / 0.04) inset, 0 8px 24px oklch(0% 0 0 / 0.45);
+  --shadow-2:     0 1px 0 oklch(100% 0 0 / 0.05) inset, 0 14px 40px oklch(0% 0 0 / 0.58);
+  --ring:         0 0 0 1px var(--line);
+  --ring-strong:  0 0 0 1px var(--line-strong);
+
+  /* radii — remapped to the ResQ scale (control 4 / panel 6 / large 10 / overlay 12) */
+  --r-1:          var(--radius-control);
+  --r-2:          var(--radius-panel);
+  --r-3:          var(--radius-panel-lg);
+  --r-4:          var(--radius-overlay);
+
+  /* layout */
+  --sidebar-w:    320px;
+  --hud-h:        52px;
+  --dvr-h:        46px;
+  --gutter:       16px;
+
+  /* type — DM Mono data, DM Sans body, Syne display. */
+  --mono:         var(--font-mono);
+  --sans:         var(--font-body);
+  --display:      var(--font-display);
+
+  /* motion */
+  --ease:         cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast:       120ms;
+  --t-mid:        220ms;
+  --t-slow:       360ms;
+}

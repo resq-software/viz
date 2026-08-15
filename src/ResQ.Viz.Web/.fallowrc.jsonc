@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+
+  // Vite resolves the real entry from `client/index.html` (<script type="module"
+  // src="./app.ts">). fallow does not parse HTML, so without this it treats
+  // app.ts — and therefore almost every module it pulls in — as unreachable and
+  // reports ~79% of the client as dead. Same root cause as knip.json's `entry`.
+  "entry": ["client/app.ts", "client/__tests__/*.test.ts"],
+
+  "ignorePatterns": [
+    // Vendored Draco decoder shipped verbatim by three.js; not our source to
+    // refactor, and DRACOLoader.setDecoderPath() loads it at runtime rather
+    // than importing it, so every analyzer calls it unreferenced.
+    "client/public/**",
+    // Vite build output (gitignored). Scanning minified bundles produces
+    // findings against three.js/meshopt internals, not against this repo.
+    "wwwroot/**"
+  ],
+
+  "ignoreDependencies": [
+    // Peer dependency of @resq-sw/analytics (peerDependencies: posthog-js
+    // >=1.180.0), imported dynamically inside that package. viz must declare it
+    // so the lazy import resolves; no viz module imports it by name, which is
+    // exactly what makes it look unused here.
+    "posthog-js"
+  ],
+
+  "ignoreDependencyOverrides": [
+    // `overrides` here is npm's field, not pnpm's, and every entry is a
+    // deliberate CVE pin forcing a patched version of a transitive package.
+    // fallow evaluates overrides with pnpm semantics against a pnpm lockfile
+    // this repo does not have, so it reports them as targeting nothing.
+    // Dropping any of them would silently un-pin a vulnerable transitive dep.
+    { "package": "@opentelemetry/core", "source": "package.json" },
+    { "package": "dompurify", "source": "package.json" },
+    { "package": "protobufjs", "source": "package.json" },
+    { "package": "uuid", "source": "package.json" },
+    { "package": "ws", "source": "package.json" }
+  ]
+}

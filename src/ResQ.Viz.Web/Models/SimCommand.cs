@@ -22,9 +22,13 @@ namespace ResQ.Viz.Web.Models;
 public record SpawnDroneRequest(float[] Position, string? Model = "quadrotor");
 
 /// <summary>Request body for sending a flight command to an existing drone.</summary>
-/// <param name="Type">Command type: "hover", "goto", "rtl", or "land".</param>
+/// <param name="Type">Command type: "hover", "goto", "rtl", "land", or "auto".</param>
 /// <param name="Target">Target position [X, Y, Z] in metres; required for "goto".</param>
-public record DroneCommandRequest(string Type, float[]? Target = null);
+/// <param name="Yaw">
+/// Optional commanded heading in radians about +Y (0 = facing +Z). Applies to "hover" and
+/// "goto"; when omitted the drone faces its direction of travel.
+/// </param>
+public record DroneCommandRequest(string Type, float[]? Target = null, float? Yaw = null);
 
 /// <summary>Request body for updating the weather simulation parameters.</summary>
 /// <param name="Mode">Weather mode string: "calm", "steady", or "turbulent".</param>
@@ -40,3 +44,11 @@ public record FaultRequest(string DroneId, string Type);
 /// <summary>Request body for toggling the simulated backhaul link.</summary>
 /// <param name="Killed">Set to <see langword="true"/> to simulate backhaul failure (mesh-only mode).</param>
 public record BackhaulRequest(bool Killed);
+
+/// <summary>Request body for advancing the simulation by a number of frames.</summary>
+/// <param name="Frames">Number of single steps to advance (1–600). Works while paused.</param>
+public record StepRequest(int Frames = 1);
+
+/// <summary>Request body for setting the simulation run-speed multiplier.</summary>
+/// <param name="Factor">Speed multiplier: 1, 2, 4, or 8.</param>
+public record SpeedRequest(int Factor);
