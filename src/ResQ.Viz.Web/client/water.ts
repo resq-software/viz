@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { loadTexture } from './assetLoader';
-import { sunDirection, SUN_COLOR } from './lighting';
+import { sunDirection, SUN_COLOR, DEFAULT_SUN_ELEVATION_DEG, DEFAULT_SUN_AZIMUTH_DEG } from './lighting';
 import { getLogger } from './log';
 
 const log = getLogger('water');
@@ -76,7 +76,7 @@ export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: bo
         waterNormals:    _cachedNormals ?? _normalsPlaceholder,
         // Shared canonical sun so the water's specular glint lands where the
         // visible Sky sun and terrain shadows say it should (see ./lighting).
-        sunDirection:    sunDirection(),
+        sunDirection:    sunDirection(DEFAULT_SUN_ELEVATION_DEG, DEFAULT_SUN_AZIMUTH_DEG),
         sunColor:        SUN_COLOR,
         // Caller override kept from main; default is the WIP's deep teal.
         waterColor:      opts.waterColor ?? 0x0e2a3d,
