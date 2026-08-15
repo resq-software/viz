@@ -14,6 +14,18 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    ignore:
+      # The gh-aw setup action is version-locked to the compiler that generated
+      # our *.lock.yml files — bumping it on its own desyncs the body from the
+      # action that materialises its helper scripts, and every agentic workflow
+      # then dies with MODULE_NOT_FOUND. Upgrade via `gh aw compile`, never via
+      # Dependabot.
+      #
+      # The trailing `*` matters: Dependabot names an action by its full path,
+      # so the dependency is `github/gh-aw-actions/setup`. A bare
+      # `github/gh-aw-actions` matches nothing — that silent no-op is exactly
+      # what broke resq-software/crates and resq-software/resQ.
+      - dependency-name: "github/gh-aw-actions*"
     labels: [chore, deps]
     open-pull-requests-limit: 5
   - package-ecosystem: nuget

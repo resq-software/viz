@@ -38,7 +38,12 @@ async function _catch<T>(fn: () => Promise<T>): Promise<Result<T, Error>> {
 
 /** HTTP error — thrown by the wrappers when the server returns non-2xx.
  *  `_catch` converts it to a `Failure<Error>` so callers see a uniform
- *  Result shape whether the failure was network-level or HTTP-level. */
+ *  Result shape whether the failure was network-level or HTTP-level.
+ *
+ *  @public Stays exported although no module imports it today: `apiGet` and
+ *  `apiPost` throw it, so a caller that wants to branch on HTTP status needs
+ *  `instanceof ApiHttpError` to narrow. Un-exporting would leave the thrown
+ *  type unnameable outside this module. */
 export class ApiHttpError extends Error {
     constructor(
         readonly status: number,

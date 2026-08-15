@@ -15,7 +15,7 @@
 const MAX_ROWS = 8;
 const FADE_MS  = 600;
 
-export type EventLevel = 'info' | 'mesh' | 'sar' | 'alert';
+type EventLevel = 'info' | 'mesh' | 'sar' | 'alert';
 
 interface EventOptions {
     level?: EventLevel;
@@ -43,6 +43,10 @@ export class EventLog {
     // time-critical for someone directing drones, so it gets its own role="alert"
     // channel (implicitly assertive) that announces immediately. WCAG 4.1.3.
     private readonly _alertEl: HTMLDivElement;
+    /** Hazard types seen in the current synchronous pass, flushed as one announcement. */
+    private _pendingAlerts: string[] = [];
+    /** rAF handle for the pending flush, or null when none is scheduled. */
+    private _alertFlush: number | null = null;
 
     constructor() {
         this._el = document.createElement('div');
@@ -143,12 +147,24 @@ export class EventLog {
         // an identical consecutive hazard type still re-announces (role="alert"
         // only fires on a content change).
         if (kind === 'enter') {
+            // app.ts walks frame.hazards and calls this once per newly-seen hazard
+            // in a single synchronous pass. Scheduling one rAF write per call made
+            // them all land in the same frame, each clobbering the previous, so
+            // only the last hazard was ever announced — dropping information on
+            // the life-safety channel. Buffer the pass and flush it as one message.
+            this._pendingAlerts.push(type);
             this._alertEl.textContent = '';
-            const msg = `Hazard: ${type} detected`;
-            requestAnimationFrame(() => { this._alertEl.textContent = msg; });
+            if (this._alertFlush !== null) return;
+            this._alertFlush = requestAnimationFrame(() => {
+                this._alertFlush = null;
+                const types = this._pendingAlerts;
+                this._pendingAlerts = [];
+                if (types.length === 0) return;
+                this._alertEl.textContent =
+                    types.length === 1
+                        ? `Hazard: ${types[0]} detected`
+                        : `Hazards: ${types.join(', ')} detected`;
+            });
         }
     }
 }
-
-// Re-export helpers for tests / future callers that want stamps.
-export { clockStamp, FADE_MS };

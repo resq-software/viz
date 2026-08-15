@@ -8,11 +8,9 @@
 //   canyon   — Terrace function + threshold canyon cuts — SW mesa landscape
 //   dunes    — Directional ridge noise — wind-driven sand dunes
 
-import * as THREE from 'three';
-
 // ── Shared value-noise utilities ─────────────────────────────────────────────
 
-export function _h(ix: number, iz: number): number {
+function _h(ix: number, iz: number): number {
     // Wang hash — stable at large integer coords, good distribution
     let n = (((ix * 374761393) ^ (iz * 668265263)) | 0);
     n = Math.imul(n ^ (n >>> 13), 1274126177);
@@ -31,7 +29,7 @@ export function _noise(x: number, z: number): number {
          + _h(ix+1, iz+1) *    ux  *    uz;
 }
 
-export function _fbm(x: number, z: number, octaves: number): number {
+function _fbm(x: number, z: number, octaves: number): number {
     let v = 0, a = 0.5, s = 1;
     for (let i = 0; i < octaves; i++) {
         v += a * _noise(x * s, z * s);
@@ -40,24 +38,37 @@ export function _fbm(x: number, z: number, octaves: number): number {
     return v;  // ≈ [0, 1]
 }
 
+function _smoothstep(edge0: number, edge1: number, x: number): number {
+    const t = Math.min(Math.max((x - edge0) / (edge1 - edge0), 0), 1);
+    return t * t * (3 - 2 * t);
+}
+
 // ── Ridged multifractal noise (Musgrave 1994) ────────────────────────────────
 //   Signal at each octave: 1 - |2n-1|  (ridge peaks where noise ≈ 0.5)
 //   Each octave weighted by previous signal — ridges reinforce across scales.
 
-export function _ridged(
+function _ridged(
     x: number, z: number, octaves: number,
-    lacunarity = 2.17, gain = 1.8,
+    lacunarity = 2.0, gain = 1.9,
 ): number {
-    let value = 0, weight = 1;
+    // Ridged multifractal with SPECTRAL AMPLITUDE DECAY: each octave's
+    // amplitude halves, so high-frequency octaves only add fine detail. Without
+    // the decay the octaves stacked equally into a field of sharp spikes
+    // ("stalagmites") instead of coherent ridges. `weight` carries the
+    // multifractal crest-sharpening; `norm` keeps the result in ≈[0, 1].
+    let sum = 0, norm = 0, freq = 1, amp = 0.5, weight = 1;
     for (let i = 0; i < octaves; i++) {
-        const freq   = lacunarity ** i;
-        const n      = _noise(x * freq, z * freq);
-        const signal = 1 - Math.abs(n * 2 - 1);        // 0=valley, 1=ridge
-        const s2     = signal * signal * weight;
-        value  += s2;
-        weight  = Math.min(signal * gain, 1);           // next octave rides on this
+        const n  = _noise(x * freq, z * freq);
+        let signal = 1 - Math.abs(n * 2 - 1);          // 0=valley, 1=ridge
+        signal  *= signal;                              // sharpen the crest
+        signal  *= weight;                              // multifractal weighting
+        weight   = Math.min(signal * gain, 1);          // next octave rides on this
+        sum     += signal * amp;
+        norm    += amp;
+        freq    *= lacunarity;
+        amp     *= 0.5;                                 // spectral decay (the fix)
     }
-    return value / octaves;   // ≈ [0, 1]  (theoretical max = 1 per octave)
+    return sum / norm;   // ≈ [0, 1]
 }
 
 // ── Erosion detail ────────────────────────────────────────────────────────────
@@ -97,7 +108,7 @@ function _erode(
 
 export type PresetKey = 'alpine' | 'ridgeline' | 'coastal' | 'canyon' | 'dunes';
 
-export interface Settlement {
+interface Settlement {
     cx: number; cz: number; r: number; count: number;
 }
 
@@ -110,6 +121,10 @@ export interface TerrainPreset {
     readonly heightFn: (x: number, z: number) => number;
     readonly glslBiome: string;   // replaces #include <color_fragment>
     readonly cacheKey: string;
+    // Biome rendering options
+    readonly waterColor?: number;
+    readonly tileScale?: number;
+    readonly normalStrength?: number;
     // Obstacle parameters
     readonly pineCount: number;
     readonly decidCount: number;
@@ -141,12 +156,12 @@ const _ALPINE_BIOME = `
     float flatness = clamp(vWorldNormal.y, 0.0, 1.0);
     float rocky    = smoothstep(0.82, 0.46, flatness);
 
-    vec3 c0 = vec3(0.058, 0.082, 0.038);
-    vec3 c1 = vec3(0.108, 0.198, 0.072);
-    vec3 c2 = vec3(0.168, 0.285, 0.115);
-    vec3 c3 = vec3(0.272, 0.238, 0.155);
-    vec3 c4 = vec3(0.388, 0.365, 0.320);
-    vec3 c5 = vec3(0.870, 0.888, 0.930);
+    vec3 c0 = vec3(0.045, 0.075, 0.032);   // deep forest shadow
+    vec3 c1 = vec3(0.095, 0.185, 0.065);   // mid meadow
+    vec3 c2 = vec3(0.155, 0.272, 0.108);   // light alpine grass
+    vec3 c3 = vec3(0.285, 0.255, 0.205);   // gravelly moraine
+    vec3 c4 = vec3(0.428, 0.405, 0.380);   // dark rock face
+    vec3 c5 = vec3(0.920, 0.935, 0.965);   // bright glacier snow
 
     vec3 biome;
     if      (zone < 0.18) biome = mix(c0, c1, zone / 0.18);
@@ -155,7 +170,13 @@ const _ALPINE_BIOME = `
     else if (zone < 0.81) biome = mix(c3, c4, (zone - 0.63) / 0.18);
     else                  biome = mix(c4, c5, (zone - 0.81) / 0.19);
 
-    biome  = mix(biome, vec3(0.350, 0.332, 0.295), rocky);
+    // Blend craggy slate-granite on steep slopes
+    biome  = mix(biome, vec3(0.24, 0.25, 0.26), rocky);
+
+    // Ambient occlusion: valleys are shaded, peaks are bright
+    float heightAo = clamp((vTerrainWorld.y + 10.0) / 210.0, 0.58, 1.0);
+    biome *= heightAo;
+
     biome *= 0.78 + nd * 0.44;
     biome  = mix(biome * vec3(1.09, 1.0, 0.85), biome * vec3(0.88, 1.0, 1.08), n);
     diffuseColor.rgb = biome;
@@ -174,8 +195,16 @@ function _alpineHeight(x: number, z: number): number {
 
     let peaks = 0;
     for (const [px, pz, ph, pr] of _ALPINE_PEAKS) {
-        const t = 1 - ((x - px) ** 2 + (z - pz) ** 2) / (pr * pr);
-        if (t > 0) peaks += ph * t * t;
+        // Domain warp peak center organically using high-order coordinates
+        const pWarpX = px + _fbm(x * 0.004, z * 0.004, 3) * 55;
+        const pWarpZ = pz + _fbm(x * 0.004 + 12.0, z * 0.004 + 12.0, 3) * 55;
+        const d = Math.sqrt((x - pWarpX) ** 2 + (z - pWarpZ) ** 2);
+        const t = 1 - d / pr;
+        if (t > 0) {
+            // Modulate peak shape with ridged noise for erosion gullies
+            const noiseFactor = 0.55 + 0.45 * _ridged(x * 0.006, z * 0.006, 4);
+            peaks += ph * Math.pow(t, 1.75) * noiseFactor;
+        }
     }
     const base = 22 + large + medium + fine + peaks;
     // Drainage gullies + ribs on the hillsides and up toward the peaks.
@@ -197,11 +226,11 @@ const _RIDGELINE_BIOME = `
     float flatness = clamp(vWorldNormal.y, 0.0, 1.0);
     float rocky    = smoothstep(0.78, 0.38, flatness);   // very steep cliffs common
 
-    vec3 c0 = vec3(0.078, 0.118, 0.050);   // dark valley grass
-    vec3 c1 = vec3(0.048, 0.085, 0.038);   // dense conifer forest
-    vec3 c2 = vec3(0.118, 0.152, 0.080);   // sub-alpine scrub
-    vec3 c3 = vec3(0.305, 0.288, 0.248);   // alpine barren
-    vec3 c4 = vec3(0.888, 0.898, 0.938);   // glacial snow/ice
+    vec3 c0 = vec3(0.055, 0.095, 0.042);   // dark conifer forest shadow
+    vec3 c1 = vec3(0.042, 0.078, 0.032);   // dense conifer canopy
+    vec3 c2 = vec3(0.125, 0.165, 0.088);   // cold sub-alpine turf
+    vec3 c3 = vec3(0.265, 0.245, 0.225);   // cold dark scree/barren
+    vec3 c4 = vec3(0.928, 0.938, 0.958);   // deep pack ice / glacier
 
     vec3 biome;
     if      (zone < 0.22) biome = mix(c0, c1, zone / 0.22);
@@ -210,7 +239,12 @@ const _RIDGELINE_BIOME = `
     else                  biome = mix(c3, c4, (zone - 0.68) / 0.32);
 
     // Dark granite cliffs — very prominent on steep faces
-    biome  = mix(biome, vec3(0.265, 0.252, 0.232), rocky);
+    biome  = mix(biome, vec3(0.18, 0.19, 0.21), rocky);
+
+    // Valley depth shadowing
+    float heightAo = clamp((vTerrainWorld.y + 15.0) / 220.0, 0.50, 1.0);
+    biome *= heightAo;
+
     biome *= 0.75 + nd * 0.50;
     biome  = mix(biome * vec3(1.04, 1.0, 0.92), biome * vec3(0.92, 1.0, 1.06), n);
     diffuseColor.rgb = biome;
@@ -218,7 +252,14 @@ const _RIDGELINE_BIOME = `
 `;
 
 function _ridgelineHeight(x: number, z: number): number {
-    const ridge  = _ridged(x * 0.00075 + 1.1, z * 0.00075 + 0.8, 8) * 195;
+    // Warp coordinates to twist the mountain ridge chain organically
+    const wx = (_fbm(x * 0.0008, z * 0.0008, 3) * 2 - 1) * 130;
+    const wz = (_fbm(x * 0.0008 + 6.3, z * 0.0008 + 2.4, 3) * 2 - 1) * 130;
+    // Lower base frequency → broader, more separated ranges; 5 octaves (the
+    // higher ones now decay away anyway); gentler pow so crests read as long
+    // ridges rather than needle spikes.
+    const rVal   = _ridged((x + wx) * 0.00052 + 1.1, (z + wz) * 0.00052 + 0.8, 5);
+    const ridge  = Math.pow(rVal, 1.15) * 235;
     const base   = (_fbm(x * 0.0022 + 3.1, z * 0.0022 + 7.4, 4) * 2 - 1) * 22;
     const fine   = (_fbm(x * 0.011  + 2.2, z * 0.011  + 5.9, 3) * 2 - 1) *  4;
     // Lighter erosion here — the ridged multifractal already carves valleys;
@@ -245,24 +286,34 @@ const _COASTAL_BIOME = `
     vec2 xz  = vTerrainWorld.xz;
     float n  = _fbm(xz * 0.0055);
     float nd = _fbm(xz * 0.040 + vec2(9.21, 3.74));
-    float zone     = clamp((vTerrainWorld.y + 4.0) / 80.0 + (n - 0.5) * 0.10, 0.0, 1.0);
+    float zone     = clamp((vTerrainWorld.y - 3.0) / 80.0 + (n - 0.5) * 0.10, 0.0, 1.0);
     float flatness = clamp(vWorldNormal.y, 0.0, 1.0);
     float rocky    = smoothstep(0.80, 0.45, flatness);
 
     vec3 c0 = vec3(0.825, 0.722, 0.490);   // sandy beach
-    vec3 c1 = vec3(0.115, 0.260, 0.082);   // lush tropical green
-    vec3 c2 = vec3(0.172, 0.318, 0.132);   // mid-island green
-    vec3 c3 = vec3(0.408, 0.385, 0.345);   // rocky high ground
-    vec3 c4 = vec3(0.848, 0.838, 0.818);   // pale summit
+    vec3 c1 = vec3(0.105, 0.282, 0.068);   // lush tropical green
+    vec3 c2 = vec3(0.155, 0.325, 0.118);   // mid-island green canopy
+    vec3 c3 = vec3(0.388, 0.365, 0.320);   // limestone rocky ground
+    vec3 c4 = vec3(0.868, 0.858, 0.838);   // pale limestone summit
 
     vec3 biome;
-    if      (zone < 0.15) biome = mix(c0, c1, zone / 0.15);
-    else if (zone < 0.50) biome = mix(c1, c2, (zone - 0.15) / 0.35);
-    else if (zone < 0.80) biome = mix(c2, c3, (zone - 0.50) / 0.30);
-    else                  biome = mix(c3, c4, (zone - 0.80) / 0.20);
+    if (vTerrainWorld.y < 3.0) {
+        // Underwater depth gradient: beach sand -> shallow aquamarine -> deep ocean blue
+        float depth = clamp((3.0 - vTerrainWorld.y) / 14.0, 0.0, 1.0);
+        vec3 shallowWater = vec3(0.08, 0.52, 0.58);
+        vec3 deepOcean    = vec3(0.04, 0.15, 0.32);
+        biome = mix(c0, shallowWater, depth);
+        biome = mix(biome, deepOcean, depth * depth);
+    } else {
+        if      (zone < 0.15) biome = mix(c0, c1, zone / 0.15);
+        else if (zone < 0.50) biome = mix(c1, c2, (zone - 0.15) / 0.35);
+        else if (zone < 0.80) biome = mix(c2, c3, (zone - 0.50) / 0.30);
+        else                  biome = mix(c3, c4, (zone - 0.80) / 0.20);
 
-    // White limestone cliffs on steep faces
-    biome  = mix(biome, vec3(0.748, 0.722, 0.688), rocky);
+        // White limestone cliffs on steep faces
+        biome  = mix(biome, vec3(0.68, 0.66, 0.62), rocky);
+    }
+
     biome *= 0.80 + nd * 0.42;
     biome  = mix(biome * vec3(1.06, 1.0, 0.88), biome * vec3(0.90, 1.0, 1.05), n);
     diffuseColor.rgb = biome;
@@ -270,22 +321,26 @@ const _COASTAL_BIOME = `
 `;
 
 function _coastalHeight(x: number, z: number): number {
-    // Island mask: maximum of all island radial falloffs
     let mask = 0;
     for (const [ix, iz, ir] of _ISLANDS) {
-        const t = 1 - ((x - ix) ** 2 + (z - iz) ** 2) / (ir * ir);
+        const dx = x - ix;
+        const dz = z - iz;
+        const angle = Math.atan2(dz, dx);
+        // Multi-frequency radial warping to create complex coastlines (bays/peninsulas)
+        const radWarp = _fbm(x * 0.006, z * 0.006, 3) * 0.22 + 
+                        Math.sin(angle * 5) * 0.05 + 
+                        Math.cos(angle * 9) * 0.02;
+        const d = Math.sqrt(dx * dx + dz * dz) * (1.0 + radWarp);
+        const t = 1 - d / ir;
         if (t > 0) mask = Math.max(mask, t);
     }
 
-    // Organic coastlines: perturb mask with medium-scale noise
-    const perturbN = (_fbm(x * 0.005 + 2.1, z * 0.005 + 0.7, 4) * 2 - 1) * 0.28;
+    const perturbN = (_fbm(x * 0.005 + 2.1, z * 0.005 + 0.7, 4) * 2 - 1) * 0.25;
     const m        = Math.max(0, mask + perturbN);
 
-    // FBM topography — only matters where islands exist
-    const topo = (_fbm(x * 0.0040 + 1.3, z * 0.0040 + 5.2, 5) * 2 - 1) * 62;
-
-    // Beach smoothing: flatten gently near sea level
-    const base = topo * Math.pow(m, 1.3) - 4;
+    const baseHeight = m * 38;
+    const details    = _fbm(x * 0.0035 + 1.3, z * 0.0035 + 5.2, 5) * 26 * m;
+    const base       = baseHeight + details - 2.5;
     // Erode the hillsides but leave beaches/shallows smooth (starts at +8 m).
     return _erode(x, z, base, 5, 8, 55);
 }
@@ -302,12 +357,10 @@ const _CANYON_BIOME = `
     vec2 xz  = vTerrainWorld.xz;
     float n  = _fbm(xz * 0.0050);
     float nd = _fbm(xz * 0.038 + vec2(5.62, 2.91));
-    // Range: -80 to +85 m
-    float zone     = clamp((vTerrainWorld.y + 80.0) / 165.0 + (n - 0.5) * 0.08, 0.0, 1.0);
+    float zone     = clamp((vTerrainWorld.y + 60.0) / 145.0 + (n - 0.5) * 0.08, 0.0, 1.0);
     float flatness = clamp(vWorldNormal.y, 0.0, 1.0);
     float rocky    = smoothstep(0.75, 0.35, flatness);
 
-    // Red sandstone palette — canyon floor to pale caprock
     vec3 c0 = vec3(0.242, 0.148, 0.082);   // canyon floor (dark red-brown)
     vec3 c1 = vec3(0.485, 0.285, 0.148);   // lower canyon wall
     vec3 c2 = vec3(0.572, 0.338, 0.172);   // mid terrace
@@ -315,15 +368,28 @@ const _CANYON_BIOME = `
     vec3 c4 = vec3(0.728, 0.688, 0.582);   // pale caprock / caliche
 
     vec3 biome;
-    if      (zone < 0.20) biome = mix(c0, c1, zone / 0.20);
-    else if (zone < 0.42) biome = mix(c1, c2, (zone - 0.20) / 0.22);
-    else if (zone < 0.65) biome = mix(c2, c3, (zone - 0.42) / 0.23);
-    else                  biome = mix(c3, c4, (zone - 0.65) / 0.35);
+    if (vTerrainWorld.y < -59.0) {
+        // Riverbed mud/clay under the water
+        float depth = clamp((-59.0 - vTerrainWorld.y) / 8.0, 0.0, 1.0);
+        biome = mix(vec3(0.242, 0.148, 0.082), vec3(0.12, 0.08, 0.05), depth);
+    } else {
+        if      (zone < 0.20) biome = mix(c0, c1, zone / 0.20);
+        else if (zone < 0.42) biome = mix(c1, c2, (zone - 0.20) / 0.22);
+        else if (zone < 0.65) biome = mix(c2, c3, (zone - 0.42) / 0.23);
+        else                  biome = mix(c3, c4, (zone - 0.65) / 0.35);
 
-    // Cliff faces: darker terracotta (same family, not grey)
-    biome  = mix(biome, vec3(0.385, 0.228, 0.118), rocky);
+        // Horizontal sedimentary strata bands on cliff faces
+        float strata = sin(vTerrainWorld.y * 0.42) * 0.5 + 0.5;
+        strata += cos(vTerrainWorld.y * 1.35) * 0.18;
+        vec3 cliffColor = vec3(0.385, 0.228, 0.118);
+        cliffColor = mix(cliffColor * 0.82, cliffColor * 1.15, strata);
+        biome  = mix(biome, cliffColor, rocky);
+    }
 
-    // Warm desert light — reduce cool tinting
+    // Canyon depth shading
+    float canyonAo = clamp((vTerrainWorld.y + 60.0) / 140.0, 0.52, 1.0);
+    biome *= canyonAo;
+
     biome *= 0.80 + nd * 0.40;
     biome  = mix(biome * vec3(1.14, 1.0, 0.80), biome * vec3(0.96, 1.0, 0.96), n);
     diffuseColor.rgb = biome;
@@ -331,21 +397,28 @@ const _CANYON_BIOME = `
 `;
 
 function _canyonHeight(x: number, z: number): number {
-    // Base undulating plateau centred around 55 m
-    const base = (_fbm(x * 0.00095 + 1.3, z * 0.00095 + 2.7, 5) * 2 - 1) * 28 + 55;
+    // Broad plateau with more vertical relief, so the gorges read as deep canyons
+    const base = (_fbm(x * 0.00085 + 1.3, z * 0.00085 + 2.7, 5) * 2 - 1) * 45 + 72;
 
-    // Terrace: flat mesa tops with steep cliff edges
-    // Uses smoothstep(0, 0.18, frac) — 82 % of each band is flat mesa
-    const T    = 20;
+    // Sedimentary strata — SUBTLE. Shorter 12 m steps with wide, sloped risers
+    // (50 % of each band, not the old 18 %), then blended only ~55 % with the
+    // smooth base. The old 20 m sheer-riser terrace stacked identical "plates"
+    // that read as stalagmite-like steps; this gives natural stratification.
+    const T    = 12;
     const frac = (((base % T) + T) % T) / T;
-    const step = Math.min(frac / 0.18, 1.0);
-    const sf   = step * step * (3 - 2 * step);   // smoothstep
-    const terraced = base - frac * T + sf * T;
+    const step = Math.min(frac / 0.5, 1.0);
+    const sf   = step * step * (3 - 2 * step);
+    const terracedFull = base - frac * T + sf * T;
+    const terraced = base * 0.45 + terracedFull * 0.55;
 
-    // Canyon cuts: threshold on a medium-scale noise field
-    // Where noise < 0.32, carve a deep canyon (narrow gorge network)
-    const canyonN = _fbm(x * 0.0048 + 7.1, z * 0.0038 + 3.4, 4);
-    const depth   = canyonN < 0.32 ? Math.pow(1 - canyonN / 0.32, 2) * 80 : 0;
+    // Branching gorge network: two warped winding canyons carved deep. Erosion
+    // (on by default) then adds the finer tributaries between them.
+    const warpX = x + _fbm(x * 0.0018, z * 0.0018, 3) * 180;
+    const warpZ = z + _fbm(x * 0.0018 + 8.0, z * 0.0018 + 8.0, 3) * 180;
+    const c1 = Math.abs(_noise(warpX * 0.0013,       warpZ * 0.0013) - 0.5);
+    const c2 = Math.abs(_noise(warpX * 0.0026 + 5.1, warpZ * 0.0026 + 2.3) - 0.5);
+    const carve = Math.max(_smoothstep(0.10, 0.0, c1), _smoothstep(0.06, 0.0, c2) * 0.7);
+    const depth = carve * carve * 110;
 
     // Weather the mesa tops and upper walls; canyon floors (deep, below 0) and
     // lower slopes stay clean so the terrace reads as intentional geology.
@@ -364,43 +437,62 @@ const _DUNES_BIOME = `
     vec2 xz  = vTerrainWorld.xz;
     float n  = _fbm(xz * 0.0040);
     float nd = _fbm(xz * 0.028 + vec2(3.11, 7.42));
-    // Range: -5 to +60 m — gentle
-    float zone = clamp((vTerrainWorld.y + 5.0) / 65.0 + (n - 0.5) * 0.08, 0.0, 1.0);
+    float zone = clamp((vTerrainWorld.y + 25.0) / 85.0 + (n - 0.5) * 0.08, 0.0, 1.0);
 
-    // Sand doesn't form hard cliff faces — no slope rocky overlay
-    // (smoothstep(0.99, 0.98, flatness) ≈ 0 everywhere)
-
-    vec3 c0 = vec3(0.498, 0.435, 0.248);   // inter-dune / oasis
-    vec3 c1 = vec3(0.728, 0.612, 0.368);   // lower sand
+    vec3 c0 = vec3(0.582, 0.518, 0.320);   // damp oasis border
+    vec3 c1 = vec3(0.728, 0.612, 0.368);   // lower dune
     vec3 c2 = vec3(0.815, 0.705, 0.465);   // main dune face
-    vec3 c3 = vec3(0.858, 0.758, 0.542);   // sun-baked dune crest
-    vec3 c4 = vec3(0.882, 0.845, 0.722);   // bleached light-hit sand
+    vec3 c3 = vec3(0.858, 0.758, 0.542);   // windward crest
+    vec3 c4 = vec3(0.882, 0.845, 0.722);   // bleached light sand
 
     vec3 biome;
-    if      (zone < 0.18) biome = mix(c0, c1, zone / 0.18);
-    else if (zone < 0.45) biome = mix(c1, c2, (zone - 0.18) / 0.27);
-    else if (zone < 0.75) biome = mix(c2, c3, (zone - 0.45) / 0.30);
-    else                  biome = mix(c3, c4, (zone - 0.75) / 0.25);
+    if (vTerrainWorld.y < -23.0) {
+        // Lush oasis vegetation/soil blend near and under the water
+        float distToWater = clamp((-23.0 - vTerrainWorld.y) / 4.0, 0.0, 1.0);
+        vec3 oasisSoil = vec3(0.24, 0.32, 0.16); // dark organic soil
+        vec3 oasisWater = vec3(0.12, 0.28, 0.18); // damp green moss
+        biome = mix(c0, oasisSoil, distToWater);
+        biome = mix(biome, oasisWater, distToWater * distToWater);
+    } else {
+        if      (zone < 0.18) biome = mix(c0, c1, zone / 0.18);
+        else if (zone < 0.45) biome = mix(c1, c2, (zone - 0.18) / 0.27);
+        else if (zone < 0.75) biome = mix(c2, c3, (zone - 0.45) / 0.30);
+        else                  biome = mix(c3, c4, (zone - 0.75) / 0.25);
+    }
 
-    // Strong warm tint — sun-baked desert
+    // High-frequency wind-blown sand ripples in the shader
+    float ripple = sin((vTerrainWorld.x * 0.8 + vTerrainWorld.z * 0.6) * 3.1) * 0.5 + 0.5;
+    ripple += cos((vTerrainWorld.x * -0.5 + vTerrainWorld.z * 0.82) * 6.5) * 0.22;
+    biome = mix(biome * 0.93, biome * 1.07, ripple * 0.28);
+
     biome *= 0.82 + nd * 0.36;
     biome  = mix(biome * vec3(1.16, 1.0, 0.76), biome * vec3(0.97, 1.0, 0.94), n);
     diffuseColor.rgb = biome;
 }
 `;
 
+function _asymmetricDune(u: number): number {
+    if (u < 0.75) {
+        const t = u / 0.75;
+        return t * t;
+    } else {
+        const t = (1.0 - u) / 0.25;
+        return t * t;
+    }
+}
+
 function _duneHeight(x: number, z: number): number {
-    // Primary dunes: N-S ridges driven by E-W wind
-    // Asymmetric tent: gentle windward slope, steep leeward drop
-    const d1n = _noise(x * 0.0028 + 0.0, z * 0.0145 + 0.0);
-    const d1  = Math.pow(1 - Math.abs(d1n * 2 - 1), 2.8) * 28;
+    // Warp the dunes input to create crescent-shaped (barchan) dune curves
+    const d1Warp = _noise(x * 0.001, z * 0.001) * 40;
+    const d1n = _noise((x + d1Warp) * 0.0028, z * 0.0145 + d1Warp * 0.1);
+    const d1  = _asymmetricDune(d1n) * 28;
 
     // Secondary barchan dunes (~15° offset, different scale)
     const ang = Math.PI * 0.15;
     const cx  =  x * Math.cos(ang) + z * Math.sin(ang);
     const cz  = -x * Math.sin(ang) + z * Math.cos(ang);
     const d2n = _noise(cx * 0.0038 + 5.2, cz * 0.018 + 2.1);
-    const d2  = Math.pow(1 - Math.abs(d2n * 2 - 1), 2.2) * 14;
+    const d2  = _asymmetricDune(d2n) * 12;
 
     // Broad undulating base (mega-dune field undulation)
     const base = (_fbm(x * 0.0010, z * 0.0010, 4) * 2 - 1) * 14;
@@ -425,7 +517,10 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000100,
         heightFn:   _alpineHeight,
         glslBiome:  _ALPINE_BIOME,
-        cacheKey:   'biome-alpine-v2',
+        cacheKey:   'biome-alpine-v3',
+        waterColor: 0x102c3d,
+        tileScale:  1 / 20,
+        normalStrength: 0.70,
         pineCount:  180,
         decidCount: 140,
         rockCount:  220,
@@ -448,7 +543,10 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000080,
         heightFn:   _ridgelineHeight,
         glslBiome:  _RIDGELINE_BIOME,
-        cacheKey:   'biome-ridgeline-v2',
+        cacheKey:   'biome-ridgeline-v4',
+        waterColor: 0x0a1822,
+        tileScale:  1 / 18,
+        normalStrength: 0.80,
         pineCount:  240,
         decidCount:  30,
         rockCount:  340,
@@ -470,6 +568,9 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         heightFn:   _coastalHeight,
         glslBiome:  _COASTAL_BIOME,
         cacheKey:   'biome-coastal-v2',
+        waterColor: 0x0a5e77,
+        tileScale:  1 / 22,
+        normalStrength: 0.60,
         pineCount:   20,
         decidCount: 200,
         rockCount:   60,
@@ -491,7 +592,10 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         fogDensity: 0.000120,
         heightFn:   _canyonHeight,
         glslBiome:  _CANYON_BIOME,
-        cacheKey:   'biome-canyon-v2',
+        cacheKey:   'biome-canyon-v3',
+        waterColor: 0x5c3820,
+        tileScale:  1 / 20,
+        normalStrength: 0.85,
         pineCount:   25,
         decidCount:   0,
         rockCount:  140,
@@ -514,6 +618,9 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         heightFn:   _duneHeight,
         glslBiome:  _DUNES_BIOME,
         cacheKey:   'biome-dunes-v1',
+        waterColor: 0x153c35,
+        tileScale:  1 / 24,
+        normalStrength: 0.30,
         pineCount:   12,
         decidCount:   0,
         rockCount:   55,
@@ -525,8 +632,3 @@ export const PRESETS: Readonly<Record<PresetKey, TerrainPreset>> = {
         ],
     },
 };
-
-// Provides the THREE.Color for renderer clearColor per preset
-export function presetSkyColor(key: PresetKey): THREE.Color {
-    return new THREE.Color(PRESETS[key].fogColor);
-}

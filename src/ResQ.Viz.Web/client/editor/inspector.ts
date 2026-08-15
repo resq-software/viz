@@ -259,7 +259,13 @@ export class Inspector {
         }
         // "Move" toggles the reposition gizmo. App owns the on/off state
         // (setMoveActive) so the M key and this button stay in sync; rebuilding
-        // on each selection resets it to off, matching the gizmo's reset.
+        // on each selection resets it to off.
+        //
+        // That reset is only correct because TransformGizmo clears _moveMode on
+        // EVERY selection change, drone-to-drone included. It used to clear only
+        // when the new selection was not a drone, so switching between drones
+        // left the gizmo live while this button rendered "off" — and the next
+        // click read inverted. Keep the two in step if either side changes.
         const move = document.createElement('button');
         move.type = 'button';
         move.className = 'ri-cmd ri-move';

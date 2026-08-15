@@ -2,15 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
-import { terrainHeight } from './terrain';
+import { TERRAIN_MIN_ABOVE, terrainHeight } from './terrain';
 import { prefersReducedMotion } from './reducedMotion';
 
 const _PITCH_LIMIT   = Math.PI * 0.44;   // ≈ 79° — prevents gimbal flip
 const _MIN_DIST      = 3;
 const _MAX_DIST      = 8000;             // enough to orbit a 4 km terrain
 const _DEFAULT_DIST  = 120;
-/** Minimum metres the camera stays above the terrain surface. */
-const _MIN_ABOVE_GND = 2.5;
 
 export class UnityCamera {
     /** The camera this controller drives. */
@@ -322,7 +320,7 @@ export class UnityCamera {
     private _clampAboveTerrain(): void {
         const { x, z } = this.camera.position;
         const gnd = terrainHeight(x, z);
-        const minY = gnd + _MIN_ABOVE_GND;
+        const minY = gnd + TERRAIN_MIN_ABOVE;
         if (this.camera.position.y < minY) {
             this.camera.position.y = minY;
             // Re-sync orbit distance so LMB orbit doesn't snap when RMB released

@@ -20,10 +20,8 @@ import {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const TERRAIN_SIZE = 4000;
-// Raised from 220 for sharper ridge silhouettes at close camera distance.
-// 320² ≈ 102k verts — ~2× the prior budget, still well under bottleneck
-// on modern GPUs and the L1/L2 geoCache absorbs the rebuild cost.
-const TERRAIN_SEGS = 320;
+// Raised from 320 to 500 for sharper silhouettes.
+const TERRAIN_SEGS = 500;
 
 /** Minimum metres the camera stays above terrain (consumed by cameraControl). */
 export const TERRAIN_MIN_ABOVE = 2.5;
@@ -66,7 +64,7 @@ function _fireTerrainChange(): void {
     }
 }
 
-export function setActivePreset(key: PresetKey): void {
+function setActivePreset(key: PresetKey): void {
     _activePresetKey = key;
     _activePreset = PRESETS[key];
     WATER_LEVEL   = _activePreset.waterLevel;
@@ -118,6 +116,10 @@ interface PbrUniforms {
     uZoneLowMid:   { value: THREE.Vector2 };   // smoothstep(x, y, zone) → low→mid
     uZoneMidHigh:  { value: THREE.Vector2 };   // smoothstep(x, y, zone) → mid→high
     uSlopeRocky:   { value: THREE.Vector2 };   // smoothstep(x, y, flatness) → rocky bias
+    uBandJitter:           { value: number };  // biome-band edge perturbation (0 = crisp bands)
+    uAntiTile:             { value: boolean }; // seamless stochastic albedo sampling (opt-in, ~9× taps)
+    uDetailScale:          { value: number };  // high-freq detail-normal tile multiplier
+    uDetailNormalStrength: { value: number };  // micro-relief strength (0 = off)
     // Drifting cloud shadows — the biggest atmospheric-mood cue. Applied to the
     // terrain diffuse in both the PBR and constant-color paths.
     uCloudTime:    { value: number };
@@ -147,6 +149,17 @@ const _pbrUniforms: PbrUniforms = {
     uZoneLowMid:  { value: new THREE.Vector2(0.30, 0.60) },
     uZoneMidHigh: { value: new THREE.Vector2(0.70, 0.95) },
     uSlopeRocky:  { value: new THREE.Vector2(0.82, 0.46) },
+    // Biome bands look painted without jitter; 1.0 dissolves the straight
+    // grass/rock/snow interfaces into an organic transition.
+    uBandJitter:  { value: 1.0 },
+    // Stochastic anti-tiling is opt-in: it multiplies the albedo tap count
+    // ~9× so it stays off until the user enables higher quality.
+    uAntiTile:    { value: false },
+    // Detail normals add ~3 m micro-relief on top of the ~20 m base tile —
+    // 7× the base frequency, blended at a light strength so it reads as
+    // surface grain, not a second obvious tile.
+    uDetailScale:          { value: 7.0 },
+    uDetailNormalStrength: { value: 0.35 },
     uCloudTime:   { value: 0 },
     // Moderate cover by default — enough to sweep mood across the terrain
     // without plunging the whole scene into gloom.
@@ -201,6 +214,8 @@ function _applyPresetTiers(): void {
     _pbrUniforms.uZoneLowMid.value.set(p.lowMid[0],  p.lowMid[1]);
     _pbrUniforms.uZoneMidHigh.value.set(p.midHigh[0], p.midHigh[1]);
     _pbrUniforms.uSlopeRocky.value.set(p.rocky[0],   p.rocky[1]);
+    _pbrUniforms.uTileScale.value      = _activePreset.tileScale ?? (1 / 20);
+    _pbrUniforms.uNormalStrength.value = _activePreset.normalStrength ?? 0.65;
 }
 
 let _pbrLoadStarted = false;
@@ -274,8 +289,13 @@ export function setHeightmapOverride(sampler: HeightmapSampler | null): void {
     _fireTerrainChange();
 }
 
-export function getHeightmapOverride(): HeightmapSampler | null {
-    return _heightmapOverride;
+/**
+ * Toggle seamless stochastic albedo sampling (anti-tiling). Mutates the shared
+ * PBR uniform in place so it takes effect on the next frame with no shader
+ * recompile. Off by default — it ~9×'s the albedo tap count.
+ */
+export function setAntiTile(enabled: boolean): void {
+    _pbrUniforms.uAntiTile.value = enabled;
 }
 
 /**
@@ -291,12 +311,24 @@ export function terrainHeight(x: number, z: number): number {
 
 // ── Shared sprite assets (lazy-initialised, shared across preset switches) ────
 
-let _pineTex:   THREE.CanvasTexture | null = null;
-let _decidTex:  THREE.CanvasTexture | null = null;
+let _pineTexLush:  THREE.CanvasTexture | null = null;
+let _pineTexArid:  THREE.CanvasTexture | null = null;
+let _decidTexLush: THREE.CanvasTexture | null = null;
+let _decidTexArid: THREE.CanvasTexture | null = null;
 let _crossGeo:  THREE.BufferGeometry | null = null;
 
-function _getPineTex():   THREE.CanvasTexture  { return (_pineTex  ??= buildPineTexture()); }
-function _getDecidTex():  THREE.CanvasTexture  { return (_decidTex ??= buildDeciduousTexture()); }
+function _getPineTex(theme: 'lush' | 'arid'): THREE.CanvasTexture {
+    if (theme === 'arid') {
+        return (_pineTexArid ??= buildPineTexture('arid'));
+    }
+    return (_pineTexLush ??= buildPineTexture('lush'));
+}
+function _getDecidTex(theme: 'lush' | 'arid'): THREE.CanvasTexture {
+    if (theme === 'arid') {
+        return (_decidTexArid ??= buildDeciduousTexture('arid'));
+    }
+    return (_decidTexLush ??= buildDeciduousTexture('lush'));
+}
 function _getCrossGeo():  THREE.BufferGeometry { return (_crossGeo ??= buildCrossGeo()); }
 
 // ── GLSL helpers (shader infrastructure shared by all presets) ────────────────
@@ -358,6 +390,51 @@ uniform vec2  uZoneLowMid;
 uniform vec2  uZoneMidHigh;
 uniform vec2  uSlopeRocky;
 uniform float uNormalStrength;
+uniform bool  uAntiTile;
+uniform float uBandJitter;
+uniform float uDetailScale;
+uniform float uDetailNormalStrength;
+
+// 4-channel hash for the seamless-sampling cell offsets below.
+vec4 _hash4(vec2 p) {
+    return fract(sin(vec4(
+        1.0 + dot(p, vec2(37.0, 17.0)),
+        2.0 + dot(p, vec2(11.0, 47.0)),
+        3.0 + dot(p, vec2(41.0, 29.0)),
+        4.0 + dot(p, vec2(23.0, 31.0)))) * 103.0);
+}
+
+// Inigo Quilez seamless non-tiling sampling: a 3×3 gather of the texture at
+// per-virtual-cell random offsets, Gaussian-weighted by sub-cell distance so
+// neighbouring cells cross-fade with no visible seam. Explicit gradients keep
+// mip selection correct across cell borders. ~9× the tap count of a plain
+// fetch, so it is gated behind uAntiTile (albedo only — tiling in the normal
+// and roughness maps is far less perceptible than in colour).
+vec3 _texNoTile(sampler2D tex, vec2 uv) {
+    vec2 p = floor(uv);
+    vec2 f = fract(uv);
+    vec2 ddx = dFdx(uv);
+    vec2 ddy = dFdy(uv);
+    vec3 va = vec3(0.0);
+    float wsum = 0.0;
+    for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+        vec2 g = vec2(float(i), float(j));
+        vec4 o = _hash4(p + g);
+        vec2 r = g - f + o.xy;
+        float w = exp(-5.0 * dot(r, r));
+        va   += w * textureGrad(tex, uv + o.zw, ddx, ddy).rgb;
+        wsum += w;
+    }
+    return va / wsum;
+}
+
+vec3 _triplanarNoTile(sampler2D tex, vec3 wp, vec3 blend, float scale) {
+    vec3 x = _texNoTile(tex, wp.yz * scale);
+    vec3 y = _texNoTile(tex, wp.xz * scale);
+    vec3 z = _texNoTile(tex, wp.xy * scale);
+    return x * blend.x + y * blend.y + z * blend.z;
+}
 
 vec3 _triplanar(sampler2D tex, vec3 wp, vec3 blend, float scale) {
     vec3 x = texture2D(tex, wp.yz * scale).rgb;
@@ -387,12 +464,16 @@ vec3 _pbrTierWeights(vec3 wp, vec3 wn, out vec3 blend) {
     blend = max(blend - 0.2, 0.0);
     blend /= max(blend.x + blend.y + blend.z, 1e-4);
 
-    // Noise-perturbed zone — matches the organic tier transitions in the
-    // constant-color _ALPINE_BIOME etc., avoids horizontal stripes
-    // at the grass/rock/snow interfaces.
-    float noise    = _fbm(wp.xz * 0.035) - 0.5;
-    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale + noise * 0.12, 0.0, 1.0);
-    float flatness = clamp(wn.y, 0.0, 1.0);
+    // Noise-perturbed zone — dissolves the straight grass/rock/snow interfaces
+    // into organic transitions. Two octaves (a fine ripple + a broad drift)
+    // scaled by uBandJitter so the bands wander instead of reading as painted
+    // contour lines. The slope→rocky edge is jittered by the fine octave too,
+    // so cliff/scree boundaries break up rather than following an iso-slope.
+    float nFine  = _fbm(wp.xz * 0.035)        - 0.5;
+    float nBroad = _fbm(wp.xz * 0.011 + 17.3) - 0.5;
+    float jitter = (nFine * 0.12 + nBroad * 0.18) * uBandJitter;
+    float zone     = clamp((wp.y + uZoneOffset) / uZoneScale + jitter, 0.0, 1.0);
+    float flatness = clamp(wn.y + nFine * 0.06 * uBandJitter, 0.0, 1.0);
     float rocky    = smoothstep(uSlopeRocky.x, uSlopeRocky.y, flatness);
 
     float midBlend  = smoothstep(uZoneLowMid.x,  uZoneLowMid.y,  zone);
@@ -411,9 +492,15 @@ vec3 _pbrBiome(vec3 wp, vec3 wn, float tile) {
     vec3 blend;
     vec3 w = _pbrTierWeights(wp, wn, blend);
     vec3 c = vec3(0.0);
-    if (w.x > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * w.x;
-    if (w.y > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * w.y;
-    if (w.z > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * w.z;
+    if (uAntiTile) {
+        if (w.x > 0.0) c += _triplanarNoTile(uTLow,  wp, blend, tile) * w.x;
+        if (w.y > 0.0) c += _triplanarNoTile(uTMid,  wp, blend, tile) * w.y;
+        if (w.z > 0.0) c += _triplanarNoTile(uTHigh, wp, blend, tile) * w.z;
+    } else {
+        if (w.x > 0.0) c += _triplanar(uTLow,  wp, blend, tile) * w.x;
+        if (w.y > 0.0) c += _triplanar(uTMid,  wp, blend, tile) * w.y;
+        if (w.z > 0.0) c += _triplanar(uTHigh, wp, blend, tile) * w.z;
+    }
 
     // Macro-scale anti-tile break-up. The per-tier textures tile every
     // ~20 m world — at fly altitude you see the same speckle repeat
@@ -481,11 +568,26 @@ vec3 _pbrNormalWS(vec3 wp, vec3 wn, float tile, vec3 blend, vec3 w, float streng
     // triplanar weights. Sum(blend) = 1 so the resulting vector carries
     // the geometric-normal contribution plus perturbation; one normalize
     // at the end is sufficient.
-    return normalize(
+    vec3 result = normalize(
           blend.x * vec3(nx.z, nx.x, nx.y)
         + blend.y * vec3(ny.x, ny.z, ny.y)
         + blend.z * vec3(nz.x, nz.y, nz.z)
     );
+
+    // High-frequency detail layer — re-sample the tier normals at a much
+    // finer tile (uDetailScale × base) from the top-down plane and nudge the
+    // base normal's horizontal components. Reads as surface grain on the
+    // mostly-flat ground (where the Y plane dominates) without a second
+    // obvious tile. One extra plane (3 taps) rather than a full 9.
+    if (uDetailNormalStrength > 0.0) {
+        vec2 duv = wp.xz * tile * uDetailScale;
+        vec3 dLo = texture2D(uNLow,  duv).xyz * 2.0 - 1.0;
+        vec3 dMi = texture2D(uNMid,  duv).xyz * 2.0 - 1.0;
+        vec3 dHi = texture2D(uNHigh, duv).xyz * 2.0 - 1.0;
+        vec3 dn  = dLo * w.x + dMi * w.y + dHi * w.z;
+        result = normalize(result + vec3(dn.x, 0.0, dn.y) * uDetailNormalStrength);
+    }
+    return result;
 }
 `;
 
@@ -526,6 +628,7 @@ const GLSL_FRAG_CLOUD_APPLY = `
 
 export class Terrain {
     private readonly _objects: THREE.Object3D[] = [];
+    private _groundMesh: THREE.Mesh | null = null;
 
     constructor(scene: THREE.Scene, preset: PresetKey = 'alpine') {
         setActivePreset(preset);
@@ -534,6 +637,10 @@ export class Terrain {
         this._buildObstacles(scene);
         this._addNorthIndicator(scene);
         this._addOriginMarker(scene);
+    }
+
+    getGroundMesh(): THREE.Mesh | null {
+        return this._groundMesh;
     }
 
     private _sceneAdd(scene: THREE.Scene, ...objs: THREE.Object3D[]): void {
@@ -547,6 +654,7 @@ export class Terrain {
         // so a stray tickWater() call between dispose and the next buildWaterMesh
         // doesn't mutate uniforms on a disposed instance.
         disposeWaterMesh();
+        this._groundMesh = null;
         for (const obj of this._objects) {
             scene.remove(obj);
             obj.traverse(child => {
@@ -580,9 +688,13 @@ export class Terrain {
         const pos    = geo.attributes['position'] as THREE.BufferAttribute;
         // Include the heightmap key (if any) so procedural and DEM-sourced
         // geometries don't share cache entries.
+        // Include the mesh topology in the cache key so a sessionStorage hit
+        // from a build with a different TERRAIN_SEGS doesn't read past the end
+        // of the cached array (which would cascade to NaN vertex heights).
+        const topo = `segs:${TERRAIN_SEGS}`;
         const cacheK = _heightmapOverride
-            ? `${_activePreset.cacheKey}|hm:${_heightmapOverride.key}`
-            : _activePreset.cacheKey;
+            ? `${_activePreset.cacheKey}|${topo}|hm:${_heightmapOverride.key}`
+            : `${_activePreset.cacheKey}|${topo}`;
 
         const cached = geoCache.tryGet(cacheK);
         if (cached) {
@@ -670,6 +782,7 @@ export class Terrain {
 
         const mesh = new THREE.Mesh(geo, mat);
         mesh.receiveShadow = true;
+        this._groundMesh = mesh;
         this._sceneAdd(scene, mesh);
 
         // Fire-and-forget load on first ground build. Subsequent terrain
@@ -684,6 +797,7 @@ export class Terrain {
             size:       TERRAIN_SIZE + 600,
             waterLevel: _activePreset.waterLevel,
             fog:        scene.fog !== null,
+            waterColor: _activePreset.waterColor,
         });
         this._sceneAdd(scene, water);
     }
@@ -713,9 +827,10 @@ export class Terrain {
         const { pineCount: PINE_N, decidCount: DECID_N, minTreeH, maxTreeH, waterLevel } = _activePreset;
         if (PINE_N + DECID_N === 0) return;
 
+        const theme = (_activePresetKey === 'canyon' || _activePresetKey === 'dunes') ? 'arid' : 'lush';
         const crossGeo  = _getCrossGeo();
-        const pineMesh  = PINE_N  > 0 ? new THREE.InstancedMesh(crossGeo, buildBillboardMaterial(_getPineTex()),  PINE_N)  : null;
-        const decidMesh = DECID_N > 0 ? new THREE.InstancedMesh(crossGeo, buildBillboardMaterial(_getDecidTex()), DECID_N) : null;
+        const pineMesh  = PINE_N  > 0 ? new THREE.InstancedMesh(crossGeo, buildBillboardMaterial(_getPineTex(theme)),  PINE_N)  : null;
+        const decidMesh = DECID_N > 0 ? new THREE.InstancedMesh(crossGeo, buildBillboardMaterial(_getDecidTex(theme)), DECID_N) : null;
 
         // Billboards don't cast correct shaped shadows — omit for perf
         if (pineMesh)  { pineMesh.receiveShadow  = true; }

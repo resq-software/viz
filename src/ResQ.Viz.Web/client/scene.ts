@@ -53,6 +53,9 @@ export class Scene {
     private readonly _postRenderCallbacks: Array<() => void> = [];
     private _postFx!: PostFx;
     private _sky!: Sky;
+    // Single source of truth for the sun. Sky, directional light, water glint,
+    // and the PBR environment map are all derived from this so the visible
+    // sun, the cast shadows, and the surface lighting stay in agreement.
     private readonly _groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     private _markerMesh: THREE.Mesh | null = null;
     private _markerTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -62,7 +65,7 @@ export class Scene {
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type      = THREE.PCFSoftShadowMap;
+        this.renderer.shadowMap.type      = THREE.PCFShadowMap;
         this.renderer.toneMapping         = THREE.ACESFilmicToneMapping;
         // Lifted from 1.0: with the flat fill ambient dropped and the env-probe
         // IBL + a stronger directional sun now carrying the scene, a touch more
@@ -309,6 +312,8 @@ export class Scene {
 
     setBloomEnabled(v: boolean): void  { this._postFx.setBloomEnabled(v); }
     setBloomStrength(v: number): void  { this._postFx.setBloomStrength(v); }
+    setSsaoEnabled(v: boolean): void   { this._postFx.setSsaoEnabled(v); }
+    setSsaoIntensity(v: number): void  { this._postFx.setSsaoIntensity(v); }
     setFogDensity(v: number): void {
         if (this.scene.fog instanceof THREE.FogExp2) this.scene.fog.density = v;
     }
@@ -332,7 +337,7 @@ export class Scene {
         });
     }
 
-    getTerrainIntersection(clientX: number, clientY: number): THREE.Vector3 | null {
+    getTerrainIntersection(clientX: number, clientY: number, groundMesh?: THREE.Mesh | null): THREE.Vector3 | null {
         const rect   = this.renderer.domElement.getBoundingClientRect();
         const ndc    = new THREE.Vector2(
             ((clientX - rect.left) / rect.width)  * 2 - 1,
@@ -340,13 +345,21 @@ export class Scene {
         );
         const ray = new THREE.Raycaster();
         ray.setFromCamera(ndc, this._camera);
+
+        if (groundMesh) {
+            const hits = ray.intersectObject(groundMesh, false);
+            if (hits.length > 0 && hits[0]!.point) {
+                return hits[0]!.point;
+            }
+        }
+
         const target = new THREE.Vector3();
         const hit    = ray.ray.intersectPlane(this._groundPlane, target);
         return hit ? target : null;
     }
 
     showTargetMarker(pos: THREE.Vector3, alt: number): void {
-        void alt; // alt unused here — marker is always on ground plane
+        void alt;
         if (!this._markerMesh) {
             const geo = new THREE.RingGeometry(1.5, 2.5, 32);
             geo.rotateX(-Math.PI / 2);
@@ -356,7 +369,7 @@ export class Scene {
             this._markerMesh = new THREE.Mesh(geo, mat);
             this.scene.add(this._markerMesh);
         }
-        this._markerMesh.position.set(pos.x, 0.1, pos.z);
+        this._markerMesh.position.set(pos.x, pos.y + 0.2, pos.z);
         this._markerMesh.visible = true;
         (this._markerMesh.material as THREE.MeshBasicMaterial).opacity = 0.8;
 

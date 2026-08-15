@@ -45,10 +45,11 @@
     <meta property="og:url" content="https://viz.resq.software/">
     <meta property="og:site_name" content="ResQ Tactical OS">
     <meta property="og:locale" content="en_US">
-    <meta property="og:image" content="https://resq.software/og-banner.png">
+    <meta property="og:image" content="https://viz.resq.software/og-banner.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
-    <meta property="og:image:alt" content="ResQ Viz">
+    <meta property="og:image:alt" content="ResQ Viz — real-time 3D coordination for autonomous drone swarms">
+    <meta property="og:image:type" content="image/png">
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
@@ -56,10 +57,60 @@
     <meta name="twitter:creator" content="@ResQSoftware">
     <meta name="twitter:title" content="ResQ Viz">
     <meta name="twitter:description" content="Real-time 3D coordination for autonomous drone swarms. Mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.">
-    <meta name="twitter:image" content="https://resq.software/og-banner.png">
+    <meta name="twitter:image" content="https://viz.resq.software/og-banner.png">
 
-    <!-- Favicon -->
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛸</text></svg>">
+    <!-- Icons + PWA manifest -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="mask-icon" href="/favicon.svg" color="#35E0F0">
+    <link rel="manifest" href="/site.webmanifest">
+
+    <!-- Structured data — Organization + WebSite mirror resq.software; the
+         SoftwareApplication node describes the viz itself. JSON-LD data blocks
+         are not executed, so the strict script-src CSP does not block them. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://resq.software/#org",
+          "name": "ResQ Systems, Inc.",
+          "url": "https://resq.software",
+          "logo": "https://resq.software/logo.png",
+          "email": "contact@resq.software",
+          "sameAs": [
+            "https://x.com/ResQSoftware",
+            "https://www.linkedin.com/company/resq-software",
+            "https://github.com/resq-software"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://viz.resq.software/#site",
+          "url": "https://viz.resq.software/",
+          "name": "ResQ Viz",
+          "description": "Real-time 3D coordination for autonomous drone swarms. Mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.",
+          "inLanguage": "en",
+          "publisher": { "@id": "https://resq.software/#org" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://viz.resq.software/#app",
+          "name": "ResQ Viz",
+          "applicationCategory": "SecurityApplication",
+          "applicationSubCategory": "Disaster-response visualization",
+          "operatingSystem": "Web (WebGL2)",
+          "browserRequirements": "Requires WebGL2",
+          "url": "https://viz.resq.software/",
+          "image": "https://viz.resq.software/og-banner.png",
+          "description": "Real-time 3D coordination for autonomous drone swarms — mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.",
+          "publisher": { "@id": "https://resq.software/#org" }
+        }
+      ]
+    }
+    </script>
 </head>
 <body>
 

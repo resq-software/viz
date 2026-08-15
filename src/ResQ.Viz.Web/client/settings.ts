@@ -13,6 +13,11 @@ export interface SettingsData {
     detectionRingShow:  boolean;
     shadowsEnabled:     boolean;
     showVelocity:       boolean;
+    ssaoEnabled:        boolean;   // GTAO ambient occlusion
+    antiTile:           boolean;   // seamless stochastic terrain albedo (heavier)
+    contactShadowEnabled: boolean; // soft blob shadow under each drone
+    downwashEnabled:    boolean;   // rotor downwash dust + water ripples
+    erosionEnabled:     boolean;   // server-baked hydraulic-erosion terrain
 }
 
 const DEFAULTS: SettingsData = {
@@ -27,6 +32,11 @@ const DEFAULTS: SettingsData = {
     detectionRingShow:  false,
     shadowsEnabled:     true,
     showVelocity:       false,
+    ssaoEnabled:        true,
+    antiTile:           false,   // opt-in: ~9× albedo taps
+    contactShadowEnabled: true,
+    downwashEnabled:    true,
+    erosionEnabled:     true,
 };
 
 const KEY = 'resq-viz-settings';

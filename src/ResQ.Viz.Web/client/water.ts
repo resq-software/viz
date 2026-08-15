@@ -29,6 +29,12 @@ let _instance: Water | null = null;
 let _cachedNormals: THREE.Texture | null = null;
 let _normalsLoadStarted = false;
 
+// Canonical sun direction, kept at module scope so the value scene.ts pushes
+// during init (via updateWaterSunDirection, before any Water exists) survives
+// until the terrain builds the Water instance — and persists across the
+// preset-driven water rebuilds that would otherwise reset it to a default.
+const _sunDir = new THREE.Vector3(0.45, 0.88, 0.25).normalize();
+
 async function _loadNormals(): Promise<void> {
     if (_normalsLoadStarted || _cachedNormals) return;
     _normalsLoadStarted = true;
@@ -59,7 +65,7 @@ async function _loadNormals(): Promise<void> {
  * Caller is responsible for adding the returned mesh to the scene and for
  * invoking {@link disposeWaterMesh} when the terrain rebuilds.
  */
-export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: boolean }): Water {
+export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: boolean; waterColor?: number }): Water {
     const geo = new THREE.PlaneGeometry(opts.size, opts.size, 1, 1);
     geo.rotateX(-Math.PI / 2);
 
@@ -72,7 +78,8 @@ export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: bo
         // visible Sky sun and terrain shadows say it should (see ./lighting).
         sunDirection:    sunDirection(),
         sunColor:        SUN_COLOR,
-        waterColor:      0x0e2a3d,   // deep teal — reads as water, not tar
+        // Caller override kept from main; default is the WIP's deep teal.
+        waterColor:      opts.waterColor ?? 0x0e2a3d,
         // More distortion so the broken-up reflection actually shimmers.
         distortionScale: 3.6,
         fog:             opts.fog,
@@ -97,6 +104,21 @@ export function tickWater(dt: number): void {
     if (_instance) {
         const u = _instance.material.uniforms['time'];
         if (u) u.value = (u.value as number) + dt;
+    }
+}
+
+/**
+ * Update the sun direction vector on the active water instance.
+ */
+export function updateWaterSunDirection(sunDir: THREE.Vector3): void {
+    // Record canonically first so a not-yet-built (or rebuilt) Water instance
+    // still picks up the right glint direction at construction time.
+    _sunDir.copy(sunDir).normalize();
+    if (_instance) {
+        const u = _instance.material.uniforms['sunDirection'];
+        if (u) {
+            (u.value as THREE.Vector3).copy(_sunDir);
+        }
     }
 }
 

@@ -312,6 +312,7 @@ public class SimulationServiceTests
     // ─── Transport (pause / speed / step) ─────────────────────────────────────
 
     [Fact]
+    /// <summary>Pausing halts world advancement: ticking a paused room leaves simulation time unchanged.</summary>
     public void Pause_Stops_World_Advancement()
     {
         var room = CreateRoom();
@@ -324,6 +325,7 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    /// <summary>Resuming after a pause returns the room to advancing simulation time on each tick.</summary>
     public void Resume_Continues_Advancement()
     {
         var room = CreateRoom();
@@ -337,6 +339,7 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    /// <summary>The speed multiplier scales how many fixed steps a single tick advances.</summary>
     public void SetSpeed_Multiplies_Steps_Per_Tick()
     {
         var room = CreateRoom();
@@ -347,6 +350,7 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    /// <summary>Out-of-range speeds clamp to the supported bounds instead of being applied verbatim.</summary>
     public void SetSpeed_Clamps_To_Valid_Range()
     {
         var room = CreateRoom();
@@ -357,6 +361,7 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    /// <summary>Single-stepping a paused room advances exactly the requested number of frames and no more.</summary>
     public void StepFrames_Advances_Exactly_While_Paused()
     {
         var room = CreateRoom();
@@ -373,6 +378,7 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    /// <summary>Broadcasts continue at 10 Hz while paused, so a paused client still receives frames and does not appear disconnected.</summary>
     public void Tick_Broadcasts_At_10Hz_Even_While_Paused()
     {
         var room = CreateRoom();
@@ -385,6 +391,7 @@ public class SimulationServiceTests
     }
 
     [Fact]
+    /// <summary>Reset returns pause and speed to their defaults along with the world itself.</summary>
     public void Reset_Clears_Transport_State()
     {
         var room = CreateRoom();

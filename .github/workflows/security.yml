@@ -15,14 +15,36 @@ on:
   workflow_dispatch:
 
 permissions:
+  # `actions: read` is required by the reusable workflow's CodeQL + SARIF-upload
+  # jobs (they declare it for github/codeql-action telemetry). An explicit
+  # permissions block sets every unlisted scope to `none`, so without this the
+  # nested jobs request more than the caller grants and the run is rejected at
+  # creation (startup_failure). Read-only; grants no write capability.
+  actions: read
   contents: read
   security-events: write
   pull-requests: read
 
 jobs:
   scan:
-    uses: resq-software/.github/.github/workflows/security-scan.yml@23ce94eabddf963835624451e89baca7ac9db541  # main
+    # Skip on Dependabot PRs: Dependabot's restricted context resolves Actions
+    # secrets to empty, so semgrep would fail to authenticate on every one of
+    # its PRs. Dependabot already vetted the bump; push/schedule still scan the
+    # default branch, and `gates` in ci.yml still runs CodeQL on the PR itself.
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    uses: resq-software/.github/.github/workflows/security-scan.yml@44987ffd6eb5b1aa9d0a0d39e8dde9d669fe1d84 # main
     with:
       languages: '["csharp","actions"]'
       submodules: recursive
-    secrets: inherit
+      # This repo has no SAST otherwise: unlike landing and crates it is not a
+      # project in the Semgrep managed app, so no `semgrep-cloud-platform/scan`
+      # check runs on its PRs. The reusable's semgrep runs in a container on
+      # ubuntu-latest, which is fine here — this caller does not route to the
+      # self-hosted runners, which is the constraint that makes landing opt out.
+      enable-semgrep: true
+    # Forward by name instead of `secrets: inherit` (zizmor secrets-inherit):
+    # the reusable declares every secret it can consume, and semgrep is the only
+    # optional scanner enabled here, so SEMGREP_APP_TOKEN is the only one it
+    # needs. gitleaks / snyk / vet stay off, so their secrets stay unshared.
+    secrets:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}

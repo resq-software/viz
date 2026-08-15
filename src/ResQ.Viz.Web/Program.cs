@@ -155,7 +155,10 @@ app.Use(async (context, next) =>
             string.Join(' ', ResQ.Viz.Web.SecurityConstants.CloudflareBeaconScriptHashes);
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
-            "script-src 'self' " +
+            // 'wasm-unsafe-eval' permits WebAssembly compilation only (NOT JS
+            // eval) — required by the Draco / meshopt glTF decoders that load a
+            // compressed quadrotor.glb. Narrow, modern allowance; no 'unsafe-eval'.
+            "script-src 'self' 'wasm-unsafe-eval' " +
                 cloudflareBeaconScriptHashes + " " +
                 "https://static.cloudflareinsights.com " +
                 "https://www.googletagmanager.com " +
@@ -212,7 +215,18 @@ app.Use(async (context, next) =>
 if (app.Environment.IsDevelopment())
     app.UseViteDevelopmentServer();
 
-app.UseStaticFiles();
+var provider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+provider.Mappings[".glb"] = "model/gltf-binary";
+provider.Mappings[".gltf"] = "model/gltf+json";
+provider.Mappings[".ktx2"] = "image/ktx2";
+provider.Mappings[".hdr"] = "image/vnd.radiance";
+provider.Mappings[".webmanifest"] = "application/manifest+json";  // PWA manifest (SEO/installability)
+provider.Mappings[".wasm"] = "application/wasm";                  // Draco decoder — enables streaming compile
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = provider
+});
 app.UseRateLimiter();
 
 if (!app.Environment.IsDevelopment())

@@ -766,6 +766,15 @@ body.fpv-mode .cam-mode-pill { display: none; }
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
+/* Firefox renders the thumb through ::-moz-range-thumb, so without this the
+   scrubber — a primary control — has no visible focus indicator there at all
+   once the default outline is removed above (WCAG 2.4.7). Kept as a separate
+   rule because one selector list is dropped wholesale by any engine that does
+   not recognise every selector in it. */
+.dvr-scrub:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
 .dvr-time {
   flex: none;
   min-width: 78px;
