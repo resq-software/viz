@@ -32,6 +32,20 @@ let _activePreset: TerrainPreset = PRESETS['alpine'];
 let _activePresetKey: PresetKey = 'alpine';
 
 /** Current water level — live binding updated whenever the preset changes. */
+/**
+ * Per-scenario water-level override, metres. `null` = use the preset's own
+ * value. Kept separate from `_activePreset` because PRESETS is frozen and its
+ * `cacheKey` contract assumes the height function is the only thing that varies
+ * — mutating a preset to move water would muddy that for no gain. Water is a
+ * separate mesh, so terrain geometry still hits the cache either way.
+ */
+let _waterLevelOverride: number | null = null;
+
+/** Effective water level: scenario override if set, else the preset's own. */
+export function activeWaterLevel(): number {
+    return _waterLevelOverride ?? _activePreset.waterLevel;
+}
+
 export let WATER_LEVEL: number = _activePreset.waterLevel;
 
 // ── Terrain-change events ────────────────────────────────────────────────────
@@ -67,7 +81,7 @@ function _fireTerrainChange(): void {
 function setActivePreset(key: PresetKey): void {
     _activePresetKey = key;
     _activePreset = PRESETS[key];
-    WATER_LEVEL   = _activePreset.waterLevel;
+    WATER_LEVEL   = activeWaterLevel();
     _applyPresetTiers();
     _fireTerrainChange();
 }
@@ -630,7 +644,8 @@ export class Terrain {
     private readonly _objects: THREE.Object3D[] = [];
     private _groundMesh: THREE.Mesh | null = null;
 
-    constructor(scene: THREE.Scene, preset: PresetKey = 'alpine') {
+    constructor(scene: THREE.Scene, preset: PresetKey = 'alpine', waterLevelOverride?: number) {
+        _waterLevelOverride = waterLevelOverride ?? null;
         setActivePreset(preset);
         this._buildGround(scene);
         this._buildWater(scene);
@@ -795,7 +810,7 @@ export class Terrain {
     private _buildWater(scene: THREE.Scene): void {
         const water = buildWaterMesh({
             size:       TERRAIN_SIZE + 600,
-            waterLevel: _activePreset.waterLevel,
+            waterLevel: activeWaterLevel(),
             fog:        scene.fog !== null,
             waterColor: _activePreset.waterColor,
         });
@@ -1018,7 +1033,7 @@ export class Terrain {
         const dummy = new THREE.Object3D();
         let idx     = 0;
 
-        const minH = _activePreset.waterLevel + 0.5;
+        const minH = activeWaterLevel() + 0.5;
         const zeroColor  = new THREE.Color(0, 0, 0);
         const whiteColor = new THREE.Color(0xffffff);
 

@@ -173,10 +173,19 @@ export function shadowDepthRange(
  */
 export function shadowBiasFor(extent: number, mapSize: number): ShadowBias {
     const texel = (2 * extent) / Math.max(mapSize, 1);
-    const scale = texel / REFERENCE_TEXEL_M;
     return {
-        bias:       REFERENCE_BIAS * scale,
-        normalBias: REFERENCE_NORMAL_BIAS * scale,
+        // NOT scaled by texel size. `shadow.bias` is in NORMALISED depth, not
+        // world units, so scaling it up with extent makes it enormously more
+        // negative over a wider depth range — every surface then self-shadows
+        // and terrain renders as a black silhouette. That is a real bug this
+        // code shipped with: it is invisible at close camera framings (small
+        // rungs) and total at survey framings (the 3200 m rung). If anything,
+        // constant normalised bias is already slightly generous at wide
+        // extents; it must not grow.
+        bias:       REFERENCE_BIAS,
+        // Scaled: `normalBias` IS in world units, so it must track texel world
+        // size or peter-panning returns at wide extents.
+        normalBias: REFERENCE_NORMAL_BIAS * (texel / REFERENCE_TEXEL_M),
     };
 }
 
