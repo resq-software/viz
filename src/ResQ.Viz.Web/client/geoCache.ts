@@ -71,8 +71,44 @@ async function _compressToStorage(key: string, data: Float32Array): Promise<void
             savedPct:     ratio,
         });
     } catch (err) {
-        // sessionStorage can be full or disabled — silently continue
-        log.debug('storage write failed', { err });
+        // A quota failure is not a benign "storage disabled" case — it means the
+        // L2 cache is silently dead and every page reload pays a full terrain
+        // rebuild. At 500 segs one preset is ~2.87 MiB raw / ~1.06 MiB deflated,
+        // and base64 inflates that 4/3 to ~1.42 MiB of characters; browsers bill
+        // storage in UTF-16 code units, so an ASCII base64 string costs 2 bytes
+        // per character — ~2.84 MiB of quota per preset against a 5 MiB budget.
+        // The second preset therefore cannot fit. Surface it instead of hiding
+        // it; the real fix is storing only the Y channel.
+        const quotaHit =
+            err instanceof DOMException &&
+            (err.name === 'QuotaExceededError' || err.code === 22);
+        if (quotaHit) {
+            log.warn('geometry cache storage unavailable or quota exceeded — L2 cache is not persisting', {
+                key,
+                approxQuotaMB: (storageBytes() / (1024 * 1024)).toFixed(2),
+            });
+        } else {
+            log.debug('storage write failed', { err });
+        }
+    }
+}
+
+/**
+ * Approximate `sessionStorage` bytes held by this cache, counted the way
+ * browsers bill it: UTF-16 code units, i.e. 2 bytes per character of both key
+ * and value. Returns 0 if storage is unavailable.
+ */
+export function storageBytes(): number {
+    try {
+        let total = 0;
+        for (let i = 0; i < sessionStorage.length; i++) {
+            const k = sessionStorage.key(i);
+            if (!k?.startsWith(_STORAGE_PREFIX)) continue;
+            total += (k.length + (sessionStorage.getItem(k)?.length ?? 0)) * 2;
+        }
+        return total;
+    } catch {
+        return 0;
     }
 }
 
