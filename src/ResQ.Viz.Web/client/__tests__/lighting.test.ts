@@ -142,11 +142,20 @@ describe('shadowBiasFor', () => {
         expect(normalBias).toBeCloseTo(0.02, 8);
     });
 
-    it('scales linearly with texel world size', () => {
+    it('scales normalBias with texel world size — it is in world units', () => {
         const ref  = shadowBiasFor(800, 4096);
         const wide = shadowBiasFor(3200, 4096);
-        expect(wide.bias / ref.bias).toBeCloseTo(4, 6);
         expect(wide.normalBias / ref.normalBias).toBeCloseTo(4, 6);
+    });
+
+    it('does NOT grow depth bias with extent', () => {
+        // Regression guard. `shadow.bias` is normalised depth; scaling it with
+        // extent drove it 4x more negative at the widest rung, every surface
+        // self-shadowed, and terrain rendered as a black silhouette at survey
+        // framing while looking fine close up.
+        for (const extent of SHADOW_EXTENT_LADDER) {
+            expect(shadowBiasFor(extent, 4096).bias).toBeCloseTo(-0.0010, 8);
+        }
     });
 });
 
