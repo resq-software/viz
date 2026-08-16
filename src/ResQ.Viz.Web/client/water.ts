@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { loadTexture } from './assetLoader';
-import { sunDirection, SUN_COLOR } from './lighting';
+import { sunDirection, SUN_COLOR, DEFAULT_SUN_ELEVATION_DEG, DEFAULT_SUN_AZIMUTH_DEG } from './lighting';
 import { getLogger } from './log';
 
 const log = getLogger('water');
@@ -33,7 +33,12 @@ let _normalsLoadStarted = false;
 // during init (via updateWaterSunDirection, before any Water exists) survives
 // until the terrain builds the Water instance — and persists across the
 // preset-driven water rebuilds that would otherwise reset it to a default.
-const _sunDir = new THREE.Vector3(0.45, 0.88, 0.25).normalize();
+// Seeded from the same helper the scene uses, so the pre-init fallback matches
+// the real default. The previous literal (0.45, 0.88, 0.25) normalised to
+// ~(0.443, 0.867, 0.246), whose z is the opposite sign to
+// sunDirection(40, 135) ~ (0.542, 0.643, -0.542) — the glint pointed across the
+// scene from the Sky sun until the first updateWaterSunDirection call.
+const _sunDir = sunDirection(DEFAULT_SUN_ELEVATION_DEG, DEFAULT_SUN_AZIMUTH_DEG);
 
 async function _loadNormals(): Promise<void> {
     if (_normalsLoadStarted || _cachedNormals) return;
@@ -76,7 +81,12 @@ export function buildWaterMesh(opts: { size: number; waterLevel: number; fog: bo
         waterNormals:    _cachedNormals ?? _normalsPlaceholder,
         // Shared canonical sun so the water's specular glint lands where the
         // visible Sky sun and terrain shadows say it should (see ./lighting).
-        sunDirection:    sunDirection(),
+        // Use the canonical direction, not a recomputed default: scene.ts may
+        // already have applied a scenario sun via setSunPosition, and a
+        // preset switch rebuilds this mesh. Recomputing the default here made
+        // the glint disagree with the Sky and the shadows until the next
+        // setSunPosition. Cloned so the addon cannot alias the module vector.
+        sunDirection:    _sunDir.clone(),
         sunColor:        SUN_COLOR,
         // Caller override kept from main; default is the WIP's deep teal.
         waterColor:      opts.waterColor ?? 0x0e2a3d,

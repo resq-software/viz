@@ -1,0 +1,217 @@
+// ResQ Viz - Height-falloff atmospheric fog (global ShaderChunk override)
+// SPDX-License-Identifier: Apache-2.0
+//
+// `THREE.FogExp2` applies identical extinction to the near field and the
+// horizon, so raising density to make distant terrain recede also lays a milky
+// veil over everything two metres from the camera and desaturates the whole
+// frame. Real aerial perspective is height-dependent — haze pools in valleys,
+// thins with altitude — and forward-scattering-dependent: it brightens toward
+// the sun. This module replaces the four fog chunks globally so every
+// fog-enabled material gets both, with no per-material plumbing.
+//
+// Three constraints read off the shipped shaders, all load-bearing:
+//
+//   • `Sky.js` contains zero occurrences of `fog`, so the sky dome is untouched
+//     by this override — correct, the dome must not be fogged.
+//   • `Water.js` DOES consume the chunks (`fog_pars_vertex` :120, `fog_vertex`
+//     :134, `fog_fragment` :209) but its vertex shader never defines
+//     `transformed` — it transforms `position` directly at :127-128. An override
+//     written against `transformed`, the obvious implementation, fails to
+//     compile Water. World position is therefore derived from the raw `position`
+//     attribute, which every material has. Water also already declares
+//     `varying vec4 worldPosition`, hence the `vFog`-prefixed names here.
+//   • `terrain.ts:314-315` declares `vTerrainWorld` / `vWorldNormal`. This module
+//     is deliberately self-contained rather than borrowing either, so there is
+//     no name collision to break terrain compilation.
+//
+// With `fogHeightFalloff = 0` the height term collapses to exactly 1 and the
+// result matches stock `FogExp2` — the override is a strict superset, so nothing
+// regresses if an environment opts out.
+//
+// NOT YET IMPLEMENTED, and deliberately not exposed:
+//
+//   • Forward scattering. The prose above describes fog brightening toward the
+//     sun, but the shader has no scattering term. `sunDirection` / `sunColor` /
+//     `sunIntensity` params existed and were pushed into `fogSun*` uniforms that
+//     the GLSL never declared or read, so every setter was a silent no-op. They
+//     are removed rather than left as dead controls; re-add them together with
+//     the shader term that consumes them.
+//   • Built-in materials. `installHeightFog()` rewrites `THREE.ShaderChunk` and
+//     adds `fogHeightFalloff` to `THREE.UniformsLib.fog`, but three.js snapshots
+//     `UniformsLib.fog` into `ShaderLib` at module-init time. Built-in materials
+//     clone those pre-existing snapshots, so they never receive the new uniform,
+//     and `applyToMaterial` cannot reach them because they expose no
+//     `.uniforms`. Reaching them needs `onBeforeCompile` per material. This is
+//     the likely cause of the black render noted in 71a8133 — see the module
+//     status note there.
+//
+// This module is currently UNWIRED: nothing imports it. It ships as parked
+// work-in-progress alongside the shadow-frustum changes that are verified.
+
+import * as THREE from 'three';
+
+/** Tunable parameters of the height-fog model. */
+export interface HeightFogParams {
+    /** Base extinction at y = 0. Same units as `FogExp2.density`. */
+    readonly density?: number;
+    /** Fog colour at the horizon, away from the sun. */
+    readonly color?: THREE.ColorRepresentation;
+    /** Vertical falloff, 1/metres. 0 = uniform (stock FogExp2 behaviour). */
+    readonly heightFalloff?: number;
+}
+
+/**
+ * Authoritative parameter values. Materials each hold their own uniform objects
+ * (three's `UniformsUtils.merge` clones them), so these are the source of truth
+ * and {@link setHeightFogParams} pushes them into live materials.
+ */
+const _state = {
+    heightFalloff: 0,
+};
+
+let _installed = false;
+
+// One float, not a vec3. Terrain already carries `vTerrainWorld` and
+// `vWorldNormal` on top of the standard MeshStandardMaterial varying set, and
+// adding a vec3 to every material in the app risks exceeding
+// GL_MAX_VARYING_VECTORS on weaker stacks. Height fog only needs world Y.
+const FOG_PARS_VERTEX = /* glsl */`
+#ifdef USE_FOG
+	varying float vFogDepth;
+	varying float vFogWorldY;
+#endif
+`;
+
+// NOTE: uses `position`, never `transformed` — see the module header for why.
+// `instanceMatrix` is applied explicitly because three applies it in
+// `project_vertex`, i.e. it is not folded into `transformed` either.
+const FOG_VERTEX = /* glsl */`
+#ifdef USE_FOG
+	vFogDepth = - mvPosition.z;
+	vec4 _fogLocal = vec4( position, 1.0 );
+	#ifdef USE_INSTANCING
+		_fogLocal = instanceMatrix * _fogLocal;
+	#endif
+	vFogWorldY = ( modelMatrix * _fogLocal ).y;
+#endif
+`;
+
+const FOG_PARS_FRAGMENT = /* glsl */`
+#ifdef USE_FOG
+	uniform vec3  fogColor;
+	varying float vFogDepth;
+	varying float vFogWorldY;
+	#ifdef FOG_EXP2
+		uniform float fogDensity;
+	#else
+		uniform float fogNear;
+		uniform float fogFar;
+	#endif
+	uniform float fogHeightFalloff;
+#endif
+`;
+
+const FOG_FRAGMENT = /* glsl */`
+#ifdef USE_FOG
+	#ifdef FOG_EXP2
+		// Analytic integral of exp(-k·y) along the view ray, normalised so the
+		// k -> 0 limit is exactly 1 and the model degrades to stock FogExp2.
+		// Defensive: fogHeightFalloff is an active uniform that three does NOT
+		// upload for built-in materials — WebGLUniforms.seqWithValue filters the
+		// upload list to keys present in the material's own uniform object, and
+		// ShaderLib snapshots UniformsLib.fog at three's module init, before this
+		// override runs. An unset uniform is specified to read 0, but a stack
+		// that returns garbage instead poisons every downstream term, and mix()
+		// with a NaN weight renders black. The comparison below is false for NaN
+		// in both directions, so this catches NaN and out-of-range alike.
+		float _fogK = fogHeightFalloff;
+		if ( !( _fogK > -1.0 && _fogK < 1.0 ) ) _fogK = 0.0;
+		float _fogDy  = vFogWorldY - cameraPosition.y;
+		float _fogKdy = _fogK * _fogDy;
+		float _fogH;
+		// The integral is singular as the ray goes horizontal (_fogKdy -> 0),
+		// which is precisely the overview shot. Series-expand through it.
+		if ( abs( _fogKdy ) < 1e-4 ) {
+			_fogH = 1.0 - 0.5 * _fogKdy;
+		} else {
+			_fogH = ( 1.0 - exp( - _fogKdy ) ) / _fogKdy;
+		}
+		_fogH *= exp( - _fogK * cameraPosition.y );
+		float _fogDist  = vFogDepth * max( _fogH, 0.0 );
+		float fogFactor = 1.0 - exp( - fogDensity * fogDensity * _fogDist * _fogDist );
+	#else
+		float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+	#endif
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, saturate( fogFactor ) );
+#endif
+`;
+
+/**
+ * Replace the fog chunks and extend `UniformsLib.fog`.
+ *
+ * MUST run before any fog-enabled material is constructed — three snapshots
+ * `UniformsLib.fog` into each material at creation, so a material built earlier
+ * would lack the new uniforms and fail to link.
+ *
+ * Idempotent: safe to call more than once.
+ */
+export function installHeightFog(): void {
+    if (_installed) return;
+    _installed = true;
+
+    THREE.ShaderChunk['fog_pars_vertex']   = FOG_PARS_VERTEX;
+    THREE.ShaderChunk['fog_vertex']        = FOG_VERTEX;
+    THREE.ShaderChunk['fog_pars_fragment'] = FOG_PARS_FRAGMENT;
+    THREE.ShaderChunk['fog_fragment']      = FOG_FRAGMENT;
+
+    const fogUniforms = THREE.UniformsLib['fog'] as Record<string, THREE.IUniform>;
+    fogUniforms['fogHeightFalloff'] = { value: _state.heightFalloff };
+}
+
+/**
+ * Update fog parameters and push them into every live material in `scene`.
+ *
+ * Materials hold cloned uniform objects, so both the `UniformsLib` defaults (for
+ * materials created later) and the existing materials (for the current frame)
+ * must be written. Scene walks are O(materials) and happen on environment
+ * change only, never per frame.
+ */
+export function setHeightFogParams(scene: THREE.Scene, params: HeightFogParams): void {
+    installHeightFog();
+
+    if (params.heightFalloff !== undefined) _state.heightFalloff = params.heightFalloff;
+
+    if (scene.fog instanceof THREE.FogExp2) {
+        if (params.density !== undefined) scene.fog.density = params.density;
+        if (params.color   !== undefined) scene.fog.color.set(params.color);
+    }
+
+    // Keep library defaults in step so materials created after this call start
+    // with the current atmosphere rather than the boot-time one.
+    const lib = THREE.UniformsLib['fog'] as Record<string, THREE.IUniform>;
+    lib['fogHeightFalloff']!.value = _state.heightFalloff;
+
+    scene.traverse(obj => {
+        const mesh = obj as THREE.Mesh;
+        if (!mesh.material) return;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of materials) applyToMaterial(mat);
+    });
+}
+
+/**
+ * Write the current fog state into one material's uniforms.
+ *
+ * Exported so materials built outside the scene graph — or rebuilt after a
+ * preset switch — can be brought into step without a full traverse.
+ */
+export function applyToMaterial(material: THREE.Material): void {
+    const uniforms = (material as THREE.ShaderMaterial).uniforms;
+    if (!uniforms) return;
+    if (uniforms['fogHeightFalloff']) uniforms['fogHeightFalloff'].value = _state.heightFalloff;
+}
+
+/** Current parameter values — for tests and diagnostics. */
+export function getHeightFogState(): Readonly<typeof _state> {
+    return _state;
+}
