@@ -4,8 +4,8 @@
 // Self-hosted brand fonts (no CDN): Syne (display), DM Sans (body), DM Mono (data).
 import '@fontsource-variable/syne';
 import '@fontsource-variable/dm-sans';
-import '@fontsource/dm-mono/400.css';
-import '@fontsource/dm-mono/500.css';
+import '@fontsource/dm-mono/latin-400.css';
+import '@fontsource/dm-mono/latin-500.css';
 import './styles/main.css';
 import { bootstrapAnalytics } from './analytics';
 import * as THREE from 'three';
@@ -29,7 +29,7 @@ import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
 import { Hud }            from './ui/hud';
 import { WindCompass }    from './ui/windCompass';
-import { Cockpit }        from './ui/cockpit';
+import type { Cockpit }   from './ui/cockpit';
 import type { VizFrame }  from './types';
 import { isDroneReady }   from './types';
 import { Settings }       from './settings';
@@ -126,7 +126,9 @@ const controlPanel = new ControlPanel();
 const hud          = new Hud();
 const windCompass  = new WindCompass();
 // Selected-drone glass cockpit — flight instruments driven by live telemetry.
-const cockpit      = new Cockpit();
+// Lazily constructed on first enable (opt-in overlay, default off) so its module
+// + CSS ship in a separate chunk and stay out of the entry bundle.
+let cockpit: Cockpit | null = null;
 
 // ── Editor suite (deferred) ──────────────────────────────────────────────────
 // The dock, outliner, inspector, gizmo, DVR and onboard sensors pull in the
@@ -757,14 +759,18 @@ _setHintsVisible(hintsVisible);  // restore persisted state
 // ◔ HUD button or the `I` key; state persists across sessions.
 const cockpitToggle = document.getElementById('hud-cockpit-toggle');
 const COCKPIT_KEY = 'resq-viz-cockpit-visible';
-function _setCockpitEnabled(v: boolean): void {
-    if (cockpit.isEnabled() !== v) cockpit.toggle();
+async function _setCockpitEnabled(v: boolean): Promise<void> {
+    if (v && !cockpit) {
+        const { Cockpit } = await import('./ui/cockpit');
+        cockpit = new Cockpit();
+    }
+    if (cockpit && cockpit.isEnabled() !== v) cockpit.toggle();
     localStorage.setItem(COCKPIT_KEY, String(v));
     cockpitToggle?.classList.toggle('active', v);
     cockpitToggle?.setAttribute('aria-pressed', String(v));
 }
-cockpitToggle?.addEventListener('click', () => _setCockpitEnabled(!cockpit.isEnabled()));
-_setCockpitEnabled(localStorage.getItem(COCKPIT_KEY) === 'true');  // default: off
+cockpitToggle?.addEventListener('click', () => void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false)));
+void _setCockpitEnabled(localStorage.getItem(COCKPIT_KEY) === 'true');  // default: off
 
 hintsToggle?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1020,7 +1026,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
         case 'KeyC': cameraMode?.cycle(); break; // FREE → CHASE → FPV
-        case 'KeyI': _setCockpitEnabled(!cockpit.isEnabled()); break; // flight-instrument cockpit
+        case 'KeyI': void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false)); break; // flight-instrument cockpit
         case 'KeyM': {
             // Toggle the drone reposition gizmo ("move mode") — opt-in, so a
             // plain selection no longer obscures the scene with handles.
@@ -1148,7 +1154,7 @@ function _renderFrame(frame: VizFrame, snap = false): void {
     const _selId = droneManager.selectedId;
     const _selDrone = _selId ? (drones.find((d) => d.id === _selId) ?? null) : null;
     fpvOsd?.update(_selDrone, frame.time ?? 0);
-    cockpit.update(_selDrone);
+    cockpit?.update(_selDrone);
     effectsMgr.update(frame);
     // Feed the fire hazards to the smoke plumes (center = ground position).
     const fires: SmokeSource[] = (frame.hazards ?? [])
