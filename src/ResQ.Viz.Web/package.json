@@ -17,8 +17,8 @@
     "@resq-systems/analytics": "^2.0.1",
     "@resq-systems/logger": "^0.3.0",
     "@resq-systems/types": "^0.1.0",
-    "effect": "^4.0.0-beta.106",
-    "posthog-js": "^1.414.0",
+    "effect": "^4.0.0-rc.109",
+    "posthog-js": "^1.417.0",
     "three": "^0.185.1"
   },
   "devDependencies": {
