@@ -34,16 +34,28 @@ jobs:
         run: |
           set -euo pipefail
           type="$(printf '%s' "$TITLE" | sed -nE 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/p' | tr '[:upper:]' '[:lower:]')"
+          # This workflow is the SOLE owner of the change-*type* labels below.
+          # C-Documentation and C-Testing are intentionally NOT mapped here: they
+          # are path-owned by .github/labeler.yml (which runs sync-labels), so
+          # managing them in both places would let the two workflows fight over
+          # the same label. Paths express "docs/tests"; this expresses the type.
           case "$type" in
             feat|feature) label="C-Feature" ;;
             fix)          label="C-Bug" ;;
             perf)         label="C-Performance" ;;
-            docs)         label="C-Documentation" ;;
             refactor)     label="C-Refactor" ;;
-            test)         label="C-Testing" ;;
             chore|build|ci|style|revert) label="C-Chore" ;;
-            *) echo "Title has no conventional type prefix; nothing to label."; exit 0 ;;
+            *) echo "Title maps to no title-owned change type; nothing to label."; exit 0 ;;
           esac
           echo "Conventional type '$type' -> $label"
+          # Reconcile: drop any stale title-owned type label so a retitle
+          # (e.g. feat -> fix) leaves exactly one change-type label, not both.
+          managed="C-Feature C-Bug C-Performance C-Refactor C-Chore"
+          current="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          for m in $managed; do
+            if [ "$m" != "$label" ] && printf '%s\n' "$current" | grep -Fxq "$m"; then
+              gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label "$m" || true
+            fi
+          done
           gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label "$label" \
             || echo "::warning::label '$label' not found yet (run Label Sync); skipped."
