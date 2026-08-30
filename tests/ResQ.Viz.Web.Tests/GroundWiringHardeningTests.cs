@@ -180,24 +180,21 @@ public partial class GroundWiringHardeningTests
     /// promise; a rover refusing a command no payload could ever satisfy is.
     /// </para>
     /// <para>
-    /// <b>The quarantine is a bug list, not an exemption.</b> Each entry is a command this build
-    /// advertises and cannot execute, left in place because closing it means changing a domain
-    /// this pass does not own — but pinned by equality, so a new divergence fails here and a
-    /// fixed one has to be deleted from the list. <c>followRoute</c> requires a route target no
-    /// executor in either domain can resolve, and <c>setSpeed</c> has no case in the air
-    /// executor's command switch at all.
+    /// <b>There is no quarantine, and there must not be one again.</b> The three entries this
+    /// assertion once carried — <c>Air:followRoute</c>, <c>Ground:followRoute</c> and
+    /// <c>Air:setSpeed</c> — were the same defect written down three times rather than fixed, and
+    /// a list of excused divergences cannot tell a known one from a new one. Both honest closures
+    /// were taken instead: <c>setSpeed</c> gained a case in the air executor, which mirrors the
+    /// waypoint in force so a cruise change takes effect on it, and <c>followRoute</c> was
+    /// withdrawn from <see cref="CommandCatalog"/> entirely because its only target shape names a
+    /// stored route this build has nowhere to store. Re-advertising a command without an executor
+    /// behind it fails here, which is the whole point of the assertion being an equality against
+    /// nothing.
     /// </para>
     /// </remarks>
     [Fact]
     public void Every_Command_Advertised_To_An_Asset_Is_One_That_Asset_Accepts()
     {
-        string[] knownGaps =
-        [
-            $"{AssetDomain.Air}:{CommandKinds.FollowRoute}",
-            $"{AssetDomain.Air}:{CommandKinds.SetSpeed}",
-            $"{AssetDomain.Ground}:{CommandKinds.FollowRoute}",
-        ];
-
         var factories = ShippedFactories();
         var divergences = new SortedSet<string>(StringComparer.Ordinal);
         int probed = 0;
@@ -221,7 +218,10 @@ public partial class GroundWiringHardeningTests
                 if (!TryPlace(room, vehicleClass, factories))
                 {
                     // No motion model ships for this class, so it cannot be spawned and has no
-                    // capability report to be wrong about. Surface is that case today.
+                    // capability report to be wrong about. No shipped class is that case today —
+                    // air, ground and surface all place — and the guard stays because a class
+                    // added to the profile table ahead of its executor must be skipped rather
+                    // than reported as a divergence it cannot yet have.
                     break;
                 }
 
@@ -237,11 +237,11 @@ public partial class GroundWiringHardeningTests
 
         probed.Should().BeGreaterThan(0, "the invariant is vacuous if nothing was actually probed");
 
-        divergences.Should().BeEquivalentTo(
-            knownGaps,
+        divergences.Should().BeEmpty(
             "a capability report is a promise: every command it lists must be one the asset can "
-            + "execute. Delete an entry from the quarantine when its command is either "
-            + "implemented or withdrawn from the catalog — never add one to make this pass");
+            + "execute. Close a divergence by implementing the command or by withdrawing it from "
+            + "the catalog — never by excusing it here, because a list of excused divergences is "
+            + "what let this defect ship in one domain after another");
     }
 
     /// <summary>No rover is offered manual steering, on any platform, through any surface.</summary>

@@ -283,6 +283,10 @@ public sealed partial class SimulationRoom
             _swarmTick = 0;
             _swarm.ResetState();
             ClearAssetEventBuffer();
+            // Simulated time restarts with the world, so the observed contacts have to go with
+            // it: a store that survived would measure every later report against a high-water
+            // mark from the previous run and refuse the lot as arriving out of order.
+            ClearTracks();
             _commands.Clear();
             _environmentRevision++;
             _backhaulKilled = false;
@@ -363,6 +367,13 @@ public sealed partial class SimulationRoom
             // loop itself the per-asset lists only shrink when a v2 consumer happens to drain
             // them — and a session nobody is draining is exactly the one that runs for hours.
             BufferAssetEvents();
+
+            // Age the observed contacts against the same clock, on the same loop and for the
+            // same reason: a session nobody is reading is the one that runs for hours, and a
+            // contact that only expired when somebody asked would hold capacity a live one then
+            // could not have. A function of simulated time only, so a paused session ages
+            // nothing and a replay ages identically.
+            AdvanceTracks();
 
             // Broadcast cadence is driven by REAL ticks, not sim steps, so the
             // client keeps receiving 10 Hz frames while paused (to reflect the

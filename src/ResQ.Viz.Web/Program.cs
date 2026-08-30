@@ -60,24 +60,40 @@ builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
 
-// Ground motion models. Registering a factory is the whole of a domain's wiring: with one
-// present, POST /api/v2/sim/assets builds a rover; with none, that class is refused with
-// AssetProblems.MobilityModelUnavailable. No surface factory is registered yet, so the surface
-// domain still answers 501 — deliberately, and by the same mechanism.
+// Ground and surface motion models. Registering a factory is the whole of a domain's wiring:
+// with one present, POST /api/v2/sim/assets builds that class and a preset naming it spawns
+// rather than skips; with none, the class is refused with
+// AssetProblems.MobilityModelUnavailable. The reserved subsurface classes have no factory, so
+// they still answer 501 — deliberately, and by that same mechanism rather than by a special
+// case anywhere in the controller.
 //
-// A singleton holding no room. A rover settles onto the terrain of the room it is spawned into,
-// and rooms own their terrain, weather and water level individually — so the sampler is resolved
-// per build, from SimulationRoom.SpawningEnvironment, which the room publishes for exactly as
-// long as it is building an asset with its own lock held. That is what keeps every terrain
+// Both are singletons holding no room. A rover settles onto the terrain of the room it is
+// spawned into and a vessel floats on that room's water surface, and rooms own their terrain,
+// weather and water level individually — so the sampler is resolved per build, from
+// SimulationRoom.SpawningEnvironment, which the room publishes for exactly as long as it is
+// building an asset with its own lock held. That is what keeps every terrain and bathymetry
 // sample a spawn takes inside the lock; reaching back through the request for the room and
 // asking it for its sampler handed a live view out of UseAssets and then read the height field
 // outside the lock, racing an in-flight heightmap upload.
+//
+// ScenarioService above resolves this same IEnumerable<IAssetFactory>, so a preset and the v2
+// spawn endpoint agree by construction about which classes this deployment can build. Adding a
+// factory here is therefore the whole of what a new domain needs; there is no second list to
+// keep in step, which is what once made a class spawnable through the API and silently skipped
+// by every preset.
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.IAssetFactory>(_ =>
     new ResQ.Viz.Web.Services.Assets.Ground.GroundAssetFactory(() =>
         ResQ.Viz.Web.Services.SimulationRoom.SpawningEnvironment
         ?? throw new InvalidOperationException(
             "A ground asset may only be built from inside SimulationRoom.TrySpawnAsset, which "
             + "is what keeps its terrain sampling under the room's lock.")));
+
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.IAssetFactory>(_ =>
+    new ResQ.Viz.Web.Services.Assets.Surface.SurfaceAssetFactory(() =>
+        ResQ.Viz.Web.Services.SimulationRoom.SpawningEnvironment
+        ?? throw new InvalidOperationException(
+            "A surface asset may only be built from inside SimulationRoom.TrySpawnAsset, which "
+            + "is what keeps its bathymetry sampling under the room's lock.")));
 
 // ── OpenTelemetry ────────────────────────────────────────────────────────────
 // Traces (ASP.NET Core requests + HttpClient + our ActivitySource) and metrics

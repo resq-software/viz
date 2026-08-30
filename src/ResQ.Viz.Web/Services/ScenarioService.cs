@@ -21,6 +21,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services.Assets;
 using ResQ.Viz.Web.Services.Assets.Ground;
+using ResQ.Viz.Web.Services.Assets.Surface;
 
 namespace ResQ.Viz.Web.Services;
 
@@ -73,14 +74,18 @@ public sealed partial class ScenarioService
 
     /// <summary>The motion models this build ships, bound to no room at all.</summary>
     /// <remarks>
-    /// Ground only. A surface entry finds no factory able to build it and is skipped, which is
-    /// the same answer the v2 spawn endpoint gives for the surface domain today.
+    /// Ground and surface, which is exactly what the composition root registers. This list is
+    /// only ever reached by a caller that supplied none — the unit tests, which is why it exists
+    /// — but it must still match, because a fallback that lagged the registration would make a
+    /// preset spawn one population under the host and a different one under test, and the test
+    /// would be the one that passed. An entry naming a class nothing here builds is skipped and
+    /// logged, never thrown.
     /// <para>
-    /// Room-independent, and it has to be: the sampler a rover settles against is resolved from
-    /// <see cref="SimulationRoom.SpawningEnvironment"/> at the moment of the build, inside the
-    /// room's own lock. Capturing a sampler here instead would mean reading it out of a room
-    /// before the lock was taken and sampling terrain after it was released — the race
-    /// <see cref="SimulationRoom.UseAssets{T}"/> documents and forbids.
+    /// Room-independent, and it has to be: the sampler a rover settles against, or a vessel
+    /// floats on, is resolved from <see cref="SimulationRoom.SpawningEnvironment"/> at the moment
+    /// of the build, inside the room's own lock. Capturing a sampler here instead would mean
+    /// reading it out of a room before the lock was taken and sampling terrain after it was
+    /// released — the race <see cref="SimulationRoom.UseAssets{T}"/> documents and forbids.
     /// </para>
     /// </remarks>
     private static readonly IAssetFactory[] ShippedAssetFactories =
@@ -90,6 +95,12 @@ public sealed partial class ScenarioService
             ?? throw new InvalidOperationException(
                 "A ground asset may only be built from inside SimulationRoom.TrySpawnAsset, "
                 + "which is what keeps its terrain sampling under the room's lock.")),
+
+        new SurfaceAssetFactory(() =>
+            SimulationRoom.SpawningEnvironment
+            ?? throw new InvalidOperationException(
+                "A surface asset may only be built from inside SimulationRoom.TrySpawnAsset, "
+                + "which is what keeps its bathymetry sampling under the room's lock.")),
     ];
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<Entry>> _scenarios;

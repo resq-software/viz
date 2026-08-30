@@ -26,6 +26,7 @@ using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 using ResQ.Viz.Web.Services.Assets;
 using ResQ.Viz.Web.Services.Assets.Ground;
+using ResQ.Viz.Web.Services.Assets.Surface;
 
 namespace ResQ.Viz.Web.Tests;
 
@@ -84,6 +85,16 @@ public partial class GroundWiringHardeningTests
             SimulationRoom.SpawningEnvironment
             ?? throw new InvalidOperationException(
                 "A ground asset may only be built from inside SimulationRoom.TrySpawnAsset.")),
+
+        // The surface model, added here in the same change that registered it in the composition
+        // root. This list decides which classes
+        // Every_Command_Advertised_To_An_Asset_Is_One_That_Asset_Accepts can actually place, so a
+        // domain missing from it is a domain that invariant skips rather than checks — it would
+        // have gone on passing while a vessel was advertised commands no vessel accepts.
+        new SurfaceAssetFactory(() =>
+            SimulationRoom.SpawningEnvironment
+            ?? throw new InvalidOperationException(
+                "A surface asset may only be built from inside SimulationRoom.TrySpawnAsset.")),
     ];
 
     /// <summary>A v2 controller bound to <paramref name="room"/>.</summary>

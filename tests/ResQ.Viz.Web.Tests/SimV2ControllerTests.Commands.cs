@@ -218,12 +218,15 @@ public partial class SimV2ControllerTests
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
+        // The berth is a framed point, which is the only positional shape dock advertises: an
+        // asset-referenced one is now refused a gate earlier, at the target shape, and this case
+        // is about the capability gate rather than about that.
         Problem(
             ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Dock,
                 "key-dock",
                 CommandId: CommandId(12),
-                Target: new AssetCommandTarget("pier-1"))),
+                Target: new PointCommandTarget(Pose(CoordinateFrame.LocalEus, 10f, 0f, 10f)))),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandRejectionReasons.CapabilityNotDeclared);
     }

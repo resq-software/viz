@@ -355,10 +355,10 @@ public sealed partial class SnapshotIntegrityTests : IClassFixture<WebApplicatio
     /// factories at all, so every non-air class takes the same refusal path whatever the wired
     /// host happens to register. That separation is the point — availability is a deployment
     /// fact, asserted against the real host by
-    /// <see cref="The_Wired_Application_Registers_A_Ground_Model_And_No_Surface_Model"/>, while
-    /// this case pins what happens when a model is genuinely absent. The rover rows stay after
-    /// the ground work landed because a deployment that ships no ground model must still refuse
-    /// this way rather than throwing.
+    /// <see cref="The_Wired_Application_Registers_Ground_And_Surface_Models_And_No_Subsurface_Model"/>,
+    /// while this case pins what happens when a model is genuinely absent. The rover and vessel
+    /// rows stay after their domains landed because a deployment that ships neither model must
+    /// still refuse this way rather than throwing.
     /// </remarks>
     /// <param name="vehicleClass">A class no factory on this controller can build.</param>
     [Theory]
@@ -388,44 +388,61 @@ public sealed partial class SnapshotIntegrityTests : IClassFixture<WebApplicatio
     }
 
     /// <summary>
-    /// The wired application can build every ground class and no surface class, which is what
-    /// decides which domains the refusal above actually applies to at runtime.
+    /// The wired application can build every ground and surface class and no subsurface one,
+    /// which is what decides which domains the refusal above actually applies to at runtime.
     /// </summary>
     /// <remarks>
     /// Asserted against the real host rather than a hand-built controller, because availability
     /// is a composition-root fact: what <c>Program.cs</c> registers is the whole of what can be
-    /// spawned. This case previously required the registration to be empty, which was the honest
-    /// contract while no motion model existed; it now pins the deliberate replacement — ground
-    /// available, surface not yet — so that enabling surface has to come with an update here
-    /// rather than a 501 quietly becoming a 201 nobody noticed.
+    /// spawned. This case has been rewritten twice, deliberately each time — it first required
+    /// the registration to be empty, then required ground and refused surface, and now requires
+    /// both. That is the point of pinning it: enabling a domain has to come with an edit here
+    /// rather than a 501 quietly becoming a 201 nobody noticed, and the reserved subsurface
+    /// classes below are what stops the assertion decaying into "anything goes".
     /// <para>
-    /// <see cref="VehicleClass.LeggedRover"/> is included on purpose. The ground factory answers
-    /// for it because it has a motion model, while <c>AssetProfiles</c> has no row for it, so the
-    /// API refuses it earlier and for a different reason. Asserting the factory's answer here
-    /// keeps those two facts visibly separate.
+    /// <see cref="VehicleClass.LeggedRover"/> and <see cref="VehicleClass.Sailboat"/> are
+    /// included on purpose and for the same reason. Their factories answer for them because they
+    /// have motion models, while <c>AssetProfiles</c> has no row for either, so the API refuses
+    /// them earlier and with a different code — <c>VehicleClassUnsupported</c> rather than
+    /// <c>MobilityModelUnavailable</c>. Asserting the factories' answers here keeps those two
+    /// facts visibly separate instead of letting one mask the other.
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_Wired_Application_Registers_A_Ground_Model_And_No_Surface_Model()
+    public void The_Wired_Application_Registers_Ground_And_Surface_Models_And_No_Subsurface_Model()
     {
         using var scope = _app.Services.CreateScope();
 
         var factories = scope.ServiceProvider.GetServices<IAssetFactory>().ToList();
 
-        factories.Should().ContainSingle("this build ships exactly one non-air motion model");
+        factories.Should().HaveCount(2, "this build ships a ground motion model and a surface one");
 
-        var factory = factories[0];
-        factory.CanCreate(VehicleClass.AckermannRover).Should().BeTrue();
-        factory.CanCreate(VehicleClass.DifferentialRover).Should().BeTrue();
-        factory.CanCreate(VehicleClass.TrackedRover).Should().BeTrue();
-        factory.CanCreate(VehicleClass.LeggedRover).Should().BeTrue();
+        // Asked of the registration as a whole rather than of one factory, because which factory
+        // answers for a class is an implementation detail and the endpoint only ever asks "does
+        // anything here build this?".
+        bool CanBuild(VehicleClass vehicleClass) => factories.Any(f => f.CanCreate(vehicleClass));
 
-        factory.CanCreate(VehicleClass.SurfaceVessel).Should().BeFalse(
-            "the surface domain lands in later work and must still refuse with "
-            + "MobilityModelUnavailable until it does");
+        CanBuild(VehicleClass.AckermannRover).Should().BeTrue();
+        CanBuild(VehicleClass.DifferentialRover).Should().BeTrue();
+        CanBuild(VehicleClass.TrackedRover).Should().BeTrue();
+        CanBuild(VehicleClass.LeggedRover).Should().BeTrue();
 
-        factory.CanCreate(VehicleClass.Multirotor).Should().BeFalse(
+        CanBuild(VehicleClass.SurfaceVessel).Should().BeTrue(
+            "the surface domain has landed: a vessel spawns rather than answering 501");
+        CanBuild(VehicleClass.Sailboat).Should().BeTrue();
+
+        CanBuild(VehicleClass.Rov).Should().BeFalse(
+            "the subsurface classes are reserved values with no motion model, and must still "
+            + "refuse with MobilityModelUnavailable");
+        CanBuild(VehicleClass.Auv).Should().BeFalse();
+
+        CanBuild(VehicleClass.Multirotor).Should().BeFalse(
             "air assets belong to the flight world, which AddDrone is the only way into");
+
+        // The two must stay separable: neither factory may quietly grow into the other's domain,
+        // which is how "one question, one answer" degrades into two tables that disagree.
+        factories.Should().ContainSingle(f => f.CanCreate(VehicleClass.AckermannRover));
+        factories.Should().ContainSingle(f => f.CanCreate(VehicleClass.SurfaceVessel));
     }
 
     /// <summary>

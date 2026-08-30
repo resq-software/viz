@@ -42,6 +42,17 @@ public static class AssetCommandTranslator
     /// <see cref="LocalOrigin"/> for the geodetic case, a live registry lookup for the asset
     /// case, a route store for the third — and guessing a position from a target we cannot
     /// resolve is how a vehicle ends up driving somewhere nobody asked for.
+    /// <para>
+    /// <b>None of the three is reachable from a conforming client any more.</b> A geodetic target
+    /// is re-expressed as a point at the REST boundary, where the origin is known;
+    /// <see cref="CommandTargetKinds.Asset"/> is advertised by no catalog row since <c>dock</c>
+    /// withdrew it; and <see cref="CommandTargetKinds.Route"/> is advertised by none since
+    /// <c>followRoute</c> was withdrawn whole, for exactly the refusal below. Each was a command
+    /// the capability report offered and this function then refused, which is a promise that
+    /// cannot be kept rather than a momentary "not now". The arms stay as backstops — this
+    /// function is callable without passing either gate, and a refusal here is cheaper than a
+    /// vehicle aimed at an approximation — but nothing should now reach them.
+    /// </para>
     /// </remarks>
     /// <param name="intent">Intent produced by <see cref="CommandCatalog.Validate"/>.</param>
     /// <param name="command">The translated command on success.</param>
@@ -85,10 +96,14 @@ public static class AssetCommandTranslator
                 break;
 
             default:
-                // Not a payload complaint: the shape is advertised and well formed, and this
-                // build simply owns no registry to resolve it against. The HTTP layer keys the
-                // status off the code's prefix, so borrowing a payload code here would answer a
-                // server limitation with "your request is malformed".
+                // Not a payload complaint: the shape is well formed, and this build simply owns
+                // no registry to resolve it against: no asset registry for an asset-referenced
+                // berth, no route store for a route identifier. The HTTP layer keys the status
+                // off the code's prefix, so borrowing a payload code here would answer a server
+                // limitation with "your request is malformed". A shape that reaches this arm
+                // while a catalog row still advertises it is the advertised-is-not-accepted bug
+                // that withdrew Asset from the dock row and then withdrew followRoute entirely;
+                // CrossDomainInvariantTests pins that, with no quarantine list to hide in.
                 reasonCode = CommandContractReasons.TargetNotResolvable;
                 message =
                     $"Target shape '{requested.Kind}' cannot be resolved by this simulation; " +
