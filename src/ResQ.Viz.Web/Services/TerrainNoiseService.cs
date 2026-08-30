@@ -21,12 +21,15 @@ public sealed class TerrainNoiseService : ITerrain
     // Heightmap override — when installed (via SetHeightmap), replaces the
     // procedural preset with a client-uploaded DEM. Drone altitude clamping
     // then tracks the imported terrain, matching what the viz renders.
+    //
+    // ONE FIELD, DELIBERATELY. The footprint a DEM covers is carried by the DEM itself
+    // (HeightmapTerrain.Width and .Depth), never beside it, so installing one is a single
+    // reference store and a reader either sees the whole override or none of it. Holding the
+    // width and depth in their own fields published the grid before its dimensions: a reader
+    // landing between those stores got the new DEM addressed with the previous footprint — or,
+    // on the first upload, with zero — and sampled it at entirely the wrong place. Nothing about
+    // that was visible in a single-threaded read, which is exactly why it must be structural.
     private HeightmapTerrain? _heightmap;
-    // Dimensions of the uploaded DEM, stored so `GetElevation` can shift
-    // client-centred world coords onto the SDK's corner-origin grid without
-    // assuming the DEM covers the service's default 4000×4000 m footprint.
-    private double _hmWidth;
-    private double _hmDepth;
 
     /// <inheritdoc/>
     public double Width => 4000;
@@ -48,12 +51,8 @@ public sealed class TerrainNoiseService : ITerrain
     /// <param name="heights">Row-major elevation grid in metres.</param>
     /// <param name="width">World width the grid covers, in metres.</param>
     /// <param name="depth">World depth the grid covers, in metres.</param>
-    public void SetHeightmap(float[,] heights, double width, double depth)
-    {
+    public void SetHeightmap(float[,] heights, double width, double depth) =>
         _heightmap = new HeightmapTerrain(heights, width, depth);
-        _hmWidth = width;
-        _hmDepth = depth;
-    }
 
     /// <summary>
     /// Clears the heightmap override.  <see cref="GetElevation"/> resumes
@@ -65,11 +64,15 @@ public sealed class TerrainNoiseService : ITerrain
     /// <inheritdoc/>
     public double GetElevation(double x, double z)
     {
-        if (_heightmap is not null)
+        // Read once into a local: re-reading the field would let an upload land between the
+        // null check and the sample, and the whole point of publishing the DEM and its footprint
+        // together is that one read yields a consistent pair.
+        if (_heightmap is { } dem)
         {
             // Client world-space is centred on origin; HeightmapTerrain expects
-            // origin-bottom-left indexing.  Shift by half-width/depth.
-            return _heightmap.GetElevation(x + _hmWidth * 0.5, z + _hmDepth * 0.5);
+            // origin-bottom-left indexing.  Shift by half-width/depth — read off the DEM, so the
+            // footprint can never be the previous upload's.
+            return dem.GetElevation(x + dem.Width * 0.5, z + dem.Depth * 0.5);
         }
 
         return _preset switch

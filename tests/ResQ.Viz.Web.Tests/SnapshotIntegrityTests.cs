@@ -344,24 +344,30 @@ public sealed partial class SnapshotIntegrityTests : IClassFixture<WebApplicatio
         room.DrainAssetEvents().Should().BeEmpty();
     }
 
-    // ─── D4: ground and surface spawn is refused deliberately ───────────────
+    // ─── D4: a class with no registered model is refused deliberately ───────
 
     /// <summary>
-    /// Ground and surface classes have a profile but no motion model in this build, so a spawn is
-    /// refused with a reason code that names the gap.
+    /// A class with a profile but no motion model available to the controller is refused with a
+    /// reason code that names the gap.
     /// </summary>
     /// <remarks>
-    /// The refusal is the contract until the ground and surface work lands. When it does, and a
-    /// factory is registered, this case fails and is meant to: flipping it is how the new domain
-    /// announces itself, rather than a 501 quietly becoming a 201 nobody noticed.
+    /// About the mechanism, not about any one domain: the controller here is built with no
+    /// factories at all, so every non-air class takes the same refusal path whatever the wired
+    /// host happens to register. That separation is the point — availability is a deployment
+    /// fact, asserted against the real host by
+    /// <see cref="The_Wired_Application_Registers_A_Ground_Model_And_No_Surface_Model"/>, while
+    /// this case pins what happens when a model is genuinely absent. The rover rows stay after
+    /// the ground work landed because a deployment that ships no ground model must still refuse
+    /// this way rather than throwing.
     /// </remarks>
-    /// <param name="vehicleClass">A class whose domain this build cannot simulate.</param>
+    /// <param name="vehicleClass">A class no factory on this controller can build.</param>
     [Theory]
     [InlineData(VehicleClass.AckermannRover)]
     [InlineData(VehicleClass.DifferentialRover)]
     [InlineData(VehicleClass.TrackedRover)]
     [InlineData(VehicleClass.SurfaceVessel)]
-    public void Spawning_An_Unavailable_Domain_Is_Refused_With_A_Reason_Code(VehicleClass vehicleClass)
+    public void Spawning_A_Class_With_No_Registered_Model_Is_Refused_With_A_Reason_Code(
+        VehicleClass vehicleClass)
     {
         var (ctrl, room) = CreateController();
 
@@ -373,7 +379,7 @@ public sealed partial class SnapshotIntegrityTests : IClassFixture<WebApplicatio
         var problem = result.Should().BeOfType<ObjectResult>().Which;
         problem.StatusCode.Should().Be(
             StatusCodes.Status501NotImplemented,
-            "the domain is unimplemented, which is neither the caller's fault nor a server error");
+            "a missing motion model is neither the caller's fault nor a server error");
 
         problem.Value.Should().BeOfType<CommandProblemDetails>()
             .Which.Code.Should().Be(AssetProblems.MobilityModelUnavailable);
@@ -381,20 +387,77 @@ public sealed partial class SnapshotIntegrityTests : IClassFixture<WebApplicatio
         room.CaptureAssetFrame().Assets.Should().BeEmpty("a refusal leaves no half-built asset behind");
     }
 
-    /// <summary>The wired application registers no asset factory, which is why the refusal above stands.</summary>
+    /// <summary>
+    /// The wired application can build every ground class and no surface class, which is what
+    /// decides which domains the refusal above actually applies to at runtime.
+    /// </summary>
     /// <remarks>
-    /// Asserted against the real host rather than a hand-built controller, because the gap being
-    /// pinned is a composition-root fact: <c>Program.cs</c> registers no
-    /// <see cref="IAssetFactory"/>, so nothing can build a rover or a vessel at runtime. Register
-    /// one and this case fails, which is the intended signal to update the refusal contract.
+    /// Asserted against the real host rather than a hand-built controller, because availability
+    /// is a composition-root fact: what <c>Program.cs</c> registers is the whole of what can be
+    /// spawned. This case previously required the registration to be empty, which was the honest
+    /// contract while no motion model existed; it now pins the deliberate replacement — ground
+    /// available, surface not yet — so that enabling surface has to come with an update here
+    /// rather than a 501 quietly becoming a 201 nobody noticed.
+    /// <para>
+    /// <see cref="VehicleClass.LeggedRover"/> is included on purpose. The ground factory answers
+    /// for it because it has a motion model, while <c>AssetProfiles</c> has no row for it, so the
+    /// API refuses it earlier and for a different reason. Asserting the factory's answer here
+    /// keeps those two facts visibly separate.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void The_Wired_Application_Registers_No_Asset_Factory()
+    public void The_Wired_Application_Registers_A_Ground_Model_And_No_Surface_Model()
     {
         using var scope = _app.Services.CreateScope();
 
-        scope.ServiceProvider.GetServices<IAssetFactory>().Should().BeEmpty(
-            "ground and surface motion models land in later work; registering one here must be a "
-            + "deliberate change that also updates the spawn-refusal contract");
+        var factories = scope.ServiceProvider.GetServices<IAssetFactory>().ToList();
+
+        factories.Should().ContainSingle("this build ships exactly one non-air motion model");
+
+        var factory = factories[0];
+        factory.CanCreate(VehicleClass.AckermannRover).Should().BeTrue();
+        factory.CanCreate(VehicleClass.DifferentialRover).Should().BeTrue();
+        factory.CanCreate(VehicleClass.TrackedRover).Should().BeTrue();
+        factory.CanCreate(VehicleClass.LeggedRover).Should().BeTrue();
+
+        factory.CanCreate(VehicleClass.SurfaceVessel).Should().BeFalse(
+            "the surface domain lands in later work and must still refuse with "
+            + "MobilityModelUnavailable until it does");
+
+        factory.CanCreate(VehicleClass.Multirotor).Should().BeFalse(
+            "air assets belong to the flight world, which AddDrone is the only way into");
+    }
+
+    /// <summary>
+    /// The wired scenario loader spawns from the same motion models the spawn endpoint does,
+    /// rather than from a second list of its own.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ScenarioService"/> accepts its factories and falls back to a built-in default
+    /// when handed none, which is what its own unit tests rely on. The composition root must not
+    /// take that fallback: a preset and <c>POST /api/v2/sim/assets</c> place assets in the same
+    /// world, so a class one can build and the other cannot is a contradiction an operator sees
+    /// as a preset that silently comes up short. Pinned by identity rather than by count — the
+    /// two must be the <em>same</em> instances, because two equivalent lists today is exactly how
+    /// they come to disagree the first time one of them gains a row.
+    /// <para>
+    /// This is the assertion the earlier wiring would have failed: the loader held its own copy of
+    /// the registry, so the first factory registered without a matching edit there would have been
+    /// spawnable through the API and skipped by every preset, with nothing but a log line saying
+    /// so.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_Wired_Scenario_Loader_Spawns_From_The_Registered_Motion_Models()
+    {
+        using var scope = _app.Services.CreateScope();
+
+        var registered = scope.ServiceProvider.GetServices<IAssetFactory>().ToList();
+        var loader = scope.ServiceProvider.GetRequiredService<ScenarioService>();
+
+        loader.AssetFactories.Should().BeEquivalentTo(
+            registered,
+            options => options.WithStrictOrdering().ComparingByValue<IAssetFactory>(),
+            "the scenario loader must spawn through the container's models, not a second list");
     }
 }

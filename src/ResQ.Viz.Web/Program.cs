@@ -39,10 +39,45 @@ builder.Services.AddControllers();
 builder.Services.AddDataProtection()
     .SetApplicationName("ResQ.Viz.Web");
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
-builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();
+// Constructed explicitly rather than by convention: ScenarioService takes optional arguments
+// naming the motion models a scenario may spawn and the logger its skipped rows are reported to,
+// and leaving those to constructor selection would make which arguments are supplied an
+// implementation detail of the container. The logger is not decoration — a preset row that fails
+// validation is skipped rather than thrown, so the log line is the only place a typo surfaces.
+//
+// The factories are the container's own, not the service's built-in default. A preset and
+// POST /api/v2/sim/assets place assets in the same world, so they must agree on which classes
+// this deployment can actually build; passing null here left the scenario loader holding a second,
+// hand-maintained copy of that list, and the first factory registered below without a matching
+// edit there would have been spawnable through the API and silently skipped by every preset.
+// Resolved lazily inside the delegate, so registration order below does not matter.
+builder.Services.AddSingleton(sp =>
+    new ResQ.Viz.Web.Services.ScenarioService(
+        sp.GetRequiredService<IConfiguration>(),
+        assetFactories: sp.GetServices<ResQ.Viz.Web.Services.IAssetFactory>().ToList(),
+        logger: sp.GetRequiredService<ILogger<ResQ.Viz.Web.Services.ScenarioService>>()));
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
+
+// Ground motion models. Registering a factory is the whole of a domain's wiring: with one
+// present, POST /api/v2/sim/assets builds a rover; with none, that class is refused with
+// AssetProblems.MobilityModelUnavailable. No surface factory is registered yet, so the surface
+// domain still answers 501 — deliberately, and by the same mechanism.
+//
+// A singleton holding no room. A rover settles onto the terrain of the room it is spawned into,
+// and rooms own their terrain, weather and water level individually — so the sampler is resolved
+// per build, from SimulationRoom.SpawningEnvironment, which the room publishes for exactly as
+// long as it is building an asset with its own lock held. That is what keeps every terrain
+// sample a spawn takes inside the lock; reaching back through the request for the room and
+// asking it for its sampler handed a live view out of UseAssets and then read the height field
+// outside the lock, racing an in-flight heightmap upload.
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.IAssetFactory>(_ =>
+    new ResQ.Viz.Web.Services.Assets.Ground.GroundAssetFactory(() =>
+        ResQ.Viz.Web.Services.SimulationRoom.SpawningEnvironment
+        ?? throw new InvalidOperationException(
+            "A ground asset may only be built from inside SimulationRoom.TrySpawnAsset, which "
+            + "is what keeps its terrain sampling under the room's lock.")));
 
 // ── OpenTelemetry ────────────────────────────────────────────────────────────
 // Traces (ASP.NET Core requests + HttpClient + our ActivitySource) and metrics

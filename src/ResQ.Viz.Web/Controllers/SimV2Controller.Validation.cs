@@ -333,6 +333,13 @@ public sealed partial class SimV2Controller
     }
 
     /// <summary>Spawns a ground or surface asset through a registered motion-model factory.</summary>
+    /// <remarks>
+    /// The factory runs inside <see cref="SimulationRoom.TrySpawnAsset"/> rather than here, and
+    /// that placement is the whole point of the call: a rover settles onto the terrain in its own
+    /// constructor, so building one reads the height field. Built out here it would read a
+    /// terrain the tick loop — or an in-flight heightmap upload — is free to replace mid-sample,
+    /// and would then be registered against a world it never actually measured.
+    /// </remarks>
     private IActionResult SpawnNonAirAsset(
         SimulationRoom room,
         AssetSpawnRequest request,
@@ -365,10 +372,10 @@ public sealed partial class SimV2Controller
             agencyId: request.AgencyId,
             fleetId: request.FleetId);
 
-        var asset = factory.Create(new AssetSpawnPlan(
-            assetId, request.VehicleClass, descriptor, positionEus, headingRad));
+        var plan = new AssetSpawnPlan(
+            assetId, request.VehicleClass, descriptor, positionEus, headingRad);
 
-        if (!room.TryAddAsset(asset, out var reasonCode))
+        if (!room.TrySpawnAsset(assetId, _ => factory.Create(plan), out var reasonCode))
         {
             return Failure(
                 StatusCodes.Status409Conflict, reasonCode,
