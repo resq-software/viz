@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { PostFx } from './postfx';
+import { DeferredPostFx } from './postfxDeferred';
 import { UnityCamera } from './cameraControl';
 import { updateWaterSunDirection } from './water';
 import { getLogger } from './log';
@@ -126,7 +126,10 @@ export class Scene {
     // directly onto the canvas (e.g. the onboard-camera picture-in-picture,
     // which scissor-renders the scene from a second camera into a corner).
     private readonly _postRenderCallbacks: Array<() => void> = [];
-    private _postFx!: PostFx;
+    // Post-processing is loaded on demand — see postfxDeferred.ts for why
+    // that is safe despite being the render path. Until it resolves this
+    // renders the scene directly through the renderer.
+    private _postFx!: DeferredPostFx;
     private _sky!: Sky;
     private _sun!: THREE.DirectionalLight;
     private _pmrem!: THREE.PMREMGenerator;
@@ -176,7 +179,10 @@ export class Scene {
         this._initSky();
         this._initLights();
         this._initHelpers();
-        this._postFx = new PostFx(
+        // Constructed before the render loop starts so the chunk fetch is in
+        // flight from the first frame; the loop renders through the direct
+        // fallback until it lands.
+        this._postFx = new DeferredPostFx(
             this.renderer,
             this.scene,
             this._camera,
