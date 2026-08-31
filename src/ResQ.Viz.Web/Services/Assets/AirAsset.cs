@@ -78,6 +78,9 @@ public sealed partial class AirAsset : ISimulatedAsset
     private readonly SimulatedDrone _drone;
     private readonly List<AssetEvent> _events = [];
 
+    /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
+    private readonly FaultOnsetLedger _faultOnsets = new();
+
     // Transition tracking for event raising, guarded by _lastObservedTick so capturing twice
     // within one tick cannot raise an event twice — capture must be idempotent per tick.
     private long _lastObservedTick = -1;
@@ -244,7 +247,8 @@ public sealed partial class AirAsset : ISimulatedAsset
             // can never disagree about the same drone.
             Mode: StatusV1,
             Power: BuildPower(physics.BatteryPercent),
-            Health: BuildHealth(physics.BatteryPercent, context.SourceTime),
+            Health: _faultOnsets.Stamp(
+                BuildHealth(physics.BatteryPercent, context.SourceTime), context.SourceTime),
             Link: new LinkState(
                 Transport: LinkTransport.Loopback,
                 IsConnected: true,

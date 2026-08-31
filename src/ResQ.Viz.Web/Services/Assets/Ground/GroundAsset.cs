@@ -162,6 +162,9 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     private readonly Vector3 _basePositionEus;
     private readonly double _capacityWh;
 
+    /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
+    private readonly FaultOnsetLedger _faultOnsets = new();
+
     private GroundMotionState _motion;
     private TerrainNormalFilter _filter = TerrainNormalFilter.Uninitialised;
     private TerrainContactState _contact;

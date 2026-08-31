@@ -204,6 +204,9 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private readonly Vector3 _basePositionEus;
     private readonly double _capacityWh;
 
+    /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
+    private readonly FaultOnsetLedger _faultOnsets = new();
+
     private SurfaceMotionState _motion;
     private EnvironmentSample _sample;
     private WaterSample _water;

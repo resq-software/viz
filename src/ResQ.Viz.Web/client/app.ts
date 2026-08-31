@@ -87,7 +87,11 @@ import {
 } from './assets/sceneFrame';
 import type { SceneAsset, SceneFrame, SceneSnapshot } from './assets/sceneFrame';
 import { AssetDomain } from './assets/types';
-import type { ExternalTrackState, VizSnapshotV2 } from './assets/types';
+import type { ExternalTrackState, VizDeltaV2, VizSnapshotV2 } from './assets/types';
+// Type-only, so the delta merge stays out of the entry chunk entirely: the
+// module is fetched by `_subscribeDeltas`, and only on a server that offers
+// the stream.
+import type { DeltaTracker } from './assets/deltaApply';
 import type { FleetUi } from './assets/fleetUi';
 import type { PickedTarget } from './assets/panelCommands';
 import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
@@ -1049,6 +1053,31 @@ const _descriptorCache = new DescriptorCache();
 const _simulationClock = new SimulationClock();
 /** The most recent projected snapshot, or null while on v1. */
 let _lastSnapshot: SceneSnapshot | null = null;
+
+// ─── v2 delta stream ───────────────────────────────────────────────────────
+//
+// A second opt-in layered on the first, exactly as v2 was layered on v1. Only a
+// connection that asks for deltas gets them, and it trades its full snapshots
+// for keyframes plus deltas rather than receiving both. Everything below is
+// inert on a server that does not offer the stream, and the client then behaves
+// exactly as it does today.
+//
+// Nothing downstream knows any of this exists: `DeltaTracker` returns a complete
+// `VizSnapshotV2`, which goes through `_ingestSnapshot` like any other frame.
+
+/** Holds the frame the chain is measured against. Null while on full snapshots. */
+let _deltaTracker: DeltaTracker | null = null;
+/** Set once this session has given up on deltas — a schema it cannot read, or a
+ *  chain no keyframe recovered. Never unset: a reload retries, a reconnect does
+ *  not, because the same server would fail the same way. */
+let _deltaOptOut = false;
+/** Unappliable frames between re-asking for a keyframe — 2 s at 10 Hz. One ask
+ *  per gap is the normal case; this is for an ask that was lost or refused. */
+const GAP_REASK_FRAMES = 20;
+/** Unappliable frames before abandoning deltas — 10 s, two whole periodic
+ *  keyframe cycles. Past that the stream is not one this client can follow, and
+ *  full snapshots are always available and always correct. */
+const GAP_GIVE_UP_FRAMES = 100;
 /** Fleet panel + filter. Null until the first v2 snapshot pulls in its chunk. */
 let fleetUi: FleetUi | null = null;
 let _fleetUiLoading = false;
@@ -2118,56 +2147,218 @@ function _wireConnection(c: HubConnection): void {
             return;
         }
 
-        loadingOverlay.onFrame();
-        if (!_v2Active) {
-            _v2Active = true;
-            _ensureFleetUi();
-            log.info('v2 snapshot stream is driving the scene', {
-                schemaVersion: snapshot.schemaVersion,
-            });
-        }
-
-        // The DVR buffers v1 frames only, so a scrub replays the air assets and
-        // nothing else. Live snapshots are still projected while scrubbing —
-        // cheap, and it keeps the descriptor cache current so going live does
-        // not arrive on a frame whose descriptors were pruned in the meantime.
-        // The wall clock is the projection's documented last resort and reaches
-        // an age only when no frame this session has carried a dateable report —
-        // in which case nothing is dateable against it either.
-        const projected = projectSnapshot(
-            snapshot, Date.now(), _descriptorCache, _simulationClock,
-        );
-        if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
-
-        _renderSnapshot(projected);
-        dvr?.updateServer(projected.frame);
-        // Roster and event announcements run over EVERY asset, not the visible
-        // subset. The filter narrows what is drawn, not what happened: a vessel
-        // the operator has filtered out is still a vessel that came online, and
-        // silencing it would turn the filter into a way to miss things.
-        _diffAssetRoster(projected.assets);
-        _applyLiveEvents(
-            projected.frame, projected.assets.length,
-            projected.isPartitioned, projected.backhaulAvailable,
-        );
-        _fitOnce(
-            projected.assets.map(a => new THREE.Vector3(
-                a.view.position[0], a.view.position[1], a.view.position[2],
-            )),
-            projected.assets.length,
-        );
+        // Every full snapshot is a base the delta chain can be measured from,
+        // and a keyframe is an ordinary snapshot on this ordinary method —
+        // deliberately, so that joining, reconnecting and recovering from a gap
+        // all end in the same message, handled here by the same code.
+        _deltaTracker?.hold(snapshot);
+        _ingestSnapshot(snapshot);
     });
 
-    c.onreconnecting(() => { hud.setStatus('reconnecting'); loadingOverlay.onReconnecting(); });
+    // Deltas. Keyframes do not arrive here — they arrive above — so this handler
+    // has exactly one decision to make: whether we are still on the chain. That
+    // is an equality check on the frame id and nothing more; there is no timer,
+    // no window and no heuristic anywhere on this path.
+    c.on('ReceiveDeltaV2', (delta: VizDeltaV2) => {
+        const tracker = _deltaTracker;
+        // No tracker means we are not following the chain — we never subscribed,
+        // or we gave up on it. Ignoring is right rather than merely safe: the
+        // full snapshots arriving instead are complete frames.
+        if (tracker === null) return;
+
+        // Same per-frame check the snapshot handler makes, and for the same
+        // reason: a server upgraded under a long-lived connection must not have
+        // this client merging fields that may have moved. The answer is one tier
+        // down rather than all the way to v1 — full snapshots are still readable
+        // if only the delta shape changed, and the snapshot handler's own check
+        // decides that independently.
+        if (!isSupportedSchema(delta.schemaVersion)) {
+            log.warn('v2 delta schema is not one this client reads; returning to full snapshots', {
+                schemaVersion: delta.schemaVersion,
+            });
+            void _abandonDeltas();
+            return;
+        }
+
+        const outcome = tracker.apply(delta);
+        if (outcome.kind === 'applied') {
+            _ingestSnapshot(outcome.snapshot);
+            return;
+        }
+        // A duplicate describes the frame we already hold and a stale one has
+        // already been superseded. Neither is a gap; neither needs an answer.
+        if (outcome.kind === 'gap') _onDeltaGap(outcome.reason, outcome.streak);
+    });
+
+    c.onreconnecting(() => {
+        hud.setStatus('reconnecting');
+        loadingOverlay.onReconnecting();
+        // Group membership dies with the connection, and the room may have been
+        // reset while we were away, so the held frame is no longer a base this
+        // client can vouch for. Dropping it costs nothing on screen: the last
+        // projected picture stays up, and re-subscribing forces a keyframe.
+        _deltaTracker?.reset();
+    });
     c.onreconnected(()  => {
         hud.setStatus('connected');
         loadingOverlay.onReconnected();
         // Snapshot subscription is connection-scoped: the server drops it with
         // the connection, and a reconnect is not always preceded by a disconnect
-        // the server saw. Re-asking is idempotent on both sides.
-        void _subscribeSnapshots();
+        // the server saw. Re-asking is idempotent on both sides — and asking for
+        // deltas again is itself the resync, because the server answers a
+        // subscription with a keyframe.
+        void _subscribeSnapshots().then(_subscribeDeltas);
     });
     c.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
+}
+
+/**
+ * Project one complete v2 frame and drive every consumer off it.
+ *
+ * The single entry point for a frame that arrived whole and for one merged out
+ * of a delta alike — which is the reason the merge returns a `VizSnapshotV2`
+ * rather than a patch. Nothing below this line can tell the two apart, and no
+ * downstream surface has to learn a second shape.
+ *
+ * `_v2Active` flips here rather than on a successful subscription: a server that
+ * accepts the subscription and then sends nothing must leave v1 driving the
+ * scene rather than freezing it.
+ */
+function _ingestSnapshot(snapshot: VizSnapshotV2): void {
+    loadingOverlay.onFrame();
+    if (!_v2Active) {
+        _v2Active = true;
+        _ensureFleetUi();
+        log.info('v2 snapshot stream is driving the scene', {
+            schemaVersion: snapshot.schemaVersion,
+        });
+    }
+
+    // The DVR buffers v1 frames only, so a scrub replays the air assets and
+    // nothing else. Live snapshots are still projected while scrubbing —
+    // cheap, and it keeps the descriptor cache current so going live does
+    // not arrive on a frame whose descriptors were pruned in the meantime.
+    // The wall clock is the projection's documented last resort and reaches
+    // an age only when no frame this session has carried a dateable report —
+    // in which case nothing is dateable against it either.
+    //
+    // A merged frame ages exactly like a whole one: every carried-forward asset
+    // arrives with its real `sourceTime`, so the freshest stamp in the frame is
+    // still the frame's own simulation instant and `SimulationClock` recovers
+    // the session epoch off a delta just as it does off a keyframe.
+    const projected = projectSnapshot(
+        snapshot, Date.now(), _descriptorCache, _simulationClock,
+    );
+    if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
+
+    _renderSnapshot(projected);
+    dvr?.updateServer(projected.frame);
+    // Roster and event announcements run over EVERY asset, not the visible
+    // subset. The filter narrows what is drawn, not what happened: a vessel
+    // the operator has filtered out is still a vessel that came online, and
+    // silencing it would turn the filter into a way to miss things.
+    _diffAssetRoster(projected.assets);
+    _applyLiveEvents(
+        projected.frame, projected.assets.length,
+        projected.isPartitioned, projected.backhaulAvailable,
+    );
+    _fitOnce(
+        projected.assets.map(a => new THREE.Vector3(
+            a.view.position[0], a.view.position[1], a.view.position[2],
+        )),
+        projected.assets.length,
+    );
+}
+
+/**
+ * Lost the chain: ask for a keyframe, and keep rendering what is on screen.
+ *
+ * **The scene is deliberately not cleared.** A hundred-millisecond freeze with
+ * visibly ageing freshness is far better than a flash of empty world, and
+ * blanking would tear down the selection and any chase camera riding an asset.
+ * The server answers a request on its next broadcast, so the stale window is one
+ * tick in the normal case.
+ *
+ * Three escalations, all driven by arriving frames rather than by a timer:
+ * ask once per gap; re-ask on a slow cadence in case the ask was lost or the
+ * server's per-connection budget refused it; and give up on deltas entirely once
+ * two whole periodic-keyframe cycles have passed without recovery. There is no
+ * fourth case — if nothing arrives at all, the connection itself is dead and
+ * SignalR's reconnect owns that, which is why this needs no timeout of its own.
+ */
+function _onDeltaGap(reason: string, streak: number): void {
+    if (streak > GAP_GIVE_UP_FRAMES) {
+        log.warn('no keyframe recovered the delta chain; returning to full snapshots', { reason });
+        void _abandonDeltas();
+        return;
+    }
+    if (streak === 1 || streak % GAP_REASK_FRAMES === 0) {
+        log.info('delta chain gap; requesting a keyframe', { reason, streak });
+        // Fire and forget. A refusal is not a failure state: the server's
+        // periodic keyframe re-establishes this client within five seconds
+        // whether or not it ever managed to ask.
+        void connection?.invoke('RequestKeyframe').catch(() => undefined);
+    }
+}
+
+/**
+ * Ask to receive deltas instead of full snapshots.
+ *
+ * Layered on `_subscribeSnapshots` and failing in the same direction: a server
+ * without the method rejects the invoke, which is a supported configuration and
+ * not an error — full snapshots keep arriving and this client behaves exactly as
+ * it did before deltas existed.
+ *
+ * Two orderings matter here. The merge module is imported **before** the invoke,
+ * because subscribing is itself a resync request and the server's next broadcast
+ * is a keyframe; a module still in flight when that frame lands would miss the
+ * base. The tracker is installed before the invoke for the same reason.
+ */
+async function _subscribeDeltas(): Promise<void> {
+    const c = connection;
+    // Not gated on `_v2Active`: the snapshot subscription has been accepted but
+    // its first frame has not landed yet, and a server that accepted one will
+    // accept the other. A server that refused v2 outright has already set the
+    // opt-out by way of `_leaveV2`.
+    if (!c || _deltaOptOut) return;
+    try {
+        const { DeltaTracker } = await import('./assets/deltaApply');
+        _deltaTracker = new DeltaTracker();
+        const version = await c.invoke<string>('SubscribeDeltas', true);
+        if (!isSupportedSchema(version)) {
+            log.warn('server speaks a delta schema this client does not read; staying on snapshots', {
+                schemaVersion: version,
+            });
+            await _abandonDeltas();
+            return;
+        }
+        log.info('subscribed to the v2 delta stream', { schemaVersion: version });
+    } catch (err: unknown) {
+        _deltaTracker = null;
+        log.info('no v2 delta stream on this server; staying on full snapshots', { err });
+    }
+}
+
+/**
+ * Give up on deltas for this session and go back to full snapshots.
+ *
+ * Unsubscribing is what restores this connection to the snapshot group, so the
+ * very next broadcast is a complete frame and the scene never blanks on the way
+ * across. The opt-out is not cleared on reconnect: the reason a client abandons
+ * the chain is a property of the server it is talking to, and re-asking would
+ * fail the same way ten times a second.
+ */
+async function _abandonDeltas(): Promise<void> {
+    if (_deltaOptOut) return;
+    _deltaOptOut = true;
+    _deltaTracker = null;
+    // Attempted whether or not the subscription is known to have completed. The
+    // server side is idempotent, and the case worth covering is the narrow one
+    // where a frame arrived — and was refused — while the subscribing invoke was
+    // still in flight: this connection is then already out of the snapshot group
+    // and skipping the unsubscribe would strand it receiving only deltas it has
+    // decided it cannot read.
+    try { await connection?.invoke('SubscribeDeltas', false); } catch { /* best effort */ }
 }
 
 /**
@@ -2188,6 +2379,11 @@ function _leaveV2(): void {
     _v2Active = false;
     _lastSnapshot = null;
     _descriptorCache.clear();
+    // Deltas are a layer on top of a schema this client has just decided it
+    // cannot read, so the chain goes with it — and the unsubscribe puts the
+    // connection back in the snapshot group in case only v2's *delta* shape was
+    // the problem.
+    void _abandonDeltas();
     // The recovered epoch belongs to this session's stream. Carrying it into the
     // next one would age its reports against another run's zero.
     _simulationClock.clear();
@@ -2301,6 +2497,10 @@ async function start(): Promise<void> {
         // server that has it is driving assets before the first auto-spawn lands;
         // a server that does not simply falls through to the v1 frame.
         await _subscribeSnapshots();
+        // Layered on the above and awaited for the same reason: a server that
+        // has the stream is sending deltas before the first auto-spawn lands.
+        // A server that does not falls through to full snapshots.
+        await _subscribeDeltas();
         await _autoSpawnIfEmpty();
     } catch {
         hud.setStatus('disconnected');

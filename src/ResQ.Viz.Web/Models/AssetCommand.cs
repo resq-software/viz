@@ -367,6 +367,17 @@ public static class CommandRejectionReasons
 
     /// <summary>The idempotency key was reused for a materially different payload.</summary>
     public const string IdempotencyKeyReuse = "idempotency.keyReuse";
+
+    /// <summary>The request body could not be deserialised at all.</summary>
+    /// <remarks>
+    /// Distinct from every other code here because it is raised by the model binder rather than
+    /// by the validator: the request never became an <see cref="AssetCommandEnvelope"/>, so there
+    /// is no kind, no asset and no target to name a more specific reason against. It is
+    /// nonetheless a rejection carrying the same guarantee as the rest — nothing in the
+    /// simulation was touched — which is why it belongs in this catalogue rather than escaping
+    /// as an unhandled fault.
+    /// </remarks>
+    public const string PayloadMalformed = "payload.malformed";
 }
 
 /// <summary>One field-level problem inside a rejected command.</summary>

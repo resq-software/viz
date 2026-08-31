@@ -796,3 +796,85 @@ export interface VizSnapshotV2 {
    *  "unchanged" and not "asset removed". */
   descriptorsComplete: boolean;
 }
+
+/** The volatile per-capture core of an asset a delta elided because nothing observable about it
+ *  changed. It exists so a carried-forward asset is *stamped, never invented*: every field here
+ *  advances on every capture even for a bolted-down asset, so including them in the server's
+ *  change test would report every asset as changed on every frame — and letting the client re-date
+ *  the record from the frame envelope instead would be the client asserting freshness on the
+ *  server's behalf, which is how a producer that stops capturing an asset ends up rendered as
+ *  eternally fresh. */
+export interface CarriedAssetStamp {
+  assetId: string;
+  sourceTime: string;                   // Replaces `AssetState.sourceTime`.
+  receiveTime: string;                  // Replaces `AssetState.receiveTime`.
+  sequenceNumber: number;               // Replaces `AssetState.sequenceNumber`.
+  /** Replaces `AssetState.freshness`. Carried rather than change-tested, so a transition to stale
+   *  or lost costs a stamp instead of a whole state and is always transmitted explicitly. */
+  freshness: DataFreshness;
+  linkLastHeardAt: string | null;       // Replaces `AssetState.link.lastHeardAt`.
+  /** Replaces `AssetState.power`, or null when the energy state is unchanged. Present on very
+   *  nearly every stamp: a battery percentage drains every capture, so the server elides it from
+   *  the change test — a sub-perceptible tick is not worth a whole asset — and re-delivers the
+   *  exact figure here. Apply it, or every carried asset shows its join-time battery forever. */
+  power?: PowerState | null;
+}
+
+/** The change from one `VizSnapshotV2` to the next, at entity granularity: a changed asset ships
+ *  its whole state, never a field patch. Apply it to the frame named by `baseFrameId` and the
+ *  result is the frame it was computed from — see `./deltaApply`, which is the only place in this
+ *  client that reads this shape.
+ *
+ *  Every list is an upsert list paired with an explicit removal list, because an absent entry
+ *  already means "unchanged" and one wire value cannot carry two meanings. A delta that changes
+ *  nothing is still a real frame and is still applied: it advances the clock, re-stamps carried
+ *  assets, and is what the *next* delta names as its base. */
+export interface VizDeltaV2 {
+  schemaVersion: string;                // Same stamp keyframes carry; compare the major only.
+  frameId: string;                      // Id of the frame this delta reconstructs.
+  /** `frameId` of the frame this applies to. The chain key: accept iff it is the frame held. */
+  baseFrameId: string;
+  /** Position in the room's chain. Counts frames *sent*, so backpressure and subscriber changes
+   *  move it and it is not deterministic — anything asserting determinism keys on `tick`. Used
+   *  here only to tell a reordered delta from a genuine gap. */
+  streamSequence: number;
+  baseSequence: number;                 // `streamSequence` of the frame this applies to.
+  serverTime: string;
+  simulationTimeSeconds: number;
+  tick: number;
+  /** Replacement transport, or null when only its tick moved — rebuild it from the held one with
+   *  `tick` substituted, never by leaving the held tick in place. */
+  transport: TransportState | null;
+  descriptors: AssetDescriptor[];       // Revision advanced, or newly appeared. Upsert by assetId.
+  removedDescriptorIds: string[];
+  assets: AssetState[];                 // Changed or new, as whole records. Upsert by assetId.
+  /** Stamps for every asset present in both frames that is not in `assets`. */
+  carried: CarriedAssetStamp[];
+  removedAssetIds: string[];
+  tracks: ExternalTrackState[];
+  removedTrackIds: string[];
+  /** The complete detection list for this frame, never a diff: detections are per-frame
+   *  observations, not persistent entities. Replace wholesale. */
+  detections: DetectionV2State[];
+  /** Whether the detection list moved. Purely descriptive — neither side acts on it. The server
+   *  computes it as one input to a "did anything observable change" predicate its differ tests
+   *  assert against; nothing on either side of the wire reads it to decide whether to send or
+   *  apply a frame. A client ignores it and replaces its detections unconditionally. */
+  detectionsChanged: boolean;
+  hazards: HazardV2State[];
+  removedHazardIds: string[];
+  network: NetworkState | null;         // Replacement mesh state, or null when unchanged.
+  /** True when the session stopped modelling comms at all — which `network: null` alone cannot
+   *  say, since that already means "unchanged". */
+  networkCleared: boolean;
+  /** Replacement environment revision, or null when unchanged. Non-null means the cached terrain
+   *  and weather are stale. Never parse it; compare it. */
+  environmentRevision: string | null;
+  /** Command acknowledgements changed since the base frame. A fast path, not the record of truth:
+   *  `GET /api/v2/sim/commands/{id}` is. Unread by this client, so deliberately untyped. */
+  commandResults?: readonly unknown[] | null;
+  eventHighWater: number;               // Highest asset-event sequence covered by this frame.
+  /** Asset events the room's bounded buffer discarded. Render the hole; never present a truncated
+   *  log as continuous. */
+  droppedEventCount: number;
+}

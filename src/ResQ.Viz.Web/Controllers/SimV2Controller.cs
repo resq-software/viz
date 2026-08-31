@@ -53,6 +53,7 @@ namespace ResQ.Viz.Web.Controllers;
 [ApiController]
 [Route("api/v2/sim")]
 [EnableRateLimiting("general")]
+[MalformedBody]
 [RequireRoom]
 public sealed partial class SimV2Controller : ControllerBase
 {

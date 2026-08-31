@@ -15,7 +15,6 @@
  */
 
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -39,13 +38,31 @@ namespace ResQ.Viz.Web.Services;
 /// independently-locked readings has already shipped here once; the streaming path does not get
 /// to reintroduce it, and at eight times speed the gap between two reads is eight world steps.
 /// <para>
-/// The v2 stream is opt-in — see <see cref="VizHub.SubscribeSnapshots"/>. A room whose
-/// <see cref="SimulationRoom.SnapshotSubscriberCount"/> is zero skips the assembly entirely, so
-/// a deployment nobody has migrated pays nothing beyond the branch. The v1 broadcast is
-/// unconditional and unchanged.
+/// The v2 stream is opt-in — see <see cref="VizHub.SubscribeSnapshots"/>. A room with neither a
+/// snapshot subscriber nor a delta subscriber skips the assembly entirely, so a deployment
+/// nobody has migrated pays nothing beyond the branch. What arrives on <c>ReceiveFrame</c> is
+/// unchanged by any of it: the v1 frame is gated on its own broadcast slot and on nothing the v2
+/// path does, so a delta subscriber that cannot keep up never costs a v1 client a frame.
+/// </para>
+/// <para>
+/// <b>Three streams, still one capture.</b> A room with delta subscribers publishes the same
+/// assembled <see cref="VizSnapshotV2"/> as a keyframe or as a change against the frame before
+/// it — see <see cref="VizHub.SubscribeDeltas"/>. The snapshot is built either way, because the
+/// diff needs the current frame's projected states to compare against, so what the delta stream
+/// saves is serialisation and bytes and never assembly. A room carrying both kinds of subscriber
+/// pays for both serialisations, which is worse than either alone and is the acknowledged cost
+/// of migrating one client at a time.
+/// </para>
+/// <para>
+/// <b>The loop does not wait for a client.</b> Broadcasts are started and not awaited, and each
+/// room holds one broadcast slot <em>per stream family</em> — one for v1, one for the v2 streams
+/// — each released by its own send rather than at the end of the fan-out. So a client that cannot
+/// keep up costs its own family a skipped tick, rather than costing the other family a frame or
+/// costing every room on the host a delayed one. Nothing about that changes what a tick produces:
+/// see <see cref="BroadcastRoomAsync"/>.
 /// </para>
 /// </remarks>
-public sealed class SimulationManager : BackgroundService
+public sealed partial class SimulationManager : BackgroundService
 {
     /// <summary>Hard cap on simultaneously active rooms. New sessions beyond this fail with 503.</summary>
     public const int MaxRooms = 100;
@@ -184,16 +201,22 @@ public sealed class SimulationManager : BackgroundService
 
                 if (toBroadcast is not null)
                 {
-                    // Fan-out broadcasts in parallel so a slow client (or a
-                    // room with many connections) doesn't starve the next
-                    // tick. Each task wraps its own try/catch so a single
-                    // failure doesn't poison the others.
-                    var tasks = new Task[toBroadcast.Count];
+                    // Started, not awaited. Awaiting the fan-out put the 60 Hz loop behind the
+                    // slowest client in any room: SignalR's send completes when the message has
+                    // been accepted by every recipient's buffer, so one client that cannot keep
+                    // up delayed the next tick for every room on the host. Now the loop hands
+                    // each room's frame to the transport and moves on, and the queue that would
+                    // otherwise grow is bounded instead by the room's single broadcast slot —
+                    // a tick that finds the previous send still in flight is skipped and
+                    // counted, which loses that tick's picture and nothing else.
+                    //
+                    // Safe to discard the task: past its argument check, BroadcastRoomAsync
+                    // catches everything including cancellation, so it does not fault and there
+                    // is no unobserved exception to surface later on a finaliser thread.
                     for (var i = 0; i < toBroadcast.Count; i++)
                     {
-                        tasks[i] = BroadcastRoomAsync(toBroadcast[i], stoppingToken);
+                        _ = BroadcastRoomAsync(toBroadcast[i], stoppingToken);
                     }
-                    await Task.WhenAll(tasks);
                 }
 
                 ReapIdleRooms();
@@ -202,76 +225,6 @@ public sealed class SimulationManager : BackgroundService
         catch (OperationCanceledException)
         {
             // Normal shutdown.
-        }
-    }
-
-    /// <summary>Publishes one broadcast tick's frames for a single room.</summary>
-    /// <remarks>
-    /// <b>One capture, two messages.</b> The room is read exactly once, under its own lock, and
-    /// both schemas are projected from that reading — so the v1 frame and the v2 snapshot carry
-    /// the same tick, the same transport state and the same asset poses by construction rather
-    /// than by luck. The previous version of this method took three separate locked reads
-    /// (drone snapshot, transport, backhaul flag) around a sim time sampled at a fourth moment;
-    /// that is exactly the tearing the v2 capture exists to prevent, and it is fixed here for
-    /// the v1 frame as well. Nothing about the v1 message's <em>shape</em> changed.
-    /// <para>
-    /// Serialisation happens outside the room lock, because the capture is fully materialised
-    /// before this method touches either builder. Nothing below reaches back into the room.
-    /// </para>
-    /// <para>
-    /// The v2 snapshot is assembled only when somebody is subscribed. Sending to an empty
-    /// SignalR group is already free — the lifetime manager never serialises a message with no
-    /// recipient — but <em>building</em> one is not, so the check is on the assembly rather than
-    /// on the send. A room with no subscriber therefore publishes exactly what it published
-    /// before this method learned about v2: one message, built from one reading.
-    /// </para>
-    /// <para>
-    /// Public so a test can drive a single tick's fan-out directly. Racing the 60 Hz loop to
-    /// observe a broadcast makes for a test that fails on a busy machine and proves nothing on a
-    /// quiet one.
-    /// </para>
-    /// </remarks>
-    /// <param name="room">Room whose frames are being published.</param>
-    /// <param name="ct">Token observed during the sends.</param>
-    /// <returns>A task that completes when both sends have been handed to the transport.</returns>
-    public async Task BroadcastRoomAsync(SimulationRoom room, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(room);
-        try
-        {
-            var capture = room.CaptureAssetFrame();
-            var frame = VizSnapshotV2Builder.BuildLegacyFrame(_frameBuilder, capture);
-
-            // Both payloads are assembled before either send starts. Starting the v1 send first
-            // would shave a few microseconds off its latency and leave its task unobserved if
-            // the v2 assembly then threw — a faulted task nobody awaits, which surfaces later as
-            // an unobserved-exception finaliser rather than as this room's log line.
-            VizSnapshotV2? snapshot = null;
-            if (room.SnapshotSubscriberCount > 0)
-            {
-                var started = Stopwatch.GetTimestamp();
-                snapshot = VizSnapshotV2Builder.Build(capture, frame, DateTimeOffset.UtcNow);
-                VizTelemetry.SnapshotBuildDuration.Record(
-                    Stopwatch.GetElapsedTime(started).TotalMilliseconds);
-            }
-
-            var legacySend = _broadcaster.BroadcastFrameAsync(room.Id, frame, ct);
-            VizTelemetry.FramesBroadcast.Add(1);
-
-            if (snapshot is null)
-            {
-                await legacySend;
-                return;
-            }
-
-            await Task.WhenAll(
-                legacySend,
-                _broadcaster.BroadcastSnapshotAsync(room.Id, snapshot, ct));
-            VizTelemetry.SnapshotsBroadcast.Add(1);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "Broadcast failed for room {RoomId}.", room.Id);
         }
     }
 
