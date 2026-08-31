@@ -25,10 +25,12 @@ builder.Services.AddControllers();
 //
 // Each SimulationRoom owns its own TerrainNoiseService, UpdatableWeatherSystem,
 // and SwarmCoordinator — they are no longer process-wide singletons because
-// rooms must not share state. The IFrameBroadcaster abstraction introduced
-// for the legacy single-sim path is unused here: SimulationManager broadcasts
-// directly to per-room SignalR groups so it can fan out one frame per room
-// without an extra hop.
+// rooms must not share state. SimulationManager publishes through
+// IFrameBroadcaster rather than sending on IHubContext itself, so one tick's
+// output can be observed without standing a hub up; SignalRFrameBroadcaster is
+// the only place that knows a frame is addressed to a per-room group, and the
+// only place that knows the v2 snapshot goes to a narrower group than the v1
+// frame.
 // SetApplicationName fixes the data-protection purpose-string discriminator
 // across deployments: without it, two instances on the same host (rolling
 // upgrade, blue/green) generate different key rings and silently invalidate
@@ -56,6 +58,11 @@ builder.Services.AddSingleton(sp =>
         sp.GetRequiredService<IConfiguration>(),
         assetFactories: sp.GetServices<ResQ.Viz.Web.Services.IAssetFactory>().ToList(),
         logger: sp.GetRequiredService<ILogger<ResQ.Viz.Web.Services.ScenarioService>>()));
+// The transport the tick loop publishes through. Registered as the interface, not the concrete
+// type, because that is the whole point of the seam: swapping SignalR for another transport is
+// a change to this line and nothing in Services/.
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.IFrameBroadcaster,
+    ResQ.Viz.Web.Services.SignalRFrameBroadcaster>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();

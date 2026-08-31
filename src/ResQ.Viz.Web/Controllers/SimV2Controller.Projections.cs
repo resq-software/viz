@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
-using System.Numerics;
 using ResQ.Viz.Web.Models;
 
 namespace ResQ.Viz.Web.Controllers;
 
 // The wire projections of the v2 surface: expanding capability and target-kind masks into stable
-// names, and lifting v1 detections and hazards into frame-qualified v2 shapes. Pure functions
+// names, and naming the optional data an asset's latest report actually carries. Pure functions
 // with no room, no request and no logging, kept apart from the validation gates so a change to
 // how something is displayed cannot reach what is accepted.
+//
+// Lifting v1 detections and hazards into frame-qualified v2 shapes used to live here too. It
+// moved to VizSnapshotV2Builder when the broadcast loop became a second publisher of v2 frames:
+// a projection two surfaces depend on cannot sit inside one of them.
 public sealed partial class SimV2Controller
 {
     /// <summary>Expands a capability mask into stable names, for display and for logs.</summary>
@@ -112,52 +115,4 @@ public sealed partial class SimV2Controller
 
         return features;
     }
-
-    /// <summary>Lifts a v1 detection into the frame-qualified v2 shape.</summary>
-    /// <remarks>
-    /// The reporting field becomes <see cref="DetectionV2State.SourceAssetId"/>: the v1 producer
-    /// only ever attributes to a drone, but the field name is no longer an assumption baked into
-    /// the contract, so a rover or a vessel reporting one needs no wire change.
-    /// </remarks>
-    private static DetectionV2State ToDetectionV2(DetectionVizState detection, DateTimeOffset detectedAt) =>
-        new(
-            DetectionId: detection.Id,
-            Type: detection.Type,
-            Pose: SceneFramePose(detection.Pos),
-            SourceAssetId: detection.DroneId,
-            Confidence: Math.Clamp(detection.Confidence, 0.0, 1.0),
-            DetectedAt: detectedAt);
-
-    /// <summary>Lifts a v1 hazard zone into the frame-qualified v2 shape.</summary>
-    /// <remarks>
-    /// The v1 severity is a free string, so it is parsed rather than cast, and an unrecognised
-    /// value becomes <see cref="HazardSeverity.Unknown"/> instead of a silently wrong level.
-    /// <paramref name="hazard"/> declares no affected domains, and null means "assume it affects
-    /// everything" — the safe reading when the source does not say.
-    /// </remarks>
-    private static HazardV2State ToHazardV2(HazardVizState hazard) =>
-        new(
-            HazardId: hazard.Id,
-            Type: hazard.Type,
-            Centre: SceneFramePose(hazard.Center),
-            RadiusM: hazard.Radius,
-            Severity: Enum.TryParse<HazardSeverity>(hazard.Severity, ignoreCase: true, out var severity)
-                ? severity
-                : HazardSeverity.Unknown,
-            AffectedDomains: null);
-
-    /// <summary>Wraps a v1 position array as a scene-frame pose with no rotation.</summary>
-    /// <remarks>
-    /// The scene frame is the frame v1 always meant and never said; stamping it here is the
-    /// whole of the v1-to-v2 lift for a point. A malformed array becomes the origin rather than
-    /// throwing, matching how the v1 hazard builder already handles one.
-    /// </remarks>
-    private static FramedPose SceneFramePose(float[]? components) =>
-        new(
-            Frame: CoordinateFrame.LocalEus,
-            OriginId: null,
-            Position: components is { Length: 3 }
-                ? new Vector3(components[0], components[1], components[2])
-                : Vector3.Zero,
-            Orientation: Quaternion.Identity);
 }

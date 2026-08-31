@@ -11,6 +11,8 @@ import { toUnitInterval } from '@resq-systems/types';
 
 import { buildHierarchy } from '../editor/outliner';
 import { hazardKey } from '../editor/keys';
+import type { SceneFrame } from '../assets/sceneFrame';
+import { AssetDomain, OperationalState, TrackClassification } from '../assets/types';
 import type { VizFrame } from '../types';
 
 describe('hazardKey', () => {
@@ -74,5 +76,62 @@ describe('buildHierarchy', () => {
         const groups = buildHierarchy(null);
         expect(groups).toHaveLength(3);
         expect(groups.every(g => g.items.length === 0)).toBe(true);
+    });
+});
+
+describe('buildHierarchy over a v2 frame', () => {
+    // Only the fields the projection reads. A full `SceneAsset` carries the whole
+    // descriptor and state; the outliner needs an id, a domain and a state, and
+    // building the rest here would test the fixture rather than the grouping.
+    function asset(id: string, domain: number, operationalState: number) {
+        return {
+            view: { id, displayName: id, domain, operationalState },
+        } as unknown as NonNullable<SceneFrame['assets']>[number];
+    }
+
+    function contact(trackId: string, classification: number) {
+        return { trackId, classification } as unknown as
+            NonNullable<SceneFrame['tracks']>[number];
+    }
+
+    const frame: SceneFrame = {
+        drones: [],
+        hazards: [],
+        detections: [],
+        assets: [
+            asset('air-1', AssetDomain.Air, OperationalState.Active),
+            asset('rover-1', AssetDomain.Ground, OperationalState.Holding),
+            asset('usv-1', AssetDomain.Surface, OperationalState.Ready),
+        ],
+        tracks: [contact('trk-1', TrackClassification.Vessel)],
+    };
+
+    it('leads with assets and trails with contacts', () => {
+        expect(buildHierarchy(frame).map(g => g.kind))
+            .toEqual(['asset', 'drone', 'hazard', 'detection', 'track']);
+    });
+
+    it('lists a rover and a vessel beside the aircraft, tagged by domain and state', () => {
+        const assets = buildHierarchy(frame)[0]!;
+        expect(assets.title).toBe('Assets');
+        expect(assets.items).toEqual([
+            { id: 'air-1', sub: 'Air · Active' },
+            { id: 'rover-1', sub: 'Ground · Holding' },
+            { id: 'usv-1', sub: 'Surface · Ready' },
+        ]);
+    });
+
+    it('lists observed contacts in their own group, tagged by classification', () => {
+        const tracks = buildHierarchy(frame)[4]!;
+        expect(tracks.title).toBe('Contacts');
+        expect(tracks.items).toEqual([{ id: 'trk-1', sub: 'Vessel' }]);
+    });
+
+    it('omits the asset and contact groups entirely on a v1 frame', () => {
+        // The property that keeps the v1 hierarchy byte-identical: absent lists
+        // mean "this stream has none", not "this stream has an empty one", and
+        // two permanently empty headings would be chrome on every v1 session.
+        const v1: SceneFrame = { drones: [], hazards: [], detections: [] };
+        expect(buildHierarchy(v1).map(g => g.kind)).toEqual(['drone', 'hazard', 'detection']);
     });
 });

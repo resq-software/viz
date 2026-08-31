@@ -6,12 +6,23 @@ import { assertNever } from '@resq-systems/types';
 /**
  * Kinds of scene entity the editor layer can select.
  *
- * Drones are the only pickable kind today; `hazard` and `detection` are
- * present so the Inspector, outliner, and (later) transform gizmos grow onto
- * the same store without a type change at every call site — every value maps
- * directly to a `VizFrame` array.
+ * `drone`, `hazard` and `detection` each map directly onto a `VizFrame` array
+ * and are what the v1 stream can select.
+ *
+ * `asset` and `track` arrive with the v2 stream, and are deliberately two kinds
+ * rather than one. An asset is something this session commands; a **track is an
+ * observed contact with no capabilities, no control authority and no command
+ * endpoint**, and that absence is a safety property rather than an omission to
+ * be filled in later. Collapsing the two into one kind carrying a flag would
+ * turn "is this commandable?" into a question every surface has to remember to
+ * ask — which is exactly the check that eventually gets forgotten.
+ *
+ * `asset` does not replace `drone`. The same aircraft selects as `asset` over
+ * v2 and as `drone` over v1, because the two carry different fields and resolve
+ * out of different lists; which one a session uses follows from which stream it
+ * is on.
  */
-export type SelectionKind = 'drone' | 'hazard' | 'detection';
+export type SelectionKind = 'drone' | 'hazard' | 'detection' | 'asset' | 'track';
 
 /**
  * Plural, human-readable group label for an entity kind — the single source of
@@ -29,6 +40,12 @@ export function kindLabel(kind: SelectionKind): string {
             return 'Hazards';
         case 'detection':
             return 'Detections';
+        case 'asset':
+            // Deliberately not "Vehicles": a fixed relay mast is an asset and is
+            // not a vehicle, and the outliner heading has to cover both.
+            return 'Assets';
+        case 'track':
+            return 'Contacts';
         default:
             return assertNever(kind);
     }

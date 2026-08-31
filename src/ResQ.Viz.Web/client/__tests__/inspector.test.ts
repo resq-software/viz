@@ -17,6 +17,20 @@ import {
     SCHEMAS,
 } from '../editor/inspector';
 import { toUnitInterval } from '@resq-systems/types';
+import type { SceneAsset, SceneFrame } from '../assets/sceneFrame';
+import type {
+    AirDomainState,
+    GroundDomainState,
+    SurfaceDomainState,
+} from '../assets/types';
+import {
+    AssetDomain,
+    DataFreshness,
+    LinkLossBehavior,
+    OperationalState,
+    TrackClassification,
+    VehicleClass,
+} from '../assets/types';
 import type { VizFrame } from '../types';
 
 const DASH = '—';
@@ -111,10 +125,241 @@ describe('inspector schemas', () => {
     it('detection schema formats confidence as a percentage', () => {
         const f = fieldMap('detection', 'det1');
         expect(f['confidence']).toBe('91%');
-        expect(f['drone']).toBe('d1');
+        // Labelled "source", not "drone". The v1 field is still `droneId`, but on
+        // the v2 stream it carries `sourceAssetId` — any domain detects — so a
+        // rover's or a vessel's find would otherwise be presented as a drone's.
+        expect(f['source']).toBe('d1');
+        expect(f['drone']).toBeUndefined();
     });
 
     it('resolve returns null for an unknown id', () => {
         expect(SCHEMAS.drone.resolve('nope', frame)).toBeNull();
+    });
+});
+
+describe('asset and contact schemas', () => {
+    const AIR: AirDomainState = {
+        type: 'air',
+        positionUncertaintyGrowthMps: 0,
+        isAirborne: true,
+        headingRad: Math.PI / 2,          // due east
+        courseOverGroundRad: Math.PI,     // pushed south by wind
+        groundSpeedMps: 7.5,
+        climbRateMps: 1.2,
+        altitudeAboveGroundM: 42.4,
+        altitudeAboveLaunchM: 40,
+        altitudeMslM: 512.1,
+        windSpeedMps: 3,
+        windDirectionRad: 0,
+        linkLossBehavior: LinkLossBehavior.ReturnToBase,
+        airspeedMps: null,
+        isWithinGeofence: true,
+    };
+
+    const GROUND: GroundDomainState = {
+        type: 'ground',
+        positionUncertaintyGrowthMps: 0,
+        isMoving: false,
+        headingRad: 0,
+        courseOverGroundRad: 0,
+        groundSpeedMps: 0,
+        steeringAngleRad: 0,
+        rollRad: 0.05,
+        pitchRad: 0.1,
+        terrainElevationM: 130,
+        slopeRad: Math.PI / 18,           // 10 degrees
+        surfaceType: 'vegetation',
+        tractionCoefficient: 0.62,
+        deratedSpeedLimitMps: 3,
+        rolloverRisk: 0.25,
+        isImmobilised: true,
+        linkLossBehavior: LinkLossBehavior.StopAndHold,
+        immobilisationReason: 'slope-exceeded',
+    };
+
+    const SURFACE: SurfaceDomainState = {
+        type: 'surface',
+        positionUncertaintyGrowthMps: 0.4,
+        headingRad: 0,
+        courseOverGroundRad: 0.3,
+        speedOverGroundMps: 4.2,
+        speedThroughWaterMps: 3.9,
+        surgeMps: 3.9,
+        swayMps: 0.2,
+        yawRateRadPerSec: 0,
+        waterSurfaceElevationM: 0,
+        waterDepthM: 8.5,
+        draftM: 1.1,
+        underKeelClearanceM: 7.4,
+        hasUnsafeUnderKeelClearance: false,
+        currentSpeedMps: 0.8,
+        currentDirectionRad: Math.PI,
+        windSpeedMps: 2,
+        windDirectionRad: 0,
+        isInsideWaterMask: true,
+        linkLossBehavior: LinkLossBehavior.DriftAndAlert,
+        stationKeep: null,
+        heaveM: 0,
+        rollRad: 0,
+        pitchRad: 0,
+    };
+
+    /** Only the fields the schema reads. The wire records carry covariances,
+     *  fault codes and mesh paths that no field accessor touches, and building
+     *  them here would test the fixture. */
+    function asset(over: {
+        id: string;
+        domain: AssetDomain;
+        vehicleClass: VehicleClass;
+        domainState: SceneAsset['view']['domainState'];
+        freshness?: DataFreshness;
+        ageSeconds?: number | null;
+        powerPercent?: number | null;
+    }): SceneAsset {
+        return {
+            view: {
+                id: over.id,
+                displayName: over.id,
+                domain: over.domain,
+                vehicleClass: over.vehicleClass,
+                visualProfile: '',
+                capabilities: 0,
+                position: [1, 2, 3],
+                orientation: null,
+                velocity: [3, 0, 4],
+                operationalState: OperationalState.Active,
+                mode: 'test',
+                freshness: over.freshness ?? DataFreshness.Fresh,
+                ageSeconds: over.ageSeconds === undefined ? 0 : over.ageSeconds,
+                powerPercent: over.powerPercent === undefined ? 55 : over.powerPercent,
+                vendor: null,
+                domainState: over.domainState,
+            },
+            descriptor: { agencyId: 'coastguard', fleetId: null },
+            state: {
+                health: { overall: 3, components: [], faults: [{}, {}], summary: '' },
+                link: { transport: 2, isConnected: true, latencyMs: 18.4, packetLossRatio: 0.02 },
+                mission: null,
+            },
+        } as unknown as SceneAsset;
+    }
+
+    const frame: SceneFrame = {
+        drones: [],
+        hazards: [],
+        detections: [],
+        assets: [
+            asset({
+                id: 'air-1',
+                domain: AssetDomain.Air,
+                vehicleClass: VehicleClass.Multirotor,
+                domainState: AIR,
+            }),
+            asset({
+                id: 'rover-1',
+                domain: AssetDomain.Ground,
+                vehicleClass: VehicleClass.AckermannRover,
+                domainState: GROUND,
+                freshness: DataFreshness.Stale,
+                ageSeconds: 12,
+            }),
+            asset({
+                id: 'usv-1',
+                domain: AssetDomain.Surface,
+                vehicleClass: VehicleClass.SurfaceVessel,
+                domainState: SURFACE,
+                powerPercent: null,
+            }),
+        ],
+        tracks: [{
+            trackId: 'trk-1',
+            classification: TrackClassification.SmallUnmannedAircraft,
+            pose: { position: { x: 10, y: 20, z: 30 } },
+            twist: { linear: { x: 5, y: 0, z: 0 } },
+            // Never empty on the wire: a track exists because something observed it.
+            sources: [{ sourceId: 's1', kind: 1, observedAt: '2026-08-30T12:00:00.000Z', quality: null }],
+            quality: { confidence: 0.42, positionAccuracyM: null, updateCount: 6, isFused: true },
+            freshness: DataFreshness.Fresh,
+            label: 'Contact Alpha',
+            transponder: null,
+        }] as unknown as NonNullable<SceneFrame['tracks']>,
+    };
+
+    function fieldMap(kind: 'asset' | 'track', id: string): Record<string, string> {
+        const entity = SCHEMAS[kind].resolve(id, frame);
+        expect(entity).not.toBeNull();
+        return Object.fromEntries(SCHEMAS[kind].fields.map(f => [f.label, f.value(entity)]));
+    }
+
+    it('resolves a rover and a vessel through the same schema as an aircraft', () => {
+        expect(SCHEMAS.asset.resolve('rover-1', frame)).not.toBeNull();
+        expect(SCHEMAS.asset.resolve('usv-1', frame)).not.toBeNull();
+        expect(SCHEMAS.asset.resolve('nope', frame)).toBeNull();
+    });
+
+    it('keeps heading and course over ground as separate readings', () => {
+        // They diverge under wind, and collapsing them is the modelling error the
+        // wire contract exists to prevent.
+        const f = fieldMap('asset', 'air-1');
+        expect(f['heading']).toBe('90°');
+        expect(f['course']).toBe('180°');
+        expect(f['over ground']).toBe('7.5 m/s');
+    });
+
+    it('reports each domain’s own detail and never another domain’s', () => {
+        const air = fieldMap('asset', 'air-1')['domain detail'] ?? '';
+        expect(air).toContain('airborne');
+        expect(air).toContain('AGL 42.4 m');
+        expect(air).not.toContain('rollover');
+        expect(air).not.toContain('UKC');
+
+        const ground = fieldMap('asset', 'rover-1')['domain detail'] ?? '';
+        expect(ground).toContain('immobilised (slope-exceeded)');
+        expect(ground).toContain('slope 10°');
+        // Rollover proximity is decision support, and says so.
+        expect(ground).toContain('advisory');
+        expect(ground).not.toContain('AGL');
+
+        const surface = fieldMap('asset', 'usv-1')['domain detail'] ?? '';
+        // Depth, draft and clearance are three quantities, not one "altitude".
+        expect(surface).toContain('depth 8.5 m');
+        expect(surface).toContain('draft 1.1 m');
+        expect(surface).toContain('UKC 7.4 m');
+        expect(surface).not.toContain('AGL');
+    });
+
+    it('states what each domain does on link loss, which differs per domain', () => {
+        expect(fieldMap('asset', 'air-1')['on link loss']).toBe('Return to base');
+        expect(fieldMap('asset', 'rover-1')['on link loss']).toBe('Stop and hold');
+        expect(fieldMap('asset', 'usv-1')['on link loss']).toBe('Drift and alert');
+    });
+
+    it('always pairs a degraded freshness with an explicit age', () => {
+        expect(fieldMap('asset', 'rover-1')['freshness']).toBe('Stale · 12s');
+        expect(fieldMap('asset', 'air-1')['freshness']).toBe('Fresh · 0s');
+    });
+
+    it('renders an unmetered pack as absent, never as a flat one', () => {
+        expect(fieldMap('asset', 'usv-1')['power']).toBe(DASH);
+        expect(fieldMap('asset', 'air-1')['power']).toBe('55%');
+    });
+
+    it('summarises health with the count of raised faults', () => {
+        expect(fieldMap('asset', 'air-1')['health']).toBe('Warning · 2 faults');
+    });
+
+    it('reads a contact and offers nothing that could become a command', () => {
+        const f = fieldMap('track', 'trk-1');
+        expect(f['classification']).toBe('Small unmanned aircraft');
+        expect(f['label']).toBe('Contact Alpha');
+        expect(f['confidence']).toBe('42%');
+        expect(f['observations']).toBe('6 · fused');
+        expect(f['sources']).toBe('Transponder');
+        // A null accuracy is no accuracy statistic, not a perfect fix.
+        expect(f['accuracy']).toBe(DASH);
+        // Nothing in the contact schema is a capability, a command or a control.
+        const labels = SCHEMAS.track.fields.map(x => x.label);
+        expect(labels).not.toContain('capabilities');
+        expect(labels.some(l => /command|arm|takeoff|dock/i.test(l))).toBe(false);
     });
 });

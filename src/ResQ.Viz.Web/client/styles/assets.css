@@ -1,0 +1,413 @@
+/**
+ * Copyright 2026 ResQ Systems, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ResQ Viz · Multi-domain asset panel and fleet filter
+
+   Every colour, radius, font and duration below is a token from tokens.css.
+   Two rules the markup depends on:
+
+   · Colour never carries a fact on its own. The operational badge is coloured
+     AND spells the state; a blocked command is dimmed AND states its reason; a
+     degraded report pulses AND prints its age. The palette is the second
+     channel, never the first.
+   · The freshness pulse is motion, so it is dropped under
+     prefers-reduced-motion — and the class that drives it is also withheld in
+     JS via reducedMotion.ts, because the media query cannot reach the
+     scene-side cues that pulse alongside it.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* ── hidden wins ── */
+
+/* The UA sheet's `[hidden] { display: none }` carries no specificity, so any
+   author `display` on the same element beats it and the element stays on
+   screen. Both hide paths in this file were losing that race: `.asset-panel`
+   sets `display: flex`, so `render(null)` left an empty panel shell over the
+   scene that its own close button could not dismiss; and the retry button
+   carries `.btn`, whose `display: inline-flex` kept RETRY on offer with no
+   failed command behind it — an affordance that can only error when pressed.
+
+   Every panel in editor.css already pairs its `display` with an `[hidden]`
+   rule; this file never did. Written as descendant selectors rather than with
+   `!important` so specificity alone settles it, and so anything added under
+   either widget later inherits the guarantee instead of needing its own rule. */
+.asset-panel[hidden],
+.asset-filter[hidden],
+.asset-panel [hidden],
+.asset-filter [hidden] {
+  display: none;
+}
+
+/* ── Asset detail panel ─────────────────────────────────────────────────── */
+
+.asset-panel {
+  position: fixed;
+  right: var(--gutter);
+  /* Bottom-right is a contested corner: the DVR transport bar owns the full
+     width below `--dvr-h`, and the mini-map floats above it at z-index 420 —
+     higher than this panel, and 214px tall (a 200px plot plus 7px of padding
+     each side) anchored at `--dvr-h + 14px`. Anchoring this panel at the bare
+     gutter put it under both, and because the mini-map paints over it, the
+     panel's whole right-hand VALUE column disappeared behind the plot: track
+     confidence, accuracy, freshness and report age rendered as labels with
+     nothing beside them. So this clears the mini-map's top edge
+     (`--dvr-h + 14px + 214px`) plus a gutter of its own. The height is bounded
+     against the same two bars — and against the camera-mode pill's line, the
+     same top edge `.telemetry-strip` takes — so a long card set grows upward
+     into free space rather than under the HUD chrome. */
+  bottom: calc(var(--dvr-h) + 244px);
+  z-index: 150;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 2 * var(--gutter)));
+  max-height: min(70vh, 720px, calc(100vh - var(--hud-h) - 52px - var(--dvr-h) - 260px));
+  background: var(--surface-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--ring), var(--shadow-2);
+  backdrop-filter: var(--blur-strong);
+  -webkit-backdrop-filter: var(--blur-strong);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+.ap-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 12px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ap-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Domain as a word. The scene conveys domain by silhouette; here it is text,
+   so neither surface depends on hue to tell a rover from a vessel. */
+.ap-domain {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: var(--radius-token);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.ap-title {
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* Operational state. Text is the fact; the tint is reinforcement. */
+.ap-badge { background: oklch(100% 0 0 / 0.05); color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border); }
+.ap-badge[data-state="3"],
+.ap-badge[data-state="4"] { background: var(--success-soft); color: var(--success); box-shadow: inset 0 0 0 1px var(--success-soft); }
+.ap-badge[data-state="5"],
+.ap-badge[data-state="6"],
+.ap-badge[data-state="7"] { background: var(--warning-soft); color: var(--warning); box-shadow: inset 0 0 0 1px var(--warning-soft); }
+.ap-badge[data-state="8"],
+.ap-badge[data-state="9"] { background: var(--primary-soft); color: var(--primary-text); box-shadow: inset 0 0 0 1px var(--primary-glow); }
+.ap-badge[data-state="track"] { background: var(--info-soft); color: var(--info); box-shadow: inset 0 0 0 1px var(--info-glow); }
+
+.ap-close {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: var(--r-1);
+  /* WCAG 2.2 §2.5.8 target size. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.ap-close:hover { color: var(--text); background: oklch(100% 0 0 / 0.06); }
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+
+.ap-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ap-card { padding: 10px 0 8px; border-bottom: 1px solid var(--line); }
+.ap-card:last-child { border-bottom: 0; }
+
+.ap-card-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hint);
+  margin-bottom: 6px;
+}
+
+.ap-rows { display: flex; flex-direction: column; gap: 3px; }
+
+.ap-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.ap-row dt {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ap-row dd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.ap-row dd[data-tone="ok"]   { color: var(--success); }
+.ap-row dd[data-tone="warn"] { color: var(--warning); }
+.ap-row dd[data-tone="crit"] { color: var(--primary-text); }
+
+/* Advisory caveats — "decision support, not a guarantee". Never hidden behind a
+   tooltip: the wording is part of the claim the panel is making. */
+.ap-note {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--hint);
+  border-left: 2px solid var(--line-strong);
+  padding-left: 8px;
+}
+
+/* ── Commands ───────────────────────────────────────────────────────────── */
+
+.ap-foot {
+  border-top: 1px solid var(--line);
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-cmd-note { font-size: 11px; color: var(--text-muted); }
+
+.ap-cmds { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ap-cmd {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ap-cmd-btn { padding: 6px 10px; font-size: 10px; }
+
+/* Blocked, not removed: the control keeps its place in the tab order so a
+   keyboard operator does not lose focus when an asset goes stale, and the
+   reason below it is what `aria-describedby` announces. */
+.ap-cmd.is-blocked .ap-cmd-btn { opacity: 0.45; cursor: not-allowed; }
+.ap-cmd.is-busy   .ap-cmd-btn { opacity: 0.6; cursor: progress; }
+
+.ap-cmd-reason {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--warning);
+  max-width: 22ch;
+}
+
+.ap-field { display: flex; flex-direction: column; gap: 2px; }
+
+.ap-field-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.ap-field-input {
+  background: oklch(100% 0 0 / 0.06);
+  border: 0;
+  box-shadow: var(--ring);
+  border-radius: var(--r-1);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 6px;
+  width: 9ch;
+  min-height: 24px;
+}
+.ap-field-input:hover { box-shadow: var(--ring-strong); }
+select.ap-field-input { width: auto; }
+
+/* Outcome of the last issued command. A polite live region, so it is announced
+   without interrupting; accepted is not the same as executed and the wording in
+   AssetPanel keeps them apart. */
+.ap-status {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  min-height: 1em;
+}
+
+/* Degraded telemetry. The pulse is the *second* cue — the explicit age in the
+   freshness card is the first, and it survives a screenshot. */
+.asset-panel.is-pulsing .ap-badge { animation: ap-stale-pulse 2s var(--ease) infinite; }
+
+@keyframes ap-stale-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+/* ── Fleet filter ───────────────────────────────────────────────────────── */
+
+.asset-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-1);
+  border-radius: var(--r-2);
+  box-shadow: var(--ring);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+.af-head { display: flex; align-items: center; gap: 8px; }
+
+.af-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--hint);
+}
+
+.af-tally {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.af-clear { padding: 4px 8px; font-size: 9px; }
+
+.af-facets { display: flex; flex-direction: column; gap: 8px; }
+
+/* A real <fieldset>/<legend>, so the group is named in the accessibility tree
+   without a hand-rolled aria-labelledby. The legend stays in normal flow — UAs
+   render it out of the box border and treat it inconsistently as a flex item —
+   and the chips get their own flex row underneath. */
+.af-facet { border: 0; padding: 0; }
+
+.af-facet legend {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hint);
+  padding: 0 0 4px;
+}
+
+.af-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+
+.af-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  min-height: 24px;
+  border-radius: var(--radius-token);
+  box-shadow: inset 0 0 0 1px var(--border);
+  background: oklch(100% 0 0 / 0.03);
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  transition: background var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
+}
+.af-chip:hover { background: oklch(100% 0 0 / 0.07); box-shadow: inset 0 0 0 1px var(--border-hover); }
+
+/* Checked state is carried by the checkbox itself — which is real, focusable and
+   announced — as well as by the tint. */
+.af-chip:has(.af-chip-input:checked) {
+  background: var(--info-soft);
+  color: var(--info);
+  box-shadow: inset 0 0 0 1px var(--info-glow);
+}
+.af-chip:has(.af-chip-input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.af-chip-input { accent-color: var(--accent); margin: 0; }
+
+.af-chip-count { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+
+/* A value with nothing behind it right now stays selectable but recedes. */
+.af-chip.is-empty { opacity: 0.5; }
+
+/* ── Motion, contrast and forced colours ────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-panel.is-pulsing .ap-badge { animation: none; }
+  .af-chip, .ap-close, .ap-cmd-btn { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .asset-panel, .asset-filter, .af-chip {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    backdrop-filter: none;
+  }
+  /* Selected and blocked must stay distinguishable when the palette is replaced. */
+  .af-chip:has(.af-chip-input:checked) { forced-color-adjust: none; outline: 2px solid Highlight; }
+  .ap-cmd.is-blocked .ap-cmd-btn { opacity: 1; text-decoration: line-through; }
+}
+
+/* The mini-map is dropped at this width (main.css), so the corner is free
+   again and the panel drops back to sitting just above the transport bar. */
+@media (max-width: 900px) {
+  .asset-panel {
+    bottom: calc(var(--dvr-h) + 14px);
+    max-height: min(70vh, calc(100vh - var(--hud-h) - 52px - var(--dvr-h) - 30px));
+  }
+}
+
+@media (max-width: 720px) {
+  .asset-panel { left: var(--gutter); width: auto; max-height: 55vh; }
+}
