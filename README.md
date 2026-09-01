@@ -493,33 +493,35 @@ CPA extrapolates two reported motions as straight lines. It reports current slan
 <a id="operator-workspace-scenarios"></a>
 ## Operator workspace and scenarios
 
-Asset selection/lifecycle is domain-neutral across scene/outliner/inspector/mini-map/panel. Air loads first. Ground/surface rendering loads on demand behind a fallback. Filters persist across domain/class/agency/fleet/state/freshness. Capabilities gate panel commands. The picture includes domain overlays, read-only tracks/CPA, event log, mini-map, orbit/free-fly/follow/domain-chase/cockpit/FPV cameras, editor dock/outliner/inspector/gizmo, DVR replay, and scene JSON.
+Asset selection and lifecycle are domain-neutral across scene, outliner, inspector, mini-map, and panel. Air loads first; ground and surface render on demand behind a fallback, while persistent fleet filters and capability-gated panel commands support mixed fleets.
+
+The operating picture combines domain overlays, read-only tracks with CPA, event log, mini-map, orbit/free-flight/follow/chase/cockpit/FPV cameras, an editor dock with outliner/inspector/gizmo, DVR replay, and scene JSON.
 
 Selection/filter/overlay/camera/replay/export stays browser-only. Scenarios, air nudges, backhaul, live transport, imports, and gizmo release mutate the room.
 
 <a id="scenario-catalog"></a>
 ### Scenario catalog and environments
 
-`RunScenario` is destructive: it resets the room, then spawns configured assets whose ground/surface members settle against terrain during the request. Before an unbound load, **SELECT coastal** for `coastal-search`, `coastal-transit`, or `port-incident`. **RESTORE alpine** for `mixed-ground`, `ground-convoy`, `flood-response`, `link-loss-divergence`, or `mixed-load-150`. Fresh rooms start alpine. Unbound loads retain current presentation. `link-loss-divergence` does not cut links.
+`RunScenario` destructively resets the room, then spawns assets; ground/surface members settle against terrain during the request. Before an unbound load, **SELECT coastal** for `coastal-search`, `coastal-transit`, or `port-incident`. **RESTORE alpine** for `mixed-ground`, `ground-convoy`, `flood-response`, `link-loss-divergence`, or `mixed-load-150`. Fresh rooms start alpine. Unbound loads keep current presentation. `link-loss-divergence` does not cut links.
 
-Browser scenario controls dispatch `resq:scenario-start` after success. It applies bound presentation for `wildfire-interface`, `hurricane-melissa`, `flood-riverine`, `urban-collapse`, `alpine-sar`, and `canyon-sar`. Atmosphere/camera always apply. Manual override suppresses only terrain/water. Scene import dispatches immediately after issuing its validated request, without awaiting success. Direct REST resets/spawns but emits no browser event, leaving atmosphere/terrain/camera unchanged.
+Six definitions exist: `wildfire-interface`, `hurricane-melissa`, `flood-riverine`, `urban-collapse`, `alpine-sar`, and `canyon-sar`. A matching `resq:scenario-start` applies atmosphere/camera. Manual override suppresses only terrain/water. Cards emit after successful requests but expose only unbound `single`, `swarm-5`, `swarm-20`, and `sar`. Keyboard adds unbound `multi-agency-sar`. Import allow-list uses those cards, rejecting all six bindings and `multi-agency-sar`. Accepted imports emit without awaiting success. No shipped control/import reaches bound presentation, and exported `multi-agency-sar` does not round-trip. Direct REST resets/spawns without an event, leaving presentation unchanged.
 
 <details>
 <summary>Complete scenario catalog (19 presets)</summary>
 
-| Scenario | Air | Ground | Surface | Purpose, composition, and browser environment |
+| Scenario | Air | Ground | Surface | Purpose / presentation |
 | :--- | ---: | ---: | ---: | :--- |
 | `single` | 1 | 0 | 0 | Smoke test (current). |
 | `swarm-5` | 5 | 0 | 0 | Formation (current). |
 | `swarm-20` | 20 | 0 | 0 | Dense swarm (current). |
 | `sar` | 3 | 0 | 0 | Lead/scout/relay (current). |
-| `multi-agency-sar` | 12 | 0 | 0 | Three vendors (current). |
-| `wildfire-interface` | 5 | 0 | 0 | Fire recon (ridgeline/smoke/survey). |
-| `hurricane-melissa` | 6 | 0 | 0 | Storm ISR (coastal-surge/overcast/survey). |
-| `flood-riverine` | 5 | 0 | 0 | River survey (alpine-flood/clear/survey). |
-| `urban-collapse` | 6 | 0 | 0 | Structure search (canyon/dust/survey). |
-| `alpine-sar` | 4 | 0 | 0 | Avalanche response (alpine/clear/survey). |
-| `canyon-sar` | 4 | 0 | 0 | Gorge search (canyon/high-sun/survey). |
+| `multi-agency-sar` | 12 | 0 | 0 | Three-vendor (current). |
+| `wildfire-interface` | 5 | 0 | 0 | Fire-recon (ridgeline/smoke/survey). |
+| `hurricane-melissa` | 6 | 0 | 0 | Storm-ISR (coastal-surge/overcast/survey). |
+| `flood-riverine` | 5 | 0 | 0 | River-survey (alpine-flood/clear/survey). |
+| `urban-collapse` | 6 | 0 | 0 | Structure-search (canyon/dust/survey). |
+| `alpine-sar` | 4 | 0 | 0 | Avalanche-response (alpine/clear/survey). |
+| `canyon-sar` | 4 | 0 | 0 | Gorge-search (canyon/high-sun/survey). |
 | `mixed-ground` | 3 | 3 | 0 | Air/three-rover hillside (alpine). |
 | `ground-convoy` | 1 | 3 | 0 | Air/rover convoy (alpine). |
 | `coastal-search` | 3 | 2 | 3 | Air/shore/vessel search (coastal). |
@@ -527,14 +529,14 @@ Browser scenario controls dispatch `resq:scenario-start` after success. It appli
 | `flood-response` | 3 | 3 | 2 | Mappers/supply/ferries (alpine). |
 | `port-incident` | 2 | 3 | 3 | Overwatch/cordon/samplers (coastal). |
 | `link-loss-divergence` | 1 | 1 | 1 | Fallback comparison (alpine/no cut). |
-| `mixed-load-150` | 50 | 50 | 50 | Three 50-asset grids (alpine). |
+| `mixed-load-150` | 50 | 50 | 50 | 150-asset grid (alpine). |
 
 </details>
 
 <a id="live-controls"></a>
 ### Canvas gestures and keyboard shortcuts
 
-Checked-in HTML help is stale. This table follows instantiated handlers. `Out` excludes INPUT/SELECT. `Browser` is browser-only. `Request` mutates the room.
+Checked-in HTML help is stale. This table follows instantiated handlers. `Out` excludes INPUT/SELECT. `Browser` is browser-only. `Request` mutates the room. `Both` combines browser state with a request.
 
 <details>
 <summary>Canvas gestures and keyboard shortcuts</summary>
@@ -569,7 +571,7 @@ Checked-in HTML help is stale. This table follows instantiated handlers. `Out` e
 
 </details>
 
-Three collisions remain. Plain `I` toggles cockpit and sensor stats, while `Space` drives DVR and climbs under RMB. `Ctrl+Shift+R` resets and toggles investor because reset accepts modifiers. Period is DVR-only. Editor transport is not instantiated.
+Three collisions: plain `I` toggles cockpit/stats; `Space` drives DVR and climbs under RMB. `Ctrl+Shift+R` resets and toggles investor because reset accepts modifiers. Period is DVR-only. Editor transport is not instantiated.
 
 <a id="system-architecture"></a>
 ## System architecture
