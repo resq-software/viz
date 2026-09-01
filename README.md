@@ -101,7 +101,7 @@ This table records one verified run at commit `4a4abd4`; it does not replace the
 <a id="five-minute-mixed-fleet-run"></a>
 ## Five-minute mixed-fleet run
 
-Prerequisites: Git, the .NET 10 SDK, Node.js with npm, `curl`, `jq`, and a modern browser with WebGL2.
+Prerequisites: Git, the .NET 10 SDK, Node.js 22.12 or newer with npm, `curl`, `jq`, and a modern browser with WebGL2.
 
 Clone the SDK submodule with the repository, then run the host in Development:
 
