@@ -208,7 +208,9 @@ public static class AssetCommandTranslator
 }
 
 /// <summary>
-/// The commands one session has issued: their idempotency keys, and their latest results.
+/// The commands one session has issued: their idempotency keys, their latest results, and the
+/// trail of every decision taken about who may command what — refusals, lease grants, and the
+/// link changes that decide whether an asset can be reached at all.
 /// </summary>
 /// <remarks>
 /// Owned by a <see cref="SimulationRoom"/> so its lifetime is exactly the session's. Keys are
@@ -288,12 +290,111 @@ public sealed class AssetCommandLog
         }
     }
 
+    /// <summary>Most authority decisions retained before the oldest are dropped.</summary>
+    /// <remarks>
+    /// Matches the lease trail's default window, so the two halves an operator reads side by side
+    /// cover comparable ground rather than one silently reaching further back than the other.
+    /// </remarks>
+    private const int MaxDecisionRecords = 256;
+
+    private readonly Queue<CommandAuditRecord> _decisions = new();
+    private long _decisionSequence;
+    private long _droppedDecisions;
+
+    /// <summary>
+    /// Decisions discarded to stay inside the window, so a reader never mistakes a truncated
+    /// trail for a complete one.
+    /// </summary>
+    public long DroppedDecisionCount
+    {
+        get { lock (_gate) { return _droppedDecisions; } }
+    }
+
+    /// <summary>Appends one authority decision to this session's trail.</summary>
+    /// <remarks>
+    /// Called once per settled outcome and never on a check. A command that is accepted, refused
+    /// by any gate, or refused because its issuer's control was taken produces exactly one record
+    /// here; a replay of an already-decided command produces none, because the decision it
+    /// replays is already in the trail and appending a copy per retry would let a client's retry
+    /// budget push the records that explain an incident out of the window.
+    /// <para>
+    /// Lease operations and command-link changes land here too, and for the same reason: a
+    /// reviewer asking why a vehicle stopped taking instructions has to find the answer in one
+    /// place, whether it was refused, preempted, or simply could no longer be heard. A link
+    /// change that changed nothing records nothing, on the same idempotency argument as a
+    /// command replay.
+    /// </para>
+    /// <para>
+    /// Oldest-first eviction, for the same reason the lease trail uses it: after an incident the
+    /// records that explain it are the recent ones, and refusing new records instead would mean
+    /// the trail stopped describing the present exactly when it mattered. Sequence numbers keep
+    /// counting across a drop, so truncation is visible from the records alone.
+    /// </para>
+    /// </remarks>
+    /// <param name="decision">What was decided.</param>
+    /// <param name="at">Instant the decision was made.</param>
+    /// <param name="correlationId">Trace identifier of the request that produced it.</param>
+    /// <param name="assetId">Asset the decision concerns.</param>
+    /// <param name="issuerId">Operator, station or service the request came from.</param>
+    /// <param name="commandId">Command it concerns, or null on a lease decision.</param>
+    /// <param name="kind">Command kind, or null on a lease decision.</param>
+    /// <param name="leaseId">Lease it concerns, or null when none was named or produced.</param>
+    /// <param name="reasonCode">Stable code for a refusal or a modification, or null on a plain acceptance.</param>
+    /// <param name="detail">Operator-facing prose.</param>
+    /// <returns>The record as stored, including the sequence number it was given.</returns>
+    public CommandAuditRecord RecordDecision(
+        CommandDecision decision,
+        DateTimeOffset at,
+        string correlationId,
+        string assetId,
+        string issuerId,
+        Guid? commandId = null,
+        string? kind = null,
+        string? leaseId = null,
+        string? reasonCode = null,
+        string? detail = null)
+    {
+        lock (_gate)
+        {
+            var record = new CommandAuditRecord(
+                ++_decisionSequence, decision, at, correlationId, assetId, commandId, kind,
+                issuerId, leaseId, reasonCode, detail);
+
+            _decisions.Enqueue(record);
+
+            while (_decisions.Count > MaxDecisionRecords)
+            {
+                _decisions.Dequeue();
+                _droppedDecisions++;
+            }
+
+            return record;
+        }
+    }
+
+    /// <summary>The retained decision trail, oldest first.</summary>
+    /// <returns>A materialised copy of at most <see cref="MaxDecisionRecords"/> records.</returns>
+    public IReadOnlyList<CommandAuditRecord> ReadDecisions()
+    {
+        lock (_gate)
+        {
+            return [.. _decisions];
+        }
+    }
+
     /// <summary>Forgets every command and every claimed idempotency key.</summary>
     /// <remarks>
     /// Called when the room resets. The ledger is replaced rather than pruned so a key claimed
     /// against the discarded world cannot suppress the same command against the new one — after
     /// a reset the assets it referred to no longer exist, and reporting the old result would be
     /// a lie about a vehicle that is gone.
+    /// <para>
+    /// <b>The decision trail survives.</b> What a reset discards is the world and the commands
+    /// still tracked against it, not the record of who was told no and why — the same stance
+    /// <c>ControlAuthority.Reset</c> takes with its lease trail, and for the same reason: a reset
+    /// is frequently the first thing that happens after the incident somebody will ask about. It
+    /// stays bounded by its own window regardless of how often a session resets.
+    /// </para>
     /// </remarks>
     public void Clear()
     {

@@ -251,7 +251,12 @@ public sealed partial class AirAsset : ISimulatedAsset
                 BuildHealth(physics.BatteryPercent, context.SourceTime), context.SourceTime),
             Link: new LinkState(
                 Transport: LinkTransport.Loopback,
-                IsConnected: true,
+                // What the server knows, not what the asset wishes were true: an in-process
+                // asset is always producing telemetry and has no way to notice that the far end
+                // has stopped listening, so this has to come from the link ledger the operator's
+                // cut actually reaches. Null means nobody is tracking links, which is honest for
+                // a fixture and is exactly the previous behaviour.
+                IsConnected: context.Link?.IsLinkConnected(AssetId) ?? true,
                 LastHeardAt: context.ReceiveTime),
 
             // Route state lives in the swarm coordinator, which assigns patrol legs the asset

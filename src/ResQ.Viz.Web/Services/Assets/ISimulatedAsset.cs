@@ -98,13 +98,19 @@ public readonly record struct AssetStepContext(
 /// unanchored. When present, poses also carry a <see cref="GeoPosition"/> so a consumer that
 /// only speaks WGS84 need not resolve the origin itself.
 /// </param>
+/// <param name="Link">
+/// The command link's state as the server knows it, or <see langword="null"/> when the caller
+/// tracks no links and every asset is to be treated as being heard. An asset cannot answer this
+/// for itself — see <see cref="IAssetLinkView"/> — so it is supplied here rather than assumed.
+/// </param>
 public readonly record struct AssetCaptureContext(
     IEnvironmentSampler Environment,
     double SimulationTimeSeconds,
     long Tick,
     DateTimeOffset SourceTime,
     DateTimeOffset ReceiveTime,
-    LocalOrigin? Origin);
+    LocalOrigin? Origin,
+    IAssetLinkView? Link = null);
 
 /// <summary>A command an asset can be asked to execute, after validation and translation.</summary>
 /// <remarks>

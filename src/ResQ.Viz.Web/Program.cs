@@ -67,6 +67,16 @@ builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
 
+// Control authority: which operator may command each asset, for how long, and what this process
+// is attached to. Resolved from configuration HERE, at registration time rather than on first
+// request, because the whole value of the mode guard is that a configuration this build has no
+// path for stops the server coming up instead of surfacing later as a surprising 500 — see
+// ControlAuthorityRegistry.FromConfiguration for why AllowLiveControl is refused rather than
+// ignored. The registry itself holds one authority per room, keyed weakly on the room object, so
+// authorities are reaped with their sessions without the reaper knowing this type exists.
+builder.Services.AddSingleton(
+    ResQ.Viz.Web.Services.ControlAuthorityRegistry.FromConfiguration(builder.Configuration));
+
 // Ground and surface motion models. Registering a factory is the whole of a domain's wiring:
 // with one present, POST /api/v2/sim/assets builds that class and a preset naming it spawns
 // rather than skips; with none, the class is refused with

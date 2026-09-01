@@ -841,7 +841,7 @@ public sealed class CrossDomainInvariantTests
     private static bool IsStructuralRefusal(CommandProblemDetails problem) =>
         StructuralProblemCodes.Contains(problem.Code, StringComparer.Ordinal)
         || (string.Equals(problem.Code, AssetProblems.CommandNotExecutable, StringComparison.Ordinal)
-            && IsStructuralAssetReason(AssetRefusalReason(problem.Detail)));
+            && IsStructuralAssetReason(problem.ReasonCode));
 
     /// <summary>Whether an executor's own refusal token is structural.</summary>
     /// <param name="reason">Machine-readable token the asset refused with.</param>
@@ -851,25 +851,6 @@ public sealed class CrossDomainInvariantTests
         && (reason.StartsWith("capability.", StringComparison.Ordinal)
             || reason.EndsWith(".unsupported", StringComparison.Ordinal)
             || reason.EndsWith(".unavailable", StringComparison.Ordinal));
-
-    /// <summary>Recovers the executor's refusal token from the endpoint's prose.</summary>
-    /// <remarks>
-    /// The v2 command endpoint answers an executor refusal with
-    /// <see cref="AssetProblems.CommandNotExecutable"/> and puts the asset's own token at the end
-    /// of the detail, because the code names the <em>class</em> of failure and the token names
-    /// the instance. Reading it back is the only way to tell "the ground ahead is water" from
-    /// "no executor in this build has a case for this command", and the two are the whole
-    /// difference between a momentary refusal and a broken promise. A change to that message
-    /// format makes this return something that is not a token, which fails loudly here rather
-    /// than quietly reclassifying every refusal.
-    /// </remarks>
-    /// <param name="detail">Operator-facing detail from the problem body.</param>
-    /// <returns>The trailing token, or null when the detail carries none.</returns>
-    private static string? AssetRefusalReason(string detail)
-    {
-        int marker = detail.LastIndexOf(": ", StringComparison.Ordinal);
-        return marker < 0 ? null : detail[(marker + 2)..].TrimEnd('.');
-    }
 
     // ─── Invariant 2 helpers ────────────────────────────────────────────────
 

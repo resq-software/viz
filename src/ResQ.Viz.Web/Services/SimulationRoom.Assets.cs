@@ -251,6 +251,9 @@ public sealed partial class SimulationRoom
             }
         }
 
+        // Outside the lock, and only once the asset is really gone: an observer may call back
+        // into this room. See IRoomLifecycleObserver.
+        NotifyAssetRemoved(assetId);
         Touch();
         _logger.LogInformation("[room {RoomId}] Asset {AssetId} removed.", Id, LogSafe(assetId));
         reasonCode = null;

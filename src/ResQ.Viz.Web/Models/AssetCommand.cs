@@ -240,15 +240,17 @@ public enum CommandState
 /// <param name="CommandId">Identifier of the command this result describes.</param>
 /// <param name="State">Where the command has got to.</param>
 /// <param name="AcceptedAt">
-/// When validation accepted the command. Null while still <see cref="CommandState.Requested"/>
-/// and for anything <see cref="CommandState.Rejected"/> — a rejected command was never
-/// accepted, and reporting an accept time for one is how audit trails go wrong.
+/// When the command passed every gate and was accepted for execution. Null while still
+/// <see cref="CommandState.Requested"/> and for anything <see cref="CommandState.Rejected"/> —
+/// a rejected command was never accepted, and reporting an accept time for one is how audit
+/// trails go wrong.
 /// </param>
 /// <param name="ProgressPercent">Completion as 0–100. Stays 0 for a command that never started.</param>
 /// <param name="Message">Operator-facing text. Render it; never parse it.</param>
 /// <param name="ReasonCode">
-/// Stable machine-readable rejection or failure code from <see cref="CommandRejectionReasons"/>,
-/// or null when there is nothing to explain. This is the field tests and dashboards key on.
+/// Stable machine-readable token from whichever validator, safe-action gate or downstream asset
+/// settled the result, or null when there is nothing to explain. This is the field tests and
+/// dashboards key on; the token's owning layer defines its vocabulary.
 /// </param>
 public sealed record CommandResult(
     Guid CommandId,
@@ -263,7 +265,7 @@ public sealed record CommandResult(
     public bool IsTerminal => State is CommandState.Rejected or CommandState.Succeeded
         or CommandState.Failed or CommandState.Cancelled or CommandState.TimedOut;
 
-    /// <summary>Builds the result for a command that passed validation.</summary>
+    /// <summary>Builds the result for a command accepted for execution.</summary>
     /// <param name="commandId">Command that was accepted.</param>
     /// <param name="acceptedAt">Instant validation completed.</param>
     /// <param name="message">Optional operator-facing note.</param>
@@ -271,9 +273,9 @@ public sealed record CommandResult(
     public static CommandResult Accepted(Guid commandId, DateTimeOffset acceptedAt, string? message = null) =>
         new(commandId, CommandState.Accepted, acceptedAt, 0, message);
 
-    /// <summary>Builds the result for a command refused during validation.</summary>
+    /// <summary>Builds the result for a command refused by validation, policy or its asset.</summary>
     /// <param name="commandId">Command that was refused.</param>
-    /// <param name="reasonCode">Stable code from <see cref="CommandRejectionReasons"/>.</param>
+    /// <param name="reasonCode">Stable token from the layer that refused the command.</param>
     /// <param name="message">Operator-facing explanation.</param>
     /// <returns>A terminal <see cref="CommandState.Rejected"/> result with no accept time.</returns>
     public static CommandResult Rejected(Guid commandId, string reasonCode, string message) =>
@@ -392,17 +394,23 @@ public sealed record CommandFieldError(string Field, string Code, string Message
 /// is a pure function with no HTTP dependency, and its result has to be assertable in a unit
 /// test and serialisable over SignalR as well as over REST.
 /// <para>
-/// <paramref name="Code"/> is the contract; <paramref name="Title"/> and
-/// <paramref name="Detail"/> are prose and may be reworded at any time.
+/// <paramref name="Code"/> classifies the problem. When a downstream asset supplies a more
+/// specific token, <paramref name="ReasonCode"/> carries it without forcing a client to parse
+/// <paramref name="Detail"/>; the title and detail remain prose and may be reworded at any time.
 /// </para>
 /// </remarks>
-/// <param name="Code">Stable machine-readable code from <see cref="CommandRejectionReasons"/>.</param>
+/// <param name="Code">Stable machine-readable class of problem from the layer that produced it.</param>
 /// <param name="Title">Short human-readable summary of the problem class.</param>
 /// <param name="Detail">Human-readable explanation of this specific occurrence.</param>
 /// <param name="TraceId">Correlation identifier tying this response to server logs and traces.</param>
 /// <param name="AssetId">Asset the refused command was aimed at, when known.</param>
 /// <param name="CommandId">Command that was refused, when known.</param>
 /// <param name="Errors">Per-field problems. Empty when the rejection is not attributable to one field.</param>
+/// <param name="ReasonCode">
+/// Stable token for the underlying refusal when it is more specific than <paramref name="Code"/>.
+/// Null, and omitted from the wire, when the top-level code already says everything machine
+/// consumers need.
+/// </param>
 public sealed record CommandProblemDetails(
     string Code,
     string Title,
@@ -410,4 +418,5 @@ public sealed record CommandProblemDetails(
     string? TraceId = null,
     string? AssetId = null,
     Guid? CommandId = null,
-    IReadOnlyList<CommandFieldError>? Errors = null);
+    IReadOnlyList<CommandFieldError>? Errors = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReasonCode = null);

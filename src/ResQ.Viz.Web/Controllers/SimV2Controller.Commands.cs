@@ -24,7 +24,9 @@ namespace ResQ.Viz.Web.Controllers;
 
 // Command envelope construction, parameter and target validation, and duplicate replay: the
 // gates a command passes before any asset is touched. The wire projections these produce live in
-// SimV2Controller.Projections.cs.
+// SimV2Controller.Projections.cs, the authority gate in SimV2Controller.Authority.Gate.cs, and
+// the situational safety gate that runs last — SafetyRefusal — in SimV2Controller.Link.cs, beside
+// the lever that is currently its only trigger.
 public sealed partial class SimV2Controller
 {
     /// <summary>Turns a request body plus the route's asset id into a validated envelope.</summary>
@@ -323,6 +325,35 @@ public sealed partial class SimV2Controller
 
         failure = null;
         return true;
+    }
+
+    /// <summary>Records a validation rejection and turns it into the response the issuer sees.</summary>
+    /// <remarks>
+    /// One place rather than two, because the gate order splits validation across the authority
+    /// check: a payload or asset-resolution failure is answered before authority is consulted and
+    /// a capability or state failure after it, and both have to produce the same body, the same
+    /// log line and the same audit record.
+    /// </remarks>
+    /// <param name="room">Session the command was issued into.</param>
+    /// <param name="envelope">The command as issued.</param>
+    /// <param name="validation">The rejected outcome.</param>
+    /// <param name="now">Instant the decision was made.</param>
+    /// <returns>The problem response carrying the gate that refused it.</returns>
+    private IActionResult RejectCommand(
+        SimulationRoom room,
+        AssetCommandEnvelope envelope,
+        CommandValidationResult validation,
+        DateTimeOffset now)
+    {
+        RecordCommandDecision(
+            room, envelope, CommandDecision.Rejected, now, validation.ReasonCode, validation.Message);
+
+        _logger.LogInformation(
+            "[room {RoomId}] Command {CommandId} ({Kind}) for asset {AssetId} rejected: {ReasonCode} (trace {TraceId}).",
+            room.Id, envelope.CommandId, Sanitize(envelope.Kind), Sanitize(envelope.AssetId),
+            validation.ReasonCode, TraceId);
+
+        return StatusCode(StatusFor(validation.ReasonCode), validation.ToProblem(TraceId));
     }
 
     /// <summary>Answers a repeated idempotency key without executing anything a second time.</summary>

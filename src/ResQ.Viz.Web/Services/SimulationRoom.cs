@@ -295,6 +295,11 @@ public sealed partial class SimulationRoom
             _pendingSteps = 0;
             _broadcastTick = 0;
         }
+
+        // Outside the lock, and after the swap: every asset the old world held is gone, so
+        // anything holding authority over one has to hear about it now rather than at whatever
+        // request next happens to look. See IRoomLifecycleObserver.
+        NotifyWorldReset();
         Touch();
         _logger.LogInformation("[room {RoomId}] Simulation reset.", Id);
     }
@@ -340,6 +345,8 @@ public sealed partial class SimulationRoom
     /// </summary>
     public (bool ShouldBroadcast, double SimTime) Tick()
     {
+        (bool ShouldBroadcast, double SimTime) tick;
+
         lock (_lock)
         {
             // World steps to advance this real (60 Hz) tick: a queued single-step
@@ -357,6 +364,19 @@ public sealed partial class SimulationRoom
                 // 1/60 per tick does), then steps ground and surface assets. The coordinator
                 // pass runs after that, at the same 2 Hz phase it always has.
                 _assets.Step();
+
+                // A safe action that fired inside that step has taken its asset off autonomous
+                // control, and the coordinator has to hear about it before its next pass — it
+                // drives the same drones on a 2 Hz cycle and would otherwise retask a vehicle
+                // the failsafe just sent home, inside half a simulated second and with nothing
+                // recording that it did. Exactly the rule an operator command already follows,
+                // through exactly the same call.
+                var detached = _assets.DrainAutonomyDetachments();
+                for (var d = 0; d < detached.Count; d++)
+                {
+                    _swarm.DetachManual(detached[d]);
+                }
+
                 _swarmTick++;
                 if (_swarmTick % 30 == 0)
                     _swarm.Tick(_assets.SimulationTimeSeconds, _assets.Drones);
@@ -379,8 +399,15 @@ public sealed partial class SimulationRoom
             // client keeps receiving 10 Hz frames while paused (to reflect the
             // paused state) or sped up (without multiplying network traffic).
             _broadcastTick++;
-            return (_broadcastTick % BroadcastEveryNTicks == 0, _assets.SimulationTimeSeconds);
+            tick = (_broadcastTick % BroadcastEveryNTicks == 0, _assets.SimulationTimeSeconds);
         }
+
+        // Upkeep for state that lives outside this room and lapses on its own — a control lease
+        // in a session nobody is watching, above all. Outside the lock because an observer calls
+        // back in, and throttled inside NotifyUpkeep so this stays a once-a-second pass rather
+        // than a 60 Hz one. See IRoomLifecycleObserver.
+        NotifyUpkeep();
+        return tick;
     }
 
     /// <summary>Single-step helper for tests; ignores the broadcast flag.</summary>

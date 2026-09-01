@@ -32,13 +32,22 @@ namespace ResQ.Viz.Web.Controllers;
 public sealed partial class SimV2Controller
 {
     /// <summary>Builds the problem body every failure on this surface returns.</summary>
+    /// <param name="status">HTTP status for the response.</param>
+    /// <param name="code">Stable machine-readable class of problem.</param>
+    /// <param name="detail">Operator-facing explanation of this occurrence.</param>
+    /// <param name="assetId">Asset the failure concerns, when known.</param>
+    /// <param name="commandId">Command the failure concerns, when known.</param>
+    /// <param name="field">Request field responsible for the failure, when applicable.</param>
+    /// <param name="reasonCode">More specific underlying refusal token, when one exists.</param>
+    /// <returns>The shaped problem response.</returns>
     private ObjectResult Failure(
         int status,
         string code,
         string detail,
         string? assetId = null,
         Guid? commandId = null,
-        string? field = null)
+        string? field = null,
+        string? reasonCode = null)
     {
         CommandFieldError[] errors = field is null
             ? []
@@ -51,7 +60,8 @@ public sealed partial class SimV2Controller
             TraceId: TraceId,
             AssetId: assetId,
             CommandId: commandId,
-            Errors: errors);
+            Errors: errors,
+            ReasonCode: reasonCode);
 
         return StatusCode(status, problem);
     }
