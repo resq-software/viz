@@ -447,12 +447,12 @@ The shared contract does not flatten motion into one generic vehicle. Air uses S
 <a id="domain-model-comparison"></a>
 ### Motion, state, commands, and safe actions
 
-| Domain or observation | Shipped motion model / input | Published domain-specific state | Typical commands | Safe-action default | Advisory output |
+| Domain / shipped class | Shipped motion model / input | Published domain state | Typical commands | Safe-action default | Advisory output |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Air | SDK multirotor / flight commands | Airborne, heading/course, climb, three altitudes, wind, airspeed | Take off, fly, loiter, land | Return to launch, then land/stop fallback | Position freshness and bounded uncertainty growth |
-| Ground | Bicycle or skid-steer / speed and turn guidance | Speed, steering, attitude, terrain, traction, immobilisation | Drive, reverse, park, stop | Stop and hold | Straight-line traversability and rollover proximity |
-| Surface | Displacement hull / thrust and rudder response | Heading/course, surge/sway, current, depth, draft, clearance, waves | Transit, set course/speed, reverse, dock | Drift and alert | Water-route clearance and docking guidance |
-| External track | Fused reported pose/velocity | Classification, sources, identity, accuracy, confidence, age | None | None, observations are not commandable | CPA, bearing, closing state, encounter geometry |
+| Air / `Multirotor` | SDK multirotor / flight commands | Airborne, heading/course, climb, three altitudes, wind, airspeed | Take off, fly, loiter, land | Return to launch, then land/stop fallback | Position freshness and bounded uncertainty growth |
+| Ground / `AckermannRover`<br>`DifferentialRover`<br>`TrackedRover` | Bicycle or skid-steer / speed and turn guidance | Speed, steering, attitude, terrain, traction, immobilisation | Drive, reverse, park, stop | Stop and hold | Straight-line traversability and rollover proximity |
+| Surface / `SurfaceVessel` | Displacement hull / thrust and rudder response | Heading/course, surge/sway, current, depth, draft, clearance, waves | Transit, set course/speed, dock, undock, stop | Drift and alert | Water-route clearance and docking guidance |
+| External track / none | Fused reported pose/velocity | Classification, sources, identity, accuracy, confidence, age | None | None, observations are not commandable | CPA, bearing, closing state, encounter geometry |
 
 <a id="air-physics"></a>
 ### Air: SDK flight-state projection
@@ -484,11 +484,11 @@ Wave heave, roll, and pitch are deterministic visual motion only. They never fee
 <a id="external-tracks-cpa"></a>
 ### External tracks and closest approach
 
-An external track is structurally separate from an asset: it has its own identifier space, no capabilities, and no command endpoint. Reports carry cooperative or non-cooperative sources, classification, identity, motion, accuracy, and confidence. Newer observations fuse by identifier. The newest measured motion and accuracy win; absent classification, label, or transponder data do not erase prior reports. Sources remain ordered by recency.
+An external track is structurally separate from an asset: it has its own identifier space, no capabilities, and no command endpoint. Reports carry cooperative or non-cooperative sources, classification, identity, motion, accuracy, and confidence. For an existing identifier, reports at or after the held observation time fuse. The accepted report's motion and accuracy win; absent classification, label, or transponder data do not erase prior reports. Sources are recency-ordered.
 
-The per-room store uses simulated time, making replay, aging, and eviction deterministic. Defaults keep a report fresh for 5 seconds, stale through 20 with confidence decay, lost after that, and retire it after 60. Capacity is 256 tracks and 8 sources per track. A full store removes expired tracks, then evicts the stalest only for a newer report. Older or over-capacity reports are refused and counted.
+Each room uses simulated time, making replay, aging, and eviction deterministic. Defaults: fresh for 5 seconds, stale through 20 with confidence decay, lost afterward, retired after 60. Capacity: 256 tracks, 8 sources each. Existing-track updates bypass capacity. For a new identifier at capacity, the store removes expired tracks first. If still full, it replaces the stalest only when newer. Otherwise, the store refuses and counts it. Older reports for a held identifier are separately refused as out of order.
 
-CPA extrapolates two reported motions as straight lines. It reports current slant and horizontal range. For the closest approach, it publishes slant and horizontal distance, vertical separation, and time to that point. Relative bearing, closing state, and encounter geometry complete the advisory. The result also carries the older input age, lower confidence, and worse freshness of the two observations. CPA issues no manoeuvre, applies no navigation rules, and confers no collision-avoidance authority. It is advisory decision support.
+CPA extrapolates two reported motions as straight lines. It reports current slant and horizontal range. For the closest approach, it publishes slant and horizontal distance, vertical separation, and time to that point. Relative bearing, closing state, and encounter geometry complete the advisory. The result also carries the older input age, lower confidence, and worse freshness of the two observations. CPA issues no manoeuvre, applies no navigation rules, and confers no collision-avoidance authority.
 
 <a id="operator-workspace-scenarios"></a>
 ## Operator workspace and scenarios
