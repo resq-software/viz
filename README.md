@@ -786,12 +786,12 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/sim/heightmap` |`{rows,cols,width,depth,cells}`→`200`<br>`400`|
 | DELETE | `/api/sim/heightmap` |Clear-override→`200`|
 | GET | `/api/sim/terrain/eroded` |query:`preset,seed,iterations,res`→`200`<br>`400`|
-| POST | `/api/v2/sim/assets/{id}/commands` |Command-envelope→`202`<br>`400/404/409`|
+| POST | `/api/v2/sim/assets/{id}/commands` |`{kind,idempotencyKey,issuerId?,commandId?,deadline?,controlLeaseId?,frame?,target?,constraints?,parameters?}`→`202`<br>`400/404/409/501`(geodetic target,no local origin)|
 | GET | `/api/v2/sim/commands/{commandId}` |Poll-result→`200`<br>`404`|
 | GET | `/api/v2/sim/snapshot` |Complete-v2-snapshot→`200`|
 | GET | `/api/v2/sim/tracks` |Track-inventory→`200`|
 | GET | `/api/v2/sim/tracks/{trackId}` |Held-track→`200`<br>`404`|
-| POST | `/api/v2/sim/tracks` |Observation-report→`200/201`<br>`400/409/429`|
+| POST | `/api/v2/sim/tracks` |`{trackId,pose,twist?,classification?,sourceId?,sourceKind?,sourceQuality?,confidence?,observedAtSimulationTimeSeconds?,positionAccuracyM?,velocityAccuracyMps?,label?,transponder?}`→`200/201`<br>`400/409/429`|
 | GET | `/api/v2/sim/assets/{id}/link` |Command-link-state→`200`<br>`400/404`|
 | POST | `/api/v2/sim/assets/{id}/link` |`{available,issuerId?,reason?}`→`200`<br>`400/403/404`|
 | GET | `/api/v2/sim/control/mode` |Deployment-mode→`200`|
@@ -802,7 +802,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/v2/sim/assets/{id}/control/release` |`{holderId,leaseId}`→`200`<br>`400/404/409`|
 | POST | `/api/v2/sim/assets/{id}/control/preempt` |`{holderId,role,justification,durationSeconds?}`→`200`<br>`400/403/404/409`|
 | GET | `/api/v2/sim/assets` |query:`domain?`→inventory `200`<br>`400`|
-| POST | `/api/v2/sim/assets` |`{vehicleClass,pose,assetId?,metadata?}`→`201`<br>`400/409/429/501`|
+| POST | `/api/v2/sim/assets` |`{vehicleClass,pose,assetId?,displayName?,vendor?,model?,agencyId?,fleetId?}`→`201`<br>`400/409/429/501`|
 | GET | `/api/v2/sim/assets/{id}` |Descriptor/state→`200`<br>`404`|
 | DELETE | `/api/v2/sim/assets/{id}` |Remove-ground/surface→`204`<br>`404/409`|
 | GET | `/api/v2/sim/assets/{id}/capabilities` |Commands/data→`200`<br>`404`|
@@ -812,7 +812,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 <details>
 <summary>SignalR contract (6 messages)</summary>
 
-The hub is `/viz`. Subscriptions and group membership are connection-scoped, so reconnecting clients resubscribe.
+The `/viz` handshake requires the `viz_session` room cookie, which binds each connection to its room. Subscriptions and group membership are connection-scoped, so reconnecting clients resubscribe. The production client sets full-snapshot intent first. An exhausted fresh delta rejoin therefore leaves that client on full snapshots; the generic hub preserves whatever prior stream existed.
 
 | Direction | Name | Payload/return · audience/repair |
 | :--- | :--- | :--- |
