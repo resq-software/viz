@@ -101,6 +101,8 @@ This table records one verified run at commit `4a4abd4`; it does not replace the
 <a id="five-minute-mixed-fleet-run"></a>
 ## Five-minute mixed-fleet run
 
+Prerequisites: Git, the .NET 10 SDK, Node.js with npm, `curl`, `jq`, and a modern browser with WebGL2.
+
 Clone the SDK submodule with the repository, then run the host in Development:
 
 ```bash
@@ -109,6 +111,8 @@ cd viz
 ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/ResQ.Viz.Web
 ```
 
+Leave this foreground terminal running while you use the browser and API.
+
 Open [https://localhost:5001](https://localhost:5001). The browser may ask you to accept the local ASP.NET development certificate. This is expected for a development-only certificate that the browser does not yet trust. Port 5000 is also configured, but the session cookie is `Secure`, so use HTTPS for the browser and API calls.
 
 Setting `ASPNETCORE_ENVIRONMENT` is deliberate. `dotnet run` builds Debug by default, while the project builds the Vite client through MSBuild only in Release. `Program.cs` starts and proxies the Vite development server only when the environment is Development. Leaving the environment implicit can therefore produce a host with neither a fresh Release client nor the Development proxy.
@@ -116,12 +120,23 @@ Setting `ASPNETCORE_ENVIRONMENT` is deliberate. `dotnet run` builds Debug by def
 For the first mixed-fleet view, keep the default **alpine** terrain. Open the browser developer console and run:
 
 ```js
-await fetch('/api/sim/scenario/flood-response', { method: 'POST' }).then(response => response.json())
+const response = await fetch('/api/sim/scenario/flood-response', {
+  method: 'POST',
+});
+if (!response.ok) {
+  throw new Error(`Scenario request failed: HTTP ${response.status}`);
+}
+
+const result = await response.json();
+if (result.scenario !== 'flood-response' || result.status !== 'started') {
+  throw new Error(`Unexpected scenario response: ${JSON.stringify(result)}`);
+}
+result
 ```
 
 `flood-response` resets the browser's room and places eight assets: three multirotors, three rovers, and two surface vessels. The preset is authored against a fresh room's alpine terrain, so its ground and water match without another environment request. Changed the terrain already? Select **Alpine** in the sidebar before loading it. Do not substitute `coastal-search`, `coastal-transit`, or `port-incident` for this first run because those scenarios need the **coastal** preset or their vessels are placed on land.
 
-The following check creates a separate API session. It keeps the encrypted, HttpOnly `viz_session` cookie in a temporary jar and sends it on each room-scoped request. `--insecure` accepts the same local certificate warning as the browser. Do not carry that option into a deployed environment.
+Open a second terminal in the `viz` directory and keep using that same shell for this check and later examples. The commands create a separate API session, keep the encrypted, HttpOnly `viz_session` cookie in a temporary jar, and send it on each room-scoped request. The `trap` deletes the cookie jar when this second shell exits, not when the displayed block ends. `--insecure` accepts the same local certificate warning as the browser. Do not carry that option into a deployed environment.
 
 ```bash
 readme_base=https://localhost:5001
@@ -158,13 +173,15 @@ Every simulated asset has an `AssetDescriptor` and an `AssetState`, joined by `a
 
 Operations are capability-driven. A caller asks what an asset declares it can do instead of inferring actions from its name or renderer. The shipped profiles cover five vehicle classes across three implemented domains. `Subsurface`, `Rov`, and `Auv` remain reserved without simulation profiles or motion models.
 
-| Domain | Shipped class and mobility model | Capability and state differences |
-| :--- | :--- | :--- |
-| Air | `Multirotor` / `multirotor` | 3D navigation, takeoff, landing, and station keeping. Air state separates heading, course, climb, wind, and three altitude references. |
-| Ground | `AckermannRover` / `ackermann`<br>`DifferentialRover` / `differential`<br>`TrackedRover` / `tracked` | 2D navigation, reverse, parking, and stop-and-hold. Differential and tracked rovers can pivot. Ground state reports terrain, slope, traction, steering, attitude, and advisory rollover proximity. |
-| Surface | `SurfaceVessel` / `displacement-hull` | 2D navigation, reverse, and docking. The shipped hull cannot station-keep and drifts without propulsion. Surface state reports current, waves, water depth, draft, and advisory under-keel clearance. |
+PascalCase entries in the second column name C# `VehicleClass` enum members. Their JSON representation is a separate wire-contract concern. Lowercase entries are literal `mobilityModel` wire/config strings.
 
-`OperationalState` supplies the shared lifecycle vocabulary from offline and standby through active, holding, recovery, emergency, and faulted. `DataFreshness` is separate from link connectivity: a connected link can carry overdue telemetry, while a recent position can remain usable briefly after disconnection. Domain state then adds facts that do not belong on every asset. The JSON discriminator is `air`, `ground`, or `surface`, so clients do not treat an absent vessel draft as though a sensor failed to report it.
+| Domain | C# `VehicleClass` member / literal `mobilityModel` string | Capability and state differences |
+| :--- | :--- | :--- |
+| Air | `Multirotor` / `"multirotor"` | 3D navigation, takeoff, landing, and station keeping. Air state separates heading, course, climb, wind, and three altitude references. |
+| Ground | `AckermannRover` / `"ackermann"`<br>`DifferentialRover` / `"differential"`<br>`TrackedRover` / `"tracked"` | 2D navigation, reverse, parking, and stop-and-hold. Differential and tracked rovers can pivot. Ground state reports terrain, slope, traction, steering, attitude, and advisory rollover proximity. |
+| Surface | `SurfaceVessel` / `"displacement-hull"` | 2D navigation, reverse, and docking. The shipped hull cannot station-keep and drifts without propulsion. Surface state reports current, waves, water depth, draft, and advisory under-keel clearance. |
+
+`OperationalState` supplies the shared lifecycle vocabulary: `Unknown`, `Offline`, `Standby`, `Ready`, `Active`, `Holding`, `Returning`, `Recovering`, `Emergency`, and `Faulted`. `DataFreshness` is separate from link connectivity: a connected link can carry overdue telemetry, while a recent position can remain usable briefly after disconnection. Domain state then adds facts that do not belong on every asset. The JSON discriminator is `air`, `ground`, or `surface`, so clients do not treat an absent vessel draft as though a sensor failed to report it.
 
 ### Coordinate boundary
 
