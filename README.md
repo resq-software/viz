@@ -192,6 +192,7 @@ PascalCase entries in the second column name C# `VehicleClass` enum members. The
 
 `GlobalWgs84` is geodetic and non-Cartesian. It travels through `GeoPosition` and `GeoCommandTarget`, never as a velocity or offset vector. Every geodetic vertical value names its `VerticalReference`, such as ellipsoid, mean sea level, terrain, water surface, or chart datum, and uses positive-up metres. Local point command targets carry a framed pose plus the applicable `originId`. Two local points are comparable only when their origins agree. The checked-in `scene-alpine-default` origin is a placeholder for local development, not a surveyed deployment location. Operators must replace its identifier and coordinates together for a real site.
 
+<a id="v1-compatibility-and-v2-scope"></a>
 ### V1 compatibility and v2 scope
 
 V1 stays available for one deprecation cycle as a drone- and air-shaped compatibility surface. Existing clients continue to receive `ReceiveFrame` and use the established v1 snapshots and command routes. V2 carries mixed-domain descriptors and states, typed domain data, capability-aware commands, control authority, external tracks, complete snapshots, and opt-in deltas.
@@ -770,7 +771,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/sim/reset` |Clear-world→`200`|
 | POST | `/api/sim/pause` |Pause→`200`|
 | POST | `/api/sim/resume` |Resume→`200`|
-| POST | `/api/sim/step` |`{frames:1..600}`→`200`<br>`400`|
+| POST | `/api/sim/step` |optional `{frames?:1..600}`(default 1)→`200`<br>`400`|
 | POST | `/api/sim/speed` |`{factor:1\|2\|4\|8}`→`200`<br>`400`|
 | GET | `/api/sim/transport` |Paused/speed/tick→`200`|
 | POST | `/api/sim/drone` |`{position:[x,y,z]}`→`200`<br>`400/429`|
@@ -785,7 +786,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/sim/preset/{key}` |Terrain-preset→`200`<br>`400`|
 | POST | `/api/sim/heightmap` |`{rows,cols,width,depth,cells}`→`200`<br>`400`|
 | DELETE | `/api/sim/heightmap` |Clear-override→`200`|
-| GET | `/api/sim/terrain/eroded` |query:`preset,seed,iterations,res`→`200`<br>`400`|
+| GET | `/api/sim/terrain/eroded` |Bake+install authoritative room DEM;return grid<br>`{preset=alpine,seed=1337,iterations=60000(0..400000),res=513(64..1025)}`→`200/400`|
 | POST | `/api/v2/sim/assets/{id}/commands` |`{kind,idempotencyKey,issuerId?,commandId?,deadline?,controlLeaseId?,frame?,target?,constraints?,parameters?}`→`202`<br>`400/404/409/501`(geodetic target,no local origin)|
 | GET | `/api/v2/sim/commands/{commandId}` |Poll-result→`200`<br>`404`|
 | GET | `/api/v2/sim/snapshot` |Complete-v2-snapshot→`200`|
@@ -796,7 +797,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/v2/sim/assets/{id}/link` |`{available,issuerId?,reason?}`→`200`<br>`400/403/404`|
 | GET | `/api/v2/sim/control/mode` |Deployment-mode→`200`|
 | GET | `/api/v2/sim/control/audit` |Bounded-decisions/leases→`200`|
-| GET | `/api/v2/sim/assets/{id}/control` |Current-holder→`200`<br>`400`|
+| GET | `/api/v2/sim/assets/{id}/control` |Lease-registry only→`200`;syntactically-valid nonexistent asset id→`isControlled:false`,not existence proof<br>`400` malformed-id|
 | POST | `/api/v2/sim/assets/{id}/control` |`{holderId,role,durationSeconds?}`→`200`<br>`400/403/404/409`|
 | POST | `/api/v2/sim/assets/{id}/control/renew` |`{holderId,leaseId,durationSeconds?}`→`200`<br>`400/404/409`|
 | POST | `/api/v2/sim/assets/{id}/control/release` |`{holderId,leaseId}`→`200`<br>`400/404/409`|
@@ -828,7 +829,7 @@ The `/viz` handshake requires the `viz_session` room cookie, which binds each co
 <details>
 <summary>Command catalog (19 registered commands)</summary>
 
-Legend: domains `A/G/S`. Target `!` is required and `?` optional. States are `all`, `responsive` (not unknown/offline), `operable` (standby/ready/active/holding/returning), or `stationary` (standby/ready).
+Legend: domains `A/G/S`. Target `!` is required and `?` optional. In target cells, `|` separates alternatives. Capability `(any)` means any listed capability passes its gate. States are `all`, `responsive` (not unknown/offline), `operable` (standby/ready/active/holding/returning), or `stationary` (standby/ready).
 
 | Token | Domain · target/required parameters | Capability | State · position |
 | :--- | :--- | :--- | :--- |
@@ -866,7 +867,7 @@ Reserved/unregistered: `followRoute` awaits a route store/translator. `setSteeri
 | authority | Acquire/renew the lease. After `authority.notHolder`, `authority.leaseNotLive`, or `authority.leasePreempted`, inspect audit before retrying. |
 | link/held-position | Restore `link.heldDown` after inspecting the fallback. `link.unreachable`, `position.stale`, `safeAction.position.stale`, and `safeAction.position.uncertain` refuse movement. |
 | execution | `command.kindNotExecutable`, `command.notExecutable`, or downstream `reasonCode`: change the request or asset state before retrying. |
-| capacity/not-found | Back off on `429`. Refresh inventories after asset/track/command `notFound` because bounded records may have expired or been evicted. |
+| capacity/not-found | Back off on `429`. `asset.notFound` means absent, removed, or reset. `track.notFound` and `command.notFound` may reflect bounded aging or eviction. |
 
 Problems carry `code`, optional downstream `reasonCode`, `errors[].field`, `traceId`, `assetId`, and `commandId`. `CommandResult` wire lifecycle states are `Requested`, `Accepted`, `Rejected`, `InProgress`, `Succeeded`, `Failed`, `Cancelled`, and `TimedOut`. Production records accepted commands but does not advance them from later simulated motion. `202`/`Accepted` is delivery, not completion.
 
