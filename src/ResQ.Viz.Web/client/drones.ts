@@ -11,7 +11,7 @@ import {
   DETECTION_FLASH_DURATION_SEC,
 } from "./dronesLed";
 import { loadGltf, withFallback } from "./assetLoader";
-import { clone as skeletonClone } from "three/addons/utils/SkeletonUtils.js";
+import { ensureSkeletonClone, getSkeletonClone } from "./skeletonClone";
 import { getLogger } from "./log";
 
 const log = getLogger("drones");
@@ -134,7 +134,14 @@ function _ensureGlbProto(): Promise<THREE.Object3D | null> {
   if (_glbPromise) return _glbPromise;
   _glbPromise = withFallback(
     async () => {
-      const gltf = await loadGltf("/models/quadrotor.glb");
+      // SkeletonUtils rides along with the GLB fetch rather than sitting in the
+      // entry chunk — it is only ever used to clone this proto. If either half
+      // fails the whole thing rejects into withFallback below, which resolves
+      // null and leaves every drone on its primitive chassis.
+      const [gltf] = await Promise.all([
+        loadGltf("/models/quadrotor.glb"),
+        ensureSkeletonClone(),
+      ]);
       _glbProto = _prepGlbProto(gltf.scene);
       return _glbProto;
     },
@@ -896,6 +903,13 @@ export class DroneManager {
   }
 
   private _applyGlbBody(entry: DroneEntry, id: string, proto: THREE.Object3D): void {
+    // Guard before anything is torn down. In practice this is always set —
+    // the proto only resolves once ensureSkeletonClone() has too — but the
+    // disposal below is destructive, so a future path that reached here early
+    // must leave the primitive chassis standing rather than empty the group.
+    const cloneProto = getSkeletonClone();
+    if (!cloneProto) return;
+
     // Dispose the primitive chassis (its geometry + materials are unique to
     // this drone) before discarding it.
     entry.body.traverse((c) => {
@@ -911,7 +925,7 @@ export class DroneManager {
 
     // Clone the proto (SkeletonUtils.clone shares geometry + materials), register
     // every node for picking, and re-point the rotor list at the clone's parts.
-    const model = skeletonClone(proto);
+    const model = cloneProto(proto);
     entry.body.add(model);
     model.traverse((c) => this._objToId.set(c, id));
     this._objToId.set(model, id);
