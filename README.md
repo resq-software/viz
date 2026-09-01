@@ -63,6 +63,7 @@ V2 clients can subscribe to full snapshots at the 10 Hz publication cadence. Del
 
 V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks. The lease identifies who holds control of an asset. HTTP `202` means the gates passed and the command was handed to the simulated asset. Clients can retrieve the latest recorded state. The current production path does not advance an accepted record from subsequent simulated asset motion. Catalog, authority, link, translation, and simulated-asset refusals enter the bounded decision audit, as do accepted commands. Envelope-build failures add no decision-audit record. Duplicate and idempotency-conflict responses also return before that audit. This build has no hardware bearer, and startup rejects configuration that enables live control.
 
+<a id="source-enforced-limits-and-gates"></a>
 ### Source-enforced limits and gates
 
 These values are constraints in the source and CI configuration. They are separate from the dated measurements below.
@@ -80,6 +81,7 @@ These values are constraints in the source and CI configuration. They are separa
 | Built entry CSS CI ceiling | 53,248 bytes |
 | Live-control configuration | Rejected at startup |
 
+<a id="reference-run-2026-09-01--4a4abd4"></a>
 ### Reference run: 2026-09-01 · 4a4abd4
 
 This table records one verified run at commit `4a4abd4`; it does not replace the source-enforced constraints above. Reproduction results vary by host.
@@ -183,6 +185,7 @@ PascalCase entries in the second column name C# `VehicleClass` enum members. The
 
 `OperationalState` supplies the shared lifecycle vocabulary: `Unknown`, `Offline`, `Standby`, `Ready`, `Active`, `Holding`, `Returning`, `Recovering`, `Emergency`, and `Faulted`. `DataFreshness` is separate from link connectivity: a connected link can carry overdue telemetry, while a recent position can remain usable briefly after disconnection. Domain state then adds facts that do not belong on every asset. The JSON discriminator is `air`, `ground`, or `surface`, so clients do not treat an absent vessel draft as though a sensor failed to report it.
 
+<a id="coordinate-boundary"></a>
 ### Coordinate boundary
 
 `LocalEus` is the canonical Three.js scene frame: +X east, +Y up, and +Z south. `LocalEnu` remains a separate ground and geographic convention (+X east, +Y north, +Z up), while `LocalNed` remains the aerospace convention (+X north, +Y east, +Z down). V2 names the frame on every pose and twist rather than guessing from the asset domain.
@@ -485,7 +488,7 @@ An external track is structurally separate from an asset: it has its own identif
 
 The per-room store uses simulated time, making replay, aging, and eviction deterministic. Defaults keep a report fresh for 5 seconds, stale through 20 with confidence decay, lost after that, and retire it after 60. Capacity is 256 tracks and 8 sources per track. A full store removes expired tracks, then evicts the stalest only for a newer report. Older or over-capacity reports are refused and counted.
 
-CPA extrapolates two reported motions as straight lines. It reports current and closest slant, horizontal, and vertical separation, time to closest approach, relative bearing, closing state, and encounter geometry. The result carries the older age, lower confidence, and worse freshness. CPA issues no manoeuvre, applies no navigation rules, and confers no collision-avoidance authority. It is advisory decision support.
+CPA extrapolates two reported motions as straight lines. It reports current slant and horizontal range. For the closest approach, it publishes slant and horizontal distance, vertical separation, and time to that point. Relative bearing, closing state, and encounter geometry complete the advisory. The result also carries the older input age, lower confidence, and worse freshness of the two observations. CPA issues no manoeuvre, applies no navigation rules, and confers no collision-avoidance authority. It is advisory decision support.
 
 <a id="operator-workspace-scenarios"></a>
 ## Operator workspace and scenarios
