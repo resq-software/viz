@@ -67,6 +67,9 @@ public sealed record RoomAssetFrame(
 // single lock, and every one of them returns a value or a materialised copy. Nothing hands out
 // the world itself, a live collection from it, or a lazy query over it. UseAssets<T> is the
 // deliberate exception and carries its own warning.
+//
+// Spawning a non-air asset runs the other way round — a callback INTO the lock, because building
+// one samples terrain — and lives in SimulationRoom.Spawn.cs.
 public sealed partial class SimulationRoom
 {
     /// <summary>Most asset events one session buffers before the oldest are dropped.</summary>
@@ -161,12 +164,18 @@ public sealed partial class SimulationRoom
         }
     }
 
-    /// <summary>Registers a ground or surface asset built by an <see cref="IAssetFactory"/>.</summary>
+    /// <summary>Registers an already-built ground or surface asset.</summary>
     /// <remarks>
+    /// For an asset that was constructed without touching the world — a test double, a replayed
+    /// fixture. Anything built by an <see cref="IAssetFactory"/> must go through
+    /// <see cref="TrySpawnAsset"/> instead: a factory samples terrain while it builds, and this
+    /// method only takes the lock once the sampling has already happened.
+    /// <para>
     /// Air assets do not come through here — their lifetime belongs to the SDK's flight world,
     /// which <see cref="AddDrone(string, System.Numerics.Vector3, string)"/> is the only correct
     /// way into. Passing one is a programming error and the world throws, rather than this
     /// method reporting it as a caller-fixable rejection.
+    /// </para>
     /// </remarks>
     /// <param name="asset">Asset to register; ground and surface assets should implement <see cref="IStepDrivenAsset"/>.</param>
     /// <param name="reasonCode">Stable code from <see cref="AssetProblems"/> when registration was refused.</param>

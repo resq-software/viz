@@ -94,11 +94,13 @@ public sealed partial class SimV2Controller : ControllerBase
     /// registered still starts, and refuses those classes with a machine-readable reason instead
     /// of failing dependency resolution at request time.
     /// <para>
-    /// <b>This build registers none.</b> Ground and surface motion models land in later work, so
-    /// spawning a rover or a vessel is answered deliberately — <c>501 Not Implemented</c> carrying
-    /// <see cref="AssetProblems.MobilityModelUnavailable"/> — and never as an unhandled exception
-    /// or a bare 500. The domain being unavailable is a fact about this build, and saying so in
-    /// the reason code is what lets a client distinguish "not yet" from "you asked wrongly".
+    /// A class no registered factory answers for is refused deliberately — <c>501 Not
+    /// Implemented</c> carrying <see cref="AssetProblems.MobilityModelUnavailable"/> — and never
+    /// as an unhandled exception or a bare 500. A domain being unavailable is a fact about the
+    /// deployment, and saying so in the reason code is what lets a client distinguish "not yet"
+    /// from "you asked wrongly". Which domains are available is therefore read off the
+    /// composition root rather than asserted here: this build registers a ground model and no
+    /// surface one, so a rover spawns and a vessel is still refused.
     /// </para>
     /// </remarks>
     /// <param name="frames">Builder supplying the configured survivor and hazard data.</param>

@@ -65,6 +65,15 @@ public sealed partial class SimV2Controller
     /// cannot declare a domain that contradicts the class it asked for. Capabilities, envelope
     /// and motion limits come from the same profile table, which is what stops a spawn producing
     /// a rover that declares <see cref="AssetCapability.Takeoff"/>.
+    /// <para>
+    /// Which domains actually succeed is a fact about the deployment, not about this method. An
+    /// air spawn goes to the SDK's flight world; everything else needs a registered
+    /// <see cref="IAssetFactory"/> that answers for the class, and gets
+    /// <see cref="AssetProblems.MobilityModelUnavailable"/> when none does. Ground models are
+    /// registered, so a rover spawns; no surface model is, so a vessel is still refused — by that
+    /// same mechanism rather than by a special case here, which is why enabling the surface
+    /// domain later is a registration and not a change to this endpoint.
+    /// </para>
     /// </remarks>
     /// <param name="request">Vehicle class, frame-qualified spawn pose and optional metadata.</param>
     /// <returns>201 with the minted identifier and descriptor, or a problem describing the refusal.</returns>

@@ -16,65 +16,263 @@
 
 using System.Numerics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using ResQ.Viz.Web.Models;
+using ResQ.Viz.Web.Services.Assets;
+using ResQ.Viz.Web.Services.Assets.Ground;
 
 namespace ResQ.Viz.Web.Services;
 
 /// <summary>
 /// Loads and executes named scenario presets from application configuration.
 /// </summary>
-public sealed class ScenarioService
+/// <remarks>
+/// A preset is a flat list of entries, each placing one asset. An entry that names no vehicle
+/// class is an air multirotor, which is what every preset written before the ground domain
+/// existed relies on: those presets parse to exactly the entries they always did and take
+/// exactly the spawn path they always took.
+/// <para>
+/// <b>A malformed entry is skipped, never thrown.</b> That is the behaviour presets have always
+/// had, and it is deliberate: a preset is data, it is read at startup, and one bad row must not
+/// stop the host serving the presets around it — nor, once a run is under way, abort it
+/// half-applied. A partially-spawned world is worse than a missing vehicle, because nothing
+/// about it says which half is missing. Every skip is logged with the preset, the row and what
+/// was wrong with it, so a typo reads as a typo rather than as a vehicle that mysteriously
+/// never appears.
+/// </para>
+/// <para>
+/// Validation is therefore complete rather than cursory: a blank, malformed or repeated
+/// identifier, a coordinate that is unparseable, non-finite or outside the scene, a vehicle
+/// class this build cannot simulate, and a declared domain that contradicts its own class are
+/// all caught at load, while the row can still be named.
+/// </para>
+/// </remarks>
+public sealed partial class ScenarioService
 {
-    /// <summary>Per-drone scenario entry: launch position and optional vendor tag.</summary>
-    public readonly record struct Entry(string Id, Vector3 Pos, string? Vendor);
+    /// <summary>Per-asset scenario entry: what to place, where, and which way round.</summary>
+    /// <remarks>
+    /// <paramref name="Domain"/> is derived from <paramref name="VehicleClass"/> at load time
+    /// rather than trusted from configuration, for the same reason the v2 spawn endpoint derives
+    /// it: a preset able to declare a domain contradicting its class would produce an asset that
+    /// is filtered as one kind of thing and simulated as another.
+    /// </remarks>
+    /// <param name="Id">Asset identifier, unique within the preset.</param>
+    /// <param name="Pos">Spawn position in the scene frame, in metres. A ground asset's height is read off the terrain, so its <c>Y</c> is ignored.</param>
+    /// <param name="Vendor">Optional vendor tag; null when unattributed.</param>
+    /// <param name="Domain">Medium the asset operates in. Defaults to <see cref="AssetDomain.Air"/>.</param>
+    /// <param name="VehicleClass">Mobility archetype. Defaults to <see cref="VehicleClass.Multirotor"/>.</param>
+    /// <param name="HeadingRad">Initial heading in radians clockwise from true north. Ignored by an air spawn, which takes no heading.</param>
+    public readonly record struct Entry(
+        string Id,
+        Vector3 Pos,
+        string? Vendor,
+        AssetDomain Domain = AssetDomain.Air,
+        VehicleClass VehicleClass = VehicleClass.Multirotor,
+        double HeadingRad = 0.0);
+
+    /// <summary>The motion models this build ships, bound to no room at all.</summary>
+    /// <remarks>
+    /// Ground only. A surface entry finds no factory able to build it and is skipped, which is
+    /// the same answer the v2 spawn endpoint gives for the surface domain today.
+    /// <para>
+    /// Room-independent, and it has to be: the sampler a rover settles against is resolved from
+    /// <see cref="SimulationRoom.SpawningEnvironment"/> at the moment of the build, inside the
+    /// room's own lock. Capturing a sampler here instead would mean reading it out of a room
+    /// before the lock was taken and sampling terrain after it was released — the race
+    /// <see cref="SimulationRoom.UseAssets{T}"/> documents and forbids.
+    /// </para>
+    /// </remarks>
+    private static readonly IAssetFactory[] ShippedAssetFactories =
+    [
+        new GroundAssetFactory(() =>
+            SimulationRoom.SpawningEnvironment
+            ?? throw new InvalidOperationException(
+                "A ground asset may only be built from inside SimulationRoom.TrySpawnAsset, "
+                + "which is what keeps its terrain sampling under the room's lock.")),
+    ];
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<Entry>> _scenarios;
+    private readonly IReadOnlyList<IAssetFactory> _assetFactories;
+    private readonly ILogger _logger;
 
     /// <summary>
     /// Initialises the service and loads scenario presets from <paramref name="configuration"/>.
     /// </summary>
     /// <param name="configuration">Application configuration containing the <c>Scenarios</c> section.</param>
-    public ScenarioService(IConfiguration configuration)
+    /// <param name="assetFactories">
+    /// Motion models a preset may spawn, or null for the ones this build ships. Injected as a
+    /// list rather than resolved per room because a factory holds no room: the environment it
+    /// settles an asset against is supplied by the room during the build itself.
+    /// </param>
+    /// <param name="logger">Where skipped rows are reported, or null to discard them.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
+    public ScenarioService(
+        IConfiguration configuration,
+        IReadOnlyList<IAssetFactory>? assetFactories = null,
+        ILogger<ScenarioService>? logger = null)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        _assetFactories = assetFactories ?? ShippedAssetFactories;
+        _logger = logger ?? NullLogger<ScenarioService>.Instance;
+
         var dict = new Dictionary<string, IReadOnlyList<Entry>>(StringComparer.OrdinalIgnoreCase);
-        var section = configuration.GetSection("Scenarios");
-        foreach (var child in section.GetChildren())
+
+        foreach (var preset in configuration.GetSection("Scenarios").GetChildren())
         {
             var entries = new List<Entry>();
-            foreach (var entry in child.GetChildren())
+
+            // Ordinal, because that is how the asset registry compares identifiers: two ids
+            // differing only in case are two assets there, and pretending otherwise here would
+            // skip a row the world would have accepted.
+            var claimed = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var row in preset.GetChildren())
             {
-                var id = entry["id"] ?? string.Empty;
-                var pos = entry.GetSection("pos").Get<float[]>() ?? Array.Empty<float>();
-                var vendor = entry["vendor"];
-                if (!string.IsNullOrEmpty(id) && pos.Length == 3)
-                    entries.Add(new Entry(id, new Vector3(pos[0], pos[1], pos[2]), string.IsNullOrWhiteSpace(vendor) ? null : vendor));
+                if (!TryReadEntry(row, out var parsed, out var problem))
+                {
+                    _logger.LogWarning(
+                        "Scenario '{Scenario}' entry [{Row}] skipped: {Problem}.",
+                        LogSafe(preset.Key), LogSafe(row.Key), problem);
+                    continue;
+                }
+
+                if (!claimed.Add(parsed.Id))
+                {
+                    _logger.LogWarning(
+                        "Scenario '{Scenario}' entry [{Row}] skipped: id '{AssetId}' is already "
+                        + "used earlier in the same preset.",
+                        LogSafe(preset.Key), LogSafe(row.Key), LogSafe(parsed.Id));
+                    continue;
+                }
+
+                entries.Add(parsed);
             }
+
             if (entries.Count > 0)
-                dict[child.Key] = entries;
+            {
+                dict[preset.Key] = entries;
+            }
         }
+
         _scenarios = dict;
     }
 
     /// <summary>Names of all available scenario presets.</summary>
     public IEnumerable<string> ScenarioNames => _scenarios.Keys;
 
+    /// <summary>Motion models this loader may spawn a non-air entry through.</summary>
+    /// <remarks>
+    /// Exposed so the composition root's choice is inspectable rather than inferred. The
+    /// constructor accepts a null list and falls back to the models this build ships, which is
+    /// what keeps the unit tests independent of a container — but a host taking that fallback
+    /// while registering its own factories would leave a preset and the v2 spawn endpoint
+    /// disagreeing about which classes exist, and nothing but a skipped-row log line would say so.
+    /// </remarks>
+    public IReadOnlyList<IAssetFactory> AssetFactories => _assetFactories;
+
     /// <summary>Returns true if the named scenario exists.</summary>
     public bool HasScenario(string name) => _scenarios.ContainsKey(name);
 
     /// <summary>
-    /// Runs a named scenario by spawning its drones into the simulation room.
+    /// Runs a named scenario by spawning its assets into the simulation room.
     /// Returns <see langword="false"/> if the scenario name is not found.
     /// </summary>
+    /// <remarks>
+    /// Air entries go through <see cref="SimulationRoom.AddDrone(string, Vector3, string)"/>, the
+    /// same call this method has always made, so an all-air preset produces the world it always
+    /// did. Everything else is built by a registered motion model, under the room's lock, and
+    /// registered as an asset; a class this build ships no model for is skipped, which leaves the
+    /// rest of the preset intact rather than failing a whole run over one vehicle nobody can
+    /// simulate yet.
+    /// <para>
+    /// The per-entry guard is a backstop behind the load-time validation, not a substitute for
+    /// it. A preset run into a room that already holds one of its identifiers — two presets
+    /// applied in sequence — is refused by the world with an exception this method's caller
+    /// cannot act on, and swallowing exactly that so the remaining entries still spawn is the
+    /// difference between a scenario missing one vehicle and an endpoint returning 500 over a
+    /// world it has already half-built.
+    /// </para>
+    /// </remarks>
     /// <param name="name">Scenario name.</param>
-    /// <param name="room">The simulation room to spawn drones into.</param>
+    /// <param name="room">The simulation room to spawn into.</param>
     /// <returns><see langword="true"/> if the scenario was found and started; <see langword="false"/> otherwise.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="room"/> is null.</exception>
     public bool TryRun(string name, SimulationRoom room)
     {
-        if (!_scenarios.TryGetValue(name, out var drones))
-            return false;
+        ArgumentNullException.ThrowIfNull(room);
 
-        foreach (var entry in drones)
-            room.AddDrone(entry.Id, entry.Pos, entry.Vendor);
+        if (!_scenarios.TryGetValue(name, out var entries))
+        {
+            return false;
+        }
+
+        foreach (var entry in entries)
+        {
+            try
+            {
+                if (entry.Domain == AssetDomain.Air)
+                {
+                    room.AddDrone(entry.Id, entry.Pos, entry.Vendor);
+                }
+                else
+                {
+                    SpawnNonAir(room, entry);
+                }
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Scenario '{Scenario}': asset '{AssetId}' was refused by the world and "
+                    + "skipped; the rest of the preset still ran.",
+                    LogSafe(name), LogSafe(entry.Id));
+            }
+        }
 
         return true;
+    }
+
+    /// <summary>Builds and registers one ground or surface asset, or logs why it did not.</summary>
+    /// <remarks>
+    /// The build runs inside <see cref="SimulationRoom.TrySpawnAsset"/> so that the terrain
+    /// samples a rover takes while settling happen under the room's lock — the same reason the v2
+    /// spawn endpoint routes through it. A duplicate identifier comes back as a reason code
+    /// rather than an exception, because a preset that repeats an id should produce one asset and
+    /// a visibly short scenario, not a 500 from whichever endpoint ran it.
+    /// </remarks>
+    /// <param name="room">Room to build and register the asset in.</param>
+    /// <param name="entry">Parsed scenario entry.</param>
+    private void SpawnNonAir(SimulationRoom room, in Entry entry)
+    {
+        // Copied out of the `in` parameter first: a by-reference parameter cannot be captured by
+        // a closure, and both the predicate and the build delegate below need these.
+        var vehicleClass = entry.VehicleClass;
+        var assetId = entry.Id;
+
+        var factory = _assetFactories.FirstOrDefault(f => f.CanCreate(vehicleClass));
+        if (factory is null)
+        {
+            _logger.LogWarning(
+                "Asset '{AssetId}' skipped: this build registers no motion model for vehicle "
+                + "class '{VehicleClass}'.",
+                LogSafe(assetId), vehicleClass);
+            return;
+        }
+
+        var plan = new AssetSpawnPlan(
+            assetId,
+            vehicleClass,
+            AssetProfiles.Create(assetId, vehicleClass, vendor: entry.Vendor),
+            entry.Pos,
+            entry.HeadingRad);
+
+        if (!room.TrySpawnAsset(assetId, _ => factory.Create(plan), out var reasonCode))
+        {
+            _logger.LogWarning(
+                "Asset '{AssetId}' skipped: the room refused it ({ReasonCode}).",
+                LogSafe(assetId), reasonCode);
+        }
     }
 }

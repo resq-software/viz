@@ -133,12 +133,16 @@ public partial class SimV2ControllerTests
         report.Domain.Should().Be(AssetDomain.Ground);
         report.Capabilities.Should().NotHaveFlag(AssetCapability.Takeoff);
         kinds.Should().Contain(
-            [CommandKinds.DriveTo, CommandKinds.SetSteering, CommandKinds.Reverse, CommandKinds.Park]);
+            [CommandKinds.DriveTo, CommandKinds.Reverse, CommandKinds.Park]);
         kinds.Should().NotContain(
         [
             CommandKinds.Takeoff, CommandKinds.Land, CommandKinds.SetAltitude, CommandKinds.Loiter,
             CommandKinds.TransitTo, CommandKinds.SetCourse, CommandKinds.StationKeep,
             CommandKinds.Dock, CommandKinds.Undock,
+
+            // Not a ground affordance this build has: no translated command carries a steering
+            // angle, so setSteering is registered nowhere and offered to nobody.
+            CommandKinds.SetSteering,
         ]);
     }
 }

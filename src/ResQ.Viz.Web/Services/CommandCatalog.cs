@@ -335,8 +335,16 @@ public static partial class CommandCatalog
             Def(CommandKinds.DriveTo, AssetCapability.Navigate2D, domains: GroundOnly,
                 targets: CommandTargetKinds.Point | CommandTargetKinds.Geo,
                 requiresTarget: true, requiresFreshPosition: true),
-            Def(CommandKinds.SetSteering, AssetCapability.ManualControl, domains: GroundOnly,
-                requiredParameters: [CommandParameters.Steering]),
+            // setSteering is NOT registered, and its absence is the contract rather than an
+            // oversight. Every ground profile declares ManualControl, so a row here would be
+            // advertised to every rover — and every rover refuses it, because
+            // SimulatedAssetCommand carries no steering field for the angle to travel in and a
+            // pivot-steered platform has no steering linkage to aim anyway. An advertised
+            // command whose only possible outcome is a rejection puts a control on screen that
+            // cannot work, which is the same dishonesty that made hold demand StationKeep and
+            // land advertise a target it discarded. Register it in the same commit that gives
+            // the angle somewhere to travel, not before; GroundAsset.ApplySetSteering names
+            // exactly what is missing, and GroundWiringHardeningTests holds the two sets equal.
             Def(CommandKinds.Reverse, AssetCapability.Reverse, domains: GroundOnly),
             Def(CommandKinds.Park, domains: GroundOnly, statePolicy: OperationalStatePolicy.Responsive),
 
