@@ -1190,23 +1190,57 @@ from pathlib import Path
 import re
 import sys
 
-routes = []
-for path in sorted(Path("src/ResQ.Viz.Web/Controllers").glob("*.cs")):
-    if path.name == "SessionController.cs":
-        prefix = "/api/sim/session"
-    elif path.name == "SimController.cs":
-        prefix = "/api/sim"
-    elif path.name.startswith("SimV2Controller"):
-        prefix = "/api/v2/sim"
-    else:
-        continue
+sources = {
+    path: path.read_text(encoding="utf-8")
+    for path in sorted(Path("src/ResQ.Viz.Web/Controllers").glob("*.cs"))
+}
+class_by_file = {}
+prefix_by_class = {}
 
-    source = path.read_text(encoding="utf-8")
-    for method, suffix in re.findall(
+# First pass: bind every class-level Route attribute to its declared controller class. Partial
+# class files without Route inherit the prefix through their shared class name.
+for path, source in sources.items():
+    classes = re.findall(
+        r"public\s+sealed\s+(?:partial\s+)?class\s+(\w+)", source
+    )
+    if len(classes) > 1:
+        raise SystemExit(f"{path}: multiple controller classes found: {classes}")
+    if classes:
+        class_by_file[path] = classes[0]
+
+    prefixes = re.findall(r'\[Route\("([^"]+)"\)\]', source)
+    if prefixes:
+        if len(classes) != 1 or len(prefixes) != 1:
+            raise SystemExit(f"{path}: cannot bind one Route prefix to one controller class")
+        prefix = "/" + prefixes[0].strip("/")
+        previous = prefix_by_class.setdefault(classes[0], prefix)
+        if previous != prefix:
+            raise SystemExit(
+                f"{classes[0]} declares conflicting Route prefixes: {previous}, {prefix}"
+            )
+
+# Second pass: derive each public method/path pair from the owning class's source prefix and the
+# action attribute. Any new controller action without a parsable class/Route fails visibly.
+routes = []
+for path, source in sources.items():
+    actions = re.findall(
         r'\[Http(Get|Post|Delete)(?:\("([^"]*)"\))?\]', source
-    ):
-        route = prefix + ("/" + suffix.strip("/") if suffix else "")
-        route = re.sub(r":guid(?=})", "", route)
+    )
+    if not actions:
+        continue
+    if path not in class_by_file:
+        raise SystemExit(f"{path}: Http action found without a parsed controller class")
+    class_name = class_by_file[path]
+    if class_name not in prefix_by_class:
+        raise SystemExit(
+            f"{path}: {class_name} has Http actions but no source-derived Route prefix"
+        )
+
+    for method, suffix in actions:
+        route = prefix_by_class[class_name] + (
+            "/" + suffix.strip("/") if suffix else ""
+        )
+        route = re.sub(r":[^}/]+(?=})", "", route)
         routes.append(f"{method.upper()} {route}")
 
 if len(routes) != 44:
@@ -1237,7 +1271,7 @@ fi
 rm -f "$readme_expected_http" "$readme_actual_http"
 ```
 
-Expected: controller attributes derive 44 actions, and the README contains each exact normalized method/path pair once.
+Expected: controller class and route attributes derive 44 actions without filename assumptions, every action resolves to a source prefix, and the README contains each exact normalized method/path pair once.
 
 - [ ] **Step 6: Verify all registered commands and SignalR messages**
 
@@ -1604,7 +1638,7 @@ Expected: all four diagrams have valid, self-contained syntax and distinct purpo
 
 - [ ] **Step 7: Rerun factual manifests and boundary checks**
 
-Rerun Task 7's scenario-composition diff, Task 10's persistence/analytics/legal scan, and Task 11's HTTP/command/SignalR manifests. Search README and source side by side for live shortcuts, tool versions, limits, and performance gates. Confirm these boundaries explicitly:
+Rerun Task 7's scenario-composition diff, Task 10's persistence/analytics/legal scan, and Task 11's source-derived HTTP/command/SignalR manifests. Search README and source side by side for live shortcuts, tool versions, limits, and performance gates. Confirm these boundaries explicitly:
 
 - simulation-only startup guard.
 - all navigation-related output is advisory.
