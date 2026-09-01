@@ -278,28 +278,28 @@ Requested lease durations must be 1–3,600 seconds and are capped by policy, wh
 
 ### Safe-action decision and recovery
 
-`GET /api/v2/sim/assets/{id}/link` reads per-asset, per-session link state. `POST` accepts required `available` plus optional `issuerId` and `reason`. Responses carry `isAvailable` and `changed`. Mutation is deliberately not lease-gated. Live-control deployments refuse cuts but permit restoration. The stock build is simulation-only.
+`GET /api/v2/sim/assets/{id}/link` reads link state. `POST` requires `available`, accepts optional `issuerId`/`reason`, and returns `isAvailable`/`changed`. Mutation is not lease-gated: any room-session holder can act despite another caller-asserted lease holder. Issuer/reason are unauthenticated audit fields. Changed cuts/restores and refused live-mode cuts enter decision audit. No-op retries do not. Live control refuses cuts but allows restoration. Stock build is simulation-only.
 
 ```mermaid
 flowchart TD
     API["Link mutation<br/>not lease-gated"] --> CHANGE{State}
-    CHANGE -->|live-control cut| REFUSED[Refused / audited]
+    CHANGE -->|live-control cut| REFUSED[Refused/audited]
     CHANGE -->|simulation-only cut| LINK[Link-loss observation]
     CHANGE -->|restore: any mode| RESTORE[Restore, no latch]
     ENERGY[Low-energy observation] --> PRIORITY{Link loss outranks energy}
     LINK --> PRIORITY
-    PRIORITY --> DOMAIN{Policy}
-    DOMAIN -->|Air| AIR[ReturnToBase]
+    PRIORITY --> DOMAIN{Domain policy}
+    DOMAIN -->|Air: ReturnToBase| OWN
     DOMAIN -->|Ground| HOLD[StopAndHold]
     DOMAIN -->|Surface: link loss| DRIFT["DriftAndAlert<br/>no StationKeep"]
     DOMAIN -->|Surface: low energy<br/>drift or unknown| HOLD
-    AIR --> OWN{Onboard gate<br/>IsPositionFixUsable}
-    OWN -->|usable: ReturnToBase| APPLY
-    OWN -->|poor fix| LAND[Land]
-    LAND -->|unavailable| STOP[Stop]
-    LAND & STOP --> APPLY[Apply accepted air fallback]
+    OWN{Onboard resolver<br/>catalog/capability/domain<br/>target/latch/own-fix}
+    OWN -->|accepted| APPLY[Apply air fallback]
+    OWN -->|poor fix or RTB unavailable| LAND[Land, then Stop]
+    OWN -->|emergency latch: no command| RECORD
+    LAND --> APPLY
     APPLY --> DETACH[Detach before coordinator pass]
-    DETACH --> RECORD[Audit/telemetry]
+    DETACH --> RECORD["Internal safe-action record /<br/>resulting asset telemetry"]
     HOLD & DRIFT --> RECORD
     RESTORE --> HELD{Operator gate<br/>IsHeldPositionUsable}
     HELD -->|stale/uncertain positional| REASSESS[Next sweep: re-assess]
@@ -312,64 +312,71 @@ flowchart TD
     class HELD,REASSESS operator
 ```
 
-Every 60 world steps, the simulated-time sweep issues one fallback per trigger episode. Onboard fallback judges `IsPositionFixUsable`: air declares `ReturnToBase`, degrading to `Land` and then `Stop` when needed. Ground declares `StopAndHold`. The shipped displacement hull declares `DriftAndAlert`, lacks `StationKeep`, and accumulates advisory uncertainty while drifting. Low energy maps drift or unknown behavior to `StopAndHold`. Air fallback precedes coordinator detachment. Restoration neither latches state nor moves the asset.
+Every 60 world steps, the simulated-time governor acts at most once per trigger episode. Link loss outranks low energy. Onboard resolution checks catalog registration, capability/domain, target, emergency latch, and own fix. Air's `ReturnToBase` can degrade for a poor fix to `Land`, then `Stop`. A latch can yield no command. Ground declares `StopAndHold`. The shipped hull declares `DriftAndAlert`, lacks `StationKeep`, and grows advisory uncertainty. Low energy maps drift/unknown to `StopAndHold`. Accepted air fallback is applied before coordinator detachment. Restoration neither moves nor latches.
 
-The operator gate is separate. At world dispatch, positional v2 commands can be refused against `IsHeldPositionUsable` as stale or uncertain. `stop` is non-positional. Immediately after restoration, a positional command may need the next one-simulated-second sweep before the held assessment recovers.
+World dispatch rejects positional v2 commands against stale/uncertain `IsHeldPositionUsable`. `stop` is non-positional. After restoration, positional retry may await the next one-simulated-second sweep.
 
-Use `readme_base` and `readme_cookie` from the quick start:
+`link-loss-divergence` places assets. It **does not cut links**. Use `readme_base` and `readme_cookie` from the [five-minute mixed-fleet run](#five-minute-mixed-fleet-run):
 
 ```bash
 (
   set -Eeuo pipefail
 
   readme_link_body=$(mktemp "${TMPDIR:-/tmp}/resq-viz-readme-link.XXXXXX")
-  readme_link_command='{"kind":"stop","idempotencyKey":"readme-link-retry-001","issuerId":"readme-operator"}'
-  trap 'rm -f "$readme_link_body"' EXIT
+  readme_link_url="$readme_base/api/v2/sim/assets/lld-ugv-1/link"
+  readme_link_down=false
+  readme_link_cut='{"available":false,"issuerId":"readme-operator","reason":"README link-loss drill"}'
+  readme_link_restore='{"available":true,"issuerId":"readme-operator","reason":"README recovery"}'
+  readme_link_key="readme-link-retry-$(date +%s)-$BASHPID"
+  readme_link_command=$(jq -cn --arg key "$readme_link_key" \
+    '{kind:"stop",idempotencyKey:$key,issuerId:"readme-operator"}')
 
-  curl --fail --silent --show-error --insecure \
-    -b "$readme_cookie" \
-    -X POST "$readme_base/api/sim/scenario/link-loss-divergence" \
-    | jq -e '(.scenario == "link-loss-divergence") and (.status == "started")'
+  readme_expect() {
+    local readme_expected=$1
+    shift
+    local readme_status
+    readme_status=$(curl --silent --show-error --insecure \
+      -b "$readme_cookie" -H 'Content-Type: application/json' \
+      "$@" -o "$readme_link_body" -w '%{http_code}')
+    if [ "$readme_status" != "$readme_expected" ]; then
+      printf 'Expected HTTP %s, received %s:\n' "$readme_expected" "$readme_status" >&2
+      sed -n '1,200p' "$readme_link_body" >&2
+      return 1
+    fi
+  }
 
-  curl --fail --silent --show-error --insecure \
-    -b "$readme_cookie" -H 'Content-Type: application/json' \
-    -X POST -d '{"available":false,"issuerId":"readme-operator","reason":"README link-loss drill"}' \
-    "$readme_base/api/v2/sim/assets/lld-ugv-1/link" \
-    | jq -e '(.isAvailable == false) and (.changed == true)'
+  readme_cleanup() {
+    if [ "$readme_link_down" = true ]; then
+      curl --silent --show-error --insecure -b "$readme_cookie" \
+        -H 'Content-Type: application/json' -X POST -d "$readme_link_restore" \
+        "$readme_link_url" >/dev/null || true
+    fi
+    rm -f "$readme_link_body"
+  }
+  trap readme_cleanup EXIT
 
-  readme_link_status=$(curl --silent --show-error --insecure \
-    -b "$readme_cookie" -H 'Content-Type: application/json' \
-    -X POST -d "$readme_link_command" -o "$readme_link_body" -w '%{http_code}' \
-    "$readme_base/api/v2/sim/assets/lld-ugv-1/commands")
-  if [ "$readme_link_status" != 409 ]
-  then
-    printf 'Link-gated command returned HTTP %s:\n' "$readme_link_status" >&2
-    sed -n '1,200p' "$readme_link_body" >&2
-    exit 1
-  fi
+  readme_expect 200 -X POST "$readme_base/api/sim/scenario/link-loss-divergence"
+  jq -e '(.scenario == "link-loss-divergence") and (.status == "started")' "$readme_link_body"
+
+  readme_expect 200 -X POST -d "$readme_link_cut" "$readme_link_url"
+  readme_link_down=true
+  jq -e '(.isAvailable == false) and (.changed == true)' "$readme_link_body"
+
+  readme_expect 409 -X POST -d "$readme_link_command" \
+    "$readme_base/api/v2/sim/assets/lld-ugv-1/commands"
   jq -e '.code == "link.unreachable"' "$readme_link_body"
 
-  curl --fail --silent --show-error --insecure \
-    -b "$readme_cookie" -H 'Content-Type: application/json' \
-    -X POST -d '{"available":true,"issuerId":"readme-operator","reason":"README recovery"}' \
-    "$readme_base/api/v2/sim/assets/lld-ugv-1/link" \
-    | jq -e '(.isAvailable == true) and (.changed == true)'
+  readme_expect 200 -X POST -d "$readme_link_restore" "$readme_link_url"
+  jq -e '(.isAvailable == true) and (.changed == true)' "$readme_link_body"
+  readme_link_down=false
 
-  readme_link_status=$(curl --silent --show-error --insecure \
-    -b "$readme_cookie" -H 'Content-Type: application/json' \
-    -X POST -d "$readme_link_command" -o "$readme_link_body" -w '%{http_code}' \
-    "$readme_base/api/v2/sim/assets/lld-ugv-1/commands")
-  if [ "$readme_link_status" != 202 ]
-  then
-    printf 'Recovered command returned HTTP %s:\n' "$readme_link_status" >&2
-    sed -n '1,200p' "$readme_link_body" >&2
-    exit 1
-  fi
+  readme_expect 202 -X POST -d "$readme_link_command" \
+    "$readme_base/api/v2/sim/assets/lld-ugv-1/commands"
   jq -e '(.commandId | type == "string") and (.commandId | length > 0)' "$readme_link_body"
 )
 ```
 
-The preset only places assets. It **does not cut links**. The identical body and key succeed because refusal precedes claim. Immediate restoration proves link gating and idempotency, not ground fallback execution. Observe fallback by leaving the link down through the next one-simulated-second sweep and inspecting the v2 snapshot. Safe actions and uncertainty are simulation/advisory outputs.
+Identical JSON/key succeeds because link refusal precedes claim. Immediate restoration proves gating/idempotency, not fallback execution. To observe ground fallback, keep the link down through the next simulated-second sweep and inspect v2 snapshot. Outputs remain simulation/advisory.
 
 <a id="streaming-operating-picture"></a>
 ## Streaming the operating picture
