@@ -39,9 +39,10 @@ namespace ResQ.Viz.Web.Controllers;
 /// north when it was told to drive south, and nothing throws.
 /// </para>
 /// <para>
-/// Failures return <see cref="CommandProblemDetails"/>, whose <c>code</c> is the contract and
-/// whose prose is not. Every log line carries the trace id plus the asset and command ids, so a
-/// rejection seen by an operator can be found in the server's own record.
+/// Failures return <see cref="CommandProblemDetails"/>, whose <c>code</c> classifies the problem
+/// and whose optional <c>reasonCode</c> preserves a more specific downstream refusal; neither
+/// requires parsing prose. Every log line carries the trace id plus the asset and command ids,
+/// so a rejection seen by an operator can be found in the server's own record.
 /// </para>
 /// <para>
 /// Request validation, spawn resolution and the wire projections live in
@@ -87,6 +88,7 @@ public sealed partial class SimV2Controller : ControllerBase
 
     private readonly VizFrameBuilder _frames;
     private readonly IReadOnlyList<IAssetFactory> _factories;
+    private readonly ControlAuthorityRegistry _authority;
     private readonly ILogger<SimV2Controller> _logger;
 
     /// <summary>Initialises the controller with the frame builder and any registered asset factories.</summary>
@@ -109,13 +111,21 @@ public sealed partial class SimV2Controller : ControllerBase
     /// <param name="frames">Builder supplying the configured survivor and hazard data.</param>
     /// <param name="factories">Factories able to build non-air assets; may be empty.</param>
     /// <param name="logger">Logger for structured, correlated request records.</param>
+    /// <param name="authority">
+    /// Supplies each session's control authority and the control mode the process runs in.
+    /// Optional so this controller can still be constructed without the composition root — a
+    /// default registry is used then, keyed by room exactly as the injected one is, so a lease
+    /// taken through it survives between requests instead of silently evaporating.
+    /// </param>
     public SimV2Controller(
         VizFrameBuilder frames,
         IEnumerable<IAssetFactory> factories,
-        ILogger<SimV2Controller> logger)
+        ILogger<SimV2Controller> logger,
+        ControlAuthorityRegistry? authority = null)
     {
         _frames = frames;
         _factories = factories.ToArray();
+        _authority = authority ?? ControlAuthorityRegistry.Shared;
         _logger = logger;
     }
 
@@ -128,9 +138,25 @@ public sealed partial class SimV2Controller : ControllerBase
     /// <summary>Issues one command to one asset, as a resource that can be polled.</summary>
     /// <remarks>
     /// Acceptance is not completion. A 202 means the command passed every gate — payload,
-    /// deadline, asset resolution, declared capability, domain, operational state, position
-    /// freshness — and was handed to the asset; whether the asset finishes is reported through
-    /// <see cref="GetCommand"/>.
+    /// deadline, asset resolution, control authority, declared capability, domain, operational
+    /// state, position freshness, and link reachability — and was handed to the asset; whether
+    /// the asset finishes is reported through <see cref="GetCommand"/>.
+    /// <para>
+    /// Authority is an <b>issuer</b>-level gate and sits between asset resolution and capability.
+    /// It decides whether <em>this caller</em> may command the asset right now; it says nothing
+    /// about what the asset can do, and it does not change what
+    /// <see cref="GetAssetCapabilities"/> advertises. An asset's command set is a fact about the
+    /// asset, and a report that shrank for whoever did not hold the lease would make the
+    /// advertised set differ from the accepted one for every other caller.
+    /// </para>
+    /// <para>
+    /// The last gate in that list is the one that can turn a caller down without the caller having
+    /// changed anything. An asset whose command link is held down is refused with
+    /// <see cref="AssetLinkReasons.Unreachable"/>, because a command it cannot hear must not be
+    /// acknowledged as though it had arrived. The refusal is recorded and claims no idempotency
+    /// key, so the identical request retried once the link is back is accepted as new rather than
+    /// answered with the refusal it replays.
+    /// </para>
     /// <para>
     /// Idempotency is classified before validation and claimed only after it succeeds, so a
     /// refused command leaves the ledger exactly as it found it. That keeps "a rejection has no
@@ -165,14 +191,35 @@ public sealed partial class SimV2Controller : ControllerBase
         var descriptor = frame.Descriptors.FirstOrDefault(d => d.AssetId == envelope.AssetId);
         var state = frame.Assets.FirstOrDefault(s => s.AssetId == envelope.AssetId);
 
+        // Pure and side-effect free, so it is safe to run before the authority gate and read the
+        // parts of its verdict that the documented order settles first.
         var validation = CommandCatalog.Validate(envelope, descriptor, state, now);
+        if (!validation.IsAccepted && PrecedesAuthority(validation.ReasonCode))
+        {
+            return RejectCommand(room, envelope, validation, now);
+        }
+
+        // Authority sits between the asset having been resolved and its capabilities being
+        // consulted. An asset nobody holds is not gated; a live lease held by somebody else stops
+        // the command here, before the ledger is claimed and before anything is translated, so a
+        // refusal leaves the world and the ledger exactly as it found them.
+        if (AuthorityRefusal(room, envelope, now) is { } unauthorised)
+        {
+            return unauthorised;
+        }
+
         if (!validation.IsAccepted)
         {
-            _logger.LogInformation(
-                "[room {RoomId}] Command {CommandId} ({Kind}) for asset {AssetId} rejected: {ReasonCode} (trace {TraceId}).",
-                room.Id, envelope.CommandId, Sanitize(envelope.Kind), Sanitize(envelope.AssetId),
-                validation.ReasonCode, TraceId);
-            return StatusCode(StatusFor(validation.ReasonCode), validation.ToProblem(TraceId));
+            return RejectCommand(room, envelope, validation, now);
+        }
+
+        // Safety policy, the last gate before anything is claimed or translated: the command is
+        // well formed, the issuer holds the asset and the asset can do this — but can it be told?
+        // An asset whose command link is held down cannot, and reporting the command as accepted
+        // would be a lie about a vehicle rather than a mistake about a request.
+        if (SafetyRefusal(room, envelope, now) is { } unreachable)
+        {
+            return unreachable;
         }
 
         // Claim only now, and re-check: two identical requests can both classify as new before
@@ -189,6 +236,7 @@ public sealed partial class SimV2Controller : ControllerBase
             var refused = CommandResult.Rejected(envelope.CommandId, reasonCode, message);
             log.Record(refused);
             log.Idempotency.Update(envelope.IdempotencyKey, CommandState.Rejected, now);
+            RecordCommandDecision(room, envelope, CommandDecision.Rejected, now, reasonCode, message);
             return Failure(
                 StatusCodes.Status409Conflict, reasonCode, message,
                 envelope.AssetId, envelope.CommandId);
@@ -197,24 +245,28 @@ public sealed partial class SimV2Controller : ControllerBase
         var outcome = room.SendAssetCommand(in command);
         if (!outcome.IsAccepted)
         {
+            var refusalReason = outcome.Reason ?? AssetProblems.CommandNotExecutable;
             var detail =
-                $"Asset '{Sanitize(envelope.AssetId)}' refused command '{Sanitize(envelope.Kind)}': {outcome.Reason}.";
+                $"Asset '{Sanitize(envelope.AssetId)}' refused command '{Sanitize(envelope.Kind)}': {refusalReason}.";
             var refused = CommandResult.Rejected(
-                envelope.CommandId, AssetProblems.CommandNotExecutable, detail);
+                envelope.CommandId, refusalReason, detail);
             log.Record(refused);
             log.Idempotency.Update(envelope.IdempotencyKey, CommandState.Rejected, now);
+            RecordCommandDecision(
+                room, envelope, CommandDecision.Rejected, now, refusalReason, detail);
             _logger.LogWarning(
                 "[room {RoomId}] Command {CommandId} ({Kind}) refused by asset {AssetId}: {Reason} (trace {TraceId}).",
                 room.Id, envelope.CommandId, Sanitize(envelope.Kind), Sanitize(envelope.AssetId),
-                outcome.Reason, TraceId);
+                refusalReason, TraceId);
             return Failure(
                 StatusCodes.Status409Conflict, AssetProblems.CommandNotExecutable, detail,
-                envelope.AssetId, envelope.CommandId);
+                envelope.AssetId, envelope.CommandId, reasonCode: refusalReason);
         }
 
         var accepted = validation.ToCommandResult(now);
         log.Record(accepted);
         log.Idempotency.Update(envelope.IdempotencyKey, CommandState.Accepted, now);
+        RecordCommandDecision(room, envelope, CommandDecision.Accepted, now, null, null);
 
         _logger.LogInformation(
             "[room {RoomId}] Command {CommandId} ({Kind}) accepted for asset {AssetId} (trace {TraceId}).",

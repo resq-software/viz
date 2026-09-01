@@ -282,6 +282,13 @@ public sealed partial class AssetWorld
             _surface.Remove(stepDriven);
         }
 
+        // The safe-action layer keeps per-asset state of its own — a held-down link, a contact
+        // time, a latch saying the fallback has already been issued — and it is the one
+        // collection removal used not to touch. Its sweep prunes against the registry, but only
+        // once a second, so a removal and a respawn under the same id inside that second handed
+        // the new asset the old one's outage.
+        _safeActions.Forget(assetId);
+
         return true;
     }
 
@@ -292,18 +299,36 @@ public sealed partial class AssetWorld
     public bool TryGet(string assetId, out ISimulatedAsset? asset) =>
         _byId.TryGetValue(assetId, out asset);
 
-    /// <summary>Routes a validated command to its asset.</summary>
+    /// <summary>Routes a validated command to its asset, once the safe-action layer allows it.</summary>
     /// <remarks>
     /// Applied immediately rather than queued. A queue would shift every command by one step and
     /// change the trajectory a replayed command log produces, for no benefit: the caller already
     /// holds the room lock, so there is no concurrency left to serialise.
+    /// <para>
+    /// <b>The v2 gate applied here.</b> A v2 command the catalog marks as needing a current
+    /// position is refused while the position on file is stale or too uncertain to navigate from
+    /// — see <see cref="AuthorizeCommand"/> for why only that half of the decision is enforced
+    /// and the rest is left to the layers that already own it. Commands that need no position,
+    /// including <c>stop</c>, remain reachable. The v1 drone endpoint does not enter this method:
+    /// after validating its legacy payload it sends an SDK <c>FlightCommand</c> directly through
+    /// <see cref="SimulationRoom.SendCommand"/> and therefore does not apply this gate.
+    /// </para>
     /// </remarks>
     /// <param name="command">Validated, translated command.</param>
     /// <returns>Acceptance, or a rejection carrying a machine-readable reason.</returns>
-    public AssetCommandResult SendCommand(in SimulatedAssetCommand command) =>
-        _byId.TryGetValue(command.AssetId, out var asset)
-            ? asset.Apply(in command)
-            : AssetCommandResult.Rejected("asset.notFound");
+    public AssetCommandResult SendCommand(in SimulatedAssetCommand command)
+    {
+        if (!_byId.TryGetValue(command.AssetId, out var asset))
+        {
+            return AssetCommandResult.Rejected("asset.notFound");
+        }
+
+        var decision = AuthorizeCommand(command.AssetId, command.Kind);
+
+        return !decision.IsAllowed && SafeActionPolicy.IsPositionRefusal(decision.ReasonCode)
+            ? AssetCommandResult.Rejected(decision.ReasonCode)
+            : asset.Apply(in command);
+    }
 
     /// <summary>Removes and returns every event raised by every asset since the last drain.</summary>
     /// <returns>Events grouped by asset in spawn order, empty when nothing happened.</returns>
@@ -358,5 +383,11 @@ public sealed partial class AssetWorld
             Tick: TickCount,
             SourceTime: WorldEpochUtc + TimeSpan.FromSeconds(SimulationTimeSeconds),
             ReceiveTime: _time.GetUtcNow(),
-            Origin: _options.Origin);
+            Origin: _options.Origin,
+
+            // Every capture stamps LinkState from the current link ledger. The safe-action
+            // assessment is cached at the last sweep, so a restored link can be published as up
+            // while that assessment still describes the preceding silence. V2 authorisation
+            // intentionally uses the cached assessment until the next sweep makes them converge.
+            Link: _safeActions);
 }
