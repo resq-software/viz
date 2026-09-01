@@ -1182,57 +1182,37 @@ Run:
 ```bash
 set -Eeuo pipefail
 
-test "$(rg '^\s*\[Http(Get|Post|Delete)' src/ResQ.Viz.Web/Controllers/*.cs | wc -l)" -eq 44
-
 readme_expected_http=$(mktemp /tmp/resq-viz-http-expected.XXXXXX)
 readme_actual_http=$(mktemp /tmp/resq-viz-http-actual.XXXXXX)
 
-printf '%s\n' \
-  'POST /api/sim/session' \
-  'GET /api/sim/session/info' \
-  'DELETE /api/sim/session' \
-  'POST /api/sim/start' \
-  'POST /api/sim/stop' \
-  'POST /api/sim/reset' \
-  'POST /api/sim/pause' \
-  'POST /api/sim/resume' \
-  'POST /api/sim/step' \
-  'POST /api/sim/speed' \
-  'GET /api/sim/transport' \
-  'POST /api/sim/drone' \
-  'POST /api/sim/drone/{id}/cmd' \
-  'POST /api/sim/weather' \
-  'POST /api/sim/fault' \
-  'POST /api/sim/mesh/backhaul' \
-  'GET /api/sim/mesh/backhaul' \
-  'GET /api/sim/state' \
-  'GET /api/sim/scenarios' \
-  'POST /api/sim/scenario/{name}' \
-  'POST /api/sim/preset/{key}' \
-  'POST /api/sim/heightmap' \
-  'DELETE /api/sim/heightmap' \
-  'GET /api/sim/terrain/eroded' \
-  'POST /api/v2/sim/assets/{id}/commands' \
-  'GET /api/v2/sim/commands/{commandId}' \
-  'GET /api/v2/sim/snapshot' \
-  'GET /api/v2/sim/tracks' \
-  'GET /api/v2/sim/tracks/{trackId}' \
-  'POST /api/v2/sim/tracks' \
-  'GET /api/v2/sim/assets/{id}/link' \
-  'POST /api/v2/sim/assets/{id}/link' \
-  'GET /api/v2/sim/control/mode' \
-  'GET /api/v2/sim/control/audit' \
-  'GET /api/v2/sim/assets/{id}/control' \
-  'POST /api/v2/sim/assets/{id}/control' \
-  'POST /api/v2/sim/assets/{id}/control/renew' \
-  'POST /api/v2/sim/assets/{id}/control/release' \
-  'POST /api/v2/sim/assets/{id}/control/preempt' \
-  'GET /api/v2/sim/assets' \
-  'POST /api/v2/sim/assets' \
-  'GET /api/v2/sim/assets/{id}' \
-  'DELETE /api/v2/sim/assets/{id}' \
-  'GET /api/v2/sim/assets/{id}/capabilities' \
-  | sort > "$readme_expected_http"
+python3 - "$readme_expected_http" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+routes = []
+for path in sorted(Path("src/ResQ.Viz.Web/Controllers").glob("*.cs")):
+    if path.name == "SessionController.cs":
+        prefix = "/api/sim/session"
+    elif path.name == "SimController.cs":
+        prefix = "/api/sim"
+    elif path.name.startswith("SimV2Controller"):
+        prefix = "/api/v2/sim"
+    else:
+        continue
+
+    source = path.read_text(encoding="utf-8")
+    for method, suffix in re.findall(
+        r'\[Http(Get|Post|Delete)(?:\("([^"]*)"\))?\]', source
+    ):
+        route = prefix + ("/" + suffix.strip("/") if suffix else "")
+        route = re.sub(r":guid(?=})", "", route)
+        routes.append(f"{method.upper()} {route}")
+
+if len(routes) != 44:
+    raise SystemExit(f"Expected 44 source HTTP actions, found {len(routes)}")
+Path(sys.argv[1]).write_text("\n".join(sorted(routes)) + "\n", encoding="utf-8")
+PY
 
 awk -F '|' '
   $0 == "<summary>HTTP REST reference (44 actions)</summary>" {
@@ -1248,6 +1228,7 @@ awk -F '|' '
   }
 ' README.md | sort > "$readme_actual_http"
 
+test "$(wc -l < "$readme_actual_http")" -eq 44
 if ! diff -u "$readme_expected_http" "$readme_actual_http"
 then
   rm -f "$readme_expected_http" "$readme_actual_http"
@@ -1256,7 +1237,7 @@ fi
 rm -f "$readme_expected_http" "$readme_actual_http"
 ```
 
-Expected: source still declares 44 actions and the README contains each exact public method/path pair once.
+Expected: controller attributes derive 44 actions, and the README contains each exact normalized method/path pair once.
 
 - [ ] **Step 6: Verify all registered commands and SignalR messages**
 
@@ -1265,14 +1246,52 @@ Run:
 ```bash
 set -Eeuo pipefail
 
-test "$(rg -oP 'Def\(CommandKinds\.\K[A-Za-z]+' src/ResQ.Viz.Web/Services/CommandCatalog.cs | sort -u | wc -l)" -eq 19
-
 readme_expected_commands=$(mktemp /tmp/resq-viz-commands-expected.XXXXXX)
 readme_actual_commands=$(mktemp /tmp/resq-viz-commands-actual.XXXXXX)
+readme_expected_signalr=$(mktemp /tmp/resq-viz-signalr-expected.XXXXXX)
+readme_actual_signalr=$(mktemp /tmp/resq-viz-signalr-actual.XXXXXX)
 
-printf '%s\n' dock driveTo emergencyStop goTo hold land loiter park resumeAutonomy \
-  returnToBase reverse setAltitude setCourse setSpeed stationKeep stop takeoff transitTo undock \
-  | sort > "$readme_expected_commands"
+python3 - "$readme_expected_commands" "$readme_expected_signalr" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+catalog = Path("src/ResQ.Viz.Web/Services/CommandCatalog.cs").read_text(encoding="utf-8")
+kinds = re.search(r"public static class CommandKinds\s*\{(.*?)\n\}", catalog, re.S)
+if not kinds:
+    raise SystemExit("CommandKinds constant block not found")
+wire_by_name = dict(re.findall(
+    r'public const string\s+(\w+)\s*=\s*"([^"]+)";', kinds.group(1)
+))
+registered = re.findall(r"Def\(CommandKinds\.(\w+)", catalog)
+if len(registered) != 19 or len(set(registered)) != 19:
+    raise SystemExit(f"Expected 19 unique Def registrations, found {len(registered)}")
+missing = set(registered) - wire_by_name.keys()
+if missing:
+    raise SystemExit(f"Registered commands lack wire constants: {sorted(missing)}")
+Path(sys.argv[1]).write_text(
+    "\n".join(sorted(wire_by_name[name] for name in registered)) + "\n",
+    encoding="utf-8",
+)
+
+hub = "\n".join(
+    path.read_text(encoding="utf-8")
+    for path in sorted(Path("src/ResQ.Viz.Web/Hubs").glob("VizHub*.cs"))
+)
+events = re.findall(
+    r'public const string\s+Receive\w+Method\s*=\s*"([^"]+)";', hub
+)
+calls = re.findall(
+    r"^\s*public\s+(?:async\s+)?Task(?:<[^>]+>)?\s+(\w+)\s*\(", hub, re.M
+)
+messages = [
+    *(f"Server event\t{name}" for name in events),
+    *(f"Client call\t{name}" for name in calls),
+]
+if len(messages) != 6 or len(set(messages)) != 6:
+    raise SystemExit(f"Expected 6 unique SignalR messages, found {len(messages)}")
+Path(sys.argv[2]).write_text("\n".join(sorted(messages)) + "\n", encoding="utf-8")
+PY
 
 awk -F '|' '
   $0 == "<summary>Command catalog (19 registered commands)</summary>" {
@@ -1286,9 +1305,11 @@ awk -F '|' '
   }
 ' README.md | sort > "$readme_actual_commands"
 
+test "$(wc -l < "$readme_actual_commands")" -eq 19
 if ! diff -u "$readme_expected_commands" "$readme_actual_commands"
 then
-  rm -f "$readme_expected_commands" "$readme_actual_commands"
+  rm -f "$readme_expected_commands" "$readme_actual_commands" \
+    "$readme_expected_signalr" "$readme_actual_signalr"
   exit 1
 fi
 
@@ -1298,9 +1319,6 @@ then
   exit 1
 fi
 
-rm -f "$readme_expected_commands" "$readme_actual_commands"
-
-readme_signalr=$(mktemp /tmp/resq-viz-signalr.XXXXXX)
 awk -F '|' '
   $0 == "<summary>SignalR contract (6 messages)</summary>" {
     inside = 1
@@ -1313,25 +1331,22 @@ awk -F '|' '
     }
     print $2 "\t" $3
   }
-' README.md | sort > "$readme_signalr"
+' README.md | sort > "$readme_actual_signalr"
 
-if ! diff -u <(printf '%s\n' \
-    $'Client call\tRequestKeyframe' \
-    $'Client call\tSubscribeDeltas' \
-    $'Client call\tSubscribeSnapshots' \
-    $'Server event\tReceiveDeltaV2' \
-    $'Server event\tReceiveFrame' \
-    $'Server event\tReceiveSnapshotV2') "$readme_signalr"
+test "$(wc -l < "$readme_actual_signalr")" -eq 6
+if ! diff -u "$readme_expected_signalr" "$readme_actual_signalr"
 then
-  rm -f "$readme_signalr"
+  rm -f "$readme_expected_commands" "$readme_actual_commands" \
+    "$readme_expected_signalr" "$readme_actual_signalr"
   exit 1
 fi
-rm -f "$readme_signalr"
+rm -f "$readme_expected_commands" "$readme_actual_commands" \
+  "$readme_expected_signalr" "$readme_actual_signalr"
 
 git diff --check -- README.md
 ```
 
-Expected: the callable table matches all 19 registered wire tokens, reserved names occur only in reserved wording, the SignalR table has the six exact names, and Git reports no whitespace errors.
+Expected: the callable table matches the 19 wire tokens derived from registered definitions, reserved names occur only in reserved wording, the SignalR table matches the six source-derived event and hub-method names, and Git reports no whitespace errors.
 
 - [ ] **Step 7: Add license and project links**
 
@@ -1499,10 +1514,34 @@ Run:
 set -Eeuo pipefail
 
 readme_urls=$(mktemp /tmp/resq-viz-readme-urls.XXXXXX)
+readme_public_urls=$(mktemp /tmp/resq-viz-readme-public-urls.XXXXXX)
+readme_loopback_urls=$(mktemp /tmp/resq-viz-readme-loopback-urls.XXXXXX)
 perl -ne '
   while (/\[[^]]*\]\((https:\/\/[^)[:space:]]+)/g) { print "$1\n" }
   while (/\b(?:href|src)="(https:\/\/[^"]+)"/g) { print "$1\n" }
 ' README.md | sort -u > "$readme_urls"
+
+python3 - "$readme_urls" "$readme_public_urls" "$readme_loopback_urls" <<'PY'
+from pathlib import Path
+from urllib.parse import urlsplit
+import sys
+
+public = []
+loopback = []
+for url in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    parsed = urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise SystemExit(f"Invalid URL port in {url}: {error}") from error
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise SystemExit(f"Invalid HTTPS URL: {url}")
+    destination = loopback if parsed.hostname in {"localhost", "127.0.0.1", "::1"} else public
+    destination.append(url)
+
+Path(sys.argv[2]).write_text("\n".join(public) + "\n", encoding="utf-8")
+Path(sys.argv[3]).write_text("\n".join(loopback) + "\n", encoding="utf-8")
+PY
 
 while IFS= read -r readme_url
 do
@@ -1511,13 +1550,15 @@ do
     echo "HEAD refused. Checking with GET: $readme_url"
     curl --connect-timeout 10 --max-time 30 -fsSL "$readme_url" -o /dev/null
   fi
-done < "$readme_urls"
+done < "$readme_public_urls"
 
-rg -Fxq 'https://raw.githubusercontent.com/resq-software/.github/main/assets/banner.png' "$readme_urls"
-rm -f "$readme_urls"
+rg -Fxq 'https://raw.githubusercontent.com/resq-software/.github/main/assets/banner.png' "$readme_public_urls"
+printf 'public_urls=%s loopback_urls=%s\n' \
+  "$(wc -l < "$readme_public_urls")" "$(wc -l < "$readme_loopback_urls")"
+rm -f "$readme_urls" "$readme_public_urls" "$readme_loopback_urls"
 ```
 
-Expected: every external link resolves. Record any host that required the GET fallback.
+Expected: every public external link resolves, loopback URLs have valid HTTPS syntax without being contacted, and any public host that required GET fallback is recorded.
 
 - [ ] **Step 6: Extract and inspect or render each Mermaid diagram**
 

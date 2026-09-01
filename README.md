@@ -57,11 +57,11 @@ ResQ Viz runs air vehicles, ground vehicles, and surface vessels in isolated sim
 
 The v2 contract describes all three implemented domains through shared asset descriptors, state, capabilities, commands, and observations. Subsurface enum values are reserved and do not describe shipped behavior. External tracks may appear in the operating picture, but they are observations rather than commandable assets.
 
-V1 remains available for a deprecation cycle. Its frames and snapshots project air assets only, and its established command routes bypass v2 control leases. Ground and surface assets stay out of v1 shapes so existing air-only clients do not receive entities they cannot render or command.
+V1 remains for a deprecation cycle. Its frames and snapshots project only air assets, and its command routes bypass v2 control leases. Ground and surface stay out of v1 shapes, protecting air-only clients from entities they cannot render or command.
 
-V2 clients can subscribe to full snapshots at the 10 Hz publication cadence. Deltas are opt-in. An in-flight delta may reach a new subscriber first, but without a baseline it is unusable and the client discards it. The first frame the subscriber can act on is complete. The client can request resynchronization after a sequence gap, and the server publishes a periodic complete frame every 50 published frames. V1 and v2 have separate backpressure slots so a slow consumer on one stream does not occupy the other's slot.
+V2 publishes full snapshots at 10 Hz, with opt-in deltas. A new subscriber may first receive an unusable in-flight delta and discard it. Its first actionable frame is complete. Clients can request resynchronization after gaps, and the server sends a complete frame every 50 publications. Separate v1 and v2 backpressure slots isolate slow consumers.
 
-V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks. The lease identifies who holds control of an asset. HTTP `202` means the gates passed and the command was handed to the simulated asset. Clients can retrieve the latest recorded state. The current production path does not advance an accepted record from subsequent simulated asset motion. Catalog, authority, link, translation, and simulated-asset refusals enter the bounded decision audit, as do accepted commands. Envelope-build failures add no decision-audit record. Duplicate and idempotency-conflict responses also return before that audit. This build has no hardware bearer, and startup rejects configuration that enables live control.
+V2 commands pass lease, capability, state, safe-action, and idempotency gates. HTTP `202` means simulated dispatch, not completion. Clients can poll the latest record, which production does not advance from later motion. Catalog, authority, link, translation, dispatch refusals, and acceptances enter the bounded decision audit. Envelope-build, duplicate, and idempotency-conflict outcomes do not. There is no hardware bearer, and startup rejects live-control configuration.
 
 <a id="source-enforced-limits-and-gates"></a>
 ### Source-enforced limits and gates
@@ -829,7 +829,7 @@ The `/viz` handshake requires the `viz_session` room cookie, which binds each co
 <details>
 <summary>Command catalog (19 registered commands)</summary>
 
-Legend: domains `A/G/S`. Target `!` is required and `?` optional. In target cells, `|` separates alternatives. Capability `(any)` means any listed capability passes its gate. States are `all`, `responsive` (not unknown/offline), `operable` (standby/ready/active/holding/returning), or `stationary` (standby/ready).
+Legend: `A/G/S` names the domains, and `!` indicates a required target while `?` indicates an optional one. A `|` separates target alternatives. Capability `(any)` accepts any listed capability. State labels are `all`, `responsive` excluding unknown/offline, `operable` covering standby/ready/active/holding/returning, and `stationary` covering standby/ready.
 
 | Token | Domain · target/required parameters | Capability | State · position |
 | :--- | :--- | :--- | :--- |
@@ -869,7 +869,7 @@ Reserved/unregistered: `followRoute` awaits a route store/translator. `setSteeri
 | execution | `command.kindNotExecutable`, `command.notExecutable`, or downstream `reasonCode`: change the request or asset state before retrying. |
 | capacity/not-found | Back off on `429`. `asset.notFound` means absent, removed, or reset. `track.notFound` and `command.notFound` may reflect bounded aging or eviction. |
 
-Problems carry `code`, optional downstream `reasonCode`, `errors[].field`, `traceId`, `assetId`, and `commandId`. `CommandResult` wire lifecycle states are `Requested`, `Accepted`, `Rejected`, `InProgress`, `Succeeded`, `Failed`, `Cancelled`, and `TimedOut`. Production records accepted commands but does not advance them from later simulated motion. `202`/`Accepted` is delivery, not completion.
+Every problem has `code` and may also carry downstream `reasonCode`, `errors[].field`, `traceId`, `assetId`, and `commandId`. The wire exposes eight `CommandResult` states: `Requested`, `Accepted`, `Rejected`, `InProgress`, `Succeeded`, `Failed`, `Cancelled`, and `TimedOut`. Production records acceptance only. Later simulated motion does not update that record, so `202`/`Accepted` confirms delivery rather than completion.
 
 <a id="license-project-links"></a>
 ## License and project links
