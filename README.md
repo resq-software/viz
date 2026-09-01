@@ -101,12 +101,82 @@ This table records one verified run at commit `4a4abd4`; it does not replace the
 <a id="five-minute-mixed-fleet-run"></a>
 ## Five-minute mixed-fleet run
 
-The local path starts the .NET 10 host, creates an isolated session, loads a mixed air-ground-surface scenario, and inspects v2 state in the browser. It also identifies the HTTPS endpoint and the point at which a command is accepted for simulated execution.
+Clone the SDK submodule with the repository, then run the host in Development:
+
+```bash
+git clone --recurse-submodules https://github.com/resq-software/viz.git
+cd viz
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/ResQ.Viz.Web
+```
+
+Open [https://localhost:5001](https://localhost:5001). The browser may ask you to accept the local ASP.NET development certificate. This is expected for a development-only certificate that the browser does not yet trust. Port 5000 is also configured, but the session cookie is `Secure`, so use HTTPS for the browser and API calls.
+
+Setting `ASPNETCORE_ENVIRONMENT` is deliberate. `dotnet run` builds Debug by default, while the project builds the Vite client through MSBuild only in Release. `Program.cs` starts and proxies the Vite development server only when the environment is Development. Leaving the environment implicit can therefore produce a host with neither a fresh Release client nor the Development proxy.
+
+For the first mixed-fleet view, keep the default **alpine** terrain. Open the browser developer console and run:
+
+```js
+await fetch('/api/sim/scenario/flood-response', { method: 'POST' }).then(response => response.json())
+```
+
+`flood-response` resets the browser's room and places eight assets: three multirotors, three rovers, and two surface vessels. The preset is authored against a fresh room's alpine terrain, so its ground and water match without another environment request. Changed the terrain already? Select **Alpine** in the sidebar before loading it. Do not substitute `coastal-search`, `coastal-transit`, or `port-incident` for this first run because those scenarios need the **coastal** preset or their vessels are placed on land.
+
+The following check creates a separate API session. It keeps the encrypted, HttpOnly `viz_session` cookie in a temporary jar and sends it on each room-scoped request. `--insecure` accepts the same local certificate warning as the browser. Do not carry that option into a deployed environment.
+
+```bash
+readme_base=https://localhost:5001
+readme_cookie=$(mktemp "${TMPDIR:-/tmp}/resq-viz-cookie.XXXXXX")
+trap 'rm -f "$readme_cookie"' EXIT
+
+curl --fail --silent --show-error --insecure \
+  -c "$readme_cookie" \
+  -X POST "$readme_base/api/sim/session" \
+  | jq -e '(.roomId | type == "string") and (.roomId | length > 0) and (.expiresIn == 86400)'
+
+curl --fail --silent --show-error --insecure \
+  -b "$readme_cookie" \
+  -X POST "$readme_base/api/sim/scenario/flood-response" \
+  | jq -e '(.scenario == "flood-response") and (.status == "started")'
+
+curl --fail --silent --show-error --insecure \
+  -b "$readme_cookie" \
+  "$readme_base/api/v2/sim/snapshot" \
+  | jq -e '(.schemaVersion == "2.0") and (.assets | length == 8)'
+
+curl --fail --silent --show-error --insecure \
+  -b "$readme_cookie" \
+  "$readme_base/api/v2/sim/assets" \
+  | jq -e '(.descriptors | length == 8) and (.assets | length == 8)'
+```
+
+Each pipeline exits nonzero on an HTTP or contract failure. The v2 snapshot is the complete operating picture, including descriptors, asset states, tracks, detections, hazards, network state, and the environment revision. The asset inventory is narrower: it returns descriptors and current states with their capture tick and simulation time.
 
 <a id="three-domain-operating-model"></a>
 ## Three-domain operating model
 
-Air, ground, and surface assets share a domain-neutral identity and state contract while retaining domain-specific profiles, capabilities, motion rules, and observations. This section maps those common fields, coordinate frames, lifecycle states, and the air-only v1 projection.
+Every simulated asset has an `AssetDescriptor` and an `AssetState`, joined by `assetId`. The descriptor is the slow-changing, effectively immutable profile: domain, vehicle and mobility class, capabilities, dimensions, motion constraints, visual profile, and a revision. Clients cache it until the revision changes. State is current telemetry and changes at stream rate. It carries source and receive times, a per-asset sequence number, freshness, framed pose and twist, operational lifecycle state, mode, energy, health, link, mission progress, and a typed `domainState`.
+
+Operations are capability-driven. A caller asks what an asset declares it can do instead of inferring actions from its name or renderer. The shipped profiles cover five vehicle classes across three implemented domains. `Subsurface`, `Rov`, and `Auv` remain reserved without simulation profiles or motion models.
+
+| Domain | Shipped class and mobility model | Capability and state differences |
+| :--- | :--- | :--- |
+| Air | `Multirotor` / `multirotor` | 3D navigation, takeoff, landing, and station keeping. Air state separates heading, course, climb, wind, and three altitude references. |
+| Ground | `AckermannRover` / `ackermann`<br>`DifferentialRover` / `differential`<br>`TrackedRover` / `tracked` | 2D navigation, reverse, parking, and stop-and-hold. Differential and tracked rovers can pivot. Ground state reports terrain, slope, traction, steering, attitude, and advisory rollover proximity. |
+| Surface | `SurfaceVessel` / `displacement-hull` | 2D navigation, reverse, and docking. The shipped hull cannot station-keep and drifts without propulsion. Surface state reports current, waves, water depth, draft, and advisory under-keel clearance. |
+
+`OperationalState` supplies the shared lifecycle vocabulary from offline and standby through active, holding, recovery, emergency, and faulted. `DataFreshness` is separate from link connectivity: a connected link can carry overdue telemetry, while a recent position can remain usable briefly after disconnection. Domain state then adds facts that do not belong on every asset. The JSON discriminator is `air`, `ground`, or `surface`, so clients do not treat an absent vessel draft as though a sensor failed to report it.
+
+### Coordinate boundary
+
+`LocalEus` is the canonical Three.js scene frame: +X east, +Y up, and +Z south. `LocalEnu` remains a separate ground and geographic convention (+X east, +Y north, +Z up), while `LocalNed` remains the aerospace convention (+X north, +Y east, +Z down). V2 names the frame on every pose and twist rather than guessing from the asset domain.
+
+`GlobalWgs84` is geodetic and non-Cartesian. It travels through `GeoPosition` and `GeoCommandTarget`, never as a velocity or offset vector. Every geodetic vertical value names its `VerticalReference`, such as ellipsoid, mean sea level, terrain, water surface, or chart datum, and uses positive-up metres. Local point command targets carry a framed pose plus the applicable `originId`. Two local points are comparable only when their origins agree. The checked-in `scene-alpine-default` origin is a placeholder for local development, not a surveyed deployment location. Operators must replace its identifier and coordinates together for a real site.
+
+### V1 compatibility and v2 scope
+
+V1 stays available for one deprecation cycle as a drone- and air-shaped compatibility surface. Existing clients continue to receive `ReceiveFrame` and use the established v1 snapshots and command routes. V2 carries mixed-domain descriptors and states, typed domain data, capability-aware commands, control authority, external tracks, complete snapshots, and opt-in deltas.
+
+The two versions are not authority-equivalent. V1 command routes bypass the v2 lease and gate sequence, while v2 commands pass through those checks before simulated dispatch. A migration that changes only the frame subscription does not gain v2 command semantics. Clients must adopt the v2 command and authority routes explicitly.
 
 <a id="commands-control-authority-safe-actions"></a>
 ## Commands, control authority, and safe actions
