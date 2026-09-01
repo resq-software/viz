@@ -729,7 +729,25 @@ Vite generates `src/ResQ.Viz.Web/wwwroot/`. Edit files under `src/ResQ.Viz.Web/c
 <a id="security-privacy-observability-deployment"></a>
 ## Security, privacy, observability, and deployment
 
-Deployment guidance separates the simulation-only control gate from transport, session, browser storage, optional exports, telemetry, and hosted-service concerns. Privacy and compliance conclusions depend on the operator's deployment and enabled integrations.
+### Simulation boundary and request controls
+
+ResQ Viz accepts commands only for its in-process simulation. This build has no hardware bearer or live vehicle path. Startup rejects `ControlAuthority:AllowLiveControl=true`. Rooms isolate simulation and control state.
+
+The protected `viz_session` cookie binds requests to a room for 24 hours. It is a room-session mechanism, not user authentication. Session bootstrap refreshes a valid cookie's expiry. The cookie is `HttpOnly`, `Secure`, `SameSite=Strict`, essential, scoped to `/`, and bound to the caller's IPv4 `/24` or IPv6 `/64` prefix. HTTPS is therefore required. The fixed-window partitions permit 10 destructive or 60 general requests per minute. Responses receive CSP and other security headers, with `Cache-Control: no-store` added for APIs. The host redirects HTTP to HTTPS. Production enables HSTS.
+
+### Browser and exported data
+
+`localStorage` retains visual settings, hint visibility or dismissal, cockpit visibility, editor-dock collapse, and fleet-filter choices. Per-tab `sessionStorage` holds compressed terrain geometry under `resq-geo-v1-*`. Scene terrain and scenario choices travel only through explicit operator export or import of `resq-scene.json`, rather than browser persistence.
+
+### Process state and optional exports
+
+Rooms and their command, idempotency, and audit state are room-scoped process memory. Command results cap at 512. Idempotency claims last 10 minutes after update. Command decisions retain 256 entries, while lease-audit capacity defaults to 256 and is configurable. Resets clear command results, idempotency keys, and active leases. Bounded decision trails survive reset. A room with zero connections is reaped after more than 60 seconds idle. The reaper checks every 10 seconds. Reaping or process restart removes this state, and instances do not share it. This is not a durable security audit.
+
+PostHog and GA4 start only when their build-time keys are configured. With neither key, analytics bootstrap returns without initialization. Initialization failures log a warning while tracking and identification remain safe no-ops. Cloudflare Web Analytics is separate: a deployment may inject its script and beacon, and the CSP permits those endpoints. OpenTelemetry instruments ASP.NET Core, HTTP clients, runtime data, scenario activities, and Viz meters for broadcasts, deltas, keyframes, backpressure, resyncs, and build/encode timing. It exports through OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Configuration alone does not provide a collector.
+
+### Deployment facts
+
+Multi-instance and rolling deployments must share the ASP.NET Core data-protection key ring so either instance can unprotect room cookies. Reverse proxies must enable forwarded headers and configure trusted `KnownProxies` or `KnownNetworks`. Otherwise IP-prefix binding sees the proxy or becomes spoofable if headers are trusted broadly. Defaults listen on HTTP `5000` and HTTPS `5001`. Replace the placeholder `Simulation:LocalOrigin` id and coordinates for each site. Operators remain responsible for TLS, proxy trust, analytics choices, access policy, retention, and applicable legal or organizational obligations. Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 <a id="reference"></a>
 ## Reference
