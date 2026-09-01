@@ -381,13 +381,13 @@ Identical JSON/key succeeds because link refusal precedes claim. Immediate resto
 <a id="streaming-operating-picture"></a>
 ## Streaming the operating picture
 
-The SignalR hub is `/viz`. It sends `ReceiveFrame`, `ReceiveSnapshotV2`, and `ReceiveDeltaV2`. Clients call `SubscribeSnapshots`, `SubscribeDeltas`, and `RequestKeyframe`. Every accepted connection remains in its room's v1 group and receives `ReceiveFrame`. `SubscribeSnapshots(true)` adds that connection to the full-v2 group. `SubscribeDeltas(true)` moves it from the full-v2 group to the delta group without removing v1 membership. Snapshot intent and group membership belong to the connection, so a reconnect restores neither automatically: the client calls both subscription methods again. Turning deltas off restores full-v2 membership when that was the recorded intent.
+The SignalR hub is `/viz`. It sends `ReceiveFrame`, `ReceiveSnapshotV2`, and `ReceiveDeltaV2`. Clients call `SubscribeSnapshots`, `SubscribeDeltas`, and `RequestKeyframe`. Both subscription methods return the server's schema version except the refused fresh delta rejoin below. Every connection remains in its room's v1 group and receives `ReceiveFrame`. `SubscribeSnapshots(true)` adds the connection to the full-v2 group. `SubscribeDeltas(true)` moves it from full-v2 to the delta group without removing v1 membership. Intent belongs to the connection, so reconnecting clients repeat both calls and turning deltas off restores full-v2 when that was the recorded intent.
 
-**Capture and backpressure.** The host ticks at 60 Hz. A running room advances one world step at 1x and up to eight world steps at 8x during each host tick. Acceleration does not increase network cadence. Every sixth host tick creates a capture and publication opportunity, nominally 10 Hz even while paused. Separate in-flight slots cover the v1 family and the v2 snapshot/delta family. If one family's prior send still occupies its slot, that family skips the opportunity while the other can proceed. `resq.viz.frames_dropped_backpressure` records the skip with a `stream` tag of `v1` or `v2`.
+**Capture and backpressure.** During normal unpaused operation, 1x, 2x, 4x, and 8x advance exactly one, two, four, and eight world steps per 60 Hz host tick. A queued manual step takes precedence and advances one even at 8x. Every sixth host tick is a capture and publication opportunity, nominally 10 Hz even while paused. Speed does not multiply network cadence. Separate in-flight slots cover v1 and the v2 family. A busy family skips the opportunity while the other can send. `resq.viz.frames_dropped_backpressure` records it with `stream=v1` or `stream=v2`.
 
-**Delta chain.** Each room owns one v2 baseline and stream sequence. The server computes an exact entity-level diff from the last published baseline, sends explicit removed IDs, replaces per-frame observations, and stamps carried assets with their captured freshness, time, sequence, link observation, and exact power state when it changed. As a frame is handed to the transport, the room advances the baseline and sequence before the awaited send completes. A failed v2 send requests a repairing keyframe because clients may not hold the new baseline.
+**Delta chain.** Each room owns one baseline and stream sequence. The exact entity diff includes removed IDs and complete per-frame observations. A carried asset sends source time, receive time, sequence, link last-heard time, and exact power when changed. The chain advances when handed to transport, before the awaited send completes. A failed v2 send requests a repairing keyframe because clients may not hold that baseline.
 
-A complete `ReceiveSnapshotV2` keyframe starts the chain when no baseline exists. The server also chooses a keyframe for a resync request, a changed environment revision, a regressed tick or replaced world, a pending delta-group join, and every 50 published v2 frames. Five seconds is only the nominal periodic interval under uninterrupted 10 Hz publication. Backpressure extends its wall time. A delta already inside SignalR transport can reach a joiner before the owed keyframe. That delta has no usable base, but the first frame the joiner can act on is complete.
+A `ReceiveSnapshotV2` keyframe starts a chain with no baseline. Resync requests, environment revision changes, tick regression or world replacement, pending joins, and every 50 published v2 frames also trigger one. Five seconds is nominal only under uninterrupted 10 Hz publication. Backpressure extends wall time. A delta already in transport can reach a joiner first and is unusable without its base. The first actionable frame is complete.
 
 ### Frame production, delivery, and repair
 
@@ -406,23 +406,33 @@ flowchart TD
     V2 --> DELTA{Delta group}
     DELTA -->|opening, periodic,<br/>join, or request| KEYFRAME[ReceiveSnapshotV2 keyframe]
     DELTA -->|otherwise| PATCH[ReceiveDeltaV2<br/>baseFrameId]
-    PATCH --> MATCH{Held frameId matches?}
-    MATCH -->|yes| APPLY[Apply exact reconstruction]
-    MATCH -->|no| HOLD[Gap<br/>keep last good picture]
-    HOLD --> REPAIR[RequestKeyframe]
+    FULL --> COMPLETE[Hold complete frame<br/>sequence unknown, gap streak 0]
+    KEYFRAME --> COMPLETE
+    PATCH --> MATCH{baseFrameId matches<br/>held frameId?}
+    MATCH -->|yes| APPLY[Apply exact reconstruction<br/>set sequence, gap streak 0]
+    MATCH -->|no| DUP{frameId equals<br/>held frameId?}
+    DUP -->|yes| IGNORE1[Duplicate<br/>ignore, keep streak]
+    DUP -->|no| OLD{Held sequence known and<br/>incoming at or below it?}
+    OLD -->|yes| IGNORE2[Stale or reordered<br/>ignore, keep streak]
+    OLD -->|no| GAP[Gap<br/>keep picture, increment streak]
+    GAP --> LIMIT{Gap streak over 100?}
+    LIMIT -->|yes| FALLBACK[Leave deltas<br/>use full snapshots]
+    FALLBACK --> FULL
+    LIMIT -->|no| PACE{First gap or<br/>every 20?}
+    PACE -->|yes| REPAIR[RequestKeyframe]
+    PACE -->|no| WAIT[Await another frame]
     REPAIR --> KEYFRAME
-    HOLD --> FALLBACK[Fall back to full snapshots]
     RECONNECT[Reconnect<br/>repeat subscriptions] --> KEYFRAME
-    REST[GET /api/v2/sim/snapshot<br/>cold start or reconciliation] --> APPLY
+    REST[GET /api/v2/sim/snapshot<br/>cold start or reconciliation] --> COMPLETE
 ```
 
-**Client reconstruction.** The browser applies a delta only when `delta.baseFrameId === held.frameId`. It does not validate `baseSequence`. A successful merge atomically produces a complete snapshot, upserts changed entities, removes named assets and related collections, replaces complete observations, and applies the exact carried stamps. A delta whose `frameId` is already held is a duplicate. A mismatched delta at or below the held `streamSequence` is stale or reordered and is ignored, while a newer mismatch, missing baseline, or merge failure is a gap.
+**Client reconstruction.** A full snapshot or keyframe resets the gap streak and leaves the held stream sequence unknown. A matching `baseFrameId` applies atomically without validating `baseSequence`. The exact reconstruction removes named entities, applies carried stamps and observations, establishes the sequence, and resets the streak. A delta whose `frameId` is held is a duplicate. Only after a delta establishes the held sequence can a mismatched delta at or below it be stale or reordered. Duplicate and stale outcomes are ignored without incrementing or resetting the streak. Every other mismatch, missing baseline, or merge failure is a gap and increments it.
 
-On a gap, the browser keeps rendering its last good picture. It requests a keyframe on the first gap and again every 20 consecutive unappliable frames, while the server's periodic keyframe remains a passive repair path. Reconnect resets the held chain and repeats the subscriptions. If more than 100 arriving deltas fail to recover the chain, the client leaves the delta group and returns to full snapshots. `GET /api/v2/sim/snapshot` supplies a complete frame for cold start or out-of-band reconciliation.
+On a gap, the browser keeps rendering its last good picture and calls `RequestKeyframe` for the first and every 20 consecutive gap outcomes. Periodic keyframes and reconnect subscriptions provide other repair paths. When the streak exceeds 100, the client returns to full snapshots. `GET /api/v2/sim/snapshot` supports cold start or reconciliation.
 
-**Resync budget.** A connection's first delta subscription opens with a free keyframe. Later in-place re-subscriptions, fresh rejoins, and `RequestKeyframe` share five requests per 10 seconds. Exhausting the budget during an in-place re-subscribe does not force a keyframe and leaves the existing delta membership intact. A fresh rejoin can instead be refused while the connection's prior stream state stays unchanged. `RequestKeyframe` returns `false` when the budget is exhausted or the caller is not an applicable delta subscriber.
+**Resync budget.** The opening delta subscription gets one free keyframe. Later re-subscriptions, rejoins, and `RequestKeyframe` share five requests per 10 seconds. An exhausted in-place `SubscribeDeltas(true)` returns the schema version without forcing and keeps delta membership. An exhausted fresh rejoin throws `HubException` and preserves the prior state, while `RequestKeyframe` returns `false` when exhausted or inapplicable.
 
-**Observability budgets.** Energy display quanta decide whether an asset travels as a whole changed record or through the carried channel. The carried power stamp still contains the exact captured values. These budgets never decide whether a frame is sent, and reconstruction does not round state. The underway and holding delta-to-snapshot ratios in the [dated reference run](#reference-run-2026-09-01--4a4abd4) measure the resulting payload shapes under two motion profiles.
+**Observability budgets.** Energy display quanta choose a whole changed record or the carried channel, which preserves exact power. They never decide whether to send a frame or round reconstructed state. The underway and holding ratios in the [dated reference run](#reference-run-2026-09-01--4a4abd4) measure those payload shapes.
 
 <a id="domain-physics-advisory-models"></a>
 ## Domain physics and advisory models
