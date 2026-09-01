@@ -1,4 +1,4 @@
-// Copyright 2024 ResQ Technologies Ltd.
+// Copyright 2026 ResQ Systems, Inc.
 // Licensed under the Apache License, Version 2.0
 // (see https://www.apache.org/licenses/LICENSE-2.0)
 

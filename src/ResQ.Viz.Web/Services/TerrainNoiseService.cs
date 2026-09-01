@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2024 ResQ Technologies Ltd.
+// Copyright 2026 ResQ Systems, Inc.
 
 using ResQ.Simulation.Engine.Environment;
 
