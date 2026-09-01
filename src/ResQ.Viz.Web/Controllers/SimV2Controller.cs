@@ -256,53 +256,16 @@ public sealed partial class SimV2Controller : ControllerBase
     /// several steps newer than the asset poses beside them — a disagreement that is invisible in
     /// a paused test and routine at eight times speed.
     /// </para>
+    /// <para>
+    /// The assembly itself lives in <see cref="VizSnapshotV2Builder"/> because this is no longer
+    /// the only publisher of a v2 frame: <see cref="SimulationManager"/> broadcasts one over
+    /// SignalR on the same 10 Hz cadence as the v1 frame. Two copies of this projection would
+    /// not stay identical, and a polled frame that disagreed with a streamed one is the same
+    /// class of defect as a frame that disagreed with itself.
+    /// </para>
     /// </remarks>
     /// <returns>A <see cref="VizSnapshotV2"/> covering every asset in the session.</returns>
     [HttpGet("snapshot")]
-    public IActionResult GetSnapshot()
-    {
-        var frame = Room.CaptureAssetFrame();
-        var serverTime = DateTimeOffset.UtcNow;
-
-        // Detections are attributed to the drone that made them, so they are derived from the v1
-        // projection rather than recomputed: one detector, two wire shapes. The projection
-        // travels on the captured frame, so it is the same reading as the asset states.
-        var legacy = _frames.Build(
-            frame.Drones, frame.SimulationTimeSeconds, frame.BackhaulKilled,
-            frame.Transport.Paused, frame.Transport.Speed, frame.Transport.Tick);
-
-        return Ok(new VizSnapshotV2(
-            SchemaVersion: VizSnapshotV2.CurrentSchemaVersion,
-            FrameId: Guid.NewGuid(),
-            ServerTime: serverTime,
-            SimulationTimeSeconds: frame.SimulationTimeSeconds,
-            Tick: frame.Transport.Tick,
-            Transport: frame.Transport,
-            Descriptors: frame.Descriptors,
-            Assets: frame.Assets,
-
-            // The contacts this session is observing but does not control, taken from the same
-            // reading as the assets beside them so a client can draw a geometry between the two
-            // without silently mixing two ticks. The age each was captured with stays on the
-            // track surface — GET /api/v2/sim/tracks — because a frame publishes a picture and
-            // the ages are what a consumer needs to decide how much of it to believe; a client
-            // that only reads frames still has ExternalTrackState.Freshness and LastUpdateTime.
-            // Nothing here carries a capability or a command endpoint, and nothing may render a
-            // command affordance on one.
-            Tracks: frame.Tracks.Select(t => t.Track).ToList(),
-            Detections: legacy.Detections.Select(d => ToDetectionV2(d, serverTime)).ToList(),
-            Hazards: legacy.Hazards.Select(ToHazardV2).ToList(),
-
-            // The backhaul is the only comms fact this build actually has. Mesh connectivity is
-            // not modelled, so partition state is reported as unknown rather than derived from
-            // the backhaul flag: the two are independent, and answering "partitioned" because the
-            // uplink is cut tells an operator the swarm has split when it has not moved.
-            Network: new NetworkState(
-                Links: [],
-                IsPartitioned: null,
-                Partitions: null,
-                BackhaulAvailable: !frame.BackhaulKilled),
-            EnvironmentRevision: frame.EnvironmentRevision,
-            DescriptorsComplete: true));
-    }
+    public IActionResult GetSnapshot() =>
+        Ok(VizSnapshotV2Builder.Build(_frames, Room.CaptureAssetFrame(), DateTimeOffset.UtcNow));
 }

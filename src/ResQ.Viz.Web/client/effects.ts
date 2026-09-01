@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { getLogger } from './log';
 import { onTerrainChange } from './terrain';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
+import { resolveMeshLinkPairs } from './types';
 import { LidarScan, type LidarHit } from './webgpu/lidar';
 import type { LosRay } from './webgpu/los';
 import { HIT_OBSTACLE, MASK_OBSTACLES } from './webgpu/rays';
@@ -681,9 +682,14 @@ export class EffectsManager {
         }
         this._meshLines = [];
 
-        if (!mesh?.links || drones.length === 0) return;
+        // Endpoints are resolved by id against the roster being drawn, never by
+        // position in it: this list is the *filtered* fleet, so an index pair
+        // built against the unfiltered one would land on a different asset and
+        // draw a link that was never reported. `resolveMeshLinkPairs` drops a
+        // link whose endpoint is not on screen rather than re-pointing it.
+        const pairs = resolveMeshLinkPairs(drones, mesh);
 
-        const baseOpacity = mesh.partitioned ? 0.3 : 0.6;
+        const baseOpacity = mesh?.partitioned ? 0.3 : 0.6;
         // Occluded links fade significantly but stay faintly visible so
         // operators can still see the topology even when terrain blocks
         // direct line-of-sight.
@@ -698,11 +704,7 @@ export class EffectsManager {
         // simulation as drones spawn/despawn.
         const seenKeys = new Set<string>();
 
-        for (const [i, j] of mesh.links) {
-            const a = drones[i];
-            const b = drones[j];
-            if (!a || !b || !a.pos || !b.pos) continue;
-
+        for (const [a, b] of pairs) {
             const pts = [
                 new THREE.Vector3(a.pos[0], a.pos[1], a.pos[2]),
                 new THREE.Vector3(b.pos[0], b.pos[1], b.pos[2]),

@@ -5,7 +5,9 @@ import '../styles/editor.css';
 import { hazardKey } from './keys';
 import { kindLabel } from './selection';
 import type { Selection, SelectionKind, SelectionStore } from './selection';
-import type { VizFrame } from '../types';
+import { domainLabel, enumLabel, operationalStateLabel } from '../assets/AssetFilter';
+import type { SceneFrame } from '../assets/sceneFrame';
+import { TrackClassification } from '../assets/types';
 
 /** Callback invoked when an outliner row is chosen. */
 export type OutlinerSelectFn = (kind: SelectionKind, id: string) => void;
@@ -29,12 +31,35 @@ const NO_STATUS = '—';
 /**
  * Pure projection of a frame into the outliner's grouped view-model. Exported
  * so the grouping/keying is unit-tested without touching the DOM.
+ *
+ * The asset and contact groups are emitted **only when the frame actually
+ * carries those lists**, which is what makes the v1 stream's hierarchy
+ * byte-identical to what it was: a v1 frame has no `assets` array, so it yields
+ * the same three groups it always did rather than two permanently empty
+ * headings. On the v2 stream the drone group is the one that empties, because
+ * v2 assets arrive as assets — including the air ones.
  */
-export function buildHierarchy(frame: VizFrame | null): OutlineGroup[] {
+export function buildHierarchy(frame: SceneFrame | null): OutlineGroup[] {
     const drones = frame?.drones ?? [];
     const hazards = frame?.hazards ?? [];
     const detections = frame?.detections ?? [];
-    return [
+    const groups: OutlineGroup[] = [];
+
+    if (frame?.assets !== undefined) {
+        groups.push({
+            kind: 'asset',
+            title: kindLabel('asset'),
+            items: frame.assets.map(a => ({
+                id: a.view.id,
+                // Domain first, because it is what distinguishes two rows that
+                // are otherwise a name and a state — and it is the fact a
+                // screen-reader user cannot get from the silhouette.
+                sub: `${domainLabel(a.view.domain)} · ${operationalStateLabel(a.view.operationalState)}`,
+            })),
+        });
+    }
+
+    groups.push(
         {
             kind: 'drone',
             title: kindLabel('drone'),
@@ -50,7 +75,20 @@ export function buildHierarchy(frame: VizFrame | null): OutlineGroup[] {
             title: kindLabel('detection'),
             items: detections.map(d => ({ id: d.id, sub: d.type })),
         },
-    ];
+    );
+
+    if (frame?.tracks !== undefined) {
+        groups.push({
+            kind: 'track',
+            title: kindLabel('track'),
+            items: frame.tracks.map(t => ({
+                id: t.trackId,
+                sub: enumLabel(TrackClassification, t.classification),
+            })),
+        });
+    }
+
+    return groups;
 }
 
 interface GroupEls {
@@ -63,10 +101,21 @@ interface GroupEls {
     sig: string;
 }
 
+/**
+ * Sections the panel builds, in render order.
+ *
+ * Every kind gets its element up front and stays hidden until it has rows, so a
+ * frame that starts carrying assets does not reorder the panel underneath an
+ * operator mid-session. Assets lead: on the v2 stream they are the whole fleet,
+ * and contacts trail because an observed contact is context for the fleet rather
+ * than part of it.
+ */
 const KIND_ORDER: ReadonlyArray<{ kind: SelectionKind; title: string }> = [
+    { kind: 'asset', title: kindLabel('asset') },
     { kind: 'drone', title: kindLabel('drone') },
     { kind: 'hazard', title: kindLabel('hazard') },
     { kind: 'detection', title: kindLabel('detection') },
+    { kind: 'track', title: kindLabel('track') },
 ];
 
 /**
@@ -99,12 +148,21 @@ export class Outliner {
     }
 
     /** Reconcile the tree with the latest frame. */
-    update(frame: VizFrame | null): void {
-        const groups = buildHierarchy(frame);
+    update(frame: SceneFrame | null): void {
+        const produced = new Map<SelectionKind, OutlineGroup>();
+        for (const g of buildHierarchy(frame)) produced.set(g.kind, g);
+
+        // Iterate the full kind order rather than only what the frame produced,
+        // so a group the frame stopped carrying is emptied and hidden instead of
+        // keeping the rows it had when it last appeared — a stale row is a row
+        // that still selects, and selecting a despawned asset is worse than an
+        // empty list.
         let total = 0;
-        for (const g of groups) {
-            total += g.items.length;
-            this._syncGroup(g);
+        for (const def of KIND_ORDER) {
+            const group = produced.get(def.kind)
+                ?? { kind: def.kind, title: def.title, items: [] };
+            total += group.items.length;
+            this._syncGroup(group);
         }
         if (total === 0) this._hide();
         else this._show();

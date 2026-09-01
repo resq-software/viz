@@ -25,11 +25,34 @@ namespace ResQ.Viz.Web.Services;
 /// in this project that knows about <see cref="VizHub"/> as a transport target —
 /// keeping the simulation domain free of <c>Microsoft.AspNetCore.SignalR</c>.
 /// </summary>
+/// <remarks>
+/// Both sends address a group, never <c>Clients.All</c>: a room is an isolated session, and the
+/// two groups are what keeps the schemas apart. The v1 frame goes to every connection in the
+/// room; the v2 snapshot goes only to <see cref="VizHub.SnapshotGroupName"/>, which a connection
+/// joins by calling <see cref="VizHub.SubscribeSnapshots"/>.
+/// <para>
+/// Sending to an empty group is free — the hub lifetime manager returns before it serialises
+/// anything — so a room whose clients are all v1 pays no serialisation for the v2 message. It
+/// still pays for <em>assembling</em> one, which is why <see cref="SimulationManager"/> checks
+/// <see cref="SimulationRoom.SnapshotSubscriberCount"/> before building rather than relying on
+/// this being cheap.
+/// </para>
+/// </remarks>
+/// <param name="hubContext">Hub context used to address room groups.</param>
 public sealed class SignalRFrameBroadcaster(IHubContext<VizHub> hubContext) : IFrameBroadcaster
 {
     private readonly IHubContext<VizHub> _hubContext = hubContext;
 
     /// <inheritdoc/>
-    public Task BroadcastFrameAsync(VizFrame frame, CancellationToken cancellationToken) =>
-        _hubContext.Clients.All.SendAsync("ReceiveFrame", frame, cancellationToken);
+    public Task BroadcastFrameAsync(string roomId, VizFrame frame, CancellationToken cancellationToken) =>
+        _hubContext.Clients
+            .Group(VizHub.RoomGroupName(roomId))
+            .SendAsync(VizHub.ReceiveFrameMethod, frame, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task BroadcastSnapshotAsync(
+        string roomId, VizSnapshotV2 snapshot, CancellationToken cancellationToken) =>
+        _hubContext.Clients
+            .Group(VizHub.SnapshotGroupName(roomId))
+            .SendAsync(VizHub.ReceiveSnapshotMethod, snapshot, cancellationToken);
 }
