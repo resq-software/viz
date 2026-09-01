@@ -276,7 +276,100 @@ An uncontrolled asset accepts a v2 command without a lease. Once a lease is live
 
 Requested lease durations must be 1–3,600 seconds and are capped by policy, which defaults to 120 seconds. Callers renew against the granted expiry in the response. The holder may renew or release. Expiry also frees the asset, while an emergency-role caller may preempt with a required justification. Lease audit records distinguish `Released`, `Expired`, `Preempted`, `AssetRemoved`, and `AuthorityReset` endings. V1 commands retain the bypass described under [v1 compatibility and v2 scope](#v1-compatibility-and-v2-scope).
 
-Safe actions begin after these command and authority rules: link loss and low-energy conditions invoke domain-specific simulated fallback policies, subject to stale-position and recovery gates.
+### Safe-action decision and recovery
+
+`GET /api/v2/sim/assets/{id}/link` reads per-asset, per-session link state. `POST` accepts required `available` plus optional `issuerId` and `reason`. Responses carry `isAvailable` and `changed`. Mutation is deliberately not lease-gated. Live-control deployments refuse cuts but permit restoration. The stock build is simulation-only.
+
+```mermaid
+flowchart TD
+    API["Link mutation<br/>not lease-gated"] --> CHANGE{State}
+    CHANGE -->|live-control cut| REFUSED[Refused / audited]
+    CHANGE -->|simulation-only cut| LINK[Link-loss observation]
+    CHANGE -->|restore: any mode| RESTORE[Restore, no latch]
+    ENERGY[Low-energy observation] --> PRIORITY{Link loss outranks energy}
+    LINK --> PRIORITY
+    PRIORITY --> DOMAIN{Policy}
+    DOMAIN -->|Air| AIR[ReturnToBase]
+    DOMAIN -->|Ground| HOLD[StopAndHold]
+    DOMAIN -->|Surface: link loss| DRIFT["DriftAndAlert<br/>no StationKeep"]
+    DOMAIN -->|Surface: low energy<br/>drift or unknown| HOLD
+    AIR --> OWN{Onboard gate<br/>IsPositionFixUsable}
+    OWN -->|usable: ReturnToBase| APPLY
+    OWN -->|poor fix| LAND[Land]
+    LAND -->|unavailable| STOP[Stop]
+    LAND & STOP --> APPLY[Apply accepted air fallback]
+    APPLY --> DETACH[Detach before coordinator pass]
+    DETACH --> RECORD[Audit/telemetry]
+    HOLD & DRIFT --> RECORD
+    RESTORE --> HELD{Operator gate<br/>IsHeldPositionUsable}
+    HELD -->|stale/uncertain positional| REASSESS[Next sweep: re-assess]
+    REASSESS --> HELD
+    HELD -->|usable or stop| RECOVER[Operator recovery]
+
+    classDef onboard fill:#17324d,stroke:#69b7ff,color:#fff
+    classDef operator fill:#4a2d14,stroke:#ffb45c,color:#fff
+    class OWN onboard
+    class HELD,REASSESS operator
+```
+
+Every 60 world steps, the simulated-time sweep issues one fallback per trigger episode. Onboard fallback judges `IsPositionFixUsable`: air declares `ReturnToBase`, degrading to `Land` and then `Stop` when needed. Ground declares `StopAndHold`. The shipped displacement hull declares `DriftAndAlert`, lacks `StationKeep`, and accumulates advisory uncertainty while drifting. Low energy maps drift or unknown behavior to `StopAndHold`. Air fallback precedes coordinator detachment. Restoration neither latches state nor moves the asset.
+
+The operator gate is separate. At world dispatch, positional v2 commands can be refused against `IsHeldPositionUsable` as stale or uncertain. `stop` is non-positional. Immediately after restoration, a positional command may need the next one-simulated-second sweep before the held assessment recovers.
+
+Use `readme_base` and `readme_cookie` from the quick start:
+
+```bash
+(
+  set -Eeuo pipefail
+
+  readme_link_body=$(mktemp "${TMPDIR:-/tmp}/resq-viz-readme-link.XXXXXX")
+  readme_link_command='{"kind":"stop","idempotencyKey":"readme-link-retry-001","issuerId":"readme-operator"}'
+  trap 'rm -f "$readme_link_body"' EXIT
+
+  curl --fail --silent --show-error --insecure \
+    -b "$readme_cookie" \
+    -X POST "$readme_base/api/sim/scenario/link-loss-divergence" \
+    | jq -e '(.scenario == "link-loss-divergence") and (.status == "started")'
+
+  curl --fail --silent --show-error --insecure \
+    -b "$readme_cookie" -H 'Content-Type: application/json' \
+    -X POST -d '{"available":false,"issuerId":"readme-operator","reason":"README link-loss drill"}' \
+    "$readme_base/api/v2/sim/assets/lld-ugv-1/link" \
+    | jq -e '(.isAvailable == false) and (.changed == true)'
+
+  readme_link_status=$(curl --silent --show-error --insecure \
+    -b "$readme_cookie" -H 'Content-Type: application/json' \
+    -X POST -d "$readme_link_command" -o "$readme_link_body" -w '%{http_code}' \
+    "$readme_base/api/v2/sim/assets/lld-ugv-1/commands")
+  if [ "$readme_link_status" != 409 ]
+  then
+    printf 'Link-gated command returned HTTP %s:\n' "$readme_link_status" >&2
+    sed -n '1,200p' "$readme_link_body" >&2
+    exit 1
+  fi
+  jq -e '.code == "link.unreachable"' "$readme_link_body"
+
+  curl --fail --silent --show-error --insecure \
+    -b "$readme_cookie" -H 'Content-Type: application/json' \
+    -X POST -d '{"available":true,"issuerId":"readme-operator","reason":"README recovery"}' \
+    "$readme_base/api/v2/sim/assets/lld-ugv-1/link" \
+    | jq -e '(.isAvailable == true) and (.changed == true)'
+
+  readme_link_status=$(curl --silent --show-error --insecure \
+    -b "$readme_cookie" -H 'Content-Type: application/json' \
+    -X POST -d "$readme_link_command" -o "$readme_link_body" -w '%{http_code}' \
+    "$readme_base/api/v2/sim/assets/lld-ugv-1/commands")
+  if [ "$readme_link_status" != 202 ]
+  then
+    printf 'Recovered command returned HTTP %s:\n' "$readme_link_status" >&2
+    sed -n '1,200p' "$readme_link_body" >&2
+    exit 1
+  fi
+  jq -e '(.commandId | type == "string") and (.commandId | length > 0)' "$readme_link_body"
+)
+```
+
+The preset only places assets. It **does not cut links**. The identical body and key succeed because refusal precedes claim. Immediate restoration proves link gating and idempotency, not ground fallback execution. Observe fallback by leaving the link down through the next one-simulated-second sweep and inspecting the v2 snapshot. Safe actions and uncertainty are simulation/advisory outputs.
 
 <a id="streaming-operating-picture"></a>
 ## Streaming the operating picture
