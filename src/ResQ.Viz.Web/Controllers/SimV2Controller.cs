@@ -99,8 +99,10 @@ public sealed partial class SimV2Controller : ControllerBase
     /// as an unhandled exception or a bare 500. A domain being unavailable is a fact about the
     /// deployment, and saying so in the reason code is what lets a client distinguish "not yet"
     /// from "you asked wrongly". Which domains are available is therefore read off the
-    /// composition root rather than asserted here: this build registers a ground model and no
-    /// surface one, so a rover spawns and a vessel is still refused.
+    /// composition root rather than asserted here: this build registers a ground model and a
+    /// surface one, so a rover and a vessel both spawn, while the reserved subsurface classes
+    /// have no motion model and are still refused — by that same mechanism rather than by any
+    /// special case in this type.
     /// </para>
     /// </remarks>
     /// <param name="frames">Builder supplying the configured survivor and hazard data.</param>
@@ -278,7 +280,16 @@ public sealed partial class SimV2Controller : ControllerBase
             Transport: frame.Transport,
             Descriptors: frame.Descriptors,
             Assets: frame.Assets,
-            Tracks: [],
+
+            // The contacts this session is observing but does not control, taken from the same
+            // reading as the assets beside them so a client can draw a geometry between the two
+            // without silently mixing two ticks. The age each was captured with stays on the
+            // track surface — GET /api/v2/sim/tracks — because a frame publishes a picture and
+            // the ages are what a consumer needs to decide how much of it to believe; a client
+            // that only reads frames still has ExternalTrackState.Freshness and LastUpdateTime.
+            // Nothing here carries a capability or a command endpoint, and nothing may render a
+            // command affordance on one.
+            Tracks: frame.Tracks.Select(t => t.Track).ToList(),
             Detections: legacy.Detections.Select(d => ToDetectionV2(d, serverTime)).ToList(),
             Hazards: legacy.Hazards.Select(ToHazardV2).ToList(),
 

@@ -109,10 +109,17 @@ public partial class SimV2ControllerTests
         report.Commands.Select(c => c.Kind).Should().BeEquivalentTo(
         [
             CommandKinds.Stop, CommandKinds.EmergencyStop, CommandKinds.Hold,
-            CommandKinds.ResumeAutonomy, CommandKinds.GoTo, CommandKinds.FollowRoute,
+            CommandKinds.ResumeAutonomy, CommandKinds.GoTo,
             CommandKinds.ReturnToBase, CommandKinds.SetSpeed, CommandKinds.Takeoff,
             CommandKinds.Land, CommandKinds.SetAltitude, CommandKinds.Loiter,
         ]);
+
+        // followRoute is deliberately absent, and its absence is the assertion. Its one target
+        // shape names a stored route, this build has nowhere to store one, so every request
+        // carrying it was refused by the translator in every domain — the row was withdrawn from
+        // CommandCatalog rather than advertised as a control that could only ever fail. A commit
+        // that gives routes somewhere to live restores the row and this expectation together.
+        report.Commands.Select(c => c.Kind).Should().NotContain(CommandKinds.FollowRoute);
 
         // It declares StationKeep, but stationKeep is a surface command: the domain gate still
         // fires, so no client renders an affordance the validator would refuse.

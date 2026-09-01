@@ -49,6 +49,15 @@ namespace ResQ.Viz.Web.Services;
 /// <c>speed</c> world steps apart while the frame still claimed a single
 /// <paramref name="Transport"/> tick.
 /// </param>
+/// <param name="Tracks">
+/// The contacts this session is observing but does not control, aged against
+/// <paramref name="SimulationTimeSeconds"/> in this same reading. Carried here for the same
+/// reason <paramref name="Drones"/> is: a frame that plotted contacts read one lock acquisition
+/// after its assets would put the two pictures up to <c>speed</c> world steps apart while still
+/// claiming a single tick, and any closing geometry drawn between them would be wrong by exactly
+/// that much. They are <em>not</em> assets — no capabilities, no control authority, no command
+/// endpoint — and nothing downstream may render a command affordance on one.
+/// </param>
 public sealed record RoomAssetFrame(
     TransportState Transport,
     double SimulationTimeSeconds,
@@ -56,7 +65,8 @@ public sealed record RoomAssetFrame(
     bool BackhaulKilled,
     IReadOnlyList<AssetDescriptor> Descriptors,
     IReadOnlyList<AssetState> Assets,
-    IReadOnlyList<DroneSnapshot> Drones);
+    IReadOnlyList<DroneSnapshot> Drones,
+    IReadOnlyList<AgedExternalTrack> Tracks);
 
 // The multi-domain asset surface: everything the v2 API and the v2 frame pipeline need from a
 // room, and nothing the v1 path uses. Split from SimulationRoom.cs the way CommandCatalog and
@@ -113,11 +123,17 @@ public sealed partial class SimulationRoom
 
     /// <summary>Captures everything a v2 frame needs from this room in one locked reading.</summary>
     /// <remarks>
-    /// Transport, environment revision, descriptors, asset states <em>and</em> the v1 drone
-    /// projection are all sampled inside a single acquisition. Anything a snapshot publishes has
-    /// to come from here: a second locked read taken beside this one is not a second half of the
-    /// same frame, it is a different frame, and at eight times speed the tick loop advances up to
-    /// eight world steps between the two.
+    /// Transport, environment revision, descriptors, asset states, the observed contacts
+    /// <em>and</em> the v1 drone projection are all sampled inside a single acquisition. Anything
+    /// a snapshot publishes has to come from here: a second locked read taken beside this one is
+    /// not a second half of the same frame, it is a different frame, and at eight times speed the
+    /// tick loop advances up to eight world steps between the two.
+    /// <para>
+    /// Tracks are read through <see cref="CaptureTracks"/> rather than fetched separately, so the
+    /// ages published beside a contact are measured against the very tick the assets were sampled
+    /// on. That is what lets a consumer draw a closing geometry between an asset and a contact
+    /// without silently mixing two readings.
+    /// </para>
     /// </remarks>
     /// <returns>A fully materialised frame that stays valid after the lock is released.</returns>
     public RoomAssetFrame CaptureAssetFrame()
@@ -131,7 +147,8 @@ public sealed partial class SimulationRoom
                 BackhaulKilled: _backhaulKilled,
                 Descriptors: _assets.Descriptors,
                 Assets: _assets.States,
-                Drones: CaptureDroneSnapshots());
+                Drones: CaptureDroneSnapshots(),
+                Tracks: CaptureTracks().Tracks);
         }
     }
 

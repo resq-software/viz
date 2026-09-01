@@ -103,16 +103,46 @@ public sealed partial class AssetCommandValidationTests
         var vessel = AssetProfiles.Create(AssetId, VehicleClass.SurfaceVessel);
         vessel.Capabilities.Should().HaveFlag(AssetCapability.Dock);
 
-        var envelope = EnvelopeFor(Definition(CommandKinds.Dock)) with
+        // The fixture supplies the shape the definition actually advertises, which for dock is a
+        // framed point: a berth is a position, and a position is what the executor can steer to.
+        var result = CommandCatalog.Validate(
+            EnvelopeFor(Definition(CommandKinds.Dock)), vessel, StateFor(), Now);
+
+        result.IsAccepted.Should().BeTrue("refused with {0}: {1}", result.ReasonCode, result.Message);
+        result.Intent?.Target.Should().BeOfType<PointCommandTarget>();
+    }
+
+    /// <summary>
+    /// An asset-referenced berth is refused at the target gate, not accepted and then dropped
+    /// three layers down.
+    /// </summary>
+    /// <remarks>
+    /// The dock row used to advertise <see cref="CommandTargetKinds.Asset"/>, this validator used
+    /// to accept it, and <c>AssetCommandTranslator</c> then refused every request that carried
+    /// one — with a conflict raised after the idempotency key had already been claimed. Nothing
+    /// in this build resolves an identifier to a pose, and no vehicle class <c>AssetProfiles</c>
+    /// can spawn is a pier, so the shape was withdrawn rather than left advertised. This pins the
+    /// refusal at the gate that can name the offending field.
+    /// </remarks>
+    [Fact]
+    public void Dock_Refuses_An_Asset_Referenced_Berth_At_The_Target_Gate()
+    {
+        var definition = Definition(CommandKinds.Dock);
+        definition.AllowedTargets.Should().NotHaveFlag(
+            CommandTargetKinds.Asset,
+            "a shape no code path resolves must not be advertised to a client that renders it");
+
+        var vessel = AssetProfiles.Create(AssetId, VehicleClass.SurfaceVessel);
+        var envelope = EnvelopeFor(definition) with
         {
             Target = new AssetCommandTarget("dock-north", StandoffM: 8.0),
         };
 
         var result = CommandCatalog.Validate(envelope, vessel, StateFor(), Now);
 
-        result.IsAccepted.Should().BeTrue("refused with {0}: {1}", result.ReasonCode, result.Message);
-        result.Intent?.Target.Should().BeOfType<AssetCommandTarget>(
-            "an asset-referenced dock target is resolved when the command executes, not when it is issued");
+        AssertRejectedCleanly(result, "dock with an asset-referenced berth");
+        result.ReasonCode.Should().Be(CommandRejectionReasons.TargetKindUnsupported);
+        result.Field.Should().Be("target");
     }
 
     [Fact]

@@ -69,10 +69,11 @@ public sealed partial class SimV2Controller
     /// Which domains actually succeed is a fact about the deployment, not about this method. An
     /// air spawn goes to the SDK's flight world; everything else needs a registered
     /// <see cref="IAssetFactory"/> that answers for the class, and gets
-    /// <see cref="AssetProblems.MobilityModelUnavailable"/> when none does. Ground models are
-    /// registered, so a rover spawns; no surface model is, so a vessel is still refused — by that
-    /// same mechanism rather than by a special case here, which is why enabling the surface
-    /// domain later is a registration and not a change to this endpoint.
+    /// <see cref="AssetProblems.MobilityModelUnavailable"/> when none does. Ground and surface
+    /// models are both registered, so a rover and a vessel both spawn — and enabling surface was
+    /// exactly that registration, with not one line of this endpoint changed, which is the
+    /// property the mechanism exists for. The reserved subsurface classes still have no motion
+    /// model and are still refused the same way.
     /// </para>
     /// </remarks>
     /// <param name="request">Vehicle class, frame-qualified spawn pose and optional metadata.</param>

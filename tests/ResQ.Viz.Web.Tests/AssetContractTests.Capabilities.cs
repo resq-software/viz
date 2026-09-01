@@ -92,7 +92,9 @@ public partial class AssetContractTests
     {
         var vessel = ProfileDescriptor("vessel-1", VehicleClass.SurfaceVessel);
         var vesselWithoutDock = vessel with { Capabilities = vessel.Capabilities & ~AssetCapability.Dock };
-        var target = new AssetCommandTarget("harbour-berth-3");
+        // A berth is a position: dock advertises a framed point (and, on an anchored deployment,
+        // a geodetic one), and nothing else, because nothing else can be resolved to steer to.
+        var target = new PointCommandTarget(SamplePose(), AcceptanceRadiusM: 3.0);
 
         var accepted = Validate(vessel, EnvelopeFor("vessel-1", CommandKinds.Dock, target));
         var refused = Validate(vesselWithoutDock, EnvelopeFor("vessel-1", CommandKinds.Dock, target));

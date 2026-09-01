@@ -40,6 +40,10 @@ public static class CommandKinds
     /// <summary>Navigate to a point, domain-neutrally.</summary>
     public const string GoTo = "goTo";
     /// <summary>Execute a stored route.</summary>
+    /// <remarks>
+    /// Reserved but <b>not registered</b> in <see cref="CommandCatalog"/>: nothing advertises it
+    /// and nothing accepts it. The comment where its row belongs says why, and what restores it.
+    /// </remarks>
     public const string FollowRoute = "followRoute";
     /// <summary>Navigate to the asset's base, launch point or rally point.</summary>
     public const string ReturnToBase = "returnToBase";
@@ -303,8 +307,22 @@ public static partial class CommandCatalog
             Def(CommandKinds.GoTo, AnyNavigation, CapabilityMatch.Any,
                 targets: CommandTargetKinds.Point | CommandTargetKinds.Geo,
                 requiresTarget: true, requiresFreshPosition: true),
-            Def(CommandKinds.FollowRoute, AnyNavigation, CapabilityMatch.Any,
-                targets: CommandTargetKinds.Route, requiresTarget: true, requiresFreshPosition: true),
+            // followRoute is NOT registered, and its absence is the contract rather than an
+            // oversight. Its one target shape is a CommandTargetKinds.Route — a stored route named
+            // by identifier — and this build has no route store for that identifier to name, so
+            // AssetCommandTranslator refuses every route target handed to it. While the row was
+            // registered, all three mobile domains therefore advertised "run route R7" and refused
+            // every such request, after the idempotency key had already been claimed. Same broken
+            // promise as dock's Asset target and setSteering's whole row, withdrawn for the same
+            // reason: an honest contract beats a control whose only outcome is a rejection.
+            //
+            // Register it again in the commit that gives a route somewhere to live and somewhere
+            // to travel — a per-room store the translator resolves an identifier against, and a
+            // translated command carrying the resolved waypoint list rather than the single pose
+            // SimulatedAssetCommand holds today. The executors are the small part: every navigator
+            // already tracks to a target, so a route is a sequence of them.
+            // SurfaceAsset.ApplyFollowRoute is where one lands; CrossDomainInvariantTests fails
+            // the moment this is advertised again without the store behind it.
             Def(CommandKinds.ReturnToBase, AnyNavigation, CapabilityMatch.Any, requiresFreshPosition: true),
             Def(CommandKinds.SetSpeed, AnyNavigation | AssetCapability.ManualControl, CapabilityMatch.Any,
                 requiredParameters: [CommandParameters.Speed]),
@@ -356,8 +374,21 @@ public static partial class CommandCatalog
                 requiredParameters: [CommandParameters.Course]),
             Def(CommandKinds.StationKeep, AssetCapability.StationKeep, domains: SurfaceOnly,
                 targets: CommandTargetKinds.Point | CommandTargetKinds.Geo, requiresFreshPosition: true),
+            // Dock takes a berth as a POSITION. The Asset shape used to be advertised here and
+            // accepted by this validator, and then refused by AssetCommandTranslator for every
+            // request that carried one: nothing in this build resolves an identifier to a pose,
+            // and there is nothing for it to resolve to either, because every VehicleClass
+            // AssetProfiles can spawn is a vehicle — a pier or a mooring cannot exist as an
+            // asset at all. So a client that rendered the capability report drew a
+            // "dock to <asset>" control whose only possible outcome was a 409, raised after the
+            // idempotency key had already been claimed. Withdrawing the shape turns that into an
+            // immediate 400 naming the target field, which is the same call already made for
+            // land's discarded target and for setSteering. Restore it in the commit that adds
+            // both a fixed-domain berth asset and a resolver the translator can reach — and
+            // resolve it there, after the idempotency hash is taken, so that "dock to pier-1"
+            // keeps one stable request identity however the berth moves.
             Def(CommandKinds.Dock, AssetCapability.Dock, domains: SurfaceOnly,
-                targets: CommandTargetKinds.Asset | CommandTargetKinds.Point | CommandTargetKinds.Geo,
+                targets: CommandTargetKinds.Point | CommandTargetKinds.Geo,
                 requiresTarget: true, requiresFreshPosition: true),
             Def(CommandKinds.Undock, AssetCapability.Dock, domains: SurfaceOnly,
                 statePolicy: OperationalStatePolicy.Stationary),

@@ -26,6 +26,19 @@ namespace ResQ.Viz.Web.Services.Assets;
 // the type's summary lives on the primary declaration in AirAsset.cs.
 public sealed partial class AirAsset
 {
+    // The waypoint this asset last commanded, and the yaw it was commanded with. Mirrored here
+    // because IFlightModel publishes no setpoint to read back, and a standing cruise speed with
+    // no waypoint to attach it to would be an acceptance with nowhere to land. Null whenever the
+    // airframe is doing something that is not tracking a waypoint — hovering, landing, or
+    // returning to launch — so a cruise change is never re-issued as a waypoint the operator
+    // cancelled. Command state, which is why it lives in the command half of the type.
+    private Vector3? _activeWaypointEus;
+    private double? _activeWaypointYaw;
+
+    /// <summary>Standing cruise speed from the last <c>setSpeed</c>, in metres per second.</summary>
+    /// <remarks>Null until one is commanded, which is what keeps the flight model's own default in force.</remarks>
+    private double? _cruiseSpeedMps;
+
     /// <inheritdoc />
     /// <remarks>
     /// Translates into the SDK's small flight-command vocabulary. Anything that vocabulary
@@ -65,8 +78,7 @@ public sealed partial class AirAsset
                         return AssetCommandResult.Rejected(rejection);
                     }
 
-                    _drone.SendCommand(FlightCommand.GoTo(target, command.SpeedMps, yaw));
-                    return AssetCommandResult.Accepted;
+                    return TrackWaypoint(target, EffectiveSpeed(in command), yaw);
                 }
 
             case AssetCommandKind.SetAltitude:
@@ -76,9 +88,10 @@ public sealed partial class AirAsset
                         return AssetCommandResult.Rejected(rejection);
                     }
 
-                    _drone.SendCommand(FlightCommand.GoTo(
-                        new Vector3(position.X, (float)altitude, position.Z), command.SpeedMps, yaw));
-                    return AssetCommandResult.Accepted;
+                    return TrackWaypoint(
+                        new Vector3(position.X, (float)altitude, position.Z),
+                        EffectiveSpeed(in command),
+                        yaw);
                 }
 
             case AssetCommandKind.Takeoff:
@@ -101,9 +114,10 @@ public sealed partial class AirAsset
                         climb = requested;
                     }
 
-                    _drone.SendCommand(FlightCommand.GoTo(
-                        new Vector3(position.X, (float)climb, position.Z), command.SpeedMps, yaw));
-                    return AssetCommandResult.Accepted;
+                    return TrackWaypoint(
+                        new Vector3(position.X, (float)climb, position.Z),
+                        EffectiveSpeed(in command),
+                        yaw);
                 }
 
             // Land takes no target: this flight model has one setpoint and cannot sequence "fly
@@ -117,8 +131,7 @@ public sealed partial class AirAsset
                     return AssetCommandResult.Rejected("command.target.unsupported");
                 }
 
-                _drone.SendCommand(FlightCommand.Land());
-                return AssetCommandResult.Accepted;
+                return Untracked(FlightCommand.Land());
 
             // Loiter's target IS honoured: with one, the airframe flies to the point and holds
             // over it; without one it holds where it is. There is no orbit primitive in this
@@ -128,8 +141,7 @@ public sealed partial class AirAsset
                 {
                     if (command.Target is null)
                     {
-                        _drone.SendCommand(FlightCommand.Hover(yaw));
-                        return AssetCommandResult.Accepted;
+                        return Untracked(FlightCommand.Hover(yaw));
                     }
 
                     if (ResolveTarget(command.Target, out var centre) is { } rejection)
@@ -137,13 +149,11 @@ public sealed partial class AirAsset
                         return AssetCommandResult.Rejected(rejection);
                     }
 
-                    _drone.SendCommand(FlightCommand.GoTo(centre, command.SpeedMps, yaw));
-                    return AssetCommandResult.Accepted;
+                    return TrackWaypoint(centre, EffectiveSpeed(in command), yaw);
                 }
 
             case AssetCommandKind.ReturnToBase:
-                _drone.SendCommand(FlightCommand.RTL());
-                return AssetCommandResult.Accepted;
+                return Untracked(FlightCommand.RTL());
 
             // A multirotor stops by holding position: there is no other way for it to remain
             // aloft, which is exactly the asymmetry the capability model exists to express.
@@ -151,8 +161,13 @@ public sealed partial class AirAsset
             case AssetCommandKind.EmergencyStop:
             case AssetCommandKind.Hold:
             case AssetCommandKind.StationKeep:
-                _drone.SendCommand(FlightCommand.Hover(yaw));
-                return AssetCommandResult.Accepted;
+                return Untracked(FlightCommand.Hover(yaw));
+
+            // A cruise speed is a standing setpoint rather than a manoeuvre, so it governs the
+            // waypoint being flown now and every waypoint issued after it — the same reading the
+            // ground and surface navigators give their own cruise settings.
+            case AssetCommandKind.SetSpeed:
+                return ApplySetSpeed(in command);
 
             // Whether a drone follows the swarm coordinator or an operator is room state, not
             // asset state, so there is nothing here to undo. Accepted rather than rejected so
@@ -163,6 +178,101 @@ public sealed partial class AirAsset
             default:
                 return AssetCommandResult.Rejected("command.unsupported");
         }
+    }
+
+    /// <summary>Changes the cruise speed without changing the destination.</summary>
+    /// <remarks>
+    /// The air domain's counterpart of the cruise setting the ground and surface navigators
+    /// already keep. It exists because the catalog advertises <c>setSpeed</c> to every mobile
+    /// domain and air was the one that fell through to <c>command.unsupported</c>: the capability
+    /// report drew a speed control on every drone, and that control could never work.
+    /// <para>
+    /// The SDK's flight vocabulary carries a speed only as a field of a waypoint command, and the
+    /// flight model publishes no setpoint to read back, so this asset mirrors the waypoint it last
+    /// issued. With one being tracked the waypoint is re-issued immediately at the new speed, so
+    /// the command takes effect now rather than at the next retask; with none — hovering, landing,
+    /// returning to launch — the setting is recorded and the next waypoint is flown at it. The
+    /// re-issue is not deferred because an acceptance that changes nothing an operator can observe
+    /// is worse than a refusal: nothing anywhere would say the speed had not been taken.
+    /// </para>
+    /// <para>
+    /// A value above the airframe's declared ceiling is clamped rather than refused, because that
+    /// ceiling is a physical fact and "as fast as you can" is the honest reading of the request.
+    /// A non-positive one <em>is</em> refused: a multirotor takes its direction from where its
+    /// waypoint is, so a negative speed would make one field carry two meanings. Both refusals
+    /// describe the payload rather than the build, so supplying a usable speed makes the same
+    /// command land.
+    /// </para>
+    /// </remarks>
+    /// <param name="command">Command carrying the requested speed.</param>
+    /// <returns>Acceptance, or a rejection naming the fault in the requested speed.</returns>
+    private AssetCommandResult ApplySetSpeed(in SimulatedAssetCommand command)
+    {
+        if (command.SpeedMps is not { } speed || !double.IsFinite(speed))
+        {
+            return AssetCommandResult.Rejected("command.speed.missing");
+        }
+
+        if (speed <= 0.0)
+        {
+            return AssetCommandResult.Rejected("command.speed.outOfRange");
+        }
+
+        double ceiling = Descriptor.Motion.MaxSpeedMps;
+        _cruiseSpeedMps = ceiling > 0.0 ? Math.Min(speed, ceiling) : speed;
+
+        if (_activeWaypointEus is { } waypoint)
+        {
+            _drone.SendCommand(FlightCommand.GoTo(waypoint, _cruiseSpeedMps, _activeWaypointYaw));
+        }
+
+        return AssetCommandResult.Accepted;
+    }
+
+    /// <summary>The speed a waypoint command should be flown at.</summary>
+    /// <remarks>
+    /// A speed carried by the command itself wins; otherwise the standing cruise setting applies;
+    /// with neither, null lets the flight model use its own default. That order is what makes
+    /// "set the cruise speed, then send waypoints" behave in the air exactly as it does on the
+    /// ground and on the water, instead of silently ignoring the setting on every retask.
+    /// </remarks>
+    /// <param name="command">Command being executed.</param>
+    /// <returns>The speed in metres per second, or null to leave the choice to the flight model.</returns>
+    private double? EffectiveSpeed(in SimulatedAssetCommand command) =>
+        command.SpeedMps ?? _cruiseSpeedMps;
+
+    /// <summary>Flies to a waypoint and remembers it as the setpoint in force.</summary>
+    /// <remarks>
+    /// Every waypoint this asset commands goes through here, so the mirror cannot fall out of step
+    /// with the flight model by someone adding a command arm and forgetting to record it.
+    /// </remarks>
+    /// <param name="waypointEus">Scene-frame destination.</param>
+    /// <param name="speedMps">Speed to fly it at, or null for the flight model's default.</param>
+    /// <param name="yaw">Commanded scene yaw, or null to face the direction of travel.</param>
+    /// <returns>Acceptance; a waypoint that reaches this method has already been resolved.</returns>
+    private AssetCommandResult TrackWaypoint(Vector3 waypointEus, double? speedMps, double? yaw)
+    {
+        _activeWaypointEus = waypointEus;
+        _activeWaypointYaw = yaw;
+        _drone.SendCommand(FlightCommand.GoTo(waypointEus, speedMps, yaw));
+        return AssetCommandResult.Accepted;
+    }
+
+    /// <summary>Issues a command that is not a waypoint, and forgets the one that was.</summary>
+    /// <remarks>
+    /// Hovering, landing and returning to launch each replace the waypoint the flight model was
+    /// tracking, so keeping the mirror would let a later <c>setSpeed</c> re-issue a destination
+    /// the operator had already cancelled — an asset flying somewhere nobody asked for, from a
+    /// command that only named a number.
+    /// </remarks>
+    /// <param name="command">Flight command to issue.</param>
+    /// <returns>Acceptance.</returns>
+    private AssetCommandResult Untracked(FlightCommand command)
+    {
+        _activeWaypointEus = null;
+        _activeWaypointYaw = null;
+        _drone.SendCommand(command);
+        return AssetCommandResult.Accepted;
     }
 
     /// <summary>Resolves a commanded altitude onto the scene's vertical axis.</summary>
