@@ -14,402 +14,142 @@
   limitations under the License.
 -->
 
-# ResQ Viz — Live Coordination
-
-**The common operating picture for autonomous disaster response.** Ten agencies show up to a hurricane with ten different drones; one shared air picture keeps them coordinated. ResQ Viz renders that picture in real time — mesh topology, hazard fusion, and decentralized consensus, streaming at 10 Hz into any browser.
-
-- **For emergency managers running multi-agency SAR** — HURRICANE MELISSA scenario, 12 drones across 3 vendors, visible backhaul-loss → mesh-only degradation.
-- **For integration partners** — vendor-tagged chassis per agency, MAVLink mesh simulation, SignalR streaming, REST control plane.
-- **Live:** [viz.resq.software](https://viz.resq.software/)
-
-Press `5` to load `multi-agency-sar`. Press `K` to kill the backhaul. Press `Ctrl+Shift+R` to enter investor-mode for a recorded demo.
-
----
-
-## Features
-
-- **Live telemetry** — SignalR WebSocket streaming at 10 Hz, ACES filmic tonemapping, PCF soft shadows
-- **5 procedural terrain presets** — each backed by a distinct noise algorithm (domain-warped FBM, ridged multifractal, island-mask, terrace+canyon, anisotropic dunes)
-- **Canvas-drawn tree billboard sprites** — 5-tier pine silhouettes and deciduous blobs rendered with Canvas 2D; 8 triangles per tree, two draw calls for the entire forest
-- **Displaced boulder geometry** — per-vertex hash displacement on IcosahedronGeometry gives every rock a unique craggy profile
-- **Geometry cache with deflate compression** — browser-native `CompressionStream` / `DecompressionStream` (RFC 1951); 572 KB → ~210 KB per preset (~63 % reduction); two-level L1/L2 cache survives page refresh via `sessionStorage`
-- **Post-processing** — selective `UnrealBloomPass` (only emissive LEDs and nav lights glow), `SSAOPass` ambient occlusion, `OutputPass` tone mapping
-- **Unity-style camera** — LMB orbit, RMB free-fly (WASD/QE/Shift), MMB pan, scroll zoom; collision prevention keeps the camera above terrain
-- **Drone interaction** — click to select, WASD/QE to nudge in world space, click terrain to issue GoTo command, `F` to follow
-- **Visual overlays** — position trails, altitude halos, velocity component arrows, mesh topology links, hazard zone discs, detection markers
-- **Settings persistence** — bloom, fog density, FOV, fly speed, trail length, detection rings, battery warning threshold; stored in `localStorage`
-- **WebGPU sensor primitive** — brick-map raymarcher voxelizes the heightfield at boot, then rebuilds when the terrain preset switches or a heightmap override is installed. It serves both **drone-pair line-of-sight** (mesh links visibly fade when terrain occludes them) and **per-drone LiDAR scans** (point clouds emanate from each drone, follow yaw/pitch/roll, optional mast/gimbal mount offsets). One compute kernel, two sensor consumers; ring-buffered async dispatch with `peakSlotDepth` / `raysOutsideWorld` audit counters; press `i` for the live stats overlay.
-- **Lazy-loaded SignalR** — the SignalR runtime ships as a separate ~55 KB chunk and is fetched on first connect, keeping the main bundle below the 800 KiB CI budget
-
----
-
-## Quick Start
-
-```bash
-git clone --recurse-submodules <repo>
-cd viz/src/ResQ.Viz.Web
-dotnet run                      # http://localhost:5000
-```
-
-`dotnet run` compiles the TypeScript frontend through Vite automatically via `Vite.AspNetCore` — no separate `npm run dev` is needed.
-
----
-
-## System Architecture
-
-```mermaid
-flowchart TB
-    subgraph SDK["ResQ SDK  (git submodule · lib/dotnet-sdk)"]
-        ENGINE["ResQ.Simulation.Engine\nphysics · pathfinding · weather"]
-        MAVLINK["ResQ.Mavlink\nMAVLink gateway · mesh routing"]
-    end
-
-    subgraph BACKEND["ASP.NET Core Host  (src/ResQ.Viz.Web)"]
-        SIM["SimulationService\nIHostedService · 60 Hz loop"]
-        VFB["VizFrameBuilder\nsnapshot → VizFrame JSON"]
-        HUB["VizHub\nSignalR hub"]
-        REST["SimController\nREST API  /api/sim/*"]
-    end
-
-    subgraph BROWSER["Browser"]
-        direction TB
-        SC["SignalR client"]
-        subgraph THREEJS["Three.js Scene"]
-            TER["Terrain + GeoCache\n5 preset algorithms"]
-            DRN["DroneManager\nInstancedMesh · LEDs"]
-            EFX["EffectsManager\nTrails · Halos · Hazards"]
-            OVL["OverlayManager\nVelocity · Formation"]
-        end
-        UI["HUD · DronePanel · WindCompass\nSettings · Controls"]
-    end
-
-    ENGINE --> SIM
-    MAVLINK --> SIM
-    SIM -->|"every 6th tick  →  10 Hz"| VFB
-    VFB --> HUB
-    HUB -->|"WebSocket  ReceiveFrame"| SC
-    SC --> TER & DRN & EFX & OVL & UI
-    UI -->|"fetch  /api/sim/*"| REST
-    REST --> SIM
-```
-
----
-
-## Real-Time Frame Pipeline
-
-```mermaid
-sequenceDiagram
-    participant Eng  as ResQ.Simulation.Engine
-    participant Svc  as SimulationService (60 Hz)
-    participant VFB  as VizFrameBuilder
-    participant Hub  as VizHub (SignalR)
-    participant CLI  as Browser
-
-    loop every 16.7 ms
-        Eng  ->> Svc  : SimulationWorld.Step()
-        alt  every 6th tick  →  10 Hz
-            Svc  ->> VFB  : SnapshotFrame(world)
-            VFB  ->> Hub  : BroadcastFrameAsync(VizFrame)
-            Hub -->> CLI  : ReceiveFrame(JSON)
-            CLI  ->> CLI  : DroneManager.update(drones)
-            CLI  ->> CLI  : EffectsManager.update(frame)
-            CLI  ->> CLI  : OverlayManager.update(drones)
-            CLI  ->> CLI  : HUD.update(count, time, battery)
-        end
-    end
-```
-
----
-
-## Frontend Module Graph
-
-```mermaid
-flowchart LR
-    APP["app.ts\nentry · wiring"]
-
-    SCENE["scene.ts\nrenderer · raycasting"]
-    CAM["cameraControl.ts\nUnityCamera"]
-    POSTFX["postfx.ts\nbloom · SSAO · output"]
-
-    TERRAIN["terrain.ts\nheightmap · obstacles"]
-    PRESETS["terrainPresets.ts\n5 height functions\n5 GLSL biome shaders"]
-    GEOCACHE["geoCache.ts\ndeflate-raw L1 / L2"]
-    SPRITES["treeSprites.ts\nCanvas 2D billboards"]
-
-    DRONES["drones.ts\nInstancedMesh · LEDs\nselection · nudge"]
-    EFFECTS["effects.ts\ntrails · halos · hazards\nmesh links"]
-    OVERLAYS["overlays.ts\nvelocity arrows\nformation lines"]
-    CONTROLS["controls.ts\nREST panel · keyboard"]
-
-    UI["ui/\nhud.ts\ndronePanel.ts\nwindCompass.ts"]
-    SETTINGS["settings.ts\nlocalStorage"]
-    TYPES["types.ts\nVizFrame · DroneState"]
-
-    APP --> SCENE & TERRAIN & DRONES & EFFECTS & OVERLAYS & CONTROLS & UI & SETTINGS & GEOCACHE & PRESETS & TYPES
-    SCENE --> CAM & POSTFX
-    TERRAIN --> PRESETS & GEOCACHE & SPRITES
-    DRONES --> TYPES
-    EFFECTS --> TYPES
-```
-
----
-
-## Terrain Engine
-
-Five presets selectable at runtime from the sidebar. Each builds its own GLSL biome fragment shader, atmosphere (fog colour + density), obstacle distribution, and water level. Switching a preset disposes all Three.js objects and GPU resources, then rebuilds — using the geometry cache when available.
-
-| Preset | Algorithm | Height range | Water level | Character |
-|--------|-----------|-------------|-------------|-----------|
-| 🏔 Alpine | Domain-warped FBM | −60 … +220 m | −3 m | Sweeping ridges, snow caps, 4 mountain peaks |
-| ⛰ Ridgeline | Ridged multifractal | −15 … +210 m | −15 m | Knife-edge ridges, dense conifer valleys |
-| 🏝 Coastal | Island-mask × FBM | −∞ … +90 m | +3 m | Tropical archipelago, sandy beaches |
-| 🏜 Canyon | Terrace + canyon cuts | −80 … +85 m | −60 m | Sandstone mesas, deep gorge networks |
-| 🌵 Dunes | Anisotropic ridge noise | −25 … +60 m | −25 m | Wind-driven barchan dune fields |
-
-```mermaid
-flowchart LR
-    A1["Domain-Warped FBM\nQuilez 2002\nwarp scale 260 m\n6-octave final FBM"] --> P1["🏔 Alpine"]
-    A2["Ridged Multifractal\nMusgrave 1994\nsignal = 1 − |2n−1|\n8 octaves, gain 1.8"] --> P2["⛰ Ridgeline"]
-    A3["Island-Mask FBM\nradial falloff per island\n× 5-octave topo FBM\ncoastline perturbation"] --> P3["🏝 Coastal"]
-    A4["Terrace Function\nsmoothstep(0, 0.18, frac)\n+ noise threshold\ncanyon cut depth 80 m"] --> P4["🏜 Canyon"]
-    A5["Anisotropic Ridge Noise\ntent(n)^2.8 primary axis\n15° rotated secondary\nmega-dune field modulation"] --> P5["🌵 Dunes"]
-
-    subgraph SHARED["Shared noise primitives  (terrainPresets.ts)"]
-        direction LR
-        H["_h(ix, iz)\nWang hash\nno float drift"]
-        N["_noise(x, z)\nquintic bilinear\nC² continuity"]
-        F["_fbm(x, z, oct)\nfractional Brownian motion\nlacunarity 2.09  gain 0.47"]
-        R["_ridged(x, z, oct)\nridged multifractal\nweight chaining"]
-        H --> N --> F --> A1 & A2 & A3 & A4 & A5
-        N --> R --> A2
-    end
-```
-
----
-
-## Geometry Cache
-
-Terrain vertex positions (572 KB per preset as `Float32Array`) are cached at two levels to make preset switches fast and page reloads instant.
-
-```mermaid
-flowchart TD
-    SW["switchPreset(key)"]
-    L1{{"L1  In-Memory\nMap · Float32Array\n~0 ms lookup"}}
-    MISS["Compute heights\n48 841 × terrainHeight()"]
-    UPLOAD["BufferGeometry → GPU\ncomputeVertexNormals()"]
-    FFW["fire-and-forget\nasync compress"]
-    CS["CompressionStream\ndeflate-raw  RFC 1951\n572 KB → ~210 KB  (−63 %)"]
-    SS[("sessionStorage\nbase64 string\n~280 KB per preset")]
-    INIT["geoCache.init()\nat app startup"]
-    DS["DecompressionStream\ninflate-raw\n~3 ms"]
-
-    SW --> L1
-    L1 -->|"hit"| UPLOAD
-    L1 -->|"miss"| MISS
-    MISS --> UPLOAD
-    MISS --> FFW --> CS --> SS
-    INIT --> SS --> DS --> L1
-```
-
-Five presets cached: ~1.0 MB in `sessionStorage` vs 2.8 MB uncompressed. Compression ratio is logged to the browser console at runtime.
-
----
-
-## Post-Processing Pipeline
-
-Bloom is **selective**: a first composer pass blacks out all non-emissive objects so only drone LEDs, nav lights, and detection markers glow. A blend shader additively composites this onto the full scene render before the final `OutputPass` applies ACES filmic tone mapping and gamma correction.
-
-```
-RenderPass ──► UnrealBloomPass  ──► ShaderPass (blend)  ──► OutputPass
- (bloom          (emissive only)     base + bloom.rgb        ACES + gamma
-  composer)
-
-RenderPass ──► ShaderPass (blend)  ──► OutputPass
- (final          ↑ bloom texture        ACES + gamma
-  composer)
-```
-
----
-
-## Project Layout
-
-```
-viz/
-├── src/ResQ.Viz.Web/
-│   ├── client/
-│   │   ├── app.ts               Entry point — wires all modules together
-│   │   ├── scene.ts             Three.js renderer, camera, post-processing, raycasting
-│   │   ├── cameraControl.ts     Unity-style free-fly camera with terrain collision
-│   │   ├── postfx.ts            Selective bloom pipeline (two EffectComposer passes)
-│   │   │
-│   │   ├── terrain.ts           Ground mesh, water, trees, rocks, buildings
-│   │   ├── terrainPresets.ts    5 height functions + GLSL biome shaders + obstacle config
-│   │   ├── treeSprites.ts       Canvas 2D tree textures + cross-billboard geometry
-│   │   ├── geoCache.ts          deflate-raw geometry cache (CompressionStream / sessionStorage)
-│   │   │
-│   │   ├── drones.ts            Quadrotor InstancedMesh, PBR materials, LED status, selection
-│   │   ├── effects.ts           Trails, hazard zone discs, detection markers, mesh links
-│   │   ├── overlays.ts          Velocity arrows, altitude halos, formation lines
-│   │   ├── controls.ts          Sidebar REST calls, scenario and command wiring
-│   │   │
-│   │   ├── settings.ts          User settings with localStorage persistence
-│   │   ├── sensorStatsOverlay.ts  Bottom-left dev/audit overlay (`i` to toggle)
-│   │   ├── types.ts             VizFrame · DroneState · HazardState · DetectionState
-│   │   ├── dom.ts               Typed getEl<T>() helper
-│   │   │
-│   │   ├── webgpu/              WebGPU sensor primitive (brick-map raymarcher)
-│   │   │   ├── device.ts          GPUDevice initialization with null-safe fallback
-│   │   │   ├── sensors.ts         bootSensors() — wires world + LoS + LiDAR managers
-│   │   │   ├── registry.ts        Singleton seam — getSensorContext() + LIDAR_MANAGER_CAPACITY
-│   │   │   ├── world.ts           Heightfield → 128³ voxel cube + onTerrainChange rebuild
-│   │   │   ├── brickmap.ts        Sparse top-grid + dense 8³ bricks (BRICK constant)
-│   │   │   ├── los.ts             LosQueryManager — ring-buffered query() with LosQueryStats
-│   │   │   ├── lidar.ts           LidarScan — quaternion-rotated scan pattern + mount offset
-│   │   │   ├── rays.ts            Ray (48 B) / RayHit (32 B) wire format + flag constants
-│   │   │   └── shaders/           build_brickmap.wgsl · march.wgsl · blit.wgsl
-│   │   │
-│   │   ├── __tests__/           Vitest smoke tests (rays packing, LidarScan validation)
-│   │   │
-│   │   └── ui/
-│   │       ├── hud.ts           Top bar — connection, drone count, FPS, battery, selected chip
-│   │       ├── dronePanel.ts    Drone detail panel — position, velocity, battery, commands
-│   │       └── windCompass.ts   Canvas wind rose compass
-│   │
-│   ├── Controllers/             SimController — REST API
-│   ├── Hubs/                    VizHub — SignalR frame broadcast
-│   ├── Models/                  Request / response records
-│   ├── Services/                SimulationService · VizFrameBuilder · ScenarioService
-│   ├── styles/main.css          CSS custom properties, glassmorphism panels, HUD
-│   └── wwwroot/                 Vite build output (gitignored; produced by `dotnet build` and uploaded as the `viz-wwwroot-{sha}` CI artifact for deploys)
-│
-├── tests/ResQ.Viz.Web.Tests/    xUnit + FluentAssertions + Moq
-└── lib/dotnet-sdk/              Git submodule — ResQ .NET SDK
-```
-
----
-
-## REST API
-
-| Method | Path | Body / Params | Description |
-|--------|------|---------------|-------------|
-| `POST` | `/api/sim/start` | — | Resume simulation |
-| `POST` | `/api/sim/stop` | — | Pause simulation |
-| `POST` | `/api/sim/reset` | — | Clear all drones |
-| `POST` | `/api/sim/drone` | `{ position: [x,y,z] }` | Spawn a drone |
-| `POST` | `/api/sim/drone/{id}/cmd` | `{ type, target? }` | Send flight command |
-| `POST` | `/api/sim/weather` | `{ mode, windSpeed, windDirection }` | Update weather |
-| `POST` | `/api/sim/fault` | `{ droneId, faultType }` | Inject fault |
-| `GET`  | `/api/sim/state` | — | Current drone snapshots |
-| `GET`  | `/api/sim/scenarios` | — | Available scenario names |
-| `POST` | `/api/sim/scenario/{name}` | — | Load a preset scenario |
-
-**Flight commands** — `type` field: `hover` · `land` · `rtl` · `goto` (`goto` requires `target: [x, y, z]`)
-
-**Weather modes**: `calm` · `steady` · `turbulent`
-
-**Scenarios**: `single` · `swarm-5` · `swarm-20` · `sar` · `multi-agency-sar`
-
----
-
-## Camera & Controls
-
-| Input | Action |
-|-------|--------|
-| `LMB drag` | Orbit around target |
-| `RMB hold` | Enter free-fly mode |
-| `MMB drag` | Pan |
-| `Scroll` | Zoom |
-| `WASD` | Free-fly strafe / forward · Nudge selected drone (when RMB released) |
-| `Q / E` | Fly up / down · Nudge drone altitude |
-| `Shift` | ×5 speed multiplier |
-| `Click drone` | Select — opens detail panel, activates WASD nudge |
-| `Click terrain` | Send selected drone to that world position |
-| `Click selected drone` | Pass-through to terrain GoTo (re-click = GoTo) |
-
----
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `F` | Follow / unfollow selected drone |
-| `Home` | Fit view to entire swarm |
-| `V` | Toggle velocity component arrows |
-| `H` | Toggle altitude halos |
-| `G` | Toggle formation lines |
-| `[` / `]` | Cycle drone selection (severity-sorted to match the telemetry strip) |
-| `Space` | Stop simulation |
-| `R` | Reset simulation |
-| `Tab` | Toggle sidebar |
-| `1` | Scenario: single drone |
-| `2` | Scenario: swarm-5 |
-| `3` | Scenario: swarm-20 |
-| `4` | Scenario: SAR |
-| `5` | Scenario: multi-agency-sar (12 drones across skydio · autel · anzu) |
-| `Shift` + `1` … `5` | Camera presets: overview · tactical · cockpit · ground · investor |
-| `K` | Toggle simulated backhaul kill (mesh-only degradation banner) |
-| `Ctrl` + `Shift` + `R` | Toggle investor-mode cinematic playback for screen recording |
-| `?` | Toggle keyboard shortcuts panel |
-| `i` | Toggle WebGPU sensor-stack stats overlay (queries, peakSlotDepth, raysOutsideWorld) |
-
----
-
-## Development Commands
-
-```bash
-# Run development server (Vite HMR + ASP.NET Core)
-dotnet run --project src/ResQ.Viz.Web/
-
-# Production build (TypeScript check + Vite bundle → wwwroot/)
-dotnet build src/ResQ.Viz.Web/
-
-# Run xUnit test suite
-dotnet test tests/ResQ.Viz.Web.Tests/
-
-# TypeScript type-check only (no emit)
-cd src/ResQ.Viz.Web && npx tsc --noEmit
-
-# Vite bundle only
-cd src/ResQ.Viz.Web && npx vite build
-
-# Initialise the SDK submodule after a fresh clone
-git submodule update --init --recursive
-```
-
----
-
-## Tech Stack
-
-| Layer | Technology | Notes |
-|-------|------------|-------|
-| Runtime | .NET 10 / ASP.NET Core | `IHostedService` simulation loop |
-| Real-time | SignalR 10 (WebSocket) | 10 Hz frame broadcast; lazy-loaded chunk in the client |
-| 3D | Three.js 0.184 (npm) | PBR, InstancedMesh, custom GLSL |
-| Sensor primitive | WebGPU compute (WGSL) | Brick-map raymarcher; mesh-link LoS + per-drone LiDAR off one kernel |
-| Post-processing | Three.js `EffectComposer` | Selective bloom, SSAO, ACES |
-| Frontend build | TypeScript 6 + Vite 8 | Hot module replacement in dev; rolldown-based |
-| Compression | Web Streams API | `CompressionStream` · `DecompressionStream` · deflate-raw |
-| Simulation | ResQ.Simulation.Engine | Git submodule — physics, terrain, weather |
-| Tests | xUnit + FluentAssertions + Moq | Backend unit tests |
-| Frontend tests | Vitest 4 | Host-side WebGPU primitive smoke tests |
-
----
-
-## Privacy & Data Handling
-
-ResQ Viz processes only **simulated** drone telemetry. The web app does not:
-
-- collect personal data, account details, or contact information
-- set tracking cookies or run analytics
-- transmit data to third parties
-- store user-generated content beyond an in-memory simulation snapshot
-
-Frame data is broadcast over SignalR to whatever clients are connected to the local server; nothing leaves the host. Because no personal data is processed and no payment or health data is involved, GDPR / HIPAA / PCI-DSS controls are out of scope for this repository. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-A CycloneDX [SBOM](https://cyclonedx.org/) is generated on every push to `main`, every PR, and attached to each release — see the `sbom` workflow.
-
----
-
-## License
-
-Apache-2.0 — Copyright 2026 ResQ Systems, Inc.
+![ResQ organization banner](https://raw.githubusercontent.com/resq-software/.github/main/assets/banner.png)
+
+<h1 align="center">ResQ Viz</h1>
+
+<p align="center">A browser operating picture and command surface for simulated air, ground, and surface fleets.</p>
+
+<p align="center">
+  <a href="https://github.com/resq-software/viz/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/resq-software/viz/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/resq-software/viz/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
+  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4.svg">
+  <img alt="Three.js 0.185.1" src="https://img.shields.io/badge/Three.js-0.185.1-black.svg">
+  <img alt="SignalR 10.0.11" src="https://img.shields.io/badge/SignalR-10.0.11-512BD4.svg">
+</p>
+
+**Hosted deployment:** [viz.resq.software](https://viz.resq.software/) · **Run locally:** [five-minute mixed-fleet run](#local-run)
+
+[**Evaluate**](#evaluate) product scope and measured evidence · [**Operate**](#operate) a mixed-fleet simulation · [**Build**](#build) and test the host and browser client
+
+> **Operating boundary:** ResQ Viz is simulation-only. Navigation, ground traversability, rollover proximity, marine clearance, docking guidance, and closest-point-of-approach (CPA) outputs are advisory.
+
+<a id="contents"></a>
+### Contents
+
+- [Evaluate ResQ Viz](#evaluate)
+- [Five-minute mixed-fleet run](#five-minute-mixed-fleet-run)
+- [Three-domain operating model](#three-domain-operating-model)
+- [Commands, control authority, and safe actions](#commands-control-authority-safe-actions)
+- [Streaming the operating picture](#streaming-operating-picture)
+- [Domain physics and advisory models](#domain-physics-advisory-models)
+- [Operator workspace and scenarios](#operator-workspace-scenarios)
+- [System architecture](#system-architecture)
+- [Contributor workflow](#contributor-workflow)
+- [Security, privacy, observability, and deployment](#security-privacy-observability-deployment)
+- [Reference](#reference)
+- [License and project links](#license-project-links)
+
+<a id="evaluate"></a>
+## Evaluate ResQ Viz
+
+ResQ Viz runs air vehicles, ground vehicles, and surface vessels in isolated simulation rooms. Each room owns its in-process world, scenario state, command history, and stream membership. Session-bound HTTP requests and SignalR groups keep one room's assets and frames out of another room.
+
+The v2 contract describes all three implemented domains through shared asset descriptors, state, capabilities, commands, and observations. Subsurface enum values are reserved and do not describe shipped behavior. External tracks may appear in the operating picture, but they are observations rather than commandable assets.
+
+V1 remains available for a deprecation cycle. Its frames and snapshots project air assets only, and its established command routes bypass v2 control leases. Ground and surface assets stay out of v1 shapes so existing air-only clients do not receive entities they cannot render or command.
+
+V2 clients can subscribe to full snapshots at the 10 Hz publication cadence. Deltas are opt-in: a delta subscriber leaves the full-snapshot group, receives an initial complete frame, and can request resynchronization after a sequence gap. The server also publishes a periodic complete frame every 50 published frames. V1 and v2 have separate backpressure slots so a slow consumer on one stream does not occupy the other's slot.
+
+V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks before the simulator acts on them. The lease identifies who holds control of an asset; accepted and refused decisions enter the room's bounded audit trail. An accepted command reports that processing began, not that the simulated asset completed the requested motion. This build has no hardware bearer, and startup rejects configuration that enables live control.
+
+### Source-enforced limits and gates
+
+These values are constraints in the source and CI configuration. They are separate from the dated measurements below.
+
+| Constraint | Enforced value |
+| :--- | ---: |
+| Air assets per room | 50 |
+| Total assets per room | 200 |
+| Local coordinate range | ±20 km |
+| Rooms per host | 100 |
+| Simulation host cadence | 60 Hz |
+| Operating-picture publication | Every sixth host tick, 10 Hz |
+| Periodic delta-stream complete frame | Every 50 published frames |
+| Built entry JavaScript CI ceiling | 819,200 bytes |
+| Built entry CSS CI ceiling | 53,248 bytes |
+| Live-control configuration | Rejected at startup |
+
+### Reference run: 2026-09-01 · 4a4abd4
+
+This table records one verified run at commit `4a4abd4`; it does not replace the source-enforced constraints above. Reproduction results vary by host.
+
+| Measurement | Verified value |
+| :--- | ---: |
+| xUnit tests | 1,257 passed |
+| Vitest tests | 661 passed |
+| 150-asset world-step p95 | 0.798 ms |
+| 150-asset frame total p95, including serialization | 4.136 ms |
+| Median world-step scaling, 150 versus 15 assets | 10.56× |
+| Underway delta-to-snapshot payload ratio | 80.8% |
+| Holding delta-to-snapshot payload ratio | 9.6% |
+| Built entry JavaScript | 796,176 bytes |
+| Built entry CSS | 37,569 bytes |
+
+<a id="local-run"></a>
+<a id="operate"></a>
+<a id="five-minute-mixed-fleet-run"></a>
+## Five-minute mixed-fleet run
+
+The local path starts the .NET 10 host, creates an isolated session, loads a mixed air-ground-surface scenario, and inspects v2 state in the browser. It also identifies the HTTPS endpoint and the point at which a command is accepted for simulated execution.
+
+<a id="three-domain-operating-model"></a>
+## Three-domain operating model
+
+Air, ground, and surface assets share a domain-neutral identity and state contract while retaining domain-specific profiles, capabilities, motion rules, and observations. This section maps those common fields, coordinate frames, lifecycle states, and the air-only v1 projection.
+
+<a id="commands-control-authority-safe-actions"></a>
+## Commands, control authority, and safe actions
+
+The command path covers request validation, control leases, idempotency, capability and state checks, simulator execution, status polling, and the decision audit. Link loss and low-energy conditions invoke domain-specific simulated fallback policies, subject to stale-position and recovery gates.
+
+<a id="streaming-operating-picture"></a>
+## Streaming the operating picture
+
+The host steps each room at 60 Hz and publishes every sixth tick. This section follows v1 frames, v2 snapshots, opt-in deltas, sequence-gap recovery, periodic complete frames, and bounded sends to SignalR room groups.
+
+<a id="domain-physics-advisory-models"></a>
+## Domain physics and advisory models
+
+Each domain uses its own simulated movement and environment checks. The operating picture exposes terrain, rollover, marine clearance, docking, and CPA assessments as advisory output rather than certified navigation or autonomy decisions.
+
+<a id="operator-workspace-scenarios"></a>
+## Operator workspace and scenarios
+
+The browser workspace combines fleet state, selection, cameras, overlays, scenario loading, environment controls, replay, and command feedback. Scenario behavior depends on both backend asset placement and the matching browser environment selection.
+
+<a id="system-architecture"></a>
+## System architecture
+
+An ASP.NET Core host owns sessions, room lifecycles, simulation ticks, REST surfaces, and SignalR publication. The vanilla TypeScript and Three.js client renders the operating picture and sends scoped operator requests back to the host.
+
+<a id="build"></a>
+<a id="contributor-workflow"></a>
+## Contributor workflow
+
+The repository builds the .NET host and Vite client together, with xUnit and Vitest covering server and browser behavior. CI uses Node 22. The resolved client dependencies are Three.js 0.185.1, TypeScript 7.0.2, Vite 8.2.2, Vitest 4.1.11, and SignalR 10.0.11. Contributor guidance records the supported commands, submodule setup, source layout, formatting gate, bundle ceilings, and release-parity checks.
+
+<a id="security-privacy-observability-deployment"></a>
+## Security, privacy, observability, and deployment
+
+Deployment guidance separates the simulation-only control gate from transport, session, browser storage, optional exports, telemetry, and hosted-service concerns. Privacy and compliance conclusions depend on the operator's deployment and enabled integrations.
+
+<a id="reference"></a>
+## Reference
+
+The reference contract collects HTTP routes, SignalR methods, commands, refusal codes, scenarios, controls, and the repository directory map. Dense tables remain close to the workflow that first uses them and provide explicit anchors for direct links.
+
+<a id="license-project-links"></a>
+## License and project links
+
+ResQ Viz is licensed under [Apache-2.0](LICENSE). Use [SECURITY.md](SECURITY.md) to report vulnerabilities, [GitHub Issues](https://github.com/resq-software/viz/issues) for tracked work, and the [ResQ organization](https://github.com/resq-software) for related repositories.
