@@ -504,7 +504,7 @@ Selection/filter/overlay/camera/replay/export stays browser-only. Scenarios, air
 
 `RunScenario` destructively resets the room, then spawns assets; ground/surface members settle against terrain during the request. Before an unbound load, **SELECT coastal** for `coastal-search`, `coastal-transit`, or `port-incident`. **RESTORE alpine** for `mixed-ground`, `ground-convoy`, `flood-response`, `link-loss-divergence`, or `mixed-load-150`. Fresh rooms start alpine. Unbound loads keep current presentation. `link-loss-divergence` does not cut links.
 
-Six definitions exist: `wildfire-interface`, `hurricane-melissa`, `flood-riverine`, `urban-collapse`, `alpine-sar`, and `canyon-sar`. A matching `resq:scenario-start` applies atmosphere/camera. Manual override suppresses only terrain/water. Cards emit after successful requests but expose only unbound `single`, `swarm-5`, `swarm-20`, and `sar`. Keyboard adds unbound `multi-agency-sar`. Import allow-list uses those cards, rejecting all six bindings and `multi-agency-sar`. Accepted imports emit without awaiting success. No shipped control/import reaches bound presentation, and exported `multi-agency-sar` does not round-trip. Direct REST resets/spawns without an event, leaving presentation unchanged.
+Six definitions exist: `wildfire-interface`, `hurricane-melissa`, `flood-riverine`, `urban-collapse`, `alpine-sar`, and `canyon-sar`. A matching `resq:scenario-start` applies atmosphere/camera. Manual override suppresses only terrain/water. Cards emit after successful requests but expose only unbound `single`, `swarm-5`, `swarm-20`, and `sar`. Keyboard adds unbound `multi-agency-sar`. Import allow-list uses those cards, rejecting all six bindings and `multi-agency-sar`. Accepted imports emit without awaiting success. No shipped control/import reaches bound presentation, and exported `multi-agency-sar` does not round-trip. Direct REST resets/spawns without applying bound presentation.
 
 <details>
 <summary>Complete scenario catalog (19 presets)</summary>
@@ -529,7 +529,7 @@ Six definitions exist: `wildfire-interface`, `hurricane-melissa`, `flood-riverin
 | `flood-response` | 3 | 3 | 2 | Mappers/supply/ferries (alpine). |
 | `port-incident` | 2 | 3 | 3 | Overwatch/cordon/samplers (coastal). |
 | `link-loss-divergence` | 1 | 1 | 1 | Fallback comparison (alpine/no cut). |
-| `mixed-load-150` | 50 | 50 | 50 | 150-asset grid (alpine). |
+| `mixed-load-150` | 50 | 50 | 50 | Three 50-asset grids (alpine). |
 
 </details>
 
