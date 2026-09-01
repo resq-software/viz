@@ -493,85 +493,83 @@ CPA extrapolates two reported motions as straight lines. It reports current slan
 <a id="operator-workspace-scenarios"></a>
 ## Operator workspace and scenarios
 
-Selection and lifecycle are domain-neutral. One selection feeds scene, outliner, inspector, mini-map, and panel. Air loads first. Ground/surface renderers load on demand, with a selectable marker. Persistent filters cover domain, class, agency, fleet, state, and freshness; the panel reads capabilities before offering commands.
+Asset selection/lifecycle is domain-neutral across scene/outliner/inspector/mini-map/panel. Air loads first. Ground/surface rendering loads on demand behind a fallback. Filters persist across domain/class/agency/fleet/state/freshness. Capabilities gate panel commands. The picture includes domain overlays, read-only tracks/CPA, event log, mini-map, orbit/free-fly/follow/domain-chase/cockpit/FPV cameras, editor dock/outliner/inspector/gizmo, DVR replay, and scene JSON.
 
-The view draws ground-mobility and surface-navigation overlays; read-only tracks carry freshness, accuracy, motion, and closest-point-of-approach geometry. The event log and mini-map show state changes and position. Cameras support orbit, free-fly, follow, domain chase, cockpit instruments, and FPV; the editor dock holds the outliner, inspector, and air-only move gizmo. The DVR records, transports, and replays frames. Scene JSON carries terrain and scenario setup.
-
-Selection, filters, overlays, cameras, replay, panels, and export stay in the browser. Scenario loads, air nudges, backhaul, live transport, imports, and gizmo release mutate the room. Scene import can change terrain and request a scenario.
+Selection/filter/overlay/camera/replay/export stays browser-only. Scenarios, air nudges, backhaul, live transport, imports, and gizmo release mutate the room.
 
 <a id="scenario-catalog"></a>
 ### Scenario catalog and environments
 
-The backend scenario endpoint places assets only. Browser environments bind `wildfire-interface`, `hurricane-melissa`, `flood-riverine`, `urban-collapse`, `alpine-sar`, and `canyon-sar`. Their atmosphere and camera always apply. A manual terrain override suppresses only automatic terrain and water changes. Unbound scenarios retain the current browser environment.
+`RunScenario` is destructive: it resets the room, then spawns configured assets whose ground/surface members settle against terrain during the request. Before an unbound load, **SELECT coastal** for `coastal-search`, `coastal-transit`, or `port-incident`. **RESTORE alpine** for `mixed-ground`, `ground-convoy`, `flood-response`, `link-loss-divergence`, or `mixed-load-150`. Fresh rooms start alpine. Unbound loads retain current presentation. `link-loss-divergence` does not cut links.
 
-`coastal-search`, `coastal-transit`, and `port-incident` use **coastal**, while `mixed-ground`, `ground-convoy`, `flood-response`, `link-loss-divergence`, and `mixed-load-150` use **alpine**. Fresh rooms start alpine, but changed terrain must be restored. `link-loss-divergence` places assets with different policies. It does not cut links.
+Browser scenario controls dispatch `resq:scenario-start` after success. It applies bound presentation for `wildfire-interface`, `hurricane-melissa`, `flood-riverine`, `urban-collapse`, `alpine-sar`, and `canyon-sar`. Atmosphere/camera always apply. Manual override suppresses only terrain/water. Scene import dispatches immediately after issuing its validated request, without awaiting success. Direct REST resets/spawns but emits no browser event, leaving atmosphere/terrain/camera unchanged.
 
 <details>
 <summary>Complete scenario catalog (19 presets)</summary>
 
 | Scenario | Air | Ground | Surface | Purpose, composition, and browser environment |
 | :--- | ---: | ---: | ---: | :--- |
-| `single` | 1 | 0 | 0 | Smoke test. Current look. |
-| `swarm-5` | 5 | 0 | 0 | Small formation. Current look. |
-| `swarm-20` | 20 | 0 | 0 | Dense swarm. Current look. |
-| `sar` | 3 | 0 | 0 | Lead, scout, and relay. Current look. |
-| `multi-agency-sar` | 12 | 0 | 0 | Three-vendor air picture. Current look. |
-| `wildfire-interface` | 5 | 0 | 0 | Fire recon. Ridgeline, smoke, survey. |
-| `hurricane-melissa` | 6 | 0 | 0 | Storm ISR. Coastal surge, overcast, survey. |
-| `flood-riverine` | 5 | 0 | 0 | River survey. Alpine floodwater, clear, survey. |
-| `urban-collapse` | 6 | 0 | 0 | Structure search. Canyon, dust, survey. |
-| `alpine-sar` | 4 | 0 | 0 | Avalanche response. Alpine, clear, survey. |
-| `canyon-sar` | 4 | 0 | 0 | Gorge search. Canyon, clear high sun, survey. |
-| `mixed-ground` | 3 | 3 | 0 | Air and three rover classes on graded alpine ground. |
-| `ground-convoy` | 1 | 3 | 0 | Air overwatch and three-rover fall-line convoy. Alpine. |
-| `coastal-search` | 3 | 2 | 3 | Air, shore, and vessel search group. Coastal. |
-| `coastal-transit` | 1 | 0 | 3 | Air overwatch and three-vessel channel column. Coastal. |
-| `flood-response` | 3 | 3 | 2 | Mapping aircraft, supply rovers, and ferries. Alpine. |
-| `port-incident` | 2 | 3 | 3 | Air overwatch, shore cordon, and water samplers. Coastal. |
-| `link-loss-divergence` | 1 | 1 | 1 | Three declared fallback policies. Alpine. No link cut. |
-| `mixed-load-150` | 50 | 50 | 50 | Three 50-asset load grids. Alpine. |
+| `single` | 1 | 0 | 0 | Smoke test (current). |
+| `swarm-5` | 5 | 0 | 0 | Formation (current). |
+| `swarm-20` | 20 | 0 | 0 | Dense swarm (current). |
+| `sar` | 3 | 0 | 0 | Lead/scout/relay (current). |
+| `multi-agency-sar` | 12 | 0 | 0 | Three vendors (current). |
+| `wildfire-interface` | 5 | 0 | 0 | Fire recon (ridgeline/smoke/survey). |
+| `hurricane-melissa` | 6 | 0 | 0 | Storm ISR (coastal-surge/overcast/survey). |
+| `flood-riverine` | 5 | 0 | 0 | River survey (alpine-flood/clear/survey). |
+| `urban-collapse` | 6 | 0 | 0 | Structure search (canyon/dust/survey). |
+| `alpine-sar` | 4 | 0 | 0 | Avalanche response (alpine/clear/survey). |
+| `canyon-sar` | 4 | 0 | 0 | Gorge search (canyon/high-sun/survey). |
+| `mixed-ground` | 3 | 3 | 0 | Air/three-rover hillside (alpine). |
+| `ground-convoy` | 1 | 3 | 0 | Air/rover convoy (alpine). |
+| `coastal-search` | 3 | 2 | 3 | Air/shore/vessel search (coastal). |
+| `coastal-transit` | 1 | 0 | 3 | Air/vessel column (coastal). |
+| `flood-response` | 3 | 3 | 2 | Mappers/supply/ferries (alpine). |
+| `port-incident` | 2 | 3 | 3 | Overwatch/cordon/samplers (coastal). |
+| `link-loss-divergence` | 1 | 1 | 1 | Fallback comparison (alpine/no cut). |
+| `mixed-load-150` | 50 | 50 | 50 | Three 50-asset grids (alpine). |
 
 </details>
 
 <a id="live-controls"></a>
-### Live browser controls
+### Canvas gestures and keyboard shortcuts
 
-The checked-in HTML shortcut panel is stale. This table follows the handlers instantiated by the production client.
+Checked-in HTML help is stale. This table follows instantiated handlers. `Out` excludes INPUT/SELECT. `Browser` is browser-only. `Request` mutates the room.
 
 <details>
-<summary>Complete live mouse and keyboard controls</summary>
+<summary>Canvas gestures and keyboard shortcuts</summary>
 
 | Method or key | Context or modifier | Action | Scope |
 | :--- | :--- | :--- | :--- |
-| LMB / MMB / wheel | Scene | Orbit / pan / zoom. Follow-pan keeps tracking. | Browser only |
-| RMB + W/S/A/D/Q/E or Space | Hold RMB. Shift gives 4× speed. | Mouse-look and fly forward/back/left/right/up/down. | Browser only |
-| Canvas click | No target pick pending | Select a hit asset. Empty click clears non-air selection. | Browser only |
-| Canvas click | Selected air. Terrain or selected-object pass-through. | Send v1 air `goto` at held altitude. | Simulation request |
-| Canvas click | Capability target pending | Terrain hit supplies the declared target. Miss cancels. | Browser pick, then simulation request |
-| Mini-map click | Within the live 80 m tolerance | Select the nearest drone or asset marker. | Browser only |
-| R | Outside an input or select | Reset the room simulation. | Simulation request |
-| Tab | Outside an input or select | Collapse or open the main sidebar. | Browser only |
-| 1–5 | Unshifted | Load `single` / `swarm-5` / `swarm-20` / `sar` / `multi-agency-sar`. | Request, then browser environment |
-| Ctrl+Shift+R | Outside an input or select | Toggle investor-mode cinematic framing. | Browser and reset request |
-| Shift+1–8 | No Ctrl or Meta | 1 overview, 2 tactical, 3 cockpit-named follow, 4 ground, 5 investor, 6 air chase, 7 ground chase, 8 surface chase. | Browser only |
-| K | No Ctrl or Meta | Toggle the simulated mesh backhaul. | Simulation request |
-| V / H / G | Scene focus | Toggle velocity vectors / altitude halos / formation links. | Browser only |
-| C | Current selected asset group | Cycle Free → Chase → FPV. No group returns Free. | Browser only |
-| I | Plain, scene focus | Toggle cockpit and WebGPU sensor statistics. Both handlers fire. | Browser only |
-| M | Selected air asset | Toggle gizmo. Release sends `goto`. | Browser, then request |
-| F | Selected asset | Toggle follow-orbit. | Browser only |
-| Home | Fleet present | Fit the camera to every visible domain. | Browser only |
-| [ / ] | Fleet present | Select previous / next visible asset in publication order. | Browser only |
-| W/S/A/D/Q/E | Selected air asset, RMB released | Forward/back, yaw left/right, climb/descend. Shift enlarges the nudge. | Simulation request |
-| ? / Escape | Scene focus / modal view | Toggle hints / cancel a pick, close hints, or dismiss the focused panel. | Browser only |
-| Backslash (`\`) | No Ctrl, Meta, or Alt | Collapse or open the editor dock. | Browser only |
-| Space | DVR | Pause/resume the room live, or buffered playback in replay. | Live request. Browser replay. |
-| Period (`.`) | DVR | Step the room live, or one buffered frame in replay. | Live request. Browser replay. |
-| P / O | Scene focus | Toggle onboard picture-in-picture / cycle its mode. | Browser only |
+| LMB / MMB / wheel | Canvas | Orbit / pan / zoom. | Browser |
+| RMB + W/S/A/D/Q/E/Space | Shift: 4× | Look and fly six axes. | Browser |
+| Canvas click | No target pending | Select asset. Empty clears non-air. | Browser |
+| Canvas click | Selected air, terrain/pass-through hit | Send v1 air `goto` at held altitude. | Request |
+| Canvas click | Capability target pending | Supply terrain target. Miss cancels. | Both |
+| Mini-map click | Within 80 m | Select nearest entity. | Browser |
+| R | Out | Reset room. | Request |
+| Tab | Out | Toggle sidebar. | Browser |
+| 1–5 | Unshifted, out | `single` / `swarm-5` / `swarm-20` / `sar` / `multi-agency-sar`: reset/load, keep presentation. | Request |
+| Ctrl+Shift+R | Out | Investor camera. | Both (reset) |
+| Shift+1–8 | Out, no Ctrl/Meta | Overview/tactical/cockpit-follow/ground/investor/air-chase/ground-chase/surface-chase. | Browser |
+| K | Out, no Ctrl/Meta | Toggle backhaul. | Request |
+| V / H / G | Out | Velocity/halos/formation. | Browser |
+| C | Out, selected group | Free → Chase → FPV. No group returns Free. | Browser |
+| I | Plain, outside INPUT/SELECT/TEXTAREA/editable | Cockpit and sensor stats. | Browser |
+| M | Out, selected v1 drone | Toggle gizmo. Release sends `goto`. | Both |
+| F | Out, selected asset | Toggle follow. | Browser |
+| Home | Out, fleet | Fit visible fleet. | Browser |
+| [ / ] | Out, fleet | Previous/next visible asset. | Browser |
+| W/S/A/D/Q/E | Out, selected air, RMB up | Move/yaw/climb. Shift enlarges step. | Request |
+| ? / Escape | Out. Panel Escape works focused. | Hints/cancel/dismiss. | Browser |
+| Backslash (`\`) | Out, no Ctrl/Meta/Alt | Toggle editor dock. | Browser |
+| Space | Out, no Ctrl/Meta/Alt | Live/replay pause. | Request live / browser replay |
+| Period (`.`) | Out, no Ctrl/Meta/Alt | Live/replay step. | Request live / browser replay |
+| P / O | Out, no Ctrl/Meta/Alt | Toggle PIP / cycle mode. | Browser |
 
 </details>
 
-Three live shortcut collisions remain. Plain `I` toggles both the cockpit and the WebGPU sensor-statistics panel. `Space` operates the DVR and also flies the camera upward while RMB free-fly is held. `Ctrl+Shift+R` reaches both reset and investor mode because the reset listener does not reject modifiers. Period has one production binding: DVR. Editor transport is not instantiated.
+Three collisions remain. Plain `I` toggles cockpit and sensor stats, while `Space` drives DVR and climbs under RMB. `Ctrl+Shift+R` resets and toggles investor because reset accepts modifiers. Period is DVR-only. Editor transport is not instantiated.
 
 <a id="system-architecture"></a>
 ## System architecture
