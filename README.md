@@ -739,13 +739,13 @@ ResQ Viz has no hardware bearer: commands stay inside isolated in-process simula
 
 ### Browser and exported data
 
-`localStorage` retains visual settings, hint visibility or dismissal, cockpit visibility, editor-dock collapse, and fleet-filter choices. Per-tab `sessionStorage` holds compressed terrain geometry under `resq-geo-v1-*`. Terrain and scenario choices reach the server in requests, while operators persist or share them through `resq-scene.json` export/import rather than browser storage.
+`localStorage` retains visual settings, hint visibility or dismissal, cockpit visibility, editor-dock collapse, and fleet filters. Per-tab `sessionStorage` holds compressed terrain geometry under `resq-geo-v1-*`. Terrain and scenario choices reach the server in requests, while operators persist or share them through `resq-scene.json` export/import rather than browser storage.
 
 ### Process state and optional exports
 
 Rooms and their command, idempotency, and audit state are room-scoped process memory. One process is the default supported topology. Command results cap at 512. Idempotency entries become eligible for age eviction ten minutes after update, but the 1,024-entry capacity can evict older entries sooner. Command decisions retain 256 entries. Default lease audit capacity is 256 and configurable. Resets clear command results, idempotency entries, and active leases while retaining bounded audit trails. The ten-second reaper removes zero-connection rooms idle for more than 60 seconds. Reaping or a rolling restart discards active rooms and state, which instances neither share nor retain as a durable security audit.
 
-Unconfigured PostHog or GA4 providers are omitted, and rejected initialization is logged. When enabled, providers may persist identifiers or cookies and send pageview, autocapture, event, and identity data to their endpoints. PostHog defaults to `localStorage+cookie` and uses a `.resq.software` cross-subdomain cookie on ResQ hosts. Cloudflare Web Analytics is separate: a deployment may inject its script and beacon, and the CSP permits those endpoints. OpenTelemetry covers ASP.NET Core, HTTP clients, runtime data, scenario activities, and Viz broadcast, resync, backpressure, and timing meters. OTLP export requires `OTEL_EXPORTER_OTLP_ENDPOINT` and an operator-provided collector.
+PostHog and GA4 load only with build-time variables. Rejected initialization is logged. When enabled, providers may persist identifiers or cookies and send pageview, autocapture, event, and identity data to their endpoints. PostHog defaults to `localStorage+cookie` and uses a `.resq.software` cross-subdomain cookie on ResQ hosts. Cloudflare Web Analytics is separate: a deployment may inject its script and beacon, and the CSP permits those endpoints. OpenTelemetry covers ASP.NET Core, HTTP clients, runtime data, scenario activities, and Viz broadcast, resync, backpressure, and timing meters. OTLP export requires `OTEL_EXPORTER_OTLP_ENDPOINT` and an operator-provided collector.
 
 ### Deployment facts
 
