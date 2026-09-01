@@ -653,13 +653,15 @@ dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-b
 dotnet format ResQ.Viz.sln --no-restore --verify-no-changes
 ```
 
-Release invokes the npm and Vite client build through MSBuild. Debug skips it. At runtime, the Development environment starts and proxies the Vite development server. Run client checks directly from `src/ResQ.Viz.Web`:
+Release invokes the npm and Vite client build through MSBuild. Debug skips it. At runtime, the Development environment starts and proxies the Vite development server. From the repository root, run:
 
 ```bash
+cd src/ResQ.Viz.Web
 npm ci --legacy-peer-deps
 npm run typecheck
 npm test
 npm run build
+cd ../..
 ```
 
 The permanent performance and size gates below are distinct from the dated [reference run](#reference-run-2026-09-01--4a4abd4). The first four live in `MixedFleetLoadTests`, and CI enforces the bundle ceilings.
@@ -672,21 +674,31 @@ The permanent performance and size gates below are distinct from the dated [refe
 | Delta/snapshot payload | < 90% underway, < 25% holding |
 | Built entry JavaScript / CSS | ≤ 819200 / ≤ 53248 bytes |
 
-Run the determinism and load suites separately when changing simulation order, timing, snapshots, or deltas. Detailed logging prints the measurements:
+Run the determinism and load suites separately when changing simulation order, timing, snapshots, or deltas. Their `--no-build --no-restore` options require the successful Release build above. Detailed logging prints the measurements:
 
 ```bash
 dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~ReplayDeterminismTests" --logger "console;verbosity=detailed"
 dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~MixedFleetLoadTests" --logger "console;verbosity=detailed"
-stat -c '%n %s bytes' src/ResQ.Viz.Web/wwwroot/assets/index-*.js src/ResQ.Viz.Web/wwwroot/assets/index-*.css
+node -e 'const fs=require("node:fs"),d="src/ResQ.Viz.Web/wwwroot/assets/";for(const f of fs.readdirSync(d).filter(f=>/^index-.*\.(js|css)$/.test(f)))console.log(f,fs.statSync(d+f).size,"bytes")'
 ```
 
 Work on a topic branch, using a dedicated worktree when other changes are active. Keep commits scoped and preserve unrelated local changes.
 
-C# changes need the Apache-2.0 header and XML documentation on public APIs. Backend tests use xUnit with FluentAssertions. Vitest runs the central client suite in `src/ResQ.Viz.Web/client/__tests__/`, and documentation stays derived from source and tests. Install the canonical hook documented in [AGENTS.md](AGENTS.md) and the [organization guide](https://github.com/resq-software/dev/blob/main/AGENTS.md#git-hooks). It runs alongside this repository's Release-build and formatting checks:
+C# changes need the Apache-2.0 header and XML documentation on public APIs. Backend tests use xUnit with FluentAssertions. Vitest runs the central client suite in `src/ResQ.Viz.Web/client/__tests__/`, and documentation stays derived from source and tests.
+
+Install the canonical hook documented in [AGENTS.md](AGENTS.md) and the [organization guide](https://github.com/resq-software/dev/blob/main/AGENTS.md#git-hooks). It runs alongside this repository's Release-build and formatting checks. For a POSIX shell:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/resq-software/dev/main/scripts/install-hooks.sh | sh
 ```
+
+For PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/resq-software/dev/main/scripts/install-hooks.ps1 | iex
+```
+
+`.github/workflows/ci.yml` runs the .NET gates plus client typecheck, build, Vitest, and bundle enforcement. `.github/workflows/security.yml` runs the separate security workflow.
 
 <details>
 <summary><strong>Repository map</strong></summary>
