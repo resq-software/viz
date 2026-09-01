@@ -437,7 +437,55 @@ On a gap, the browser keeps rendering its last good picture and calls `RequestKe
 <a id="domain-physics-advisory-models"></a>
 ## Domain physics and advisory models
 
-Each domain uses its own simulated movement and environment checks. The operating picture exposes ground traversability, rollover proximity, under-keel clearance, docking guidance, and CPA assessments as advisory output rather than certified navigation or autonomy decisions.
+The shared contract does not flatten motion into one generic vehicle. Air uses SDK flight physics. Ground models wheel or track geometry against terrain, while surface models a displacement hull in wind, current, and water depth. External tracks sit beside assets as observations.
+
+> **Model boundary:** The [source-enforced limits](#source-enforced-limits-and-gates) apply: ±20 km locally, 50 air assets, and 200 total assets per room. Geodetic use inherits the [placeholder-origin constraint](#coordinate-boundary). All models are simulation-only. Navigation, mobility, clearance, docking, and approach assessments are advisory.
+
+<a id="domain-model-comparison"></a>
+### Motion, state, commands, and safe actions
+
+| Domain or observation | Shipped motion model / input | Published domain-specific state | Typical commands | Safe-action default | Advisory output |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Air | SDK multirotor / flight commands | Airborne, heading/course, climb, three altitudes, wind, airspeed | Take off, fly, loiter, land | Return to launch, then land/stop fallback | Geofence and position uncertainty |
+| Ground | Bicycle or skid-steer / speed and turn guidance | Speed, steering, attitude, terrain, traction, immobilisation | Drive, reverse, park, stop | Stop and hold | Straight-line traversability and rollover proximity |
+| Surface | Displacement hull / thrust and rudder response | Heading/course, surge/sway, current, depth, draft, clearance, waves | Transit, set course/speed, reverse, dock | Drift and alert | Water-route clearance and docking guidance |
+| External track | Fused reported pose/velocity | Classification, sources, identity, accuracy, confidence, age | None | None, observations are not commandable | CPA, bearing, closing state, encounter geometry |
+
+<a id="air-physics"></a>
+### Air: SDK flight-state projection
+
+The air adapter leaves multirotor integration in the pinned simulation SDK. It projects framed pose/twist, ground velocity, airspeed, battery energy, and height above terrain, launch, and mean sea level. The command adapter translates v2 intent into SDK flight commands. Launch position is home. Link loss declares return to base; without a usable fix or target, the resolver falls back to land and then stop.
+
+<a id="ground-physics"></a>
+### Ground: profile-specific contact and mobility
+
+Three rover profiles ship. Ackermann uses a rate-limited bicycle model, reaches 8 m/s, and needs a 3.2 m turning radius. Differential and tracked rovers drive each side independently, reach 5 and 3.5 m/s, and can pivot in place. The tracked profile trades speed for the largest grade and step envelope: 35 degrees and 0.30 m, versus 30 degrees/0.15 m for differential and 25 degrees/0.12 m for Ackermann.
+
+A spawn discards the requested vertical coordinate and settles the chassis on terrain under its footprint. There is no suspension model. Footprint-scaled normal sampling and filtering stabilise roll and pitch. Surface, precipitation, grade, cross-slope, zones, and step height set traction or a speed ceiling. An unmountable rise reverts translation. Water, excessive grade, or insufficient grip can immobilise autonomy while leaving slow reverse recovery available.
+
+Pivot-capable rovers turn toward a target before driving. Ackermann guidance uses look-ahead, steering lock, cornering limits, and braking to arc toward it. The target check samples only the straight segment, up to 512 points, and reports clear, costly, unknown, or blocked ground. It neither searches for another route nor provides general obstacle avoidance.
+
+Rollover proximity compares cross-slope with a profile-specific inferred stability angle and publishes a 0–1 fraction. The lower operational limit triggers advice and a speed reduction; the inferred tipping band may refuse the straight-line preview. Mobility and rollover remain quasi-static decision support, not certified limits. Ground link loss stops and holds.
+
+<a id="surface-physics"></a>
+### Surface: hull response, water clearance, and docking
+
+The shipped 6.5 m workboat is a single-screw displacement hull with first-order thrust and rudder response, a 6 m/s ahead limit, 2 m/s astern limit, and 12 m minimum turn radius. Its 0.6 m/s minimum is a steerage advisory, not a floor: rudder authority falls with speed. Ground track combines surge and sway with coupled current. Wind adds leeway, turns add sideslip, and zero thrust leaves drift.
+
+Water checks combine the water mask, bathymetry, the 0.55 m draft, and prohibited zones. Under-keel clearance is depth minus draft. This hull's margin is 0.305 m: safe at or above twice the margin, marginal down to it, critical below it, and aground at zero or less. Critical clearance reduces speed smoothly. Aground recovery retains 15% of the speed ceiling. All bands and route checks are advisory and use simulated bathymetry.
+
+Docking uses a staged pose approach. Approach, corridor, and final phases tighten speed from 50% to 25% to 12% of hull maximum before mooring. Timeout, corridor departure, obstructed water, lost position, overshoot, or operator cancellation abort the attempt, stop thrust, and leave the vessel commandable. Docking guidance is advisory.
+
+Wave heave, roll, and pitch are deterministic visual motion only. They never feed navigation, clearance, or hull dynamics. Generic station-keeping code exists, but the shipped hull does not declare `StationKeep`, refuses that command, and uses drift-and-alert on link loss.
+
+<a id="external-tracks-cpa"></a>
+### External tracks and closest approach
+
+An external track is structurally separate from an asset: it has its own identifier space, no capabilities, and no command endpoint. Reports carry cooperative or non-cooperative sources, classification, identity, motion, accuracy, and confidence. Newer observations fuse by identifier. The newest measured motion and accuracy win; absent classification, label, or transponder data do not erase prior reports. Sources remain ordered by recency.
+
+The per-room store uses simulated time, making replay, aging, and eviction deterministic. Defaults keep a report fresh for 5 seconds, stale through 20 with confidence decay, lost after that, and retire it after 60. Capacity is 256 tracks and 8 sources per track. A full store removes expired tracks, then evicts the stalest only for a newer report. Older or over-capacity reports are refused and counted.
+
+CPA extrapolates two reported motions as straight lines. It reports current and closest slant, horizontal, and vertical separation, time to closest approach, relative bearing, closing state, and encounter geometry. The result carries the older age, lower confidence, and worse freshness. CPA issues no manoeuvre, applies no navigation rules, and confers no collision-avoidance authority. It is advisory decision support.
 
 <a id="operator-workspace-scenarios"></a>
 ## Operator workspace and scenarios
