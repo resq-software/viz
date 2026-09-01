@@ -754,7 +754,7 @@ Replicas require session affinity: cookie validation requires the room in the re
 <a id="reference"></a>
 ## Reference
 
-Use the existing [scenario catalog](#scenario-catalog), [live controls](#live-controls), and [repository map](#repository-map) with the contracts below.
+Use the [scenario catalog](#scenario-catalog), [live controls](#live-controls), and [repository map](#repository-map) with the contracts below.
 
 <details>
 <summary>HTTP REST reference (44 actions)</summary>
@@ -777,8 +777,8 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/sim/drone` |`{position:[x,y,z]}`→`200`<br>`400/429`|
 | POST | `/api/sim/drone/{id}/cmd` |`{type,target?,yaw?}`→`200`<br>`400/404`|
 | POST | `/api/sim/weather` |`{mode,windSpeed,windDirection}`→`200`<br>`400`|
-| POST | `/api/sim/fault` |`{droneId,type}`→validate+log-only `200`<br>`404`,no simulated fault/v2-audit|
-| POST | `/api/sim/mesh/backhaul` |`{killed}`→`200`|
+| POST | `/api/sim/fault` |`{droneId,type}`→validate+log-only `200/400`<br>unknown-drone `404`,no simulated fault/v2-audit|
+| POST | `/api/sim/mesh/backhaul` |`{killed}`→`200/400`|
 | GET | `/api/sim/mesh/backhaul` |Backhaul-state→`200`|
 | GET | `/api/sim/state` |Drone-projection→`200`|
 | GET | `/api/sim/scenarios` |Preset-names→`200`|
@@ -786,7 +786,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/sim/preset/{key}` |Terrain-preset→`200`<br>`400`|
 | POST | `/api/sim/heightmap` |`{rows,cols,width,depth,cells}`→`200`<br>`400`|
 | DELETE | `/api/sim/heightmap` |Clear-override→`200`|
-| GET | `/api/sim/terrain/eroded` |Bake+install authoritative room DEM;return grid<br>`{preset=alpine,seed=1337,iterations=60000(0..400000),res=513(64..1025)}`→`200/400`|
+| GET | `/api/sim/terrain/eroded` |Bakes and installs the authoritative room DEM; returns its grid.<br>`{ preset=alpine, seed=1337, iterations=60000 (0..400000), res=513 (64..1025) }`→`200/400`|
 | POST | `/api/v2/sim/assets/{id}/commands` |`{kind,idempotencyKey,issuerId?,commandId?,deadline?,controlLeaseId?,frame?,target?,constraints?,parameters?}`→`202`<br>`400/404/409/501`(geodetic target,no local origin)|
 | GET | `/api/v2/sim/commands/{commandId}` |Poll-result→`200`<br>`404`|
 | GET | `/api/v2/sim/snapshot` |Complete-v2-snapshot→`200`|
@@ -797,7 +797,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 | POST | `/api/v2/sim/assets/{id}/link` |`{available,issuerId?,reason?}`→`200`<br>`400/403/404`|
 | GET | `/api/v2/sim/control/mode` |Deployment-mode→`200`|
 | GET | `/api/v2/sim/control/audit` |Bounded-decisions/leases→`200`|
-| GET | `/api/v2/sim/assets/{id}/control` |Lease-registry only→`200`;syntactically-valid nonexistent asset id→`isControlled:false`,not existence proof<br>`400` malformed-id|
+| GET | `/api/v2/sim/assets/{id}/control` |Lease registry only. A syntactically valid nonexistent asset ID returns `200` with `isControlled:false`; this does not establish asset existence.<br>Malformed ID→`400`|
 | POST | `/api/v2/sim/assets/{id}/control` |`{holderId,role,durationSeconds?}`→`200`<br>`400/403/404/409`|
 | POST | `/api/v2/sim/assets/{id}/control/renew` |`{holderId,leaseId,durationSeconds?}`→`200`<br>`400/404/409`|
 | POST | `/api/v2/sim/assets/{id}/control/release` |`{holderId,leaseId}`→`200`<br>`400/404/409`|
@@ -813,7 +813,7 @@ All routes except session creation require `viz_session`. Expect `401` without i
 <details>
 <summary>SignalR contract (6 messages)</summary>
 
-The `/viz` handshake requires the `viz_session` room cookie, which binds each connection to its room. Subscriptions and group membership are connection-scoped, so reconnecting clients resubscribe. The production client sets full-snapshot intent first. An exhausted fresh delta rejoin therefore leaves that client on full snapshots; the generic hub preserves whatever prior stream existed.
+The `/viz` handshake requires the `viz_session` room cookie, which binds each connection to its room. Subscriptions and group membership are connection-scoped, so reconnecting clients resubscribe. The production client sets full-snapshot intent first. An exhausted fresh delta rejoin therefore leaves that client on full snapshots; the generic hub preserves the prior stream.
 
 | Direction | Name | Payload/return · audience/repair |
 | :--- | :--- | :--- |
