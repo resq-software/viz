@@ -209,7 +209,7 @@ flowchart TD
     A[Build envelope<br/>validate payload and normalize target/frame] -->|build refusal| E[No new audit record<br/>not pollable]
     A --> B[Idempotency.Classify]
     B -->|duplicate| D[Replay prior result when retained<br/>no new audit or command resource]
-    B -->|key conflict| E
+    B -->|key conflict| Q[HTTP 409 key-reuse conflict<br/>no new audit or command resource]
     B -->|new| C[Capture asset frame<br/>compute pure catalog verdict]
     C -->|payload.*, deadline.*, or asset.*<br/>including target payload| F[Decision audit only<br/>not pollable]
     C --> G[Control authority]
@@ -219,7 +219,8 @@ flowchart TD
     H --> I[Link reachability]
     I -->|refused| F
     I --> J[Idempotency.Claim]
-    J -->|racing duplicate or conflict| D
+    J -->|racing duplicate| D
+    J -->|racing key conflict| Q
     J -->|new claim| K[Translate intent]
     K -->|translation rejected| L[Store result and audit decision<br/>pollable]
     K --> M[Dispatch to room world and simulated asset]
