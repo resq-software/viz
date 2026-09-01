@@ -632,7 +632,85 @@ In the browser, [`app.ts`](src/ResQ.Viz.Web/client/app.ts) starts analytics boot
 <a id="contributor-workflow"></a>
 ## Contributor workflow
 
-Release builds invoke Vite through MSBuild. Debug builds skip that target. In the Development environment, the host uses the Vite dev server. CI uses Node 22. The resolved client dependencies are Three.js 0.185.1, TypeScript 7.0.2, Vite 8.2.2, Vitest 4.1.11, and SignalR 10.0.11. xUnit and Vitest cover server and browser behavior. Contributor guidance records the supported commands, submodule setup, source layout, formatting gate, bundle ceilings, and release-parity checks.
+Install Git with submodule support, the .NET 10 SDK, Node.js 22.12 or newer with npm, and a browser with WebGL2. WebGPU is optional and adds compute-backed sensors. See the version badges above [Contents](#contents) and the [client lockfile](src/ResQ.Viz.Web/package-lock.json).
+
+For an existing checkout, initialize the SDK submodule and make a clean client install from the web project:
+
+```bash
+git submodule update --init --recursive
+cd src/ResQ.Viz.Web
+npm ci --legacy-peer-deps
+cd ../..
+```
+
+Run the repository gates from the root, in order:
+
+```bash
+dotnet restore ResQ.Viz.sln
+dotnet build ResQ.Viz.sln -c Debug --no-restore
+dotnet build ResQ.Viz.sln -c Release --no-restore
+dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-build --no-restore
+dotnet format ResQ.Viz.sln --no-restore --verify-no-changes
+```
+
+Release invokes the npm and Vite client build through MSBuild. Debug skips it. At runtime, the Development environment starts and proxies the Vite development server. Run client checks directly from `src/ResQ.Viz.Web`:
+
+```bash
+npm ci --legacy-peer-deps
+npm run typecheck
+npm test
+npm run build
+```
+
+The permanent performance and size gates below are distinct from the dated [reference run](#reference-run-2026-09-01--4a4abd4). The first four live in `MixedFleetLoadTests`, and CI enforces the bundle ceilings.
+
+| Gate | Required bound |
+| :--- | ---: |
+| 150-asset world-step p95 | ≤ 16.667 ms |
+| 150-asset frame total p95 | ≤ 100 ms |
+| Median step ratio, 150 versus 15 assets | ≤ 25× |
+| Delta/snapshot payload | < 90% underway, < 25% holding |
+| Built entry JavaScript / CSS | ≤ 819200 / ≤ 53248 bytes |
+
+Run the determinism and load suites separately when changing simulation order, timing, snapshots, or deltas. Detailed logging prints the measurements:
+
+```bash
+dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~ReplayDeterminismTests" --logger "console;verbosity=detailed"
+dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName~MixedFleetLoadTests" --logger "console;verbosity=detailed"
+stat -c '%n %s bytes' src/ResQ.Viz.Web/wwwroot/assets/index-*.js src/ResQ.Viz.Web/wwwroot/assets/index-*.css
+```
+
+C# changes need the Apache-2.0 header and XML documentation on public APIs. Backend tests use xUnit with FluentAssertions. Central client tests belong in `src/ResQ.Viz.Web/client/__tests__/`, and documentation stays derived from source and tests. Install the canonical hook documented in [AGENTS.md](AGENTS.md) and the [organization guide](https://github.com/resq-software/dev/blob/main/AGENTS.md#git-hooks). It runs alongside this repository's Release-build and formatting checks:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/resq-software/dev/main/scripts/install-hooks.sh | sh
+```
+
+<details>
+<summary><strong>Repository map</strong></summary>
+
+Vite generates `src/ResQ.Viz.Web/wwwroot/`. Edit files under `src/ResQ.Viz.Web/client/` instead.
+
+| Path | Contents |
+| :--- | :--- |
+| `ResQ.Viz.sln` | Host and test solution |
+| `src/ResQ.Viz.Web/Program.cs` | Host composition and middleware |
+| `src/ResQ.Viz.Web/Controllers/` | Session and simulation HTTP APIs |
+| `src/ResQ.Viz.Web/Hubs/` | SignalR snapshot and delta hub |
+| `src/ResQ.Viz.Web/Services/` | Rooms, streaming, scenarios, commands, terrain, and weather |
+| `src/ResQ.Viz.Web/Services/Assets/`<br>`src/ResQ.Viz.Web/Services/Assets/Ground/`<br>`src/ResQ.Viz.Web/Services/Assets/Surface/` | Air, ground, and surface assets, dynamics, navigation, and safety |
+| `src/ResQ.Viz.Web/Services/Tracks/` | External-track fusion and CPA |
+| `src/ResQ.Viz.Web/Models/` | API, command, asset, track, and frame contracts |
+| `src/ResQ.Viz.Web/client/` | Browser entry, scene, controls, terrain, and UI |
+| `src/ResQ.Viz.Web/client/assets/`<br>`src/ResQ.Viz.Web/client/assets/renderers/`<br>`src/ResQ.Viz.Web/client/assets/overlays/` | Asset lifecycle and domain presentation |
+| `src/ResQ.Viz.Web/client/editor/`<br>`src/ResQ.Viz.Web/client/sensors/`<br>`src/ResQ.Viz.Web/client/webgpu/`<br>`src/ResQ.Viz.Web/client/styles/` | Workspace tools, sensor UI, GPU compute, and CSS sources |
+| `tests/ResQ.Viz.Web.Tests/`<br>`src/ResQ.Viz.Web/client/__tests__/` | Backend and client tests |
+| `lib/dotnet-sdk/` | Simulation and MAVLink SDK submodule |
+| `src/ResQ.Viz.Web/ResQ.Viz.Web.csproj`<br>`src/ResQ.Viz.Web/package.json`<br>`src/ResQ.Viz.Web/package-lock.json`<br>`src/ResQ.Viz.Web/vite.config.ts` | Host and client build configuration |
+| `.github/workflows/ci.yml`<br>`.github/workflows/security.yml`<br>`.git-hooks/local-pre-push` | CI, security scanning, and local gates |
+| `docs/` · `AGENTS.md` · `SECURITY.md` · `LICENSE` | Plans, contributor rules, reporting policy, and license |
+
+</details>
 
 <a id="security-privacy-observability-deployment"></a>
 ## Security, privacy, observability, and deployment
