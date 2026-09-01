@@ -111,9 +111,9 @@ Measured results must carry a date and commit. The README will include a referen
 | :--- | ---: |
 | xUnit tests | 1,257 passed |
 | Vitest tests | 661 passed |
-| World-step p95 | 0.798 ms |
-| Frame total p95, including serialization | 4.136 ms |
-| Mixed-fleet scaling ratio | 10.56× |
+| 150-asset world-step p95 | 0.798 ms |
+| 150-asset frame total p95, including serialization | 4.136 ms |
+| Median world-step scaling, 150 versus 15 assets | 10.56× |
 | Underway delta-to-snapshot payload ratio | 80.8% |
 | Holding delta-to-snapshot payload ratio | 9.6% |
 | Built entry JavaScript | 796,176 bytes |
@@ -142,7 +142,7 @@ The expanded narrative uses one small request/response example. The full HTTP RE
 Replace compliance conclusions with a factual data-flow description:
 
 - the server issues a secure `viz_session` room-session cookie.
-- browser preferences in `localStorage` include settings, the selected scenario environment, dismissed UI hints and cockpit state, editor-dock state, and fleet filters.
+- browser preferences in `localStorage` include visual settings, dismissed UI hints and cockpit state, editor-dock state, and fleet filters. Scenario and environment selections are shared through an exported or imported `resq-scene.json` file rather than browser persistence.
 - geometry caching uses `sessionStorage`.
 - PostHog and GA4 load only when their build-time configuration is present.
 - Cloudflare Web Analytics may be injected by the deployment platform. The content-security policy explicitly permits its script and beacon, so this deployment-level path is disclosed separately from build-configured analytics.
