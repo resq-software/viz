@@ -680,7 +680,9 @@ dotnet test tests/ResQ.Viz.Web.Tests/ResQ.Viz.Web.Tests.csproj -c Release --no-b
 stat -c '%n %s bytes' src/ResQ.Viz.Web/wwwroot/assets/index-*.js src/ResQ.Viz.Web/wwwroot/assets/index-*.css
 ```
 
-C# changes need the Apache-2.0 header and XML documentation on public APIs. Backend tests use xUnit with FluentAssertions. Central client tests belong in `src/ResQ.Viz.Web/client/__tests__/`, and documentation stays derived from source and tests. Install the canonical hook documented in [AGENTS.md](AGENTS.md) and the [organization guide](https://github.com/resq-software/dev/blob/main/AGENTS.md#git-hooks). It runs alongside this repository's Release-build and formatting checks:
+Work on a topic branch, using a dedicated worktree when other changes are active. Keep commits scoped and preserve unrelated local changes.
+
+C# changes need the Apache-2.0 header and XML documentation on public APIs. Backend tests use xUnit with FluentAssertions. Vitest runs the central client suite in `src/ResQ.Viz.Web/client/__tests__/`, and documentation stays derived from source and tests. Install the canonical hook documented in [AGENTS.md](AGENTS.md) and the [organization guide](https://github.com/resq-software/dev/blob/main/AGENTS.md#git-hooks). It runs alongside this repository's Release-build and formatting checks:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/resq-software/dev/main/scripts/install-hooks.sh | sh
