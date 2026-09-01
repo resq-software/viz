@@ -198,7 +198,78 @@ The two versions are not authority-equivalent. V1 command routes bypass v2 contr
 <a id="commands-control-authority-safe-actions"></a>
 ## Commands, control authority, and safe actions
 
-The command path covers request validation, control leases, idempotency, capability and state checks, simulator execution, status polling, and the decision audit. Link loss and low-energy conditions invoke domain-specific simulated fallback policies, subject to stale-position and recovery gates.
+V2 exposes a case-sensitive command catalog. Common commands are `stop`, `emergencyStop`, `hold`, `resumeAutonomy`, `goTo`, `returnToBase`, and `setSpeed`. Air adds `takeoff`, `land`, `setAltitude`, and `loiter`. Ground adds `driveTo`, `reverse`, and `park`, while surface adds `transitTo`, `setCourse`, `stationKeep`, `dock`, and `undock`. `followRoute` and `setSteering` are named in the source but are not registered or callable in this build. The full per-command parameter and state table belongs in the [reference](#reference).
+
+A command envelope requires an `idempotencyKey` and a case-exact `kind`. A caller may supply `commandId`, `issuerId`, and `controlLeaseId`. The server mints the command ID when omitted and falls back to `room:{roomId}` when the issuer is blank. The remaining fields are an optional typed target, motion constraints, deadline, scalar `frame`, and a string-valued parameter bag. Point targets in a local frame and geodetic targets normalize to `LocalEus` before hashing. Classification therefore treats equivalent destinations as one logical request. It runs before asset resolution, and any rejection before the later claim leaves the key reusable.
+
+### Command authority and lifecycle
+
+```mermaid
+flowchart TD
+    A[Build envelope<br/>validate payload and normalize target/frame] -->|build refusal| E[No new audit record<br/>not pollable]
+    A --> B[Idempotency.Classify]
+    B -->|duplicate| D[Replay prior result when retained<br/>no new audit or command resource]
+    B -->|key conflict| E
+    B -->|new| C[Capture asset frame<br/>compute pure catalog verdict]
+    C -->|payload.*, deadline.*, or asset.*<br/>including target payload| F[Decision audit only<br/>not pollable]
+    C --> G[Control authority]
+    G -->|refused| F
+    G --> H[Capability, domain, state,<br/>and position freshness]
+    H -->|refused| F
+    H --> I[Link reachability]
+    I -->|refused| F
+    I --> J[Idempotency.Claim]
+    J -->|racing duplicate or conflict| D
+    J -->|new claim| K[Translate intent]
+    K -->|translation rejected| L[Store result and audit decision<br/>pollable]
+    K --> M[Dispatch to room world and simulated asset]
+    M -->|asset refused| L
+    M -->|accepted| N[Store and audit Accepted<br/>HTTP 202]
+    N --> O[GET latest retained command state]
+    L --> O
+```
+
+The controller computes the entire catalog verdict after one asset-frame capture, but resolves its first refusal in a fixed order. Payload errors, including the target shape, then deadline and asset errors come before authority. Capability, domain, operational state, and position freshness come after it. Link reachability is the final pre-claim gate. The controller then claims the idempotency key, translates the typed intent, and dispatches it through the room to the simulated asset. Translation or dispatch can still reject after the claim.
+
+Use the second shell and its `readme_base` and `readme_cookie` from the [five-minute run](#five-minute-mixed-fleet-run). Frame `2` is `LocalEus`. This request drives the flood-response supply rover toward a new scene point:
+
+```bash
+readme_command_body=$(mktemp "${TMPDIR:-/tmp}/resq-viz-readme-command.XXXXXX")
+trap 'rm -f "$readme_cookie" "$readme_command_body"' EXIT
+
+readme_command_status=$(curl --silent --show-error --insecure \
+  -b "$readme_cookie" \
+  -H 'Content-Type: application/json' \
+  -X POST \
+  -d '{"kind":"driveTo","idempotencyKey":"readme-fr-supply-001","issuerId":"readme-operator","target":{"type":"point","point":{"frame":2,"position":{"x":-400,"y":0,"z":25}}}}' \
+  -o "$readme_command_body" \
+  -w '%{http_code}' \
+  "$readme_base/api/v2/sim/assets/fr-supply-lead/commands")
+
+test "$readme_command_status" = 202
+readme_command_id=$(jq -er '.commandId' "$readme_command_body")
+
+curl --fail --silent --show-error --insecure \
+  -b "$readme_cookie" \
+  "$readme_base/api/v2/sim/commands/$readme_command_id" \
+  | jq -e --arg command_id "$readme_command_id" \
+      '(.commandId == $command_id) and (.state == 1)'
+
+rm -f "$readme_command_body"
+trap 'rm -f "$readme_cookie"' EXIT
+```
+
+HTTP `202` says the current gates passed and the command was handed to the simulated asset. It does not report completed motion. `GET /api/v2/sim/commands/{commandId}` returns the latest retained room record, but production does not advance an accepted record from physical execution. The `Accepted` state above is not proof that the rover arrived. Results are bounded, so `404` can mean the command was never tracked or was evicted.
+
+Envelope-build failures and a newly observed duplicate or key conflict add neither a decision-audit record nor a new pollable result. A true duplicate may replay its existing result. Catalog, authority, and link refusals occur before claim, enter the decision audit, and remain unpollable. Translation and simulated-asset rejections happen after claim, so they are audited and pollable alongside accepted commands.
+
+Control routes publish the process mode at `GET /api/v2/sim/control/mode` and the room-wide bounded audit at `GET /api/v2/sim/control/audit`. Per-asset routes report the holder, acquire a lease, or use `/renew`, `/release`, and `/preempt`. Each room owns its authority, leases are keyed by asset, and every retained audit record identifies the asset it concerns. The decision and lease windows expose dropped counts when older entries have been evicted.
+
+An uncontrolled asset accepts a v2 command without a lease. Once a lease is live, the command issuer must match its holder. That holder may omit `controlLeaseId`. If supplied, it must name the live lease. `issuerId` and lease `holderId` are caller assertions, not authenticated people or services. The encrypted room cookie is the only identity established by the server in this build.
+
+Requested lease durations must be 1–3,600 seconds and are capped by policy, which defaults to 120 seconds. Callers renew against the granted expiry in the response. The holder may renew or release. Expiry also frees the asset, while an emergency-role caller may preempt with a required justification. Lease audit records distinguish `Released`, `Expired`, `Preempted`, `AssetRemoved`, and `AuthorityReset` endings. V1 commands retain the bypass described under [v1 compatibility and v2 scope](#v1-compatibility-and-v2-scope).
+
+Safe actions begin after these command and authority rules: link loss and low-energy conditions invoke domain-specific simulated fallback policies, subject to stale-position and recovery gates.
 
 <a id="streaming-operating-picture"></a>
 ## Streaming the operating picture
