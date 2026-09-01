@@ -439,14 +439,14 @@ On a gap, the browser keeps rendering its last good picture and calls `RequestKe
 
 The shared contract does not flatten motion into one generic vehicle. Air uses SDK flight physics. Ground models wheel or track geometry against terrain, while surface models a displacement hull in wind, current, and water depth. External tracks sit beside assets as observations.
 
-> **Model boundary:** The [source-enforced limits](#source-enforced-limits-and-gates) apply: ±20 km locally, 50 air assets, and 200 total assets per room. Geodetic use inherits the [placeholder-origin constraint](#coordinate-boundary). All models are simulation-only. Navigation, mobility, clearance, docking, and approach assessments are advisory.
+> **Model boundary:** See [Evaluate ResQ Viz](#evaluate), the [source-enforced limits](#source-enforced-limits-and-gates), and the [coordinate boundary](#coordinate-boundary).
 
 <a id="domain-model-comparison"></a>
 ### Motion, state, commands, and safe actions
 
 | Domain or observation | Shipped motion model / input | Published domain-specific state | Typical commands | Safe-action default | Advisory output |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Air | SDK multirotor / flight commands | Airborne, heading/course, climb, three altitudes, wind, airspeed | Take off, fly, loiter, land | Return to launch, then land/stop fallback | Geofence and position uncertainty |
+| Air | SDK multirotor / flight commands | Airborne, heading/course, climb, three altitudes, wind, airspeed | Take off, fly, loiter, land | Return to launch, then land/stop fallback | Position freshness and bounded uncertainty growth |
 | Ground | Bicycle or skid-steer / speed and turn guidance | Speed, steering, attitude, terrain, traction, immobilisation | Drive, reverse, park, stop | Stop and hold | Straight-line traversability and rollover proximity |
 | Surface | Displacement hull / thrust and rudder response | Heading/course, surge/sway, current, depth, draft, clearance, waves | Transit, set course/speed, reverse, dock | Drift and alert | Water-route clearance and docking guidance |
 | External track | Fused reported pose/velocity | Classification, sources, identity, accuracy, confidence, age | None | None, observations are not commandable | CPA, bearing, closing state, encounter geometry |
@@ -454,14 +454,14 @@ The shared contract does not flatten motion into one generic vehicle. Air uses S
 <a id="air-physics"></a>
 ### Air: SDK flight-state projection
 
-The air adapter leaves multirotor integration in the pinned simulation SDK. It projects framed pose/twist, ground velocity, airspeed, battery energy, and height above terrain, launch, and mean sea level. The command adapter translates v2 intent into SDK flight commands. Launch position is home. Link loss declares return to base; without a usable fix or target, the resolver falls back to land and then stop.
+The air adapter leaves multirotor integration in the pinned simulation SDK. It projects framed pose/twist, ground velocity, airspeed, battery energy, and height above terrain, launch, and mean sea level. The command adapter translates v2 intent into SDK flight commands. Launch position is home. Link loss declares return to base; without a usable position fix, the resolver falls back to land and then stop.
 
 <a id="ground-physics"></a>
 ### Ground: profile-specific contact and mobility
 
 Three rover profiles ship. Ackermann uses a rate-limited bicycle model, reaches 8 m/s, and needs a 3.2 m turning radius. Differential and tracked rovers drive each side independently, reach 5 and 3.5 m/s, and can pivot in place. The tracked profile trades speed for the largest grade and step envelope: 35 degrees and 0.30 m, versus 30 degrees/0.15 m for differential and 25 degrees/0.12 m for Ackermann.
 
-A spawn discards the requested vertical coordinate and settles the chassis on terrain under its footprint. There is no suspension model. Footprint-scaled normal sampling and filtering stabilise roll and pitch. Surface, precipitation, grade, cross-slope, zones, and step height set traction or a speed ceiling. An unmountable rise reverts translation. Water, excessive grade, or insufficient grip can immobilise autonomy while leaving slow reverse recovery available.
+A spawn discards the requested vertical coordinate and settles the chassis on terrain under its footprint. There is no suspension model. Footprint-scaled normal sampling and low-pass filtering stabilise published roll and pitch. Surface material and precipitation set available traction. Grade, cross-slope, surface conditions, and zones can derate speed. An excessive step blocks the straight-line preview or, if reached in motion, triggers collision rollback. Water, excessive grade, or insufficient grip can immobilise autonomy while leaving slow reverse recovery available.
 
 Pivot-capable rovers turn toward a target before driving. Ackermann guidance uses look-ahead, steering lock, cornering limits, and braking to arc toward it. The target check samples only the straight segment, up to 512 points, and reports clear, costly, unknown, or blocked ground. It neither searches for another route nor provides general obstacle avoidance.
 
