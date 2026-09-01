@@ -5,13 +5,36 @@ import '../styles/editor.css';
 import { hazardKey } from './keys';
 import type { Selection, SelectionKind, SelectionStore } from './selection';
 import type {
-    VizFrame,
     Vec3,
     Quat,
     DroneState,
     HazardState,
     DetectionState,
 } from '../types';
+import { formatAge } from '../assets/assetView';
+import {
+    domainLabel,
+    enumLabel,
+    freshnessLabel,
+    operationalStateLabel,
+    vehicleClassLabel,
+} from '../assets/AssetFilter';
+import { normaliseDeg } from '../assets/panelCards';
+import type { SceneAsset, SceneFrame } from '../assets/sceneFrame';
+import { assetById, trackById } from '../assets/sceneFrame';
+import type { ExternalTrackState } from '../assets/types';
+import {
+    ComponentHealthStatus,
+    LinkLossBehavior,
+    LinkTransport,
+    MissionExecutionState,
+    TrackClassification,
+    TrackSourceKind,
+    TransponderKind,
+    isAirDomainState,
+    isGroundDomainState,
+    isSurfaceDomainState,
+} from '../assets/types';
 
 /** Placeholder rendered for any absent/empty field value. */
 const EMPTY = '—'; // em dash
@@ -68,7 +91,7 @@ interface Field<T> {
 
 interface KindSchema {
     readonly title: string;
-    readonly resolve: (id: string, frame: VizFrame | null) => unknown;
+    readonly resolve: (id: string, frame: SceneFrame | null) => unknown;
     readonly fields: ReadonlyArray<Field<unknown>>;
 }
 
@@ -76,19 +99,203 @@ interface KindSchema {
  * Typed schema builder — keeps each kind's field accessors strongly typed
  * against its entity type while erasing to a uniform `unknown` registry entry
  * the Inspector can iterate without per-kind branching.
+ *
+ * The frame is a {@link SceneFrame}: a `VizFrame` plus the v2 asset and track
+ * lists. Widening here rather than adding a second frame type is what the
+ * mechanism was built for — every existing v1 caller still satisfies the
+ * parameter, and the two new kinds resolve out of the same argument as the old
+ * three, with no per-kind branch anywhere in the panel itself.
  */
 function defineSchema<T>(s: {
     title: string;
-    resolve: (id: string, frame: VizFrame | null) => T | null;
+    resolve: (id: string, frame: SceneFrame | null) => T | null;
     fields: ReadonlyArray<Field<T>>;
 }): KindSchema {
     return s as unknown as KindSchema;
 }
 
+// ─── v2 field helpers ───────────────────────────────────────────────────────
+
+/** Radians clockwise from true north as whole degrees, folded into [0, 360).
+ *
+ *  Rejects only an absent or non-finite angle. That is the whole check it can
+ *  do: a bearing derived from a vanishing vector is a perfectly finite number
+ *  and indistinguishable here from a measured one, so anything *derived* must
+ *  come through {@link fmtCourse} instead. */
+function fmtBearing(rad: number | null | undefined): string {
+    if (rad === null || rad === undefined || !Number.isFinite(rad)) return EMPTY;
+    return `${Math.round(normaliseDeg((rad * 180) / Math.PI))}°`;
+}
+
+/** Speed below which a direction of travel is not a measurement. Matches the
+ *  velocity-leader threshold in `TrackOverlay`, so the plot and the panel agree
+ *  on when a course exists at all. */
+const MIN_COURSE_SPEED_MPS = 0.1;
+
 /**
- * Per-kind inspector schemas. Drones are wired to selection today; hazard and
- * detection schemas prove the store + Inspector generalise to every VizFrame
- * entity and are ready for the outliner / pickable hazards in later steps.
+ * Direction of travel, which exists only when there is travel.
+ *
+ * `Math.atan2(0, -0)` is π, so a stationary body whose course comes from its
+ * velocity renders a confident "180°" — due south — directly beneath a speed of
+ * 0.0 m/s. By the time the angle exists it is indistinguishable from a real
+ * southward course, so the speed it was derived from is the only thing that can
+ * tell them apart. A stationary contact reads as having no course, which is the
+ * truth, rather than as heading south, which is a fabrication.
+ */
+function fmtCourse(
+    rad: number | null | undefined,
+    speedMps: number | null | undefined,
+): string {
+    if (speedMps === null || speedMps === undefined || !Number.isFinite(speedMps)) return EMPTY;
+    // Absolute: a reversing rover has a negative ground speed and a real course.
+    if (Math.abs(speedMps) < MIN_COURSE_SPEED_MPS) return EMPTY;
+    return fmtBearing(rad);
+}
+
+/** A metre quantity to one decimal, or EMPTY when unreported. Absent is never
+ *  rendered as `0.0` — an unmeasured clearance and a zero clearance are
+ *  opposite facts. */
+function fmtMetres(v: number | null | undefined, digits = 1): string {
+    if (v === null || v === undefined || !Number.isFinite(v)) return EMPTY;
+    return `${v.toFixed(digits)} m`;
+}
+
+/** A speed to one decimal, or EMPTY when unreported. */
+function fmtSpeed(v: number | null | undefined): string {
+    if (v === null || v === undefined || !Number.isFinite(v)) return EMPTY;
+    return `${v.toFixed(1)} m/s`;
+}
+
+/** Freshness plus the explicit age behind it. The age is the half of the cue
+ *  that survives a screenshot and a colour-blind reader, so it is never dropped
+ *  in favour of the word alone. */
+function fmtFreshness(asset: SceneAsset): string {
+    const word = freshnessLabel(asset.view.freshness);
+    const age = asset.view.ageSeconds;
+    return age === null ? word : `${word} · ${formatAge(age)}`;
+}
+
+/**
+ * One line summarising whatever the asset's domain actually reports.
+ *
+ * Deliberately one row rather than a union of every domain's fields laid out
+ * flat: an air asset has no under-keel clearance and a vessel has no rollover
+ * risk, and eleven em dashes beside two real numbers is not a readable panel.
+ * The `domain` row above already names which domain is speaking, so this row can
+ * be read in that context. Full per-domain cards live in the asset panel.
+ */
+function fmtDomainDetail(asset: SceneAsset): string {
+    const d = asset.view.domainState;
+    if (d === null) return EMPTY;
+    if (isAirDomainState(d)) {
+        const parts = [
+            d.isAirborne ? 'airborne' : 'on the ground',
+            `AGL ${d.altitudeAboveGroundM.toFixed(1)} m`,
+            `MSL ${d.altitudeMslM.toFixed(1)} m`,
+            `climb ${d.climbRateMps >= 0 ? '+' : ''}${d.climbRateMps.toFixed(1)} m/s`,
+        ];
+        if (!d.isWithinGeofence) parts.push('outside geofence');
+        return parts.join(' · ');
+    }
+    if (isGroundDomainState(d)) {
+        const parts = [
+            d.isImmobilised ? `immobilised (${d.immobilisationReason ?? 'reason unreported'})`
+                : d.isMoving ? 'moving' : 'stopped',
+            d.surfaceType,
+            `slope ${Math.round((d.slopeRad * 180) / Math.PI)}°`,
+            `traction ${d.tractionCoefficient.toFixed(2)}`,
+            // Advisory only — decision support, never a stability guarantee.
+            `rollover risk ${Math.round(d.rolloverRisk * 100)}% (advisory)`,
+        ];
+        return parts.join(' · ');
+    }
+    if (isSurfaceDomainState(d)) {
+        const parts = [
+            `depth ${d.waterDepthM.toFixed(1)} m`,
+            `draft ${d.draftM.toFixed(1)} m`,
+            `UKC ${d.underKeelClearanceM.toFixed(1)} m${d.hasUnsafeUnderKeelClearance ? ' (advisory: unsafe)' : ''}`,
+            `current ${d.currentSpeedMps.toFixed(1)} m/s toward ${fmtCourse(d.currentDirectionRad, d.currentSpeedMps)}`,
+        ];
+        if (!d.isInsideWaterMask) parts.push('outside navigable water');
+        if (d.stationKeep?.isEngaged) {
+            parts.push(d.stationKeep.isDegraded
+                ? `station-keeping degraded (${d.stationKeep.degradedReason ?? 'reason unreported'})`
+                : 'station-keeping');
+        }
+        return parts.join(' · ');
+    }
+    return EMPTY;
+}
+
+/** Speed over ground as the asset's own domain reports it. Air and ground call
+ *  it ground speed; a vessel distinguishes speed over ground from speed through
+ *  water, and the seabed-referenced one is what matches the position beside it. */
+function domainSpeedMps(asset: SceneAsset): number | null {
+    const d = asset.view.domainState;
+    if (d === null) return null;
+    return isSurfaceDomainState(d) ? d.speedOverGroundMps : d.groundSpeedMps;
+}
+
+function fmtDomainSpeed(asset: SceneAsset): string {
+    return fmtSpeed(domainSpeedMps(asset));
+}
+
+/** What the asset does when it loses its command link. Load-bearing per domain:
+ *  air must do *something*, ground can simply stop, surface drifts. */
+function fmtLinkLoss(asset: SceneAsset): string {
+    const d = asset.view.domainState;
+    return d === null ? EMPTY : enumLabel(LinkLossBehavior, d.linkLossBehavior);
+}
+
+/** Transport plus whether the bearer is up. Independent of freshness: a link can
+ *  be up while telemetry has stalled, which is why both rows exist. */
+function fmtLink(asset: SceneAsset): string {
+    const link = asset.state.link;
+    const transport = enumLabel(LinkTransport, link.transport);
+    const parts = [`${transport} · ${link.isConnected ? 'connected' : 'down'}`];
+    if (link.latencyMs !== null) parts.push(`${Math.round(link.latencyMs)} ms`);
+    if (link.packetLossRatio !== null) parts.push(`${(link.packetLossRatio * 100).toFixed(1)}% loss`);
+    return parts.join(' · ');
+}
+
+/** Overall health, with the count of raised faults when there are any. */
+function fmtHealth(asset: SceneAsset): string {
+    const health = asset.state.health;
+    const word = enumLabel(ComponentHealthStatus, health.overall);
+    const faults = health.faults.length;
+    return faults === 0 ? word : `${word} · ${faults} fault${faults === 1 ? '' : 's'}`;
+}
+
+/** Mission execution and how far through it the asset is. */
+function fmtMission(asset: SceneAsset): string {
+    const mission = asset.state.mission;
+    if (mission === null) return EMPTY;
+    const word = enumLabel(MissionExecutionState, mission.execution);
+    const pct = `${Math.round(mission.progressFraction * 100)}%`;
+    return mission.routeName === null ? `${word} · ${pct}` : `${word} · ${mission.routeName} · ${pct}`;
+}
+
+/** The sources that contributed to a track, most recently updated first. */
+function fmtTrackSources(track: ExternalTrackState): string {
+    if (track.sources.length === 0) return EMPTY;
+    return track.sources.map((s) => enumLabel(TrackSourceKind, s.kind)).join(', ');
+}
+
+/** Cooperative broadcast identity, or EMPTY when the contact carries none. */
+function fmtTransponder(track: ExternalTrackState): string {
+    const t = track.transponder;
+    if (t === null) return EMPTY;
+    const kind = enumLabel(TransponderKind, t.kind);
+    return t.callSign === null ? `${kind} ${t.identifier}` : `${kind} ${t.identifier} · ${t.callSign}`;
+}
+
+/**
+ * Per-kind inspector schemas.
+ *
+ * `drone`, `hazard` and `detection` read the v1 frame and are unchanged.
+ * `asset` and `track` read the v2 lists, so a rover, a vessel and a transponder
+ * contact all inspect through the same panel as a drone — no per-kind branch in
+ * the Inspector itself, which is the property `defineSchema` exists to keep.
  */
 export const SCHEMAS: Readonly<Record<SelectionKind, KindSchema>> = {
     drone: defineSchema<DroneState>({
@@ -119,9 +326,72 @@ export const SCHEMAS: Readonly<Record<SelectionKind, KindSchema>> = {
         resolve: (id, frame) => frame?.detections?.find(d => d.id === id) ?? null,
         fields: [
             { label: 'type', value: d => fmtStr(d.type) },
-            { label: 'drone', value: d => fmtStr(d.droneId) },
+            // Labelled "source" rather than "drone": v2 detections name a
+            // `sourceAssetId` precisely because any domain detects, and a rover's
+            // find must not read as a drone's.
+            { label: 'source', value: d => fmtStr(d.droneId) },
             { label: 'confidence', value: d => `${Math.round(d.confidence * 100)}%` },
             { label: 'position', value: d => fmtVec(d.pos) },
+        ],
+    }),
+    asset: defineSchema<SceneAsset>({
+        title: 'Asset',
+        resolve: (id, frame) => assetById(frame?.assets, id),
+        fields: [
+            { label: 'domain', value: a => domainLabel(a.view.domain) },
+            { label: 'class', value: a => vehicleClassLabel(a.view.vehicleClass) },
+            { label: 'agency', value: a => fmtStr(a.descriptor.agencyId ?? undefined) },
+            { label: 'fleet', value: a => fmtStr(a.descriptor.fleetId ?? undefined) },
+            { label: 'state', value: a => operationalStateLabel(a.view.operationalState) },
+            { label: 'mode', value: a => fmtStr(a.view.mode) },
+            { label: 'freshness', value: a => fmtFreshness(a) },
+            // Null power is an unmetered supply — a tether, shore power — and is
+            // shown as absent rather than as a flat pack.
+            { label: 'power', value: a => fmtPct(a.view.powerPercent ?? undefined) },
+            { label: 'health', value: a => fmtHealth(a) },
+            { label: 'link', value: a => fmtLink(a) },
+            { label: 'on link loss', value: a => fmtLinkLoss(a) },
+            { label: 'mission', value: a => fmtMission(a) },
+            { label: 'position', value: a => fmtVec(a.view.position) },
+            { label: 'velocity', value: a => fmtVec(a.view.velocity) },
+            { label: 'speed', value: a => fmtMag(a.view.velocity) },
+            // Heading and course over ground are separate rows because they
+            // genuinely diverge — in wind, in a cross-current, and whenever a
+            // rover is slipping. Collapsing them is the modelling error the wire
+            // contract was written to prevent.
+            { label: 'heading', value: a => fmtBearing(a.view.domainState?.headingRad) },
+            { label: 'course', value: a => fmtCourse(a.view.domainState?.courseOverGroundRad, domainSpeedMps(a)) },
+            { label: 'over ground', value: a => fmtDomainSpeed(a) },
+            { label: 'domain detail', value: a => fmtDomainDetail(a) },
+        ],
+    }),
+    track: defineSchema<ExternalTrackState>({
+        title: 'Contact',
+        resolve: (id, frame) => trackById(frame?.tracks, id),
+        // No command affordance is reachable from here: `_renderActions` renders
+        // buttons for the `drone` kind alone, and a track has no capabilities to
+        // generate any from. That is the whole difference between a contact and
+        // an asset, and it is enforced by the absence rather than by a check.
+        fields: [
+            { label: 'classification', value: t => enumLabel(TrackClassification, t.classification) },
+            { label: 'label', value: t => fmtStr(t.label ?? undefined) },
+            { label: 'identity', value: t => fmtTransponder(t) },
+            { label: 'position', value: t => fmtVec([t.pose.position.x, t.pose.position.y, t.pose.position.z]) },
+            { label: 'speed', value: t => fmtSpeed(Math.hypot(t.twist.linear.x, t.twist.linear.z)) },
+            // Derived, not reported: the wire carries a twist even for a
+            // stationary contact, so this is the default case rather than an
+            // edge one, and `atan2(0, -0)` is due south.
+            { label: 'course', value: t => fmtCourse(
+                Math.atan2(t.twist.linear.x, -t.twist.linear.z),
+                Math.hypot(t.twist.linear.x, t.twist.linear.z),
+            ) },
+            { label: 'freshness', value: t => freshnessLabel(t.freshness) },
+            { label: 'confidence', value: t => `${Math.round(t.quality.confidence * 100)}%` },
+            // Null accuracy is no accuracy statistic, not a perfect fix: rendered
+            // absent so nobody draws a point where a circle belongs.
+            { label: 'accuracy', value: t => fmtMetres(t.quality.positionAccuracyM) },
+            { label: 'sources', value: t => fmtTrackSources(t) },
+            { label: 'observations', value: t => `${t.quality.updateCount}${t.quality.isFused ? ' · fused' : ''}` },
         ],
     }),
 };
@@ -143,7 +413,7 @@ export class Inspector {
     private readonly _idEl: HTMLElement;
     private readonly _fieldsEl: HTMLElement;
     private readonly _actionsEl: HTMLElement;
-    private readonly _getFrame: () => VizFrame | null;
+    private readonly _getFrame: () => SceneFrame | null;
     private _sel: Selection | null = null;
     private _onCloseFn: (() => void) | null = null;
     private _onCommandFn: ((id: string, cmd: string) => void) | null = null;
@@ -153,7 +423,7 @@ export class Inspector {
     /** Live cell refs so per-frame updates touch text only, not the tree. */
     private _cells: Array<{ field: Field<unknown>; el: HTMLElement }> = [];
 
-    constructor(store: SelectionStore, getFrame: () => VizFrame | null, parent: HTMLElement) {
+    constructor(store: SelectionStore, getFrame: () => SceneFrame | null, parent: HTMLElement) {
         this._getFrame = getFrame;
         const built = this._build(parent);
         this._root = built.root;
@@ -196,7 +466,7 @@ export class Inspector {
      * panel if the selected entity has dropped out of the frame (mirrors how
      * DronePanel handles a vanished drone).
      */
-    update(frame: VizFrame | null): void {
+    update(frame: SceneFrame | null): void {
         if (!this._sel) return;
         const schema = SCHEMAS[this._sel.kind];
         const entity = schema.resolve(this._sel.id, frame);

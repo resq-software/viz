@@ -1058,6 +1058,16 @@ body.investor-mode canvas { cursor: none; }
   user-select: none;
 }
 
+/* ── Comms link chip ──────────────────────────────────────── */
+/* Three distinct states. The value text (UP / CUT / UNK) carries the meaning on
+   its own; colour reinforces it. Unknown is deliberately neither green nor
+   silent — it must not read as a healthy link. */
+
+#hud-comms.comms-up      .hud-stat-value { color: var(--success); }
+#hud-comms.comms-cut     .hud-stat-value { color: var(--danger); }
+#hud-comms.comms-unknown .hud-stat-value { color: var(--warning); }
+#hud-comms.comms-cut { box-shadow: inset 0 0 0 1px var(--danger); }
+
 /* ── Partition banner ───────────────────────────────────────────────────── */
 
 .partition-banner {
