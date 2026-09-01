@@ -576,7 +576,47 @@ Three collisions: plain `I` toggles cockpit/stats; `Space` drives DVR and climbs
 <a id="system-architecture"></a>
 ## System architecture
 
-An ASP.NET Core host owns sessions, room lifecycles, simulation ticks, REST surfaces, and SignalR publication. The vanilla TypeScript and Three.js client renders the operating picture and sends scoped operator requests back to the host.
+[`Program.cs`](src/ResQ.Viz.Web/Program.cs) composes the ASP.NET Core pipeline, controllers, hub, room services, control authority, asset factories, and transport. `SimulationManager` owns up to 100 active, isolated rooms and advances all of them from one 60 Hz host loop. Each `SimulationRoom` owns its `AssetWorld` and assets, terrain, weather and water state, external tracks, swarm coordinator, command records, and stream state. `ControlAuthorityRegistry` keeps one weakly associated authority per room. The encrypted `viz_session` cookie binds both REST requests and the `/viz` handshake to one room. A room with zero SignalR connections is reaped after 60 seconds without activity.
+
+Session and REST controllers resolve that room before reading or changing state. The hub joins the connection to room-specific groups. Every sixth host tick, `VizFrameBuilder` projects the v1 air view; rooms with v2 subscribers also run `VizSnapshotV2Builder` and, for delta subscribers, the differ. `IFrameBroadcaster` keeps production SignalR transport outside simulation code. The SDK submodule supplies the flight world, physics, terrain interfaces, and MAVLink dependencies; the Mesh project is referenced but is not yet wired into room connectivity.
+
+### System context and room isolation
+
+```mermaid
+flowchart LR
+    B[Browser app] --> V1[V1 air compatibility]
+    B --> V2[V2 mixed-domain scene]
+
+    subgraph Host[ASP.NET Core host]
+        API[Session and REST controllers] -->|resolve cookie| M[SimulationManager<br/>one 60 Hz loop]
+        HUB[SignalR hub /viz] -->|validate cookie<br/>join room group| M
+        API --> C[Command and authority services]
+        M --> RA[SimulationRoom A<br/>assets, tracks, environment<br/>command records, stream state]
+        M --> RN[SimulationRoom N<br/>isolated state copy]
+        C --> RA
+        C --> RN
+        RA --> F[V1 and v2 builders<br/>snapshot differ]
+        RN --> F
+        F --> T[IFrameBroadcaster<br/>room groups only<br/>never Clients.All]
+        T --> HUB
+        RA --> SDK[SDK submodule<br/>flight physics and terrain<br/>MAVLink dependencies]
+        RN --> SDK
+    end
+
+    B -->|HTTPS REST<br/>viz_session| API
+    V1 <-->|SignalR ReceiveFrame| HUB
+    V2 <-->|SignalR snapshots or deltas| HUB
+```
+
+In the browser, [`app.ts`](src/ResQ.Viz.Web/client/app.ts) coordinates session startup, transport, scene updates, controls, and deferred modules. `AssetManager` owns the domain-neutral spawn, update, interpolation, selection, picking, and disposal lifecycle. Air registers eagerly. Ground and surface renderer chunks load on first use. `AssetRegistry` resolves by visual profile, vehicle class, then domain, and shows a selectable unknown-asset marker while a renderer loads or when none exists. One `sceneFrame` projection feeds asset renderers, overlays, fleet panels, and cameras. Capability panels read descriptors, while the editor, chase cameras, fleet UI, and track overlay load behind explicit seams.
+
+- **Terrain path.** Matching TypeScript and C# functions generate the five 4 km presets. A URL-supplied image heightmap is decoded in the browser and uploaded as the room's authoritative DEM. Optional hydraulic erosion bakes a deterministic preset grid on the server, installs it in that room, and returns the same heights to rebuild the browser mesh. Erosion is a preset bake, not a general editor.
+
+- **Geometry cache.** Terrain keeps its Y-height `Float32Array` in an L1 memory map and writes a deflate-raw, base64 copy to per-tab `sessionStorage` as L2. At 500 segments, 501 × 501 float heights consume exactly 1,004,004 raw bytes, about 0.96 MiB, before compression and base64. XYZ positions are not cached.
+
+- **WebGPU sensors.** A deferred boot path CPU-voxelizes `terrainHeight` into a default 128³, 8 m-per-voxel sparse brick map. Compute ray marching powers mesh-link line-of-sight and per-drone 16 × 256 LiDAR scans. Terrain changes rebuild the map. Without WebGPU, or after initialization failure, links retain their unoccluded presentation, LiDAR points stay absent, and the Three.js renderer continues.
+
+- **Post-processing.** Three.js 0.185.1 renders through `WebGLRenderer`. A deferred chunk adds selective emissive bloom, `GTAOPass`, `OutputPass`, and a display-space color grade. While that chunk loads, or if fetch or construction fails, the scene renders directly with ACES filmic tone mapping and the renderer's sRGB output. The current path does not use `SSAOPass`.
 
 <a id="build"></a>
 <a id="contributor-workflow"></a>
