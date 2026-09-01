@@ -201,7 +201,7 @@ The two versions are not authority-equivalent. V1 command routes bypass v2 contr
 <a id="commands-control-authority-safe-actions"></a>
 ## Commands, control authority, and safe actions
 
-V2 exposes a case-sensitive command catalog. Common commands are `stop`, `emergencyStop`, `hold`, `resumeAutonomy`, `goTo`, `returnToBase`, and `setSpeed`. Air adds `takeoff`, `land`, `setAltitude`, and `loiter`. Ground adds `driveTo`, `reverse`, and `park`, while surface adds `transitTo`, `setCourse`, `stationKeep`, `dock`, and `undock`. `followRoute` and `setSteering` are named in the source but are not registered or callable in this build. The full per-command parameter and state table belongs in the [reference](#reference).
+V2 exposes a case-sensitive command catalog. Common commands are `stop`, `emergencyStop`, `hold`, `resumeAutonomy`, `goTo`, `returnToBase`, and `setSpeed`. Air adds `takeoff`, `land`, `setAltitude`, and `loiter`. Ground adds `driveTo`, `reverse`, and `park`, while surface adds `transitTo`, `setCourse`, `stationKeep`, `dock`, and `undock`. `followRoute` and `setSteering` are reserved source names, unregistered and uncallable in this build. The full per-command parameter and state table belongs in the [reference](#reference).
 
 A command envelope requires an `idempotencyKey` and a case-exact `kind`. A caller may supply `commandId`, `issuerId`, and `controlLeaseId`. The server mints the command ID when omitted and falls back to `room:{roomId}` when the issuer is blank. The remaining fields are an optional typed target, motion constraints, deadline, scalar `frame`, and a string-valued parameter bag. Point targets in a local frame and geodetic targets normalize to `LocalEus` before hashing. Classification therefore treats equivalent destinations as one logical request. Only a request classified as `New` whose later pre-claim gate rejects it leaves the key reusable. Duplicate and key-conflict outcomes remain bound to the earlier command.
 
@@ -700,6 +700,7 @@ irm https://raw.githubusercontent.com/resq-software/dev/main/scripts/install-hoo
 
 `.github/workflows/ci.yml` runs the .NET gates plus client typecheck, build, Vitest, and bundle enforcement. `.github/workflows/security.yml` runs the separate security workflow.
 
+<a id="repository-map"></a>
 <details>
 <summary><strong>Repository map</strong></summary>
 
@@ -752,9 +753,124 @@ Replicas require session affinity: cookie validation requires the room in the re
 <a id="reference"></a>
 ## Reference
 
-The reference contract collects HTTP routes, SignalR methods, commands, refusal codes, scenarios, controls, and the repository directory map. Dense tables remain close to the workflow that first uses them and provide explicit anchors for direct links.
+Use the existing [scenario catalog](#scenario-catalog), [live controls](#live-controls), and [repository map](#repository-map) with the contracts below.
+
+<details>
+<summary>HTTP REST reference (44 actions)</summary>
+
+All routes except session creation require `viz_session`. Expect `401` without it and `429` when the applicable 10/minute destructive or 60/minute general process budget is spent.
+
+| Method | Path | Purpose · main input → success/refusals |
+| :--- | :--- | :--- |
+| POST | `/api/sim/session` |Bootstrap/refresh→`200`<br>`503`|
+| GET | `/api/sim/session/info` |Room-metadata→`200`|
+| DELETE | `/api/sim/session` |Clear-cookie→`200`|
+| POST | `/api/sim/start` |Resume→`200`|
+| POST | `/api/sim/stop` |Pause→`200`|
+| POST | `/api/sim/reset` |Clear-world→`200`|
+| POST | `/api/sim/pause` |Pause→`200`|
+| POST | `/api/sim/resume` |Resume→`200`|
+| POST | `/api/sim/step` |`{frames:1..600}`→`200`<br>`400`|
+| POST | `/api/sim/speed` |`{factor:1\|2\|4\|8}`→`200`<br>`400`|
+| GET | `/api/sim/transport` |Paused/speed/tick→`200`|
+| POST | `/api/sim/drone` |`{position:[x,y,z]}`→`200`<br>`400/429`|
+| POST | `/api/sim/drone/{id}/cmd` |`{type,target?,yaw?}`→`200`<br>`400/404`|
+| POST | `/api/sim/weather` |`{mode,windSpeed,windDirection}`→`200`<br>`400`|
+| POST | `/api/sim/fault` |`{droneId,type}`→validate+log-only `200`<br>`404`,no simulated fault/v2-audit|
+| POST | `/api/sim/mesh/backhaul` |`{killed}`→`200`|
+| GET | `/api/sim/mesh/backhaul` |Backhaul-state→`200`|
+| GET | `/api/sim/state` |Drone-projection→`200`|
+| GET | `/api/sim/scenarios` |Preset-names→`200`|
+| POST | `/api/sim/scenario/{name}` |Reset/run-preset→`200`<br>`404`|
+| POST | `/api/sim/preset/{key}` |Terrain-preset→`200`<br>`400`|
+| POST | `/api/sim/heightmap` |`{rows,cols,width,depth,cells}`→`200`<br>`400`|
+| DELETE | `/api/sim/heightmap` |Clear-override→`200`|
+| GET | `/api/sim/terrain/eroded` |query:`preset,seed,iterations,res`→`200`<br>`400`|
+| POST | `/api/v2/sim/assets/{id}/commands` |Command-envelope→`202`<br>`400/404/409`|
+| GET | `/api/v2/sim/commands/{commandId}` |Poll-result→`200`<br>`404`|
+| GET | `/api/v2/sim/snapshot` |Complete-v2-snapshot→`200`|
+| GET | `/api/v2/sim/tracks` |Track-inventory→`200`|
+| GET | `/api/v2/sim/tracks/{trackId}` |Held-track→`200`<br>`404`|
+| POST | `/api/v2/sim/tracks` |Observation-report→`200/201`<br>`400/409/429`|
+| GET | `/api/v2/sim/assets/{id}/link` |Command-link-state→`200`<br>`400/404`|
+| POST | `/api/v2/sim/assets/{id}/link` |`{available,issuerId?,reason?}`→`200`<br>`400/403/404`|
+| GET | `/api/v2/sim/control/mode` |Deployment-mode→`200`|
+| GET | `/api/v2/sim/control/audit` |Bounded-decisions/leases→`200`|
+| GET | `/api/v2/sim/assets/{id}/control` |Current-holder→`200`<br>`400`|
+| POST | `/api/v2/sim/assets/{id}/control` |`{holderId,role,durationSeconds?}`→`200`<br>`400/403/404/409`|
+| POST | `/api/v2/sim/assets/{id}/control/renew` |`{holderId,leaseId,durationSeconds?}`→`200`<br>`400/404/409`|
+| POST | `/api/v2/sim/assets/{id}/control/release` |`{holderId,leaseId}`→`200`<br>`400/404/409`|
+| POST | `/api/v2/sim/assets/{id}/control/preempt` |`{holderId,role,justification,durationSeconds?}`→`200`<br>`400/403/404/409`|
+| GET | `/api/v2/sim/assets` |query:`domain?`→inventory `200`<br>`400`|
+| POST | `/api/v2/sim/assets` |`{vehicleClass,pose,assetId?,metadata?}`→`201`<br>`400/409/429/501`|
+| GET | `/api/v2/sim/assets/{id}` |Descriptor/state→`200`<br>`404`|
+| DELETE | `/api/v2/sim/assets/{id}` |Remove-ground/surface→`204`<br>`404/409`|
+| GET | `/api/v2/sim/assets/{id}/capabilities` |Commands/data→`200`<br>`404`|
+
+</details>
+
+<details>
+<summary>SignalR contract (6 messages)</summary>
+
+The hub is `/viz`. Subscriptions and group membership are connection-scoped, so reconnecting clients resubscribe.
+
+| Direction | Name | Payload/return · audience/repair |
+| :--- | :--- | :--- |
+| Server event | `ReceiveFrame` |`VizFrame`<br>all-room,~10Hz|
+| Server event | `ReceiveSnapshotV2` |`VizSnapshotV2`<br>snapshot-opt-in/delta-keyframe|
+| Server event | `ReceiveDeltaV2` |`VizDeltaV2`<br>delta-opt-in-only|
+| Client call | `SubscribeSnapshots` |`(bool)→schema`<br>idempotent,no-force|
+| Client call | `SubscribeDeltas` |`(bool)→schema`<br>first-keyframe-free,later-forces share 5/10s,exhausted in-place returns schema/no-force,fresh rejoin throws `HubException`/preserves prior stream|
+| Client call | `RequestKeyframe` |`()→bool`<br>delta-only,`false` if ineligible/exhausted|
+
+</details>
+
+<details>
+<summary>Command catalog (19 registered commands)</summary>
+
+Legend: domains `A/G/S`. Target `!` is required and `?` optional. States are `all`, `responsive` (not unknown/offline), `operable` (standby/ready/active/holding/returning), or `stationary` (standby/ready).
+
+| Token | Domain · target/required parameters | Capability | State · position |
+| :--- | :--- | :--- | :--- |
+| `stop` |A/G/S:—|none|all/any|
+| `emergencyStop` |A/G/S:—|none|all/any|
+| `hold` |A/G/S:—|none|responsive/any|
+| `resumeAutonomy` |A/G/S:—|none|operable/any|
+| `goTo` |A/G/S:point\|geo!|Navigate2D\|Navigate3D(any)|operable/fresh|
+| `returnToBase` |A/G/S:—|Navigate2D\|Navigate3D(any)|operable/fresh|
+| `setSpeed` |A/G/S:speed!|Navigate2D\|Navigate3D\|ManualControl(any)|operable/any|
+| `takeoff` |A:—|Takeoff|stationary/any|
+| `land` |A:—|Land|responsive/any|
+| `setAltitude` |A:altitude!+verticalReference!|Navigate3D|operable/any|
+| `loiter` |A:point\|geo?|Navigate3D|operable/any|
+| `driveTo` |G:point\|geo!|Navigate2D|operable/fresh|
+| `reverse` |G:—|Reverse|operable/any|
+| `park` |G:—|none|responsive/any|
+| `transitTo` |S:point\|geo!|Navigate2D|operable/fresh|
+| `setCourse` |S:course!|ManualControl|operable/any|
+| `stationKeep` |S:point\|geo?|StationKeep|operable/fresh|
+| `dock` |S:point\|geo!|Dock|operable/fresh|
+| `undock` |S:—|Dock|stationary/any|
+
+Reserved/unregistered: `followRoute` awaits a route store/translator. `setSteering` awaits a transported steering field and executable model contract. Neither is advertised or callable.
+
+</details>
+
+### Problem and lifecycle glossary
+
+| Family | Action |
+| :--- | :--- |
+| request/payload/deadline | Fix malformed/missing fields, target/frame/datum/constraints, ranges, or expired deadline. Usually `400`. |
+| asset/capability/domain/state/freshness | Resolve `asset.*`. Choose an advertised command/domain, permitted state, and fresh fix. Expect `404` or `409`. |
+| idempotency | Replay identical issuer/key/payload. Change the key for a different payload. `idempotency.keyReuse` is `409`; refusals before claim remain retryable. |
+| authority | Acquire/renew the lease. After `authority.notHolder`, `authority.leaseNotLive`, or `authority.leasePreempted`, inspect audit before retrying. |
+| link/held-position | Restore `link.heldDown` after inspecting the fallback. `link.unreachable`, `position.stale`, `safeAction.position.stale`, and `safeAction.position.uncertain` refuse movement. |
+| execution | `command.kindNotExecutable`, `command.notExecutable`, or downstream `reasonCode`: change the request or asset state before retrying. |
+| capacity/not-found | Back off on `429`. Refresh inventories after asset/track/command `notFound` because bounded records may have expired or been evicted. |
+
+Problems carry `code`, optional downstream `reasonCode`, `errors[].field`, `traceId`, `assetId`, and `commandId`. `CommandResult` wire lifecycle states are `Requested`, `Accepted`, `Rejected`, `InProgress`, `Succeeded`, `Failed`, `Cancelled`, and `TimedOut`. Production records accepted commands but does not advance them from later simulated motion. `202`/`Accepted` is delivery, not completion.
 
 <a id="license-project-links"></a>
 ## License and project links
 
-ResQ Viz is licensed under [Apache-2.0](LICENSE). Use [SECURITY.md](SECURITY.md) to report vulnerabilities, [GitHub Issues](https://github.com/resq-software/viz/issues) for tracked work, and the [ResQ organization](https://github.com/resq-software) for related repositories.
+ResQ Viz is licensed under [Apache-2.0](LICENSE). Report vulnerabilities through [SECURITY.md](SECURITY.md), and track work in [GitHub Issues](https://github.com/resq-software/viz/issues). See the [ResQ organization](https://github.com/resq-software), [dotnet-sdk submodule](https://github.com/resq-software/dotnet-sdk), and canonical [development guide and hook contract](https://github.com/resq-software/dev/blob/main/AGENTS.md#git-hooks).
