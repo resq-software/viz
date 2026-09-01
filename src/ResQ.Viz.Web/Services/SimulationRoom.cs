@@ -16,9 +16,9 @@
 
 using System.Numerics;
 using Microsoft.Extensions.Logging;
-using ResQ.Simulation.Engine.Core;
 using ResQ.Simulation.Engine.Environment;
 using ResQ.Simulation.Engine.Physics;
+using ResQ.Viz.Web.Services.Assets;
 
 namespace ResQ.Viz.Web.Services;
 
@@ -37,11 +37,20 @@ public record DroneSnapshot(
 
 /// <summary>
 /// Per-room simulation state. One instance per active session — owns its own
-/// <see cref="SimulationWorld"/>, terrain, weather, and swarm controller. The
+/// <see cref="AssetWorld"/>, terrain, weather, and swarm controller. The
 /// 60 Hz tick loop and SignalR broadcast live in <see cref="SimulationManager"/>;
 /// this type is only state and a single-step API.
 /// </summary>
-public sealed class SimulationRoom
+/// <remarks>
+/// The room is the session host; <see cref="AssetWorld"/> is the domain core. Everything about
+/// <em>who is connected</em> and <em>how fast the loop runs</em> lives here, and everything
+/// about <em>what exists in the world</em> lives there. The world performs no synchronisation
+/// of its own, so every touch of it happens inside this type's single <c>_lock</c> — see
+/// <c>SimulationRoom.Assets.cs</c>, which holds the v2 asset surface and the rules that keep
+/// that guarantee true. <c>SimulationRoom.Environment.cs</c> holds the other partial half:
+/// weather, terrain and the world factory, split out so this file stays about the session.
+/// </remarks>
+public sealed partial class SimulationRoom
 {
     /// <summary>Broadcast a viz frame every N real ticks (60 Hz / 6 = 10 Hz).</summary>
     private const int BroadcastEveryNTicks = 6;
@@ -53,19 +62,26 @@ public sealed class SimulationRoom
     /// <summary>Upper bound on queued single-steps, so a runaway caller can't stall the loop.</summary>
     private const int MaxQueuedSteps = 600;
 
+    /// <summary>Terrain preset a fresh room starts on; must match <see cref="TerrainNoiseService"/>'s own default.</summary>
+    private const string DefaultTerrainPreset = "alpine";
+
     private readonly object _lock = new();
     private readonly ILogger _logger;
     private readonly UpdatableWeatherSystem _weather;
     private readonly TerrainNoiseService _terrain;
     private readonly SwarmCoordinator _swarm;
-    private readonly Dictionary<string, string> _droneVendors = new(StringComparer.Ordinal);
+    private readonly AssetCommandLog _commands = new();
 
-    private SimulationWorld _world;
-    // long, not int: at 8x speed this advances 480/s and would overflow int in
-    // ~51 days, turning _simTime (and the frame's Tick/Time) negative.
-    private long _tickCount;
+    // The world owns the tick count and simulation time (both long/derived, so neither drifts
+    // nor overflows at 8x speed), and the drone vendor tags that used to live in a side
+    // dictionary here now travel on each air asset's descriptor — one population, one source.
+    private AssetWorld _assets;
     private int _swarmTick;
-    private double _simTime;
+    // Terrain preset currently installed, remembered so a reset can restore the matching sea
+    // level. Without it a reset silently reverts the water surface to the default while the
+    // terrain keeps its preset, and a vessel ends up floating over dry land.
+    private string _terrainPreset = DefaultTerrainPreset;
+    private long _environmentRevision;
     private volatile bool _backhaulKilled;
     private long _lastActivityTicks;
     private int _connectionCount;
@@ -102,7 +118,7 @@ public sealed class SimulationRoom
     public bool IsBackhaulKilled => _backhaulKilled;
 
     /// <summary>Current simulation time in seconds.</summary>
-    public double SimTime { get { lock (_lock) return _simTime; } }
+    public double SimTime { get { lock (_lock) return _assets.SimulationTimeSeconds; } }
 
     /// <summary>Whether world advancement is paused. Frames still broadcast while paused.</summary>
     public bool IsPaused { get { lock (_lock) return _paused; } }
@@ -111,7 +127,7 @@ public sealed class SimulationRoom
     public int Speed { get { lock (_lock) return _speed; } }
 
     /// <summary>Total world steps advanced since the last reset.</summary>
-    public long TickCount { get { lock (_lock) return _tickCount; } }
+    public long TickCount { get { lock (_lock) return _assets.TickCount; } }
 
     /// <summary>
     /// Atomic read of the transport triple (paused / speed / tick) under a single
@@ -120,7 +136,7 @@ public sealed class SimulationRoom
     /// </summary>
     public (bool Paused, int Speed, long Tick) TransportSnapshot()
     {
-        lock (_lock) return (_paused, _speed, _tickCount);
+        lock (_lock) return (_paused, _speed, _assets.TickCount);
     }
 
     /// <summary>Initialises the room with a flat terrain and calm weather using default settings.</summary>
@@ -133,7 +149,7 @@ public sealed class SimulationRoom
         _logger = logger;
         _terrain = new TerrainNoiseService();
         _weather = new UpdatableWeatherSystem(new WeatherConfig());
-        _world = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
+        _assets = CreateWorld();
         _swarm = new SwarmCoordinator(_terrain);
     }
 
@@ -211,9 +227,7 @@ public sealed class SimulationRoom
     {
         lock (_lock)
         {
-            _world.AddDrone(id, position);
-            if (!string.IsNullOrEmpty(vendor))
-                _droneVendors[id] = vendor;
+            _assets.AddDrone(id, position, vendor);
         }
         Touch();
         _logger.LogInformation("[room {RoomId}] Drone {DroneId} added at ({X}, {Y}, {Z}) vendor={Vendor}.",
@@ -225,7 +239,7 @@ public sealed class SimulationRoom
     {
         lock (_lock)
         {
-            var drone = _world.Drones.FirstOrDefault(d => d.Id == droneId);
+            var drone = _assets.Drones.FirstOrDefault(d => d.Id == droneId);
             if (drone is null)
             {
                 _logger.LogWarning("[room {RoomId}] SendCommand: drone {DroneId} not found.", Id, LogSafe(droneId));
@@ -248,7 +262,7 @@ public sealed class SimulationRoom
     {
         lock (_lock)
         {
-            if (_world.Drones.All(d => d.Id != droneId))
+            if (_assets.Drones.All(d => d.Id != droneId))
             {
                 _logger.LogWarning("[room {RoomId}] ResumeAuto: drone {DroneId} not found.", Id, LogSafe(droneId));
                 return;
@@ -258,116 +272,72 @@ public sealed class SimulationRoom
         Touch();
     }
 
-    /// <summary>Reconfigures the weather system.</summary>
-    public void SetWeather(string mode, double windSpeed, double direction)
-    {
-        var weatherMode = mode.ToLowerInvariant() switch
-        {
-            "steady" => WeatherMode.Steady,
-            "turbulent" => WeatherMode.Turbulent,
-            _ => WeatherMode.Calm,
-        };
-        // Update under _lock so the 60 Hz Tick() loop can't sample a torn
-        // weather config (e.g. new mode, old speed) mid-update.
-        lock (_lock)
-        {
-            _weather.Update(new WeatherConfig(weatherMode, direction, windSpeed));
-        }
-        Touch();
-        _logger.LogInformation("[room {RoomId}] Weather updated: mode={Mode}, speed={Speed} m/s, direction={Dir}°.",
-            Id, weatherMode, windSpeed, direction);
-    }
-
-    /// <summary>Switches the terrain preset.</summary>
-    public void SetTerrainPreset(string key)
-    {
-        // Both terrain mutation and swarm reconfigure must run under the
-        // same lock as Tick() — otherwise the world step can sample a half-
-        // applied terrain (preset switched, drones not yet re-routed).
-        lock (_lock)
-        {
-            _terrain.SetPreset(key);
-            _swarm.SetTerrainPreset(key, _terrain, _world.Drones.ToList());
-        }
-        Touch();
-        _logger.LogInformation("[room {RoomId}] Terrain preset switched to '{Key}'.", Id, LogSafe(key));
-    }
-
-    /// <summary>Installs a heightmap as the authoritative terrain source.</summary>
-    public void SetHeightmap(float[,] heights, double width, double depth)
-    {
-        lock (_lock)
-        {
-            _terrain.SetHeightmap(heights, width, depth);
-        }
-        Touch();
-        _logger.LogInformation("[room {RoomId}] Heightmap installed: {Rows}×{Cols}, {W}×{D} m.",
-            Id, heights.GetLength(0), heights.GetLength(1), width, depth);
-    }
-
-    /// <summary>Clears the heightmap override.</summary>
-    public void ClearHeightmap()
-    {
-        lock (_lock)
-        {
-            _terrain.ClearHeightmap();
-        }
-        Touch();
-        _logger.LogInformation("[room {RoomId}] Heightmap cleared.", Id);
-    }
-
-    /// <summary>Notifies the swarm controller of the active scenario.</summary>
-    public void NotifyScenario(string name)
-    {
-        lock (_lock)
-        {
-            _swarm.SetScenario(name, _world.Drones.ToList());
-        }
-        Touch();
-    }
-
     /// <summary>Resets the simulation by discarding all drones and restarting the world clock.</summary>
     public void Reset()
     {
         lock (_lock)
         {
-            _world = new SimulationWorld(new SimulationConfig(), _terrain, _weather);
-            _simTime = 0;
-            _tickCount = 0;
+            // A fresh world rather than a cleared one: it drops the registry, the counters and
+            // the SDK world together, so a reset cannot leave a stale asset of any domain behind.
+            _assets = CreateWorld();
             _swarmTick = 0;
             _swarm.ResetState();
-            _droneVendors.Clear();
+            ClearAssetEventBuffer();
+            // Simulated time restarts with the world, so the observed contacts have to go with
+            // it: a store that survived would measure every later report against a high-water
+            // mark from the previous run and refuse the lot as arriving out of order.
+            ClearTracks();
+            _commands.Clear();
+            _environmentRevision++;
             _backhaulKilled = false;
             _paused = false;
             _speed = 1;
             _pendingSteps = 0;
             _broadcastTick = 0;
         }
+
+        // Outside the lock, and after the swap: every asset the old world held is gone, so
+        // anything holding authority over one has to hear about it now rather than at whatever
+        // request next happens to look. See IRoomLifecycleObserver.
+        NotifyWorldReset();
         Touch();
         _logger.LogInformation("[room {RoomId}] Simulation reset.", Id);
     }
 
     /// <summary>Returns a snapshot of all drones' current state.</summary>
+    /// <remarks>
+    /// The v1 broadcast path's reading. A v2 frame must not pair this with a separate
+    /// <see cref="CaptureAssetFrame"/>: two locked reads are two frames, and
+    /// <see cref="RoomAssetFrame.Drones"/> exists so one frame stays one reading.
+    /// </remarks>
     public IReadOnlyList<DroneSnapshot> GetSnapshot()
     {
         lock (_lock)
         {
-            return _world.Drones.Select(d =>
-            {
-                var state = d.FlightModel.State;
-                var q = state.Orientation;
-                return new DroneSnapshot(
-                    Id: d.Id,
-                    Position: [state.Position.X, state.Position.Y, state.Position.Z],
-                    Rotation: [q.X, q.Y, q.Z, q.W],
-                    Velocity: [state.Velocity.X, state.Velocity.Y, state.Velocity.Z],
-                    Battery: state.BatteryPercent,
-                    Status: d.FlightModel.HasLanded ? "landed" : "flying",
-                    Armed: !d.FlightModel.HasLanded,
-                    Vendor: _droneVendors.TryGetValue(d.Id, out var v) ? v : null);
-            }).ToList();
+            return CaptureDroneSnapshots();
         }
     }
+
+    /// <summary>Projects every air asset into the v1 drone shape.</summary>
+    /// <remarks>Must be called with <c>_lock</c> held; the returned list is fully materialised.</remarks>
+    /// <returns>One snapshot per drone, in the flight world's order.</returns>
+    private IReadOnlyList<DroneSnapshot> CaptureDroneSnapshots() =>
+        _assets.Drones.Select(d =>
+        {
+            var state = d.FlightModel.State;
+            var q = state.Orientation;
+            return new DroneSnapshot(
+                Id: d.Id,
+                Position: [state.Position.X, state.Position.Y, state.Position.Z],
+                Rotation: [q.X, q.Y, q.Z, q.W],
+                Velocity: [state.Velocity.X, state.Velocity.Y, state.Velocity.Z],
+                Battery: state.BatteryPercent,
+                Status: d.FlightModel.HasLanded ? "landed" : "flying",
+                Armed: !d.FlightModel.HasLanded,
+                Vendor: _assets.TryGet(d.Id, out var asset) && asset is not null
+                    ? asset.Descriptor.Vendor
+                    : null);
+        }).ToList();
 
     /// <summary>
     /// Advances the simulation by exactly one tick. Returns whether this tick
@@ -375,6 +345,8 @@ public sealed class SimulationRoom
     /// </summary>
     public (bool ShouldBroadcast, double SimTime) Tick()
     {
+        (bool ShouldBroadcast, double SimTime) tick;
+
         lock (_lock)
         {
             // World steps to advance this real (60 Hz) tick: a queued single-step
@@ -387,22 +359,55 @@ public sealed class SimulationRoom
 
             for (var i = 0; i < steps; i++)
             {
-                _world.Step();
-                _tickCount++;
+                // The world advances its own tick count and derives sim time from it (an
+                // integer-counted division, which doesn't drift over hours the way accumulating
+                // 1/60 per tick does), then steps ground and surface assets. The coordinator
+                // pass runs after that, at the same 2 Hz phase it always has.
+                _assets.Step();
+
+                // A safe action that fired inside that step has taken its asset off autonomous
+                // control, and the coordinator has to hear about it before its next pass — it
+                // drives the same drones on a 2 Hz cycle and would otherwise retask a vehicle
+                // the failsafe just sent home, inside half a simulated second and with nothing
+                // recording that it did. Exactly the rule an operator command already follows,
+                // through exactly the same call.
+                var detached = _assets.DrainAutonomyDetachments();
+                for (var d = 0; d < detached.Count; d++)
+                {
+                    _swarm.DetachManual(detached[d]);
+                }
+
                 _swarmTick++;
-                // Derive sim time from the tick count rather than accumulating
-                // 1/60 per tick: integer-counted divisions don't drift over hours.
-                _simTime = _tickCount / 60.0;
                 if (_swarmTick % 30 == 0)
-                    _swarm.Tick(_simTime, _world.Drones);
+                    _swarm.Tick(_assets.SimulationTimeSeconds, _assets.Drones);
             }
+
+            // Sweep whatever the assets raised into this room's bounded buffer, every tick and
+            // unconditionally. Assets raise events during capture, so without a call site on the
+            // loop itself the per-asset lists only shrink when a v2 consumer happens to drain
+            // them — and a session nobody is draining is exactly the one that runs for hours.
+            BufferAssetEvents();
+
+            // Age the observed contacts against the same clock, on the same loop and for the
+            // same reason: a session nobody is reading is the one that runs for hours, and a
+            // contact that only expired when somebody asked would hold capacity a live one then
+            // could not have. A function of simulated time only, so a paused session ages
+            // nothing and a replay ages identically.
+            AdvanceTracks();
 
             // Broadcast cadence is driven by REAL ticks, not sim steps, so the
             // client keeps receiving 10 Hz frames while paused (to reflect the
             // paused state) or sped up (without multiplying network traffic).
             _broadcastTick++;
-            return (_broadcastTick % BroadcastEveryNTicks == 0, _simTime);
+            tick = (_broadcastTick % BroadcastEveryNTicks == 0, _assets.SimulationTimeSeconds);
         }
+
+        // Upkeep for state that lives outside this room and lapses on its own — a control lease
+        // in a session nobody is watching, above all. Outside the lock because an observer calls
+        // back in, and throttled inside NotifyUpkeep so this stays a once-a-second pass rather
+        // than a 60 Hz one. See IRoomLifecycleObserver.
+        NotifyUpkeep();
+        return tick;
     }
 
     /// <summary>Single-step helper for tests; ignores the broadcast flag.</summary>

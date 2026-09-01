@@ -30,7 +30,7 @@ import { ControlPanel }    from './controls';
 import { Hud }            from './ui/hud';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
-import type { VizFrame }  from './types';
+import type { DroneState, MeshState, VizFrame } from './types';
 import { isDroneReady }   from './types';
 import { Settings }       from './settings';
 import { PRESETS, PresetKey } from './terrainPresets';
@@ -67,6 +67,34 @@ import type { FpvOsd } from './sensors/fpvOsd';
 import type { CameraModeControl } from './cameraMode';
 import type { FrameRecorder } from './editor/recorder';
 import type { Dvr } from './editor/dvr';
+// ── Multi-domain asset layer ─────────────────────────────────────────────────
+// `sceneFrame`, `domainRegistration` and `chaseCamera` are small and are needed
+// the moment a v2 snapshot lands, so they ship with the entry chunk. Everything
+// expensive stays behind a dynamic import: the ground and surface renderers via
+// `registerDomainRenderers` (fetched on the first asset of that domain), the
+// fleet panel + filter + their stylesheet via `./assets/fleetUi`, and the
+// external-contact overlay via `./assets/overlays/TrackOverlay` — the last two
+// type-only here, so neither creates a static edge into its chunk.
+import { registerDomainRenderers } from './assets/domainRegistration';
+import type { ChaseCamera, ChaseProfileName } from './assets/chaseCamera';
+import {
+    DescriptorCache,
+    SimulationClock,
+    assetById,
+    isSupportedSchema,
+    projectSnapshot,
+    trackById,
+} from './assets/sceneFrame';
+import type { SceneAsset, SceneFrame, SceneSnapshot } from './assets/sceneFrame';
+import { AssetDomain } from './assets/types';
+import type { ExternalTrackState, VizDeltaV2, VizSnapshotV2 } from './assets/types';
+// Type-only, so the delta merge stays out of the entry chunk entirely: the
+// module is fetched by `_subscribeDeltas`, and only on a server that offers
+// the stream.
+import type { DeltaTracker } from './assets/deltaApply';
+import type { FleetUi } from './assets/fleetUi';
+import type { PickedTarget } from './assets/panelCommands';
+import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
 
 const log = getLogger('app');
 
@@ -119,6 +147,12 @@ if (!container) throw new Error('#scene-container not found');
 const viz          = new Scene(container);
 let   terrain      = new Terrain(viz.scene, 'alpine');
 const droneManager = new DroneManager(viz.scene);
+// `DroneManager` registers the air renderer eagerly; ground and surface are
+// registered as loaders only, so a drones-only session never requests either
+// chunk. Nothing is fetched by this call — the registry starts a load the first
+// time an asset of that domain actually appears in a frame, and until it lands
+// the asset draws as the registry's visible, selectable fallback marker.
+registerDomainRenderers(droneManager.assets.registry);
 const downwashFx   = new DownwashFx(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
@@ -320,6 +354,9 @@ const cameraPresets = new CameraPresets({
     droneManager,
     investorMode,
     getDrones: () => _lastFrame?.drones ?? [],
+    // Framing follows the whole fleet, not the aircraft in it. On the v1 stream
+    // this returns nothing and the drone path below takes over unchanged.
+    getFleetPositions: () => _fleetPositions(),
 });
 
 // Cold-load + outage overlay. Created immediately so it's visible before the
@@ -347,9 +384,10 @@ miniMap.onCameraQuery(() => viz.getCameraState());
 // WebGPU sensor primitive is healthy and not silently queueing.
 const sensorStats = new SensorStatsOverlay();
 
-// Partition banner — shown when the server reports a degraded backhaul link.
+// Comms banner — raised when the server reports the mesh degraded. Two
+// independent facts can raise it (a cut backhaul, a partitioned mesh) and the
+// wording keeps them apart; `_commsState` owns every string it can show.
 // Persists across investor-mode so the degradation shows in screen recordings.
-const PARTITION_BANNER_TEXT = 'Backhaul link down — operating mesh-only';
 const partitionBanner = document.createElement('div');
 partitionBanner.className = 'partition-banner';
 partitionBanner.setAttribute('role', 'status');
@@ -359,6 +397,17 @@ partitionBanner.setAttribute('aria-hidden', 'true');
 // Text is populated on partition transitions so the live region announces
 // the state change (screen readers ignore text present at insertion time).
 document.body.appendChild(partitionBanner);
+
+// LINK chip — the always-present comms readout. The banner only appears on a
+// fault, which leaves "backhaul up" and "backhaul not reported" looking
+// identical, because both are silent; the chip is what keeps those two apart.
+const commsChip      = document.getElementById('hud-comms');
+const commsChipValue = document.getElementById('comms-state');
+// Last rendered comms reading, as `backhaul/partition`. Guards the chip writes
+// so a 10 Hz stream does not rewrite unchanged DOM sixty times a minute.
+let _commsKey = '';
+// Banner text currently on screen, so it is assigned only on a real change.
+let _commsBanner = '';
 
 const settings = new Settings();
 
@@ -802,6 +851,14 @@ document.addEventListener('click', (e) => {
 // ─── Drone click-to-select ─────────────────────────────────────────────────
 
 viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
+    // While a command is waiting for a destination the canvas is in an aiming
+    // mode: hold the crosshair and suppress hover highlighting, so the next click
+    // reads as "place the target" and not as "pick that asset".
+    if (_pendingPick) {
+        droneManager.setHovered(null);
+        viz.renderer.domElement.style.cursor = 'crosshair';
+        return;
+    }
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     droneManager.setHovered(hit[0]?.object ?? null);
     const hasDroneSelected = droneManager.selectedId !== null;
@@ -817,16 +874,40 @@ viz.renderer.domElement.addEventListener('mousemove', (e: MouseEvent) => {
 
 viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
     if (gizmo?.swallowClick()) return;   // ignore the click that ends a gizmo handle drag
+
+    // A command is waiting for a destination: this click supplies it and does
+    // nothing else. Checked first so aiming a `goTo` cannot also re-select
+    // whatever happened to be under the cursor. A click that misses the terrain
+    // cancels — there is no destination there to send.
+    if (_pendingPick) {
+        const picked = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
+        if (picked) {
+            viz.showTargetMarker(picked, picked.y);
+            _settlePick({ position: [picked.x, picked.y, picked.z] });
+        } else {
+            _cancelPick();
+        }
+        return;
+    }
+
     const hit = viz.getIntersections(e.clientX, e.clientY, droneManager.meshObjects);
     const first = hit[0];
     const selectedId = droneManager.selectedId;
+    // Click-to-GoTo posts the v1 air endpoint, so it is offered for air assets
+    // only. A rover or vessel is commanded from the asset panel, where the
+    // buttons come from that asset's own declared capabilities and the
+    // destination is picked deliberately rather than as a side effect of a click.
+    const domain = _selectedDomain();
+    const canClickGoTo = domain === null || domain === AssetDomain.Air;
 
     if (first) {
         const droneId = droneManager.getDroneIdFromObject(first.object);
         if (droneId) {
             if (droneId === selectedId) {
                 // Clicking selected drone again → treat as terrain GoTo (pass-through)
-                const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
+                const terrainHit = canClickGoTo
+                    ? viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh())
+                    : null;
                 if (terrainHit && selectedId) {
                     const alt = droneManager.getSelectedAltitude() ?? 15;
                     apiPostOrWarn(
@@ -841,7 +922,7 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             }
         }
     } else {
-        if (selectedId) {
+        if (selectedId && canClickGoTo) {
             const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
             if (terrainHit) {
                 const alt = droneManager.getSelectedAltitude() ?? 15;
@@ -870,30 +951,68 @@ let _pilotHeadingFor: string | null = null;
 
 // Unified selection: any surface (scene click, telemetry strip, minimap, bracket
 // cycle) routes here so the Inspector, selection ring, and HUD update identically.
-function _selectFromAnySurface(droneId: string): void {
-    droneManager.setSelected(droneId);
-    hud.setSelectedDrone(droneId);
-    miniMap.setSelected(droneId);
-    selection.set('drone', droneId);
-    _pilotHeadingFor = null; // re-seed piloted heading from the new drone's facing
+//
+// The selection *kind* follows the stream, not the asset. On v2 an aircraft is
+// an `asset` and resolves out of the snapshot's asset list; on v1 the same
+// aircraft is a `drone` and resolves out of `VizFrame.drones`. Publishing the
+// wrong kind would leave the Inspector resolving against a list the id is not
+// in, and it would silently render nothing.
+function _selectFromAnySurface(assetId: string): void {
+    // A destination the operator was aiming for the *previous* subject must not
+    // be delivered to the new one. Cancelling also drops the crosshair, so the
+    // canvas stops swallowing clicks as target placements.
+    _cancelPick();
+    droneManager.setSelected(assetId);
+    hud.setSelectedDrone(assetId);
+    miniMap.setSelected(assetId);
+    selection.set(_v2Active ? 'asset' : 'drone', assetId);
+    _pilotHeadingFor = null; // re-seed piloted heading from the new asset's facing
+}
+// Selecting an observed contact. Deliberately separate from the asset path: a
+// track has no scene entry in the asset manager, no selection ring there and —
+// the point of the whole distinction — no command surface. Any live asset
+// selection is cleared so the two can never both look selected.
+function _selectTrack(trackId: string): void {
+    _cancelPick();
+    droneManager.setSelected(null);
+    hud.setSelectedDrone(null);
+    miniMap.setSelected(null);
+    _stopDomainChase();
+    selection.set('track', trackId);
+    _pilotHeadingFor = null;
 }
 // Symmetric deselect — clears every legacy selection surface plus the editor
-// SelectionStore, so the Inspector hides in lockstep with the drone ring/panel.
+// SelectionStore, so the Inspector hides in lockstep with the selection ring.
 function _deselectAll(): void {
+    // The pick has to die with the selection. `onPanelClose` routes here, and the
+    // panel is mounted on `document.body` — its close click never reaches the
+    // canvas listener that would otherwise settle the pick. Leaving `_pendingPick`
+    // set would strand the app in aiming mode: the mousemove handler forces the
+    // crosshair and suppresses hover, and the next click is consumed as a target,
+    // so nothing could be selected again.
+    _cancelPick();
     droneManager.setSelected(null);
     hud.setSelectedDrone(null);
     miniMap.setSelected(null);
     selection.clear();
+    _stopDomainChase();
+    fleetUi?.renderSubject(null);
     _pilotHeadingFor = null;
 }
-// Select any entity kind from the editor layer (outliner rows). Drones light up
-// the legacy HUD surfaces; hazards/detections drive only the editor store +
-// Inspector and clear any stale drone selection so the surfaces never disagree.
+// Select any entity kind from the editor layer (outliner rows). Drones and
+// assets light up the legacy HUD surfaces; hazards, detections and tracks drive
+// only the editor store + Inspector and clear any stale asset selection so the
+// surfaces never disagree.
 function _selectEntity(kind: SelectionKind, id: string): void {
-    if (kind === 'drone') {
+    if (kind === 'drone' || kind === 'asset') {
         _selectFromAnySurface(id);
         return;
     }
+    if (kind === 'track') {
+        _selectTrack(id);
+        return;
+    }
+    _cancelPick();
     droneManager.setSelected(null);
     hud.setSelectedDrone(null);
     miniMap.setSelected(null);
@@ -902,35 +1021,333 @@ function _selectEntity(kind: SelectionKind, id: string): void {
 miniMap.onSelect(_selectFromAnySurface);
 
 let _fittedToSwarm = false;
-let _lastFrame: VizFrame | null = null;
+let _lastFrame: SceneFrame | null = null;
 let _prevDroneCount = 0;
+
+// ─── v2 snapshot stream ────────────────────────────────────────────────────
+//
+// `_v2Active` flips on the first snapshot this client can actually read, not on
+// a successful subscription: a server that accepts the subscription and then
+// sends nothing must leave v1 driving the scene rather than freezing it. Once
+// it is true the v1 `ReceiveFrame` handler stops applying frames — both streams
+// describe the same tick, and letting them both drive would have the air assets
+// reconciled twice per tick against two different projections.
+
+/** True once a readable v2 snapshot has arrived and is driving the scene. */
+let _v2Active = false;
+/** Descriptors held across frames, so a later delta frame still resolves. */
+const _descriptorCache = new DescriptorCache();
+/**
+ * The session's simulation clock, recovered from the snapshots themselves.
+ *
+ * Held for the life of the stream rather than rebuilt per frame so the epoch it
+ * learns stays monotonic: a frame in which everything has gone quiet carries no
+ * stamp as recent as its own tick, and re-deriving the epoch from that one frame
+ * would move it backwards and make the whole fleet read younger than it is.
+ *
+ * **Every report age on screen is measured against this** — assets, and equally
+ * the observed contacts, whose `lastUpdateTime` the server stamps from the same
+ * clock. The wall clock is not interchangeable with it: the two diverge by the
+ * speed multiplier and by the whole of every pause.
+ */
+const _simulationClock = new SimulationClock();
+/** The most recent projected snapshot, or null while on v1. */
+let _lastSnapshot: SceneSnapshot | null = null;
+
+// ─── v2 delta stream ───────────────────────────────────────────────────────
+//
+// A second opt-in layered on the first, exactly as v2 was layered on v1. Only a
+// connection that asks for deltas gets them, and it trades its full snapshots
+// for keyframes plus deltas rather than receiving both. Everything below is
+// inert on a server that does not offer the stream, and the client then behaves
+// exactly as it does today.
+//
+// Nothing downstream knows any of this exists: `DeltaTracker` returns a complete
+// `VizSnapshotV2`, which goes through `_ingestSnapshot` like any other frame.
+
+/** Holds the frame the chain is measured against. Null while on full snapshots. */
+let _deltaTracker: DeltaTracker | null = null;
+/** Set once this session has given up on deltas — a schema it cannot read, or a
+ *  chain no keyframe recovered. Never unset: a reload retries, a reconnect does
+ *  not, because the same server would fail the same way. */
+let _deltaOptOut = false;
+/** Unappliable frames between re-asking for a keyframe — 2 s at 10 Hz. One ask
+ *  per gap is the normal case; this is for an ask that was lost or refused. */
+const GAP_REASK_FRAMES = 20;
+/** Unappliable frames before abandoning deltas — 10 s, two whole periodic
+ *  keyframe cycles. Past that the stream is not one this client can follow, and
+ *  full snapshots are always available and always correct. */
+const GAP_GIVE_UP_FRAMES = 100;
+/** Fleet panel + filter. Null until the first v2 snapshot pulls in its chunk. */
+let fleetUi: FleetUi | null = null;
+let _fleetUiLoading = false;
+/** External-contact overlay. Null until a snapshot actually carries contacts. */
+let trackOverlay: TrackOverlay | null = null;
+let _trackOverlayLoading = false;
+
+/**
+ * Positions of every asset currently in the scene, whatever domain it belongs
+ * to. Read from the asset manager's own groups rather than from the frame, so a
+ * filtered-out asset does not drag the framing out to include something the
+ * operator has hidden.
+ */
+function _fleetPositions(): THREE.Vector3[] {
+    return droneManager.assets.meshObjects.map(o => o.position.clone());
+}
+
+/** Ids of the assets the last snapshot actually drew, in publication order: the
+ *  filter's subset, plus a selected asset the filter would otherwise hide. Read
+ *  from the render rather than re-derived from the filter, so cycling walks
+ *  exactly what is on screen. Empty while on v1. */
+let _visibleAssetIds: string[] = [];
+
+/** Ids selection cycling walks, in publication order: what was drawn on v2, the
+ *  frame's drones on v1. */
+function _selectableIds(): string[] {
+    if (!_v2Active) return (_lastFrame?.drones ?? []).map(d => d.id);
+    return _visibleAssetIds;
+}
+
+/**
+ * The filter's subset, with the selected asset added back if it hid it.
+ *
+ * The selected asset is exempt from filtering. `AssetManager.update` evicts
+ * anything absent from the list it is handed and clears its own `_selectedId`,
+ * and nothing tells the editor `SelectionStore`, the HUD chip or the detail
+ * panel that it did — so a filter change could leave three stores each believing
+ * something different about what is selected. Exempting the selection keeps them
+ * in agreement, and is also the less surprising of the two behaviours: an
+ * operator narrowing the facets is asking to see less of the fleet, not to have
+ * the thing they are inspecting yanked out from under them.
+ *
+ * Publication order is preserved by re-walking `all`, so the exempt asset lands
+ * where it belongs in the cycling order rather than being appended.
+ */
+function _withSelectedAsset(
+    all: readonly SceneAsset[],
+    filtered: readonly SceneAsset[],
+): SceneAsset[] {
+    const id = droneManager.selectedId;
+    if (id === null) return [...filtered];
+    if (filtered.some((a) => a.view.id === id)) return [...filtered];
+    if (!all.some((a) => a.view.id === id)) return [...filtered];
+    const kept = new Set(filtered.map((a) => a.view.id));
+    return all.filter((a) => kept.has(a.view.id) || a.view.id === id);
+}
+
+/** The selected asset's domain, or null when nothing (or a track) is selected. */
+function _selectedDomain(): number | null {
+    const id = droneManager.selectedId;
+    if (!id || !_lastSnapshot) return null;
+    return assetById(_lastSnapshot.assets, id)?.view.domain ?? null;
+}
+
+// ─── Ground and surface chase cameras (deferred) ───────────────────────────
+//
+// Operator-triggered and rarely used, so the module is fetched on the first
+// press rather than shipped with the entry chunk — the same rule the domain
+// renderers follow. Until it lands nothing changes, which is the right
+// behaviour for a keypress that has not taken effect yet.
+
+/** The chase controller, once its chunk has landed. */
+let chaseCamera: ChaseCamera | null = null;
+let _chaseLoading = false;
+
+/** Release the ground/surface chase camera if it is driving. Called from every
+ *  other path that takes the camera — follow toggle, fleet framing, mode cycle,
+ *  deselect — so no caller has to know whether a chase is live, and a no-op when
+ *  the chunk was never loaded. */
+function _stopDomainChase(): void {
+    chaseCamera?.detach();
+}
+
+/**
+ * Start a low chase on the selected asset.
+ *
+ * No-op when nothing is selected: there is nothing to ride, and stealing the
+ * camera to look at the origin would read as a bug. The selection is re-read
+ * *after* the chunk resolves, so a press followed by a different selection
+ * chases what the operator is looking at now rather than what they were looking
+ * at when the fetch began.
+ */
+function _startDomainChase(profile: ChaseProfileName): void {
+    if (!droneManager.selectedGroup) return;
+    if (chaseCamera) {
+        viz.followObject(null);
+        chaseCamera.attach(droneManager.selectedGroup, profile);
+        return;
+    }
+    if (_chaseLoading) return;
+    _chaseLoading = true;
+    void import('./assets/chaseCamera')
+        .then((m) => {
+            // The manager is handed over as the removal source so the chase is told
+            // its subject is gone the moment it leaves the roster, rather than
+            // discovering it on the next frame's parent check. `ChaseCamera` keeps
+            // both routes deliberately; wiring only one of them leaves the other as
+            // dead code and the release a frame later than it needs to be.
+            chaseCamera = new m.ChaseCamera(
+                viz.cameraController, undefined, droneManager.assets);
+            const group = droneManager.selectedGroup;
+            if (!group) return;
+            viz.followObject(null);
+            chaseCamera.attach(group, profile);
+        })
+        .catch((err: unknown) => {
+            _chaseLoading = false;
+            log.error('chase camera failed to load; the camera is unchanged', err);
+        });
+}
+
+// ─── Deferred fleet surfaces ───────────────────────────────────────────────
+
+/**
+ * Load the fleet panel + filter on the first v2 snapshot.
+ *
+ * Fire-and-forget: the scene renders assets from the frame it is already
+ * holding, and the panel and filter appear a beat later. Blocking the first
+ * snapshot on a chunk fetch would stall the picture on the network for the sake
+ * of chrome. A failure is logged once and left — the fleet still renders,
+ * selects and cycles; what is missing is the detail panel and the facets.
+ */
+function _ensureFleetUi(): void {
+    if (fleetUi || _fleetUiLoading) return;
+    _fleetUiLoading = true;
+    void import('./assets/fleetUi')
+        .then((m) => {
+            fleetUi = new m.FleetUi({
+                pickTarget: _pickSceneTarget,
+                onPanelClose: () => _deselectAll(),
+                // A filter change is an operator decision, so the picture is
+                // refreshed immediately rather than at the next 10 Hz frame.
+                onFilterChange: () => { if (_lastSnapshot) _renderSnapshot(_lastSnapshot, true); },
+            });
+        })
+        .catch((err: unknown) => {
+            _fleetUiLoading = false;
+            log.error('fleet panel/filter failed to load; assets still render and select', err);
+        });
+}
+
+/** Load the external-contact overlay the first time a snapshot carries one. A
+ *  failure leaves contacts undrawn rather than breaking the frame; they remain
+ *  listed in the outliner and inspectable there. */
+function _ensureTrackOverlay(): void {
+    if (trackOverlay || _trackOverlayLoading) return;
+    _trackOverlayLoading = true;
+    void import('./assets/overlays/TrackOverlay')
+        .then((m) => { trackOverlay = m.createTrackOverlay(viz.scene); })
+        .catch((err: unknown) => {
+            _trackOverlayLoading = false;
+            log.error('external-contact overlay failed to load; contacts are not drawn', err);
+        });
+}
+
+// ─── Target picking for capability-gated commands ──────────────────────────
+
+/** The pick in flight, or null. At most one: a second request supersedes the
+ *  first, which is cancelled rather than left hanging. */
+let _pendingPick: {
+    readonly resolve: (target: PickedTarget | null) => void;
+    readonly label: string;
+} | null = null;
+
+/**
+ * Resolve a scene-frame destination from the operator's next click on the
+ * terrain.
+ *
+ * Handed to `AssetPanel` so a target-taking command (`goTo`, `driveTo`,
+ * `transitTo`) can be aimed. Resolving to null means the operator cancelled —
+ * Escape, or a click that hit nothing — which is not a failure and is not
+ * reported as one.
+ */
+const _pickSceneTarget = (kind: string, label: string): Promise<PickedTarget | null> => {
+    // A second request supersedes the first, which is resolved as a cancellation
+    // rather than abandoned — an un-settled promise would leave the panel's
+    // command handler awaiting forever and the control stuck busy.
+    _cancelPick();
+    log.info('awaiting a destination', { kind });
+    viz.renderer.domElement.style.cursor = 'crosshair';
+    return new Promise<PickedTarget | null>((resolve) => {
+        _pendingPick = { resolve, label };
+    });
+};
+
+/** Settle the in-flight pick, if any, and drop the aiming affordance. */
+function _settlePick(target: PickedTarget | null): void {
+    const pending = _pendingPick;
+    if (!pending) return;
+    _pendingPick = null;
+    viz.renderer.domElement.style.cursor = '';
+    pending.resolve(target);
+}
+
+/** Cancel any in-flight pick. Safe when there is none. */
+function _cancelPick(): void {
+    _settlePick(null);
+}
 
 // ─── A11y telemetry summary ────────────────────────────────────────────────
 // Pushes a short text summary into #a11y-telemetry (aria-live="polite") so
 // screen-reader users get an audible picture of the 3D scene. Throttled to
-// avoid flooding the AT queue: only announces on drone-count change or once
+// avoid flooding the AT queue: only announces on entity-count change or once
 // every TELEMETRY_ANNOUNCE_MS, whichever comes first.
 const _a11yTelemetryEl = document.getElementById('a11y-telemetry');
 const TELEMETRY_ANNOUNCE_MS = 8000;
 let _lastTelemetryAnnounceAt = 0;
-let _lastTelemetryDroneCount = -1;
-function _updateA11yTelemetry(drones: { battery?: number; status?: string }[], simTime: number): void {
+let _lastTelemetryCount = -1;
+
+/**
+ * Shared throttle for the live region.
+ *
+ * `count` is the change signal: a fleet gaining or losing a member is worth
+ * interrupting for, a battery ticking down a percent is not. Returns whether the
+ * announcement was made, which is only of interest to callers that want to skip
+ * the work of composing one.
+ */
+function _announceTelemetry(count: number, text: () => string): void {
     if (!_a11yTelemetryEl) return;
     const now = performance.now();
-    const countChanged = drones.length !== _lastTelemetryDroneCount;
+    const countChanged = count !== _lastTelemetryCount;
     if (!countChanged && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
     _lastTelemetryAnnounceAt = now;
-    _lastTelemetryDroneCount = drones.length;
-    if (drones.length === 0) {
-        _a11yTelemetryEl.textContent = 'No active drones.';
-        return;
-    }
-    const batteries = drones.map(d => d.battery ?? 0).filter(b => b > 0);
-    const avgBat = batteries.length > 0 ? Math.round(batteries.reduce((a, b) => a + b, 0) / batteries.length) : 0;
-    const flying = drones.filter(d => d.status === 'flying').length;
-    _a11yTelemetryEl.textContent =
-        `${drones.length} drone${drones.length === 1 ? '' : 's'} active, ` +
-        `${flying} flying, average battery ${avgBat}%, sim time ${simTime.toFixed(0)} seconds.`;
+    _lastTelemetryCount = count;
+    _a11yTelemetryEl.textContent = text();
+}
+
+/** v1 wording, unchanged: a drone-only stream describes a drone-only fleet. */
+function _updateA11yTelemetry(drones: { battery?: number; status?: string }[], simTime: number): void {
+    _announceTelemetry(drones.length, () => {
+        if (drones.length === 0) return 'No active drones.';
+        const batteries = drones.map(d => d.battery ?? 0).filter(b => b > 0);
+        const avgBat = batteries.length > 0
+            ? Math.round(batteries.reduce((a, b) => a + b, 0) / batteries.length)
+            : 0;
+        const flying = drones.filter(d => d.status === 'flying').length;
+        return `${drones.length} drone${drones.length === 1 ? '' : 's'} active, `
+            + `${flying} flying, average battery ${avgBat}%, sim time ${simTime.toFixed(0)} seconds.`;
+    });
+}
+
+/**
+ * Mixed-fleet wording, from the same counts the filter is showing.
+ *
+ * Domains are named because that is precisely the fact a screen-reader user
+ * cannot get from the scene — silhouette carries it for everyone else. The
+ * sentence itself is composed by `fleetSummaryText`, which lives with the filter
+ * so the spoken counts and the visible tally can never disagree.
+ *
+ * Until the fleet chunk lands there is no filter and no summary, so this falls
+ * back to a plain count rather than announcing nothing: a fleet the operator
+ * cannot see and is not told about is the worst of the three states.
+ */
+function _announceFleet(assetCount: number, simTime: number): void {
+    _announceTelemetry(assetCount, () => {
+        if (fleetUi) return fleetUi.summaryText();
+        if (assetCount === 0) return 'No assets in view.';
+        return `${assetCount} asset${assetCount === 1 ? '' : 's'} in view, `
+            + `sim time ${simTime.toFixed(0)} seconds.`;
+    });
 }
 // Client-side mirror of the server backhaul state. Optimistically updated on
 // K-press, then reconciled by each incoming frame. The in-flight flag prevents
@@ -967,6 +1384,9 @@ _bindHudToggle('hud-form-toggle', () => overlayMgr.showFormation,
                                    v  => { overlayMgr.showFormation = v; });
 
 followBtn?.addEventListener('click', () => {
+    // Follow-orbit and the domain chases are two claims on the same camera, so
+    // taking one always releases the other.
+    _stopDomainChase();
     if (viz.isFollowing) {
         viz.followObject(null);
         followBtn.classList.remove('active');
@@ -1002,17 +1422,25 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         return;
     }
 
-    // Shift+1..5 — named camera presets for demo framing (see cameraPresets.ts).
+    // Shift+1..8 — named camera presets for demo framing (see cameraPresets.ts).
     // Shift is checked first so the unshifted `Digit1..4` in controls.ts
     // continues to run scenarios — no collision.
+    //
+    // 7 and 8 are the domain chases. They sit alongside 6 (the air chase) rather
+    // than replacing it, and each names the profile it applies rather than
+    // guessing from the selection: an operator who asks for a surface chase on a
+    // rover should get the framing they asked for and see that it does not suit
+    // it, not silently get a different camera.
     if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
         switch (e.code) {
-            case 'Digit1': e.preventDefault(); cameraPresets.overview(); return;
-            case 'Digit2': e.preventDefault(); cameraPresets.tactical(); return;
-            case 'Digit3': e.preventDefault(); cameraPresets.cockpit();  return;
-            case 'Digit4': e.preventDefault(); cameraPresets.ground();   return;
-            case 'Digit5': e.preventDefault(); cameraPresets.investor(); return;
-            case 'Digit6': e.preventDefault(); cameraPresets.chase();    return;
+            case 'Digit1': e.preventDefault(); _stopDomainChase(); cameraPresets.overview(); return;
+            case 'Digit2': e.preventDefault(); _stopDomainChase(); cameraPresets.tactical(); return;
+            case 'Digit3': e.preventDefault(); _stopDomainChase(); cameraPresets.cockpit();  return;
+            case 'Digit4': e.preventDefault(); _stopDomainChase(); cameraPresets.ground();   return;
+            case 'Digit5': e.preventDefault(); _stopDomainChase(); cameraPresets.investor(); return;
+            case 'Digit6': e.preventDefault(); _stopDomainChase(); cameraPresets.chase();    return;
+            case 'Digit7': e.preventDefault(); _startDomainChase('ground');  return;
+            case 'Digit8': e.preventDefault(); _startDomainChase('surface'); return;
         }
     }
 
@@ -1036,17 +1464,21 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         case 'KeyV': overlayMgr.showVelocity  = !overlayMgr.showVelocity;  break;
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
-        case 'KeyC': cameraMode?.cycle(); break; // FREE → CHASE → FPV
+        case 'KeyC': _stopDomainChase(); cameraMode?.cycle(); break; // FREE → CHASE → FPV
         case 'KeyI': void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false)); break; // flight-instrument cockpit
         case 'KeyM': {
-            // Toggle the drone reposition gizmo ("move mode") — opt-in, so a
-            // plain selection no longer obscures the scene with handles.
+            // Toggle the reposition gizmo ("move mode") — opt-in, so a plain
+            // selection no longer obscures the scene with handles. Gated to the
+            // v1 drone kind: the gizmo releases by POSTing a v1 `goto`, which is
+            // an air-only endpoint, so offering handles on a rover would end in
+            // a drag that silently does nothing.
             if (selection.current?.kind === 'drone') {
                 if (inspector && gizmo) inspector.setMoveActive(gizmo.toggleMoveMode());
             }
             break;
         }
         case 'KeyF': {
+            _stopDomainChase();
             if (viz.isFollowing) {
                 viz.followObject(null);
             } else {
@@ -1057,17 +1489,25 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             break;
         }
         case 'Home': {
-            const positions = (_lastFrame?.drones ?? [])
-                .filter(d => isDroneReady(d))
-                .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
+            // Frame the whole fleet. On v2 that is every domain, read from the
+            // scene rather than from the drone list — a fit computed off aircraft
+            // alone leaves the rovers and vessels outside the shot.
+            _stopDomainChase();
+            const positions = _v2Active
+                ? _fleetPositions()
+                : (_lastFrame?.drones ?? [])
+                    .filter(d => isDroneReady(d))
+                    .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
             viz.fitToPositions(positions);
             break;
         }
-        // [ / ] — cycle selection through the current drones (frame order),
-        // matching the Outliner's Drones list.
+        // [ / ] — cycle selection through the current fleet in publication order,
+        // matching the Outliner's list. On v2 that covers every domain and skips
+        // whatever the fleet filter is hiding, so the keyboard walks exactly what
+        // the operator can see.
         case 'BracketLeft':
         case 'BracketRight': {
-            const ids = (_lastFrame?.drones ?? []).map(d => d.id);
+            const ids = _selectableIds();
             if (ids.length === 0) break;
             e.preventDefault();
             const current = droneManager.selectedId;
@@ -1083,10 +1523,20 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         // Drone piloting — heading-relative, only when a drone is selected and the
         // camera is NOT in free-fly mode. A/D yaw (rotate in place), W/S fly
         // forward/back along the drone's heading, Q/E climb/descend.
+        //
+        // Air only, and checked rather than assumed. These keys post to the v1
+        // `/api/sim/drone/{id}/cmd` endpoint, which is an air-domain adapter: a
+        // rover selected on the v2 stream has an id that endpoint will refuse, so
+        // pressing W would fire a request that fails somewhere the operator never
+        // sees. A key that does nothing is better than one that appears to work.
+        // Ground and surface assets are commanded from the asset panel, whose
+        // buttons come from the asset's own declared capabilities.
         case 'KeyW': case 'KeyS': case 'KeyA': case 'KeyD':
         case 'KeyQ': case 'KeyE': {
             const nudgeId = droneManager.selectedId;
-            if (nudgeId && !viz.isFlying) {
+            const domain = _selectedDomain();
+            const isPilotable = domain === null || domain === AssetDomain.Air;
+            if (nudgeId && isPilotable && !viz.isFlying) {
                 e.preventDefault();
                 const pos = droneManager.getSelectedPosition();
                 if (pos) {
@@ -1123,8 +1573,12 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
     }
     // '?' key (Shift+/) — toggle hints panel
     if (e.key === '?') _setHintsVisible(!hintsVisible);
-    // Esc — close hints if open
-    if (e.key === 'Escape' && hintsVisible) _setHintsVisible(false);
+    // Esc — abandon a destination pick first (it is the modal state), then close
+    // the hints. Leaving a pick armed with no way out would strand every click.
+    if (e.key === 'Escape') {
+        if (_pendingPick) _cancelPick();
+        else if (hintsVisible) _setHintsVisible(false);
+    }
 });
 
 // ─── SignalR ───────────────────────────────────────────────────────────────
@@ -1177,16 +1631,87 @@ document.addEventListener('resq:scenario-start', (e) => {
     }, name);
 });
 
-// Apply a frame to every visual surface. Shared by the live SignalR path and
-// the DVR replay path (scrubbing) — pure rendering, NO live-only side effects
-// (event log, partition banner, auto-fit) which stay in the ReceiveFrame handler.
-function _renderFrame(frame: VizFrame, snap = false): void {
-    _lastFrame = frame;
+/**
+ * Resolve one mesh-link endpoint to an asset id.
+ *
+ * v1 addresses link endpoints by position in the drone list; the v2 contract
+ * names them. Both are accepted here — an index is resolved against the
+ * *unfiltered* list it was built from, an id is already the answer — so this
+ * keeps working whichever shape `assets/sceneFrame` publishes.
+ */
+function _linkEndpointId(
+    endpoint: number | string,
+    all: readonly DroneState[],
+): string | undefined {
+    return typeof endpoint === 'string' ? endpoint : all[endpoint]?.id;
+}
+
+/**
+ * Re-index a projected mesh onto the drone list it will actually be drawn
+ * against.
+ *
+ * `EffectsManager` reads `mesh.links` as positions in `frame.drones`, and the v2
+ * path narrows `frame.drones` by the fleet filter *after* the projection built
+ * those positions. Handing the two on together drew links between whichever
+ * assets happened to land at those positions — the wrong pairs entirely. Links
+ * are resolved back to ids, then re-addressed against the drawn list; a link
+ * with a hidden endpoint has nothing to draw to and is dropped.
+ */
+function _reindexMeshLinks(
+    mesh: MeshState | undefined,
+    all: readonly DroneState[],
+    shown: readonly DroneState[],
+): MeshState | undefined {
+    if (mesh === undefined) return undefined;
+    const position = new Map<string, number>();
+    shown.forEach((d, i) => position.set(d.id, i));
+    const links: [number, number][] = [];
+    for (const link of mesh.links) {
+        const aId = _linkEndpointId(link[0], all);
+        const bId = _linkEndpointId(link[1], all);
+        if (aId === undefined || bId === undefined) continue;
+        const a = position.get(aId);
+        const b = position.get(bId);
+        if (a === undefined || b === undefined) continue;
+        links.push([a, b]);
+    }
+    return { ...mesh, links };
+}
+
+/**
+ * The consumers both streams drive identically.
+ *
+ * Two groups live here, and the difference is worth naming because it is the
+ * whole shape of this migration:
+ *
+ *   * **Air-specific, fed from the projection.** `fpvOsd`, `cockpit`, the HUD's
+ *     flight readouts, `overlayMgr`, `effectsMgr` and `controlPanel` were all
+ *     written against `DroneState`, and on v2 they receive the v1 projection
+ *     from `assets/projection.ts` — the client twin of the server's own, so what
+ *     the HUD says agrees with the scene it is drawn over. They are not migrated
+ *     in this pass; rewriting six working surfaces at once is the unreviewable
+ *     diff this split exists to avoid.
+ *
+ *   * **Domain-neutral, fed from the frame.** `inspector` and `outliner` take a
+ *     `SceneFrame`, so on v2 they see the asset and contact lists and a rover
+ *     appears in both without a per-kind branch on their side.
+ *
+ * `drones` is passed separately rather than re-read from `frame` so the caller
+ * decides what "the drones in this frame" means — on v2 that is the projection
+ * filtered to what the fleet filter is showing.
+ *
+ * `fleetDrones` is that same projection *before* filtering, and exists for the
+ * HUD alone: see the note at its call site.
+ */
+function _applyFrameConsumers(
+    frame: SceneFrame,
+    drones: DroneState[],
+    fleetDrones: readonly DroneState[] = drones,
+): void {
     missionChrome.update(frame.time ?? 0);
-    const drones = frame.drones ?? [];
-    droneManager.update(drones, frame.detections, snap);
-    // FPV OSD + cockpit read the selected drone's telemetry (no-ops when nothing
-    // is selected / FPV mode is off).
+    // FPV OSD + cockpit read the selected asset's telemetry through the v1
+    // projection, so they no-op for anything that is not an air asset — which is
+    // right: there is no attitude ball for a rover.
     const _selId = droneManager.selectedId;
     const _selDrone = _selId ? (drones.find((d) => d.id === _selId) ?? null) : null;
     fpvOsd?.update(_selDrone, frame.time ?? 0);
@@ -1197,80 +1722,733 @@ function _renderFrame(frame: VizFrame, snap = false): void {
         .filter((h) => h.type === 'fire' && h.center)
         .map((h) => ({ x: h.center![0], z: h.center![2], radius: h.radius ?? 30 }));
     fireSmoke.setSources(fires);
-    miniMap.update(drones, frame.hazards);
     overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
-    hud.updateDrones(droneManager.count, frame.time ?? 0, drones);
+    // The HUD readout is labelled DRN / "Active drones", so it is fed the *drone*
+    // count and not the asset manager's, which on the v2 stream counts rovers and
+    // vessels too. A number that quietly changes meaning under a label that did
+    // not is worse than a narrower number.
+    //
+    // For the same reason it is fed the *unfiltered* drones. The fleet filter is
+    // a view control, not a change to the fleet: a drone the operator has hidden
+    // is still an active drone, and reporting the narrowed number under this
+    // label — with nothing on the HUD to say anything is hidden — would make DRN
+    // silently mean "drones you happen to be looking at". The battery average
+    // comes off the same list so the two readouts describe one fleet. What *is*
+    // hidden is reported where it can be labelled as such: the fleet filter's own
+    // tally and the spoken summary, both of which name the hidden count.
+    // (Identical on v1, and on v2 with no filtering: same list either way.)
+    hud.updateDrones(fleetDrones.length, frame.time ?? 0, [...fleetDrones]);
     inspector?.update(frame);
     outliner?.update(frame);
     windCompass.updateFromWeatherSliders();
     sensorStats.update();
+}
+
+// Apply a v1 frame to every visual surface. Shared by the live SignalR path and
+// the DVR replay path (scrubbing) — pure rendering, NO live-only side effects
+// (event log, partition banner, auto-fit) which stay in the ReceiveFrame handler.
+function _renderFrame(frame: VizFrame, snap = false): void {
+    _lastFrame = frame;
+    const drones = frame.drones ?? [];
+    droneManager.update(drones, frame.detections, snap);
+    miniMap.update(drones, frame.hazards);
+    _applyFrameConsumers(frame, drones);
     _updateA11yTelemetry(drones, frame.time ?? 0);
+}
+
+/**
+ * Apply a v2 snapshot to every visual surface.
+ *
+ * The migrated consumers are driven from assets: the manager gets `AssetView`s
+ * covering every domain, the mini-map gets domain-shaped markers, and the
+ * inspector and outliner get the asset and contact lists on the frame. The
+ * air-specific ones are driven from the v1 projection carried on the same frame.
+ *
+ * Filtering is applied once, here, and everything downstream sees the same
+ * subset — scene, plot, outliner, inspector, panel and keyboard cycling. Six
+ * surfaces each re-deriving "is this one visible?" is six chances to disagree.
+ */
+function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
+    _lastSnapshot = projected;
+
+    const filtered = fleetUi ? fleetUi.update(projected.assets) : [...projected.assets];
+    const visible = _withSelectedAsset(projected.assets, filtered);
+    const visibleIds = new Set(visible.map((a) => a.view.id));
+    _visibleAssetIds = visible.map((a) => a.view.id);
+    const fleetDrones = projected.frame.drones ?? [];
+    const drones = fleetDrones.filter((d) => visibleIds.has(d.id));
+    // The mesh has to be re-addressed against `drones`, because that is the list
+    // the effects layer will index into.
+    const mesh = _reindexMeshLinks(projected.frame.mesh, fleetDrones, drones);
+    const frame: SceneFrame = {
+        ...projected.frame,
+        drones,
+        assets: visible,
+        ...(mesh === undefined ? {} : { mesh }),
+    };
+    _lastFrame = frame;
+
+    droneManager.assets.update(visible.map((a) => a.view), projected.detections, snap);
+    miniMap.update([], frame.hazards ?? [], projected.markers.filter((m) => visibleIds.has(m.id)));
+    _applyFrameConsumers(frame, drones, fleetDrones);
+    _renderFleetSubject(visible, projected.tracks, projected.simulationNowMs);
+    _renderTracks(projected);
+    // The filter's own count, not the drawn one: this is the change signal for a
+    // sentence `FleetUi` composes from that same set, and an exempt selection
+    // would make the two disagree by one.
+    _announceFleet(filtered.length, frame.time ?? 0);
+}
+
+/**
+ * Point the detail panel at whatever is selected.
+ *
+ * A track and an asset are looked up in their own lists and never in each
+ * other's — the id spaces are distinct and joining them is explicitly not
+ * allowed. A selection that has left the frame renders as nothing rather than
+ * leaving the previous subject's numbers on screen under a new name.
+ *
+ * `simulationNowMs` is the frame's own instant, and is what a selected contact's
+ * report age is measured against. It is *not* `Date.now()`: the server stamps a
+ * track from the simulation clock, so a wall-clock age is wrong by the speed
+ * multiplier and by every pause, and it is handed to the overlay in the same
+ * breath so the two surfaces cannot disagree about the same contact.
+ */
+function _renderFleetSubject(
+    visible: readonly SceneAsset[],
+    tracks: readonly ExternalTrackState[],
+    simulationNowMs: number | null,
+): void {
+    if (!fleetUi) return;
+    const current = selection.current;
+
+    if (current?.kind === 'track') {
+        const track = trackById(tracks, current.id);
+        fleetUi.renderSubject(track ? { kind: 'track', track } : null, simulationNowMs);
+        return;
+    }
+    const id = droneManager.selectedId;
+    const asset = id === null ? null : assetById(visible, id);
+    fleetUi.renderSubject(
+        asset ? { kind: 'asset', view: asset.view, descriptor: asset.descriptor, state: asset.state }
+            : null,
+        simulationNowMs,
+    );
+}
+
+/**
+ * Draw the observed contacts, loading their overlay the first time a snapshot
+ * actually carries one.
+ *
+ * The advisory subject is the selected asset, so closest-point-of-approach
+ * geometry is measured from the platform the operator is looking at. Everything
+ * it produces is **decision support**: an advisory, never a navigation
+ * instruction and never a claim of regulatory compliance.
+ */
+function _renderTracks(projected: SceneSnapshot): void {
+    if (projected.tracks.length > 0) _ensureTrackOverlay();
+    if (!trackOverlay) return;
+
+    const id = droneManager.selectedId;
+    const subject = id === null ? null : assetById(projected.assets, id);
+    trackOverlay.update(
+        projected.tracks,
+        // The frame's own instant, on the clock the server stamped these contacts
+        // from. The same value the detail panel is given, so the plot and the
+        // panel report one age for one contact.
+        projected.simulationNowMs,
+        subject === null ? null : _motionSampleOf(subject),
+    );
+}
+
+/** The selected asset as the approach geometry needs it. Heading comes from the
+ *  asset's own domain state where it declares one, so relative bearings are
+ *  measured off the bow rather than off the direction of travel. */
+function _motionSampleOf(asset: SceneAsset): TrackMotionSample {
+    const view = asset.view;
+    return {
+        id: view.id,
+        position: new THREE.Vector3(view.position[0], view.position[1], view.position[2]),
+        velocity: new THREE.Vector3(view.velocity[0], view.velocity[1], view.velocity[2]),
+        headingRad: view.domainState?.headingRad ?? null,
+        ageSeconds: view.ageSeconds ?? 0,
+        // An asset's own position is a report, not an estimate, so it enters the
+        // advisory at full confidence; the contact's own confidence is what
+        // bounds the result.
+        confidence: 1,
+        freshness: view.freshness,
+    };
+}
+
+/**
+ * What the operator is shown about comms, resolved from the two independent
+ * facts a server may report.
+ *
+ * Fields are plain strings rather than literal unions because this function's
+ * body is lifted out and executed by `__tests__/commsState.test.ts`; the
+ * permitted values are listed per field.
+ */
+interface CommsState {
+    /** `'up'` | `'cut'` | `'unknown'` — the backhaul, as reported. */
+    readonly backhaul: string;
+    /** `'whole'` | `'split'` | `'unknown'` — mesh connectivity, as reported. */
+    readonly partition: string;
+    /** Banner text, or `''` when there is nothing to raise. */
+    readonly banner: string;
+    /** LINK chip value: `'UP'` | `'CUT'` | `'UNK'`. */
+    readonly chip: string;
+    /** LINK chip state class: `'comms-up'` | `'comms-cut'` | `'comms-unknown'`. */
+    readonly chipClass: string;
+    /** Chip tooltip — spells out both facts in words. */
+    readonly title: string;
+}
+
+/**
+ * Resolve the comms readout from the mesh partition and the backhaul.
+ *
+ * **These are two facts, not one, and neither may be answered with the other's
+ * value.** A partitioned mesh has split into pieces that cannot hear each other;
+ * a fully connected mesh with its backhaul cut is a healthy swarm that nobody
+ * outside it can hear. Different incidents, different responses — so they get
+ * different wording, and a frame carrying both says both.
+ *
+ * **Either fact may be unknown**, and unknown is never rendered as good news:
+ * it raises no banner (announcing an all-clear nobody vouched for is the exact
+ * failure mode), and it never reads as `UP` on the chip. That is why the chip
+ * exists at all: the banner is silent both when the backhaul is up and when it
+ * was never reported, and those two must not look the same.
+ *
+ * Every string it can produce is defined here, so the whole decision is one
+ * self-contained unit — which is also what lets the test lift this body out and
+ * run it. Keep the body free of type annotations.
+ */
+function _commsState(
+    isPartitioned: boolean | null,
+    backhaulAvailable: boolean | null,
+): CommsState {
+    const backhaul =
+        backhaulAvailable === true  ? 'up'
+      : backhaulAvailable === false ? 'cut'
+      :                               'unknown';
+    const partition =
+        isPartitioned === true  ? 'split'
+      : isPartitioned === false ? 'whole'
+      :                           'unknown';
+
+    // v1 has only the backhaul, and its banner text is unchanged here so a v1
+    // session reads exactly as it always has.
+    const banner =
+        backhaul === 'cut' && partition === 'split'
+            ? 'Mesh partitioned — backhaul link down'
+      : backhaul === 'cut'
+            ? 'Backhaul link down — operating mesh-only'
+      : partition === 'split'
+            ? 'Mesh partitioned — segments cannot reach each other'
+      :       '';
+
+    const chip = backhaul === 'up' ? 'UP' : backhaul === 'cut' ? 'CUT' : 'UNK';
+
+    const backhaulTitle =
+        backhaul === 'up'  ? 'Backhaul uplink available'
+      : backhaul === 'cut' ? 'Backhaul uplink cut — reachable only over the fleet mesh'
+      :                      'Backhaul uplink not reported by this server';
+    const partitionTitle =
+        partition === 'whole' ? 'mesh reported as one connected segment'
+      : partition === 'split' ? 'mesh reported as partitioned'
+      :                         'mesh connectivity not reported';
+
+    return {
+        backhaul,
+        partition,
+        banner,
+        chip,
+        chipClass: 'comms-' + backhaul,
+        title: backhaulTitle + ' \u00b7 ' + partitionTitle,
+    };
+}
+
+/**
+ * Live-only side effects shared by both streams: the event ticker, the partition
+ * banner, the empty state and the one-shot fit to the fleet.
+ *
+ * Kept out of `_renderFrame`/`_renderSnapshot` because those also run for DVR
+ * scrubbing, and replaying a buffered frame must not re-announce a detection the
+ * operator was told about two minutes ago.
+ *
+ * The comms facts are passed rather than read off `frame.mesh`, because v1's
+ * single boolean can express neither "this server does not compute
+ * connectivity" nor the backhaul separately from the partition. Null is unknown
+ * on both, and unknown must not read as good news: no banner, no restoration
+ * announced, and never `UP` on the chip.
+ */
+function _applyLiveEvents(
+    frame: SceneFrame,
+    entityCount: number,
+    isPartitioned: boolean | null,
+    backhaulAvailable: boolean | null,
+): void {
+    // Detection events — fire once per new detection.id. `droneId` carries the
+    // reporting asset whatever its domain, so a rover's find shows up here too.
+    for (const det of frame.detections ?? []) {
+        if (_seenDetectionIds.has(det.id)) continue;
+        _seenDetectionIds.add(det.id);
+        eventLog.pushDetection(det.droneId, det.type);
+    }
+
+    // Hazard lifecycle — diff current vs. last frame to catch enter/exit.
+    const currentHazardIds = new Set<string>();
+    for (const h of frame.hazards ?? []) {
+        // Legacy frames may omit `id`; synthesize a stable key from type+centre.
+        const hId = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
+        currentHazardIds.add(hId);
+        if (!_seenHazardIds.has(hId)) {
+            _seenHazardIds.set(hId, h.type);
+            eventLog.pushHazard('enter', h.type);
+        }
+    }
+    for (const [id, type] of _seenHazardIds) {
+        if (!currentHazardIds.has(id)) {
+            eventLog.pushHazard('exit', type);
+            _seenHazardIds.delete(id);
+        }
+    }
+
+    const comms = _commsState(isPartitioned, backhaulAvailable);
+
+    // Set on the transition, not every frame: a live region only announces text
+    // that changes after it was inserted.
+    if (comms.banner !== _commsBanner) {
+        _commsBanner = comms.banner;
+        partitionBanner.textContent = comms.banner;
+        partitionBanner.setAttribute('aria-hidden', String(comms.banner === ''));
+    }
+    // Re-asserted every frame, as it always has been, so the styling cannot
+    // drift out of step with the state it reflects.
+    document.body.classList.toggle('partitioned', comms.banner !== '');
+
+    // The ticker reports the backhaul, and only while the backhaul is known —
+    // an unknown must never become the false all-clear "link restored".
+    if (comms.backhaul !== 'unknown') {
+        const killed = comms.backhaul === 'cut';
+        if (killed !== _backhaulKilled) {
+            _backhaulKilled = killed;
+            eventLog.pushPartition(!killed);
+        }
+    }
+
+    // The chip carries the third state the banner cannot: silence means either
+    // "up" or "not reported", and those are not the same answer.
+    const commsKey = `${comms.backhaul}/${comms.partition}`;
+    if (commsChip && commsChipValue && commsKey !== _commsKey) {
+        _commsKey = commsKey;
+        commsChipValue.textContent = comms.chip;
+        // Swap only the state class: the chip's layout classes come from the
+        // markup and a wholesale className write would silently drop them.
+        commsChip.classList.remove('comms-up', 'comms-cut', 'comms-unknown');
+        commsChip.classList.add(comms.chipClass);
+        commsChip.title = comms.title;
+    }
+
+    if (emptyStateEl) {
+        if (entityCount > 0) emptyStateEl.classList.add('hidden');
+        else                 emptyStateEl.classList.remove('hidden');
+    }
+}
+
+/**
+ * Announce assets arriving and leaving.
+ *
+ * The ticker's whole job is to make the session legible without voiceover, and
+ * on a mixed fleet "a vessel just came online" is the event a drone-only log
+ * could never carry. Bounded by the live roster: an id is remembered only while
+ * its asset is present.
+ */
+const _seenAssetIds = new Map<string, string>();   // id → domain word
+
+function _diffAssetRoster(assets: readonly SceneAsset[]): void {
+    const present = new Set<string>();
+    for (const asset of assets) {
+        present.add(asset.view.id);
+        if (_seenAssetIds.has(asset.view.id)) continue;
+        const domain = _domainWord(asset.view.domain);
+        _seenAssetIds.set(asset.view.id, domain);
+        eventLog.push(`${asset.view.displayName} · ${domain} online`, { level: 'info', tag: 'FLEET' });
+    }
+    for (const [id, domain] of _seenAssetIds) {
+        if (present.has(id)) continue;
+        _seenAssetIds.delete(id);
+        eventLog.push(`${id} · ${domain} offline`, { level: 'alert', tag: 'FLEET' });
+    }
+}
+
+/** One lower-case word for a domain, for ticker prose. Deliberately local and
+ *  tiny: pulling the filter's label table in here would drag the whole fleet-UI
+ *  chunk into the entry bundle. */
+function _domainWord(domain: number): string {
+    switch (domain) {
+        case AssetDomain.Air:     return 'air';
+        case AssetDomain.Ground:  return 'ground';
+        case AssetDomain.Surface: return 'surface';
+        case AssetDomain.Fixed:   return 'fixed';
+        default:                  return 'asset';
+    }
+}
+
+/** Fit the camera to the fleet once, and re-arm the one-shot whenever the fleet
+ *  empties (a reset or a scenario switch). */
+function _fitOnce(positions: THREE.Vector3[], count: number): void {
+    if (_prevDroneCount > 0 && count === 0) _fittedToSwarm = false;
+    _prevDroneCount = count;
+    if (_fittedToSwarm || positions.length === 0) return;
+    _fittedToSwarm = true;
+    viz.fitToPositions(positions);
 }
 
 function _wireConnection(c: HubConnection): void {
     c.on('ReceiveFrame', (frame: VizFrame) => {
         loadingOverlay.onFrame();
         dvr?.record(frame);
+        // Both streams describe the same tick. Once v2 is driving, the v1 frame
+        // is recorded for the DVR and nothing else — applying both would
+        // reconcile every air asset twice per tick against two projections, and
+        // the v1 one carries no rovers to reconcile the rest against.
+        if (_v2Active) return;
         // While scrubbing/replaying, buffered frames drive the scene; live
         // frames keep recording (above) but must not overwrite the view.
         if (dvr && !dvr.isLive) return;   // no DVR yet ⇒ always live
         _renderFrame(frame);
         dvr?.updateServer(frame);
+
         const drones = frame.drones ?? [];
-
-        // Detection events — fire once per new detection.id.
-        for (const det of frame.detections) {
-            if (_seenDetectionIds.has(det.id)) continue;
-            _seenDetectionIds.add(det.id);
-            eventLog.pushDetection(det.droneId, det.type);
-        }
-
-        // Hazard lifecycle — diff current vs. last frame to catch enter/exit.
-        const currentHazardIds = new Set<string>();
-        for (const h of frame.hazards) {
-            // Legacy frames may omit `id`; synthesize a stable key from type+centre.
-            const hId = h.id ?? `${h.type}-${h.center ? h.center.join(',') : '0,0,0'}`;
-            currentHazardIds.add(hId);
-            if (!_seenHazardIds.has(hId)) {
-                _seenHazardIds.set(hId, h.type);
-                eventLog.pushHazard('enter', h.type);
-            }
-        }
-        for (const [id, type] of _seenHazardIds) {
-            if (!currentHazardIds.has(id)) {
-                eventLog.pushHazard('exit', type);
-                _seenHazardIds.delete(id);
-            }
-        }
-
-        const partitioned = frame.mesh?.partitioned === true;
-        if (partitioned !== _backhaulKilled) {
-            _backhaulKilled = partitioned;
-            partitionBanner.textContent = partitioned ? PARTITION_BANNER_TEXT : '';
-            partitionBanner.setAttribute('aria-hidden', String(!partitioned));
-            eventLog.pushPartition(!partitioned);
-        }
-        document.body.classList.toggle('partitioned', partitioned);
-        if (emptyStateEl) {
-            if (drones.length > 0) emptyStateEl.classList.add('hidden');
-            else                   emptyStateEl.classList.remove('hidden');
-        }
-        // Allow refit whenever drones are cleared (reset or scenario switch)
-        if (_prevDroneCount > 0 && drones.length === 0) _fittedToSwarm = false;
-        _prevDroneCount = drones.length;
-        if (!_fittedToSwarm && drones.length > 0) {
-            _fittedToSwarm = true;
-            const positions = drones
-                .filter(isDroneReady)
-                .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));
-            viz.fitToPositions(positions);
-        }
+        // v1 carries one mesh flag and the server sets it from the backhaul kill
+        // switch (`VizFrameBuilder.Build`), so it is read as the backhaul here —
+        // which is what the banner it raises has always said. Connectivity is
+        // not computed on this path at all, so the partition goes in as unknown
+        // rather than as the all-clear a `false` would assert.
+        _applyLiveEvents(frame, drones.length, null, !(frame.mesh?.partitioned === true));
+        _fitOnce(
+            drones.filter(isDroneReady).map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2])),
+            drones.length,
+        );
     });
 
-    c.onreconnecting(() => { hud.setStatus('reconnecting'); loadingOverlay.onReconnecting(); });
-    c.onreconnected(()  => { hud.setStatus('connected');    loadingOverlay.onReconnected();  });
+    c.on('ReceiveSnapshotV2', (snapshot: VizSnapshotV2) => {
+        // Checked per frame, not just at subscription. A server upgraded under a
+        // long-lived connection would otherwise keep this client parsing a schema
+        // it agreed to before the change; falling back to v1 is always available
+        // and is strictly better than reading fields that may have moved.
+        if (!isSupportedSchema(snapshot.schemaVersion)) {
+            if (_v2Active) {
+                log.warn('v2 snapshot schema is not one this client reads; falling back to v1', {
+                    schemaVersion: snapshot.schemaVersion,
+                });
+                _leaveV2();
+            }
+            return;
+        }
+
+        // Every full snapshot is a base the delta chain can be measured from,
+        // and a keyframe is an ordinary snapshot on this ordinary method —
+        // deliberately, so that joining, reconnecting and recovering from a gap
+        // all end in the same message, handled here by the same code.
+        _deltaTracker?.hold(snapshot);
+        _ingestSnapshot(snapshot);
+    });
+
+    // Deltas. Keyframes do not arrive here — they arrive above — so this handler
+    // has exactly one decision to make: whether we are still on the chain. That
+    // is an equality check on the frame id and nothing more; there is no timer,
+    // no window and no heuristic anywhere on this path.
+    c.on('ReceiveDeltaV2', (delta: VizDeltaV2) => {
+        const tracker = _deltaTracker;
+        // No tracker means we are not following the chain — we never subscribed,
+        // or we gave up on it. Ignoring is right rather than merely safe: the
+        // full snapshots arriving instead are complete frames.
+        if (tracker === null) return;
+
+        // Same per-frame check the snapshot handler makes, and for the same
+        // reason: a server upgraded under a long-lived connection must not have
+        // this client merging fields that may have moved. The answer is one tier
+        // down rather than all the way to v1 — full snapshots are still readable
+        // if only the delta shape changed, and the snapshot handler's own check
+        // decides that independently.
+        if (!isSupportedSchema(delta.schemaVersion)) {
+            log.warn('v2 delta schema is not one this client reads; returning to full snapshots', {
+                schemaVersion: delta.schemaVersion,
+            });
+            void _abandonDeltas();
+            return;
+        }
+
+        const outcome = tracker.apply(delta);
+        if (outcome.kind === 'applied') {
+            _ingestSnapshot(outcome.snapshot);
+            return;
+        }
+        // A duplicate describes the frame we already hold and a stale one has
+        // already been superseded. Neither is a gap; neither needs an answer.
+        if (outcome.kind === 'gap') _onDeltaGap(outcome.reason, outcome.streak);
+    });
+
+    c.onreconnecting(() => {
+        hud.setStatus('reconnecting');
+        loadingOverlay.onReconnecting();
+        // Group membership dies with the connection, and the room may have been
+        // reset while we were away, so the held frame is no longer a base this
+        // client can vouch for. Dropping it costs nothing on screen: the last
+        // projected picture stays up, and re-subscribing forces a keyframe.
+        _deltaTracker?.reset();
+    });
+    c.onreconnected(()  => {
+        hud.setStatus('connected');
+        loadingOverlay.onReconnected();
+        // Snapshot subscription is connection-scoped: the server drops it with
+        // the connection, and a reconnect is not always preceded by a disconnect
+        // the server saw. Re-asking is idempotent on both sides — and asking for
+        // deltas again is itself the resync, because the server answers a
+        // subscription with a keyframe.
+        void _subscribeSnapshots().then(_subscribeDeltas);
+    });
     c.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
+}
+
+/**
+ * Project one complete v2 frame and drive every consumer off it.
+ *
+ * The single entry point for a frame that arrived whole and for one merged out
+ * of a delta alike — which is the reason the merge returns a `VizSnapshotV2`
+ * rather than a patch. Nothing below this line can tell the two apart, and no
+ * downstream surface has to learn a second shape.
+ *
+ * `_v2Active` flips here rather than on a successful subscription: a server that
+ * accepts the subscription and then sends nothing must leave v1 driving the
+ * scene rather than freezing it.
+ */
+function _ingestSnapshot(snapshot: VizSnapshotV2): void {
+    loadingOverlay.onFrame();
+    if (!_v2Active) {
+        _v2Active = true;
+        _ensureFleetUi();
+        log.info('v2 snapshot stream is driving the scene', {
+            schemaVersion: snapshot.schemaVersion,
+        });
+    }
+
+    // The DVR buffers v1 frames only, so a scrub replays the air assets and
+    // nothing else. Live snapshots are still projected while scrubbing —
+    // cheap, and it keeps the descriptor cache current so going live does
+    // not arrive on a frame whose descriptors were pruned in the meantime.
+    // The wall clock is the projection's documented last resort and reaches
+    // an age only when no frame this session has carried a dateable report —
+    // in which case nothing is dateable against it either.
+    //
+    // A merged frame ages exactly like a whole one: every carried-forward asset
+    // arrives with its real `sourceTime`, so the freshest stamp in the frame is
+    // still the frame's own simulation instant and `SimulationClock` recovers
+    // the session epoch off a delta just as it does off a keyframe.
+    const projected = projectSnapshot(
+        snapshot, Date.now(), _descriptorCache, _simulationClock,
+    );
+    if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
+
+    _renderSnapshot(projected);
+    dvr?.updateServer(projected.frame);
+    // Roster and event announcements run over EVERY asset, not the visible
+    // subset. The filter narrows what is drawn, not what happened: a vessel
+    // the operator has filtered out is still a vessel that came online, and
+    // silencing it would turn the filter into a way to miss things.
+    _diffAssetRoster(projected.assets);
+    _applyLiveEvents(
+        projected.frame, projected.assets.length,
+        projected.isPartitioned, projected.backhaulAvailable,
+    );
+    _fitOnce(
+        projected.assets.map(a => new THREE.Vector3(
+            a.view.position[0], a.view.position[1], a.view.position[2],
+        )),
+        projected.assets.length,
+    );
+}
+
+/**
+ * Lost the chain: ask for a keyframe, and keep rendering what is on screen.
+ *
+ * **The scene is deliberately not cleared.** A hundred-millisecond freeze with
+ * visibly ageing freshness is far better than a flash of empty world, and
+ * blanking would tear down the selection and any chase camera riding an asset.
+ * The server answers a request on its next broadcast, so the stale window is one
+ * tick in the normal case.
+ *
+ * Three escalations, all driven by arriving frames rather than by a timer:
+ * ask once per gap; re-ask on a slow cadence in case the ask was lost or the
+ * server's per-connection budget refused it; and give up on deltas entirely once
+ * two whole periodic-keyframe cycles have passed without recovery. There is no
+ * fourth case — if nothing arrives at all, the connection itself is dead and
+ * SignalR's reconnect owns that, which is why this needs no timeout of its own.
+ */
+function _onDeltaGap(reason: string, streak: number): void {
+    if (streak > GAP_GIVE_UP_FRAMES) {
+        log.warn('no keyframe recovered the delta chain; returning to full snapshots', { reason });
+        void _abandonDeltas();
+        return;
+    }
+    if (streak === 1 || streak % GAP_REASK_FRAMES === 0) {
+        log.info('delta chain gap; requesting a keyframe', { reason, streak });
+        // Fire and forget. A refusal is not a failure state: the server's
+        // periodic keyframe re-establishes this client within five seconds
+        // whether or not it ever managed to ask.
+        void connection?.invoke('RequestKeyframe').catch(() => undefined);
+    }
+}
+
+/**
+ * Ask to receive deltas instead of full snapshots.
+ *
+ * Layered on `_subscribeSnapshots` and failing in the same direction: a server
+ * without the method rejects the invoke, which is a supported configuration and
+ * not an error — full snapshots keep arriving and this client behaves exactly as
+ * it did before deltas existed.
+ *
+ * Two orderings matter here. The merge module is imported **before** the invoke,
+ * because subscribing is itself a resync request and the server's next broadcast
+ * is a keyframe; a module still in flight when that frame lands would miss the
+ * base. The tracker is installed before the invoke for the same reason.
+ */
+async function _subscribeDeltas(): Promise<void> {
+    const c = connection;
+    // Not gated on `_v2Active`: the snapshot subscription has been accepted but
+    // its first frame has not landed yet, and a server that accepted one will
+    // accept the other. A server that refused v2 outright has already set the
+    // opt-out by way of `_leaveV2`.
+    if (!c || _deltaOptOut) return;
+    try {
+        const { DeltaTracker } = await import('./assets/deltaApply');
+        _deltaTracker = new DeltaTracker();
+        const version = await c.invoke<string>('SubscribeDeltas', true);
+        if (!isSupportedSchema(version)) {
+            log.warn('server speaks a delta schema this client does not read; staying on snapshots', {
+                schemaVersion: version,
+            });
+            await _abandonDeltas();
+            return;
+        }
+        log.info('subscribed to the v2 delta stream', { schemaVersion: version });
+    } catch (err: unknown) {
+        _deltaTracker = null;
+        log.info('no v2 delta stream on this server; staying on full snapshots', { err });
+    }
+}
+
+/**
+ * Give up on deltas for this session and go back to full snapshots.
+ *
+ * Unsubscribing is what restores this connection to the snapshot group, so the
+ * very next broadcast is a complete frame and the scene never blanks on the way
+ * across. The opt-out is not cleared on reconnect: the reason a client abandons
+ * the chain is a property of the server it is talking to, and re-asking would
+ * fail the same way ten times a second.
+ */
+async function _abandonDeltas(): Promise<void> {
+    if (_deltaOptOut) return;
+    _deltaOptOut = true;
+    _deltaTracker = null;
+    // Attempted whether or not the subscription is known to have completed. The
+    // server side is idempotent, and the case worth covering is the narrow one
+    // where a frame arrived — and was refused — while the subscribing invoke was
+    // still in flight: this connection is then already out of the snapshot group
+    // and skipping the unsubscribe would strand it receiving only deltas it has
+    // decided it cannot read.
+    try { await connection?.invoke('SubscribeDeltas', false); } catch { /* best effort */ }
+}
+
+/**
+ * Stop reading the v2 stream and hand the scene back to v1.
+ *
+ * The descriptor cache is dropped because it describes a schema this client has
+ * just decided it cannot read, and a stale descriptor would outlive the assets
+ * it described. The asset manager is left alone: the very next v1 frame
+ * reconciles it, and clearing it first would blink the whole fleet out for a
+ * tenth of a second on the way past.
+ *
+ * Everything else the v2 path owns is released here, because nothing downstream
+ * gets another chance to: the contact overlay's GPU resources, a domain chase
+ * camera riding an asset v1 cannot describe, and any selection of a kind that
+ * only resolves against a v2 snapshot.
+ */
+function _leaveV2(): void {
+    _v2Active = false;
+    _lastSnapshot = null;
+    _descriptorCache.clear();
+    // Deltas are a layer on top of a schema this client has just decided it
+    // cannot read, so the chain goes with it — and the unsubscribe puts the
+    // connection back in the snapshot group in case only v2's *delta* shape was
+    // the problem.
+    void _abandonDeltas();
+    // The recovered epoch belongs to this session's stream. Carrying it into the
+    // next one would age its reports against another run's zero.
+    _simulationClock.clear();
+    _seenAssetIds.clear();
+    _visibleAssetIds = [];
+    // Contacts are a v2-only concept, so on the way back to v1 they stop being
+    // updated *and* stop being true. The overlay owns per-contact geometry,
+    // materials and label textures, so it is disposed rather than merely
+    // stranded; the loading flag is released with it so a later v2 subscription
+    // fetches a fresh one instead of finding the slot permanently claimed.
+    trackOverlay?.dispose();
+    trackOverlay = null;
+    _trackOverlayLoading = false;
+    // A ground or surface chase is riding an asset v1 cannot describe. Release
+    // the camera rather than leave it locked to a group nothing updates.
+    _stopDomainChase();
+    // `asset` and `track` resolve out of lists a v1 frame does not carry, so a
+    // selection of either kind would survive as an id no surface can look up.
+    const current = selection.current;
+    if (current?.kind === 'asset' || current?.kind === 'track') {
+        _deselectAll();
+    } else {
+        fleetUi?.renderSubject(null);
+    }
+    // The live region throttles on a changed count; the wording changes here
+    // even when the number does not, so let the next frame speak.
+    _lastTelemetryCount = -1;
+}
+
+/**
+ * Ask the server for the v2 snapshot stream, and decide whether we can read it.
+ *
+ * Three outcomes, and the failure directions are what matter:
+ *
+ *   * the hub has no such method — an older server — so `invoke` rejects and the
+ *     client stays on v1, which is exactly how it behaves today;
+ *   * the hub answers with a schema version this client does not read, so it
+ *     unsubscribes rather than parsing frames it does not understand;
+ *   * the hub answers with a readable version, and `_v2Active` still waits for
+ *     an actual snapshot to arrive — a subscription that is accepted and then
+ *     never delivered must leave v1 driving rather than freeze the scene.
+ */
+async function _subscribeSnapshots(): Promise<void> {
+    const c = connection;
+    if (!c) return;
+    try {
+        const version = await c.invoke<string>('SubscribeSnapshots', true);
+        if (isSupportedSchema(version)) {
+            log.info('subscribed to the v2 snapshot stream', { schemaVersion: version });
+            return;
+        }
+        log.warn('server speaks a v2 schema this client does not read; staying on v1', {
+            schemaVersion: version,
+        });
+        _leaveV2();
+        // Unsubscribing is best-effort. Failing to get out of the group is not
+        // worth surfacing: every snapshot that arrives is refused by the
+        // per-frame schema check above.
+        await c.invoke('SubscribeSnapshots', false).catch(() => undefined);
+    } catch (err: unknown) {
+        // The overwhelmingly likely cause is a server that predates the v2
+        // stream, which is a supported configuration and not an error.
+        log.info('no v2 snapshot stream on this server; using the v1 frame', { err });
+        _leaveV2();
+    }
 }
 
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
@@ -1315,6 +2493,14 @@ async function start(): Promise<void> {
         }
         await connection.start();
         hud.setStatus('connected');
+        // Ask for the multi-domain stream. Awaited rather than fired off so a
+        // server that has it is driving assets before the first auto-spawn lands;
+        // a server that does not simply falls through to the v1 frame.
+        await _subscribeSnapshots();
+        // Layered on the above and awaited for the same reason: a server that
+        // has the stream is sending deltas before the first auto-spawn lands.
+        // A server that does not falls through to full snapshots.
+        await _subscribeDeltas();
         await _autoSpawnIfEmpty();
     } catch {
         hud.setStatus('disconnected');

@@ -26,6 +26,19 @@ interface Deps {
     investorMode: InvestorMode;
     /** Returns the drone set at the moment of invocation. */
     getDrones: () => DroneState[];
+    /**
+     * Positions of the whole fleet, whatever domain each asset belongs to.
+     *
+     * Supplied by a host on the v2 stream, where the fleet is not a drone list
+     * and framing it off one would leave every rover and vessel outside the
+     * shot. Optional so the v1 path is untouched: absent, framing falls back to
+     * the drone positions exactly as before.
+     *
+     * The bounds these produce are taken as they come — nothing here assumes an
+     * airborne extent. A fleet sitting flat on the ground yields a shallow box,
+     * and `_bounds` already floors the extent so a degenerate one still frames.
+     */
+    getFleetPositions?: () => THREE.Vector3[];
 }
 
 export class CameraPresets {
@@ -123,7 +136,18 @@ export class CameraPresets {
 
     // ── Private helpers ────────────────────────────────────────────────
 
+    /**
+     * The positions every preset frames against.
+     *
+     * Prefers the whole-fleet source when the host supplies one, so a mixed
+     * fleet is framed as a fleet. Falls back to ready drones, which is what the
+     * v1 stream can offer — `isDroneReady` is still applied there because a v1
+     * frame may carry a drone whose arrays have not arrived, and a malformed
+     * position would drag the bounding box to the origin.
+     */
     private _readyPositions(): THREE.Vector3[] {
+        const fleet = this._d.getFleetPositions?.();
+        if (fleet && fleet.length > 0) return fleet;
         return this._d.getDrones()
             .filter(isDroneReady)
             .map(d => new THREE.Vector3(d.pos[0], d.pos[1], d.pos[2]));

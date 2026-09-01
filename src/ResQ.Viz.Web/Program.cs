@@ -25,10 +25,12 @@ builder.Services.AddControllers();
 //
 // Each SimulationRoom owns its own TerrainNoiseService, UpdatableWeatherSystem,
 // and SwarmCoordinator — they are no longer process-wide singletons because
-// rooms must not share state. The IFrameBroadcaster abstraction introduced
-// for the legacy single-sim path is unused here: SimulationManager broadcasts
-// directly to per-room SignalR groups so it can fan out one frame per room
-// without an extra hop.
+// rooms must not share state. SimulationManager publishes through
+// IFrameBroadcaster rather than sending on IHubContext itself, so one tick's
+// output can be observed without standing a hub up; SignalRFrameBroadcaster is
+// the only place that knows a frame is addressed to a per-room group, and the
+// only place that knows the v2 snapshot goes to a narrower group than the v1
+// frame.
 // SetApplicationName fixes the data-protection purpose-string discriminator
 // across deployments: without it, two instances on the same host (rolling
 // upgrade, blue/green) generate different key rings and silently invalidate
@@ -39,10 +41,76 @@ builder.Services.AddControllers();
 builder.Services.AddDataProtection()
     .SetApplicationName("ResQ.Viz.Web");
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.VizFrameBuilder>();
-builder.Services.AddSingleton<ResQ.Viz.Web.Services.ScenarioService>();
+// Constructed explicitly rather than by convention: ScenarioService takes optional arguments
+// naming the motion models a scenario may spawn and the logger its skipped rows are reported to,
+// and leaving those to constructor selection would make which arguments are supplied an
+// implementation detail of the container. The logger is not decoration — a preset row that fails
+// validation is skipped rather than thrown, so the log line is the only place a typo surfaces.
+//
+// The factories are the container's own, not the service's built-in default. A preset and
+// POST /api/v2/sim/assets place assets in the same world, so they must agree on which classes
+// this deployment can actually build; passing null here left the scenario loader holding a second,
+// hand-maintained copy of that list, and the first factory registered below without a matching
+// edit there would have been spawnable through the API and silently skipped by every preset.
+// Resolved lazily inside the delegate, so registration order below does not matter.
+builder.Services.AddSingleton(sp =>
+    new ResQ.Viz.Web.Services.ScenarioService(
+        sp.GetRequiredService<IConfiguration>(),
+        assetFactories: sp.GetServices<ResQ.Viz.Web.Services.IAssetFactory>().ToList(),
+        logger: sp.GetRequiredService<ILogger<ResQ.Viz.Web.Services.ScenarioService>>()));
+// The transport the tick loop publishes through. Registered as the interface, not the concrete
+// type, because that is the whole point of the seam: swapping SignalR for another transport is
+// a change to this line and nothing in Services/.
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.IFrameBroadcaster,
+    ResQ.Viz.Web.Services.SignalRFrameBroadcaster>();
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
+
+// Control authority: which operator may command each asset, for how long, and what this process
+// is attached to. Resolved from configuration HERE, at registration time rather than on first
+// request, because the whole value of the mode guard is that a configuration this build has no
+// path for stops the server coming up instead of surfacing later as a surprising 500 — see
+// ControlAuthorityRegistry.FromConfiguration for why AllowLiveControl is refused rather than
+// ignored. The registry itself holds one authority per room, keyed weakly on the room object, so
+// authorities are reaped with their sessions without the reaper knowing this type exists.
+builder.Services.AddSingleton(
+    ResQ.Viz.Web.Services.ControlAuthorityRegistry.FromConfiguration(builder.Configuration));
+
+// Ground and surface motion models. Registering a factory is the whole of a domain's wiring:
+// with one present, POST /api/v2/sim/assets builds that class and a preset naming it spawns
+// rather than skips; with none, the class is refused with
+// AssetProblems.MobilityModelUnavailable. The reserved subsurface classes have no factory, so
+// they still answer 501 — deliberately, and by that same mechanism rather than by a special
+// case anywhere in the controller.
+//
+// Both are singletons holding no room. A rover settles onto the terrain of the room it is
+// spawned into and a vessel floats on that room's water surface, and rooms own their terrain,
+// weather and water level individually — so the sampler is resolved per build, from
+// SimulationRoom.SpawningEnvironment, which the room publishes for exactly as long as it is
+// building an asset with its own lock held. That is what keeps every terrain and bathymetry
+// sample a spawn takes inside the lock; reaching back through the request for the room and
+// asking it for its sampler handed a live view out of UseAssets and then read the height field
+// outside the lock, racing an in-flight heightmap upload.
+//
+// ScenarioService above resolves this same IEnumerable<IAssetFactory>, so a preset and the v2
+// spawn endpoint agree by construction about which classes this deployment can build. Adding a
+// factory here is therefore the whole of what a new domain needs; there is no second list to
+// keep in step, which is what once made a class spawnable through the API and silently skipped
+// by every preset.
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.IAssetFactory>(_ =>
+    new ResQ.Viz.Web.Services.Assets.Ground.GroundAssetFactory(() =>
+        ResQ.Viz.Web.Services.SimulationRoom.SpawningEnvironment
+        ?? throw new InvalidOperationException(
+            "A ground asset may only be built from inside SimulationRoom.TrySpawnAsset, which "
+            + "is what keeps its terrain sampling under the room's lock.")));
+
+builder.Services.AddSingleton<ResQ.Viz.Web.Services.IAssetFactory>(_ =>
+    new ResQ.Viz.Web.Services.Assets.Surface.SurfaceAssetFactory(() =>
+        ResQ.Viz.Web.Services.SimulationRoom.SpawningEnvironment
+        ?? throw new InvalidOperationException(
+            "A surface asset may only be built from inside SimulationRoom.TrySpawnAsset, which "
+            + "is what keeps its bathymetry sampling under the room's lock.")));
 
 // ── OpenTelemetry ────────────────────────────────────────────────────────────
 // Traces (ASP.NET Core requests + HttpClient + our ActivitySource) and metrics

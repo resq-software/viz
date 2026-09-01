@@ -203,3 +203,119 @@ export function apiPostOrWarn(path: string, body?: unknown, label?: string): voi
         if (!res.success) log.warn(`${label ?? path} failed`, { error: res.error.message });
     });
 }
+
+// ─── v2 resources (/api/v2/sim/*) ──────────────────────────────────────────
+//
+// The multi-domain surface. Everything below is a *read* of the session's
+// current picture; the write side — spawning an asset, issuing a command — is
+// deliberately not mirrored here. A command is gated on a capability report,
+// and that gate lives with the panel that renders it
+// (`assets/panelCommands.ts`). A second spelling of the command route in this
+// module would be a second place for it to drift from the one that actually
+// decides, so the command and capability routes are absent by design.
+//
+// The streamed `ReceiveSnapshotV2` message carries the same `VizSnapshotV2`
+// these fetchers return, assembled by the same server-side builder from the
+// same atomic capture. They cover the paths the stream does not: a cold read
+// before the socket is up, and a reconciliation after a reconnect.
+
+/** Root of the multi-domain REST surface. */
+const V2_ROOT = '/api/v2/sim';
+
+/**
+ * Route builders for the v2 surface.
+ *
+ * Ids are percent-encoded here rather than by each caller: an asset id is
+ * server-minted but not guaranteed path-safe, and a caller that forgets gets a
+ * request for a different resource with nothing to notice.
+ */
+export const v2Routes = {
+    /** Full snapshot: descriptors, assets, tracks, detections, hazards, network. */
+    snapshot: () => `${V2_ROOT}/snapshot`,
+    /** Asset inventory, optionally narrowed to one `AssetDomain`. */
+    assets: (domain?: number) =>
+        domain === undefined ? `${V2_ROOT}/assets` : `${V2_ROOT}/assets?domain=${domain}`,
+    /** One asset's descriptor and current state. */
+    asset: (assetId: string) => `${V2_ROOT}/assets/${encodeURIComponent(assetId)}`,
+    /** Observed contacts held by the session. */
+    tracks: () => `${V2_ROOT}/tracks`,
+    /** One observed contact. */
+    track: (trackId: string) => `${V2_ROOT}/tracks/${encodeURIComponent(trackId)}`,
+} as const;
+
+/** `AssetInventoryResponse` — descriptors and states as of one captured tick. */
+export interface AssetInventory<TDescriptor, TState> {
+    descriptors: TDescriptor[];
+    assets: TState[];
+    tick: number;
+    simulationTimeSeconds: number;
+}
+
+/** `AssetDetailResponse` — one asset's descriptor paired with its state. */
+export interface AssetDetail<TDescriptor, TState> {
+    descriptor: TDescriptor;
+    state: TState;
+    tick: number;
+}
+
+/** `AgedExternalTrack` — a contact plus how old the observation behind it is.
+ *  The age is published rather than left to be computed from a timestamp:
+ *  anything read off a contact is only as good as the age beside it, and a
+ *  consumer that has to derive staleness is one that can forget to. */
+export interface AgedTrack<TTrack> {
+    track: TTrack;
+    ageSeconds: number;
+    observedAtSimulationTimeSeconds: number;
+    reportedConfidence: number;
+    isDegraded: boolean;
+}
+
+/** `TrackInventoryResponse` — the held contacts and the store's bounds. A
+ *  climbing `droppedTrackCount` means contacts are being retired; a climbing
+ *  `rejectedReportCount` means a source is reporting faster than the session
+ *  will retain. */
+export interface TrackInventory<TTrack> {
+    tracks: AgedTrack<TTrack>[];
+    simulationTimeSeconds: number;
+    capacity: number;
+    droppedTrackCount: number;
+    rejectedReportCount: number;
+}
+
+/**
+ * GET the full v2 snapshot.
+ *
+ * Generic over the snapshot type so this module stays free of the v2 wire
+ * vocabulary. `client/assets/types.ts` is the single transcription of the C#
+ * contract; a caller supplies it as `getSnapshotV2<VizSnapshotV2>()`.
+ * Re-declaring those records here would be a second copy to keep in step with
+ * the server.
+ */
+export function getSnapshotV2<TSnapshot>(opts: ApiGetOptions = {}) {
+    return apiGet<TSnapshot>(v2Routes.snapshot(), opts);
+}
+
+/** GET the asset inventory, optionally narrowed to one `AssetDomain`. */
+export function getAssetInventory<TDescriptor, TState>(
+    domain?: number,
+    opts: ApiGetOptions = {},
+) {
+    return apiGet<AssetInventory<TDescriptor, TState>>(v2Routes.assets(domain), opts);
+}
+
+/** GET one asset's descriptor and state. A 404 means the session holds no such
+ *  asset *now*, which covers both "never existed" and "since removed" — the two
+ *  are not distinguished because a caller cannot act differently on them. */
+export function getAsset<TDescriptor, TState>(assetId: string, opts: ApiGetOptions = {}) {
+    return apiGet<AssetDetail<TDescriptor, TState>>(v2Routes.asset(assetId), opts);
+}
+
+/** GET the observed contacts the session currently holds. */
+export function getTrackInventory<TTrack>(opts: ApiGetOptions = {}) {
+    return apiGet<TrackInventory<TTrack>>(v2Routes.tracks(), opts);
+}
+
+/** GET one observed contact and the age of the observation behind it. */
+export function getTrack<TTrack>(trackId: string, opts: ApiGetOptions = {}) {
+    return apiGet<AgedTrack<TTrack>>(v2Routes.track(trackId), opts);
+}

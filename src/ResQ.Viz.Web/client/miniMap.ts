@@ -11,16 +11,65 @@
 // Rendered via the raw 2D canvas API — a second Three.js scene would be
 // overkill for ~20 dots. Redraw is driven off the frame handler (10 Hz)
 // so cost is trivial (≈0.2 ms per frame for 12 drones).
+//
+// ── Mixed fleets ────────────────────────────────────────────────────────────
+//
+// The v1 drone list still draws exactly as it always did (LED-classified dots).
+// The v2 stream instead supplies `FleetMarker`s covering every domain, and those
+// follow the same grammar as the 3D scene:
+//
+//   * **Domain is the glyph, never the colour.** A rover is a square and a
+//     vessel a hull chevron at any colour, and both still read as themselves in
+//     greyscale or through a washed-out projector.
+//   * **Colour is operational state**, and only that.
+//   * **Freshness changes the shape, not only the alpha.** A stale contact gains
+//     a broken ring and a lost one is drawn hollow with a cross through it.
+//     Dimming alone is unreadable on a 200 px plot — "is that faint, or is that
+//     small?" — and the plot has no room for the explicit age that the scene
+//     labels and the detail panel carry.
 
 import type { DroneState, HazardState } from './types';
 import { classifyLED, LED_PROFILES } from './dronesLed';
 import { cssVar } from './dom';
 import { TERRAIN_SIZE } from './terrain';
+import type { FleetMarker } from './assets/sceneFrame';
+import { AssetDomain, DataFreshness, OperationalState } from './assets/types';
 
 const CANVAS_SIZE = 200;
 const WORLD_SIZE  = TERRAIN_SIZE;   // single source of truth
 const HALF_WORLD  = WORLD_SIZE * 0.5;
 const BATTERY_WARN = 0.20;
+
+/** Half-extent of an unselected marker glyph, in canvas pixels. */
+const GLYPH_R = 3.6;
+/** Half-extent of the selected marker's glyph. */
+const GLYPH_R_SELECTED = 5;
+
+/**
+ * Operational state to plot colour.
+ *
+ * Deliberately a separate table from the 3D renderers': each domain renderer
+ * owns a palette tuned for lit, shaded geometry, while these are flat few-pixel
+ * glyphs on a dark plot that need more separation than a material tint does.
+ * What the two share is the *rule* — colour means state and nothing else — and
+ * that is the part which must not drift.
+ */
+const STATE_PLOT_COLORS: Readonly<Record<number, string>> = {
+    [OperationalState.Unknown]:    '#8b949e',
+    [OperationalState.Offline]:    '#6e7681',
+    [OperationalState.Standby]:    '#8ab4f8',
+    [OperationalState.Ready]:      '#58a6ff',
+    [OperationalState.Active]:     '#3fb950',
+    [OperationalState.Holding]:    '#d29922',
+    [OperationalState.Returning]:  '#a371f7',
+    [OperationalState.Recovering]: '#db6d28',
+    [OperationalState.Emergency]:  '#f85149',
+    [OperationalState.Faulted]:    '#f85149',
+};
+
+/** Colour for a state this build does not recognise. Grey rather than a guess:
+ *  an unfamiliar state is not evidence of a healthy one. */
+const DEFAULT_STATE_COLOR = '#8b949e';
 
 type SelectFn = (droneId: string) => void;
 type GetCameraFn = () => { x: number; z: number; fwd: { x: number; z: number }; fov: number } | null;
@@ -33,6 +82,7 @@ export class MiniMap {
     private _getCamera:  GetCameraFn | null = null;
     private _lastDrones:  DroneState[]  = [];
     private _lastHazards: HazardState[] = [];
+    private _lastMarkers: readonly FleetMarker[] = [];
     private _selectedId:  string | null = null;
     // Palette pulled from tokens.css once at construction (dark-only, static).
     private readonly _colInfo = cssVar('--info', '#3d9bf5');
@@ -63,15 +113,19 @@ export class MiniMap {
         this._root.appendChild(this._canvas);
         document.body.appendChild(this._root);
 
-        // Click → worldspace coord → nearest drone (within tolerance).
+        // Click → worldspace coord → nearest entity (within tolerance).
         this._canvas.addEventListener('click', (e) => {
-            if (!this._selectFn || this._lastDrones.length === 0) return;
+            if (!this._selectFn) return;
             const rect = this._canvas.getBoundingClientRect();
             const px = e.clientX - rect.left;
             const py = e.clientY - rect.top;
             const [wx, wz] = this._pixelToWorld(px, py);
 
-            // Nearest drone within 80 m (scales to ~4 px at 200² / 4 km world).
+            // Nearest within 80 m (scales to ~4 px at 200² / 4 km world). Both
+            // lists are searched against one running best so a mixed fleet picks
+            // whatever is genuinely closest rather than whichever list came
+            // first — the two are never populated at once today, but a click
+            // that silently preferred one domain would be a hard bug to see.
             let bestId: string | null = null;
             let bestD2 = 80 * 80;
             for (const d of this._lastDrones) {
@@ -79,6 +133,12 @@ export class MiniMap {
                 const dz = (d.pos?.[2] ?? 0) - wz;
                 const d2 = dx * dx + dz * dz;
                 if (d2 < bestD2) { bestD2 = d2; bestId = d.id; }
+            }
+            for (const m of this._lastMarkers) {
+                const dx = m.x - wx;
+                const dz = m.z - wz;
+                const d2 = dx * dx + dz * dz;
+                if (d2 < bestD2) { bestD2 = d2; bestId = m.id; }
             }
             if (bestId) this._selectFn(bestId);
         });
@@ -96,11 +156,24 @@ export class MiniMap {
      *  the global selection changes so the map can draw a ring on the dot. */
     setSelected(id: string | null): void { this._selectedId = id; }
 
-    /** Redraw from the latest frame. Safe to call every frame — the 2D
-     *  draw is ~0.2 ms for a 12-drone scenario. */
-    update(drones: DroneState[], hazards: HazardState[]): void {
+    /**
+     * Redraw from the latest frame. Safe to call every frame — the 2D draw is
+     * ~0.2 ms for a 12-drone scenario.
+     *
+     * `markers` is the multi-domain fleet from the v2 stream and defaults to
+     * empty, so the existing two-argument v1 call is unchanged in both signature
+     * and output. A caller on v2 passes markers and an empty drone list: the two
+     * describe the same assets, and drawing both would double-plot every
+     * aircraft.
+     */
+    update(
+        drones: DroneState[],
+        hazards: HazardState[],
+        markers: readonly FleetMarker[] = [],
+    ): void {
         this._lastDrones  = drones;
         this._lastHazards = hazards;
+        this._lastMarkers = markers;
         this._render();
     }
 
@@ -185,6 +258,111 @@ export class MiniMap {
                 ctx.lineWidth = 1.5;
                 ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2); ctx.stroke();
             }
+        }
+
+        // Multi-domain markers — glyph by domain, colour by operational state.
+        for (const m of this._lastMarkers) this._drawMarker(m);
+    }
+
+    /**
+     * One multi-domain asset: a domain-shaped glyph in its state's colour, with
+     * a freshness treatment that changes the outline rather than only the alpha.
+     */
+    private _drawMarker(marker: FleetMarker): void {
+        const ctx = this._ctx;
+        const [px, py] = this._worldToPixel(marker.x, marker.z);
+        const selected = marker.id === this._selectedId;
+        const r = selected ? GLYPH_R_SELECTED : GLYPH_R;
+        const color = STATE_PLOT_COLORS[marker.operationalState] ?? DEFAULT_STATE_COLOR;
+        const lost = marker.freshness === DataFreshness.Lost;
+        const stale = marker.freshness === DataFreshness.Stale;
+
+        ctx.save();
+        ctx.translate(px, py);
+        // Canvas Y runs the same way as world +Z (south), and headings are
+        // clockwise from north, so a heading rotates the glyph directly.
+        if (marker.headingRad !== null) ctx.rotate(marker.headingRad);
+
+        this._glyphPath(marker.domain, r);
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = color;
+        if (lost) {
+            // Hollow: the position is an extrapolation, and a solid glyph claims
+            // a confidence the report no longer supports.
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = color;
+            ctx.globalAlpha = stale ? 0.55 : 1;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+
+        // Everything below is drawn unrotated so a ring stays a ring and the
+        // lost-contact cross reads at any heading.
+        if (stale) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 2]);
+            ctx.beginPath(); ctx.arc(px, py, r + 2.6, 0, Math.PI * 2); ctx.stroke();
+            ctx.setLineDash([]);
+        }
+        if (lost) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            const c = r * 0.8;
+            ctx.beginPath();
+            ctx.moveTo(px - c, py - c); ctx.lineTo(px + c, py + c);
+            ctx.moveTo(px + c, py - c); ctx.lineTo(px - c, py + c);
+            ctx.stroke();
+        }
+        if (selected) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(px, py, r + 4, 0, Math.PI * 2); ctx.stroke();
+        }
+    }
+
+    /**
+     * Traces the silhouette for one domain, centred on the origin and pointing
+     * along −Y (the glyph's nose) so a rotation by the reported heading aims it.
+     *
+     * Shapes are chosen to survive at four pixels and to stay distinct without
+     * colour: a forward-pointing triangle for air, a square for ground, a hull
+     * chevron with a flat transom for surface, a diamond for a fixed installation,
+     * and a circle for a domain this build does not recognise — which reads as
+     * "something, unclassified" rather than borrowing another domain's shape.
+     */
+    private _glyphPath(domain: number, r: number): void {
+        const ctx = this._ctx;
+        ctx.beginPath();
+        switch (domain) {
+            case AssetDomain.Air:
+                ctx.moveTo(0, -r * 1.35);
+                ctx.lineTo(r, r * 0.95);
+                ctx.lineTo(-r, r * 0.95);
+                ctx.closePath();
+                return;
+            case AssetDomain.Ground:
+                ctx.rect(-r * 0.9, -r * 0.9, r * 1.8, r * 1.8);
+                return;
+            case AssetDomain.Surface:
+                ctx.moveTo(0, -r * 1.4);
+                ctx.lineTo(r * 0.9, 0);
+                ctx.lineTo(r * 0.75, r);
+                ctx.lineTo(-r * 0.75, r);
+                ctx.lineTo(-r * 0.9, 0);
+                ctx.closePath();
+                return;
+            case AssetDomain.Fixed:
+                ctx.moveTo(0, -r * 1.2);
+                ctx.lineTo(r * 1.2, 0);
+                ctx.lineTo(0, r * 1.2);
+                ctx.lineTo(-r * 1.2, 0);
+                ctx.closePath();
+                return;
+            default:
+                ctx.arc(0, 0, r, 0, Math.PI * 2);
         }
     }
 

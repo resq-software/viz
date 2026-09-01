@@ -160,6 +160,13 @@
                     <div id="battery-track"><div id="battery-fill"></div></div>
                     <span class="hud-stat-value" id="battery-pct">--%</span>
                 </div>
+                <!-- Backhaul uplink. Starts UNKNOWN because nothing has been reported
+                     yet; app.ts resolves it per frame. Three states, told apart by
+                     the value text and not by colour alone. -->
+                <div class="hud-stat comms-unknown" id="hud-comms" title="Backhaul uplink not reported by this server">
+                    <span class="hud-stat-label">LINK</span>
+                    <span class="hud-stat-value" id="comms-state">UNK</span>
+                </div>
             </div>
         </div>
 
