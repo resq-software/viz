@@ -176,7 +176,7 @@ Operations are capability-driven. A caller asks what an asset declares it can do
 
 V1 stays available for one deprecation cycle as a drone- and air-shaped compatibility surface. Existing clients continue to receive `ReceiveFrame` and use the established v1 snapshots and command routes. V2 carries mixed-domain descriptors and states, typed domain data, capability-aware commands, control authority, external tracks, complete snapshots, and opt-in deltas.
 
-The two versions are not authority-equivalent. V1 command routes bypass the v2 lease and gate sequence, while v2 commands pass through those checks before simulated dispatch. A migration that changes only the frame subscription does not gain v2 command semantics. Clients must adopt the v2 command and authority routes explicitly.
+The two versions are not authority-equivalent. V1 command routes bypass v2 control authority and leases, idempotency, link-reachability checks, and held-position safe-action gates; v2 commands pass through that sequence before simulated dispatch. A migration that changes only the frame subscription does not gain v2 command semantics. Clients must adopt the v2 command and authority routes explicitly.
 
 <a id="commands-control-authority-safe-actions"></a>
 ## Commands, control authority, and safe actions
