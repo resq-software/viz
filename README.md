@@ -32,10 +32,10 @@
 
 [**Evaluate**](#evaluate) product scope and measured evidence · [**Operate**](#operate) a mixed-fleet simulation · [**Build**](#build) and test the host and browser client
 
-> **Operating boundary:** ResQ Viz is simulation-only. Navigation, ground traversability, rollover proximity, marine clearance, docking guidance, and closest-point-of-approach (CPA) outputs are advisory.
+> **Operating boundary:** ResQ Viz is simulation-only. Navigation, ground traversability, rollover proximity, under-keel clearance, docking guidance, and closest-point-of-approach (CPA) outputs are advisory.
 
 <a id="contents"></a>
-### Contents
+**Contents**
 
 - [Evaluate ResQ Viz](#evaluate)
 - [Five-minute mixed-fleet run](#five-minute-mixed-fleet-run)
@@ -53,15 +53,15 @@
 <a id="evaluate"></a>
 ## Evaluate ResQ Viz
 
-ResQ Viz runs air vehicles, ground vehicles, and surface vessels in isolated simulation rooms. Each room owns its in-process world, scenario state, command history, and stream membership. Session-bound HTTP requests and SignalR groups keep one room's assets and frames out of another room.
+ResQ Viz runs air vehicles, ground vehicles, and surface vessels in isolated simulation rooms. Each room owns one in-process world. Room-scoped scenario state, command history, HTTP requests, and SignalR groups keep assets and frames from crossing session boundaries.
 
 The v2 contract describes all three implemented domains through shared asset descriptors, state, capabilities, commands, and observations. Subsurface enum values are reserved and do not describe shipped behavior. External tracks may appear in the operating picture, but they are observations rather than commandable assets.
 
 V1 remains available for a deprecation cycle. Its frames and snapshots project air assets only, and its established command routes bypass v2 control leases. Ground and surface assets stay out of v1 shapes so existing air-only clients do not receive entities they cannot render or command.
 
-V2 clients can subscribe to full snapshots at the 10 Hz publication cadence. Deltas are opt-in: a delta subscriber leaves the full-snapshot group, receives an initial complete frame, and can request resynchronization after a sequence gap. The server also publishes a periodic complete frame every 50 published frames. V1 and v2 have separate backpressure slots so a slow consumer on one stream does not occupy the other's slot.
+V2 clients can subscribe to full snapshots at the 10 Hz publication cadence. Deltas are opt-in. An in-flight delta may reach a new subscriber first, but without a baseline it is unusable and the client discards it. The first frame the subscriber can act on is complete. The client can request resynchronization after a sequence gap, and the server publishes a periodic complete frame every 50 published frames. V1 and v2 have separate backpressure slots so a slow consumer on one stream does not occupy the other's slot.
 
-V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks before the simulator acts on them. The lease identifies who holds control of an asset; accepted and refused decisions enter the room's bounded audit trail. An accepted command reports that processing began, not that the simulated asset completed the requested motion. This build has no hardware bearer, and startup rejects configuration that enables live control.
+V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks. The lease identifies who holds control of an asset. HTTP `202` means the gates passed and the command was handed to the simulated asset. Clients poll its state for completion. Catalog, authority, link, translation, and simulated-asset refusals enter the bounded decision audit, as do accepted commands. Envelope-build failures add no decision-audit record. Duplicate and idempotency-conflict responses also return before that audit. This build has no hardware bearer, and startup rejects configuration that enables live control.
 
 ### Source-enforced limits and gates
 
@@ -121,7 +121,7 @@ The host steps each room at 60 Hz and publishes every sixth tick. This section f
 <a id="domain-physics-advisory-models"></a>
 ## Domain physics and advisory models
 
-Each domain uses its own simulated movement and environment checks. The operating picture exposes terrain, rollover, marine clearance, docking, and CPA assessments as advisory output rather than certified navigation or autonomy decisions.
+Each domain uses its own simulated movement and environment checks. The operating picture exposes ground traversability, rollover proximity, under-keel clearance, docking guidance, and CPA assessments as advisory output rather than certified navigation or autonomy decisions.
 
 <a id="operator-workspace-scenarios"></a>
 ## Operator workspace and scenarios
@@ -137,7 +137,7 @@ An ASP.NET Core host owns sessions, room lifecycles, simulation ticks, REST surf
 <a id="contributor-workflow"></a>
 ## Contributor workflow
 
-The repository builds the .NET host and Vite client together, with xUnit and Vitest covering server and browser behavior. CI uses Node 22. The resolved client dependencies are Three.js 0.185.1, TypeScript 7.0.2, Vite 8.2.2, Vitest 4.1.11, and SignalR 10.0.11. Contributor guidance records the supported commands, submodule setup, source layout, formatting gate, bundle ceilings, and release-parity checks.
+Release builds invoke Vite through MSBuild. Debug builds skip that target. In the Development environment, the host uses the Vite dev server. CI uses Node 22. The resolved client dependencies are Three.js 0.185.1, TypeScript 7.0.2, Vite 8.2.2, Vitest 4.1.11, and SignalR 10.0.11. xUnit and Vitest cover server and browser behavior. Contributor guidance records the supported commands, submodule setup, source layout, formatting gate, bundle ceilings, and release-parity checks.
 
 <a id="security-privacy-observability-deployment"></a>
 ## Security, privacy, observability, and deployment
