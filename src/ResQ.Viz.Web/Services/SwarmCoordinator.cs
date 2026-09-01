@@ -1,4 +1,4 @@
-// Copyright 2024 ResQ Technologies Ltd.
+// Copyright 2026 ResQ Systems, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 using System.Numerics;
