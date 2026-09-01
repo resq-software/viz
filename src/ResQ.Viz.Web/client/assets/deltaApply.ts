@@ -252,6 +252,7 @@ export function mergeSnapshot(base: VizSnapshotV2, delta: VizDeltaV2): VizSnapsh
     // *asset* list when this is false, so a merged frame that inherited a false
     // flag would delete the descriptor of every asset the delta elided.
     descriptorsComplete: true,
+    scenario: delta.scenarioCleared ? null : (delta.scenario ?? base.scenario),
   };
 }
 

@@ -282,6 +282,7 @@ public sealed partial class SimulationRoom
             _assets = CreateWorld();
             _swarmTick = 0;
             _swarm.ResetState();
+            ClearScenario();
             ClearAssetEventBuffer();
             // Simulated time restarts with the world, so the observed contacts have to go with
             // it: a store that survived would measure every later report against a high-water

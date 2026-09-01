@@ -264,6 +264,11 @@ public sealed record NetworkState(
 /// descriptor means "unchanged" and not "asset removed". Defaulted to true so full-frame
 /// producers and their tests stay unchanged.
 /// </param>
+/// <param name="Scenario">
+/// Scenario active for this reading, or null when the room has no named preset. Full snapshots
+/// carry null explicitly so a client can distinguish a cleared scenario from an older payload
+/// that predates this field.
+/// </param>
 public sealed record VizSnapshotV2(
     string SchemaVersion,
     Guid FrameId,
@@ -278,7 +283,8 @@ public sealed record VizSnapshotV2(
     IReadOnlyList<HazardV2State> Hazards,
     NetworkState? Network,
     string EnvironmentRevision,
-    bool DescriptorsComplete = true)
+    bool DescriptorsComplete = true,
+    ScenarioSessionState? Scenario = null)
 {
     /// <summary>Schema version this build produces.</summary>
     /// <remarks>

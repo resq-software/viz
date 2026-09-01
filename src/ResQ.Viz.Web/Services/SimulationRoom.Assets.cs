@@ -58,6 +58,7 @@ namespace ResQ.Viz.Web.Services;
 /// that much. They are <em>not</em> assets — no capabilities, no control authority, no command
 /// endpoint — and nothing downstream may render a command affordance on one.
 /// </param>
+/// <param name="Scenario">Scenario active for this same reading, or null when the room is custom.</param>
 public sealed record RoomAssetFrame(
     TransportState Transport,
     double SimulationTimeSeconds,
@@ -66,7 +67,8 @@ public sealed record RoomAssetFrame(
     IReadOnlyList<AssetDescriptor> Descriptors,
     IReadOnlyList<AssetState> Assets,
     IReadOnlyList<DroneSnapshot> Drones,
-    IReadOnlyList<AgedExternalTrack> Tracks);
+    IReadOnlyList<AgedExternalTrack> Tracks,
+    ScenarioSessionState? Scenario = null);
 
 // The multi-domain asset surface: everything the v2 API and the v2 frame pipeline need from a
 // room, and nothing the v1 path uses. Split from SimulationRoom.cs the way CommandCatalog and
@@ -144,6 +146,7 @@ public sealed partial class SimulationRoom
                 Transport: new TransportState(_paused, _speed, _assets.TickCount),
                 SimulationTimeSeconds: _assets.SimulationTimeSeconds,
                 EnvironmentRevision: FormatEnvironmentRevision(_environmentRevision),
+                Scenario: _scenario,
                 BackhaulKilled: _backhaulKilled,
                 Descriptors: _assets.Descriptors,
                 Assets: _assets.States,

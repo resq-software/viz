@@ -160,4 +160,63 @@ public sealed partial class SnapshotDifferTests
         cleared.Network.Should().BeNull();
         VizSnapshotDiffer.Apply(previous, cleared).Network.Should().BeNull();
     }
+
+    [Fact]
+    public void Unchanged_Scenario_Is_Elided()
+    {
+        var asset = Seeded(AirId, AssetDomain.Air, new Vector3(0f, 40f, 0f));
+        var scenario = new ScenarioSessionState("single", 0.0, 1);
+        var previous = Room(FrameA, 0, [asset], scenario: scenario);
+        var next = Room(
+            FrameB,
+            SecondFrameTick,
+            [asset with { Sequence = asset.Sequence + 1 }],
+            scenario: scenario);
+
+        var delta = VizSnapshotDiffer.Diff(previous, next, 1, 2);
+
+        delta.Scenario.Should().BeNull();
+        delta.ScenarioCleared.Should().BeFalse();
+        VizSnapshotDiffer.Apply(previous, delta).Scenario.Should().BeSameAs(scenario);
+    }
+
+    [Fact]
+    public void Replaced_Scenario_Is_Carried_And_Round_Trips()
+    {
+        var asset = Seeded(AirId, AssetDomain.Air, new Vector3(0f, 40f, 0f));
+        var previous = Room(
+            FrameA, 0, [asset], scenario: new ScenarioSessionState("single", 0.0, 1));
+        var next = Room(
+            FrameB,
+            SecondFrameTick,
+            [asset with { Sequence = asset.Sequence + 1 }],
+            scenario: new ScenarioSessionState("flood-response", 0.0, 2));
+
+        var delta = VizSnapshotDiffer.Diff(previous, next, 1, 2);
+
+        delta.Scenario.Should().BeSameAs(next.Scenario);
+        delta.ScenarioCleared.Should().BeFalse();
+        delta.HasStateChanges.Should().BeTrue();
+        ToJson(VizSnapshotDiffer.Apply(previous, delta)).Should().Be(ToJson(next));
+    }
+
+    [Fact]
+    public void Cleared_Scenario_Is_Explicit_And_Applies_As_Null()
+    {
+        var asset = Seeded(AirId, AssetDomain.Air, new Vector3(0f, 40f, 0f));
+        var previous = Room(
+            FrameA, 0, [asset], scenario: new ScenarioSessionState("single", 0.0, 1));
+        var next = Room(
+            FrameB,
+            SecondFrameTick,
+            [asset with { Sequence = asset.Sequence + 1 }],
+            scenario: null);
+
+        var delta = VizSnapshotDiffer.Diff(previous, next, 1, 2);
+
+        delta.Scenario.Should().BeNull();
+        delta.ScenarioCleared.Should().BeTrue();
+        delta.HasStateChanges.Should().BeTrue();
+        VizSnapshotDiffer.Apply(previous, delta).Scenario.Should().BeNull();
+    }
 }

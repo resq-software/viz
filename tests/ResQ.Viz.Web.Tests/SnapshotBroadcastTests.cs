@@ -113,6 +113,21 @@ public sealed partial class SnapshotBroadcastTests
             "domain travels on the descriptor, so a client never has to infer it from a class name");
     }
 
+    [Fact]
+    public async Task Full_Snapshot_Carries_The_Room_Scenario()
+    {
+        var room = CreatePopulatedRoom();
+        room.NotifyScenario("flood-response");
+        room.IncrementSnapshotSubscribers();
+        var broadcaster = new RecordingBroadcaster();
+
+        await CreateManager(broadcaster).BroadcastRoomAsync(room, CancellationToken.None);
+
+        broadcaster.Snapshots.Should().ContainSingle();
+        broadcaster.Snapshots[0].Snapshot.Scenario.Should().Be(
+            new ScenarioSessionState("flood-response", 0.0, 1));
+    }
+
     /// <summary>Both messages describe the same tick, down to the poses they publish.</summary>
     /// <remarks>
     /// The tick and the sim time agreeing is necessary but weak — two readings a step apart on a
