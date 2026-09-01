@@ -61,7 +61,7 @@ V1 remains available for a deprecation cycle. Its frames and snapshots project a
 
 V2 clients can subscribe to full snapshots at the 10 Hz publication cadence. Deltas are opt-in. An in-flight delta may reach a new subscriber first, but without a baseline it is unusable and the client discards it. The first frame the subscriber can act on is complete. The client can request resynchronization after a sequence gap, and the server publishes a periodic complete frame every 50 published frames. V1 and v2 have separate backpressure slots so a slow consumer on one stream does not occupy the other's slot.
 
-V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks. The lease identifies who holds control of an asset. HTTP `202` means the gates passed and the command was handed to the simulated asset. Clients can retrieve the latest recorded state. The current production path does not advance an accepted record from physical execution. Catalog, authority, link, translation, and simulated-asset refusals enter the bounded decision audit, as do accepted commands. Envelope-build failures add no decision-audit record. Duplicate and idempotency-conflict responses also return before that audit. This build has no hardware bearer, and startup rejects configuration that enables live control.
+V2 command requests pass through lease, capability, current-state, safe-action, and idempotency checks. The lease identifies who holds control of an asset. HTTP `202` means the gates passed and the command was handed to the simulated asset. Clients can retrieve the latest recorded state. The current production path does not advance an accepted record from subsequent simulated asset motion. Catalog, authority, link, translation, and simulated-asset refusals enter the bounded decision audit, as do accepted commands. Envelope-build failures add no decision-audit record. Duplicate and idempotency-conflict responses also return before that audit. This build has no hardware bearer, and startup rejects configuration that enables live control.
 
 ### Source-enforced limits and gates
 
@@ -200,7 +200,7 @@ The two versions are not authority-equivalent. V1 command routes bypass v2 contr
 
 V2 exposes a case-sensitive command catalog. Common commands are `stop`, `emergencyStop`, `hold`, `resumeAutonomy`, `goTo`, `returnToBase`, and `setSpeed`. Air adds `takeoff`, `land`, `setAltitude`, and `loiter`. Ground adds `driveTo`, `reverse`, and `park`, while surface adds `transitTo`, `setCourse`, `stationKeep`, `dock`, and `undock`. `followRoute` and `setSteering` are named in the source but are not registered or callable in this build. The full per-command parameter and state table belongs in the [reference](#reference).
 
-A command envelope requires an `idempotencyKey` and a case-exact `kind`. A caller may supply `commandId`, `issuerId`, and `controlLeaseId`. The server mints the command ID when omitted and falls back to `room:{roomId}` when the issuer is blank. The remaining fields are an optional typed target, motion constraints, deadline, scalar `frame`, and a string-valued parameter bag. Point targets in a local frame and geodetic targets normalize to `LocalEus` before hashing. Classification therefore treats equivalent destinations as one logical request. It runs before asset resolution, and any rejection before the later claim leaves the key reusable.
+A command envelope requires an `idempotencyKey` and a case-exact `kind`. A caller may supply `commandId`, `issuerId`, and `controlLeaseId`. The server mints the command ID when omitted and falls back to `room:{roomId}` when the issuer is blank. The remaining fields are an optional typed target, motion constraints, deadline, scalar `frame`, and a string-valued parameter bag. Point targets in a local frame and geodetic targets normalize to `LocalEus` before hashing. Classification therefore treats equivalent destinations as one logical request. Only a request classified as `New` whose later pre-claim gate rejects it leaves the key reusable. Duplicate and key-conflict outcomes remain bound to the earlier command.
 
 ### Command authority and lifecycle
 
@@ -235,34 +235,40 @@ The controller computes the entire catalog verdict after one asset-frame capture
 Use the second shell and its `readme_base` and `readme_cookie` from the [five-minute run](#five-minute-mixed-fleet-run). Frame `2` is `LocalEus`. This request drives the flood-response supply rover toward a new scene point:
 
 ```bash
-readme_command_body=$(mktemp "${TMPDIR:-/tmp}/resq-viz-readme-command.XXXXXX")
-trap 'rm -f "$readme_cookie" "$readme_command_body"' EXIT
+(
+  set -Eeuo pipefail
 
-readme_command_status=$(curl --silent --show-error --insecure \
-  -b "$readme_cookie" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{"kind":"driveTo","idempotencyKey":"readme-fr-supply-001","issuerId":"readme-operator","target":{"type":"point","point":{"frame":2,"position":{"x":-400,"y":0,"z":25}}}}' \
-  -o "$readme_command_body" \
-  -w '%{http_code}' \
-  "$readme_base/api/v2/sim/assets/fr-supply-lead/commands")
+  readme_command_body=$(mktemp "${TMPDIR:-/tmp}/resq-viz-readme-command.XXXXXX")
+  trap 'rm -f "$readme_command_body"' EXIT
 
-test "$readme_command_status" = 202
-readme_command_id=$(jq -er '.commandId' "$readme_command_body")
+  readme_command_status=$(curl --silent --show-error --insecure \
+    -b "$readme_cookie" \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d '{"kind":"driveTo","idempotencyKey":"readme-fr-supply-001","issuerId":"readme-operator","target":{"type":"point","point":{"frame":2,"position":{"x":-400,"y":0,"z":25}}}}' \
+    -o "$readme_command_body" \
+    -w '%{http_code}' \
+    "$readme_base/api/v2/sim/assets/fr-supply-lead/commands")
 
-curl --fail --silent --show-error --insecure \
-  -b "$readme_cookie" \
-  "$readme_base/api/v2/sim/commands/$readme_command_id" \
-  | jq -e --arg command_id "$readme_command_id" \
-      '(.commandId == $command_id) and (.state == 1)'
+  if [ "$readme_command_status" != 202 ]; then
+    printf 'Command returned HTTP %s:\n' "$readme_command_status" >&2
+    sed -n '1,200p' "$readme_command_body" >&2
+    exit 1
+  fi
 
-rm -f "$readme_command_body"
-trap 'rm -f "$readme_cookie"' EXIT
+  readme_command_id=$(jq -er '.commandId' "$readme_command_body")
+
+  curl --fail --silent --show-error --insecure \
+    -b "$readme_cookie" \
+    "$readme_base/api/v2/sim/commands/$readme_command_id" \
+    | jq -e --arg command_id "$readme_command_id" \
+        '(.commandId == $command_id) and (.state == 1)'
+)
 ```
 
-HTTP `202` says the current gates passed and the command was handed to the simulated asset. It does not report completed motion. `GET /api/v2/sim/commands/{commandId}` returns the latest retained room record, but production does not advance an accepted record from physical execution. The `Accepted` state above is not proof that the rover arrived. Results are bounded, so `404` can mean the command was never tracked or was evicted.
+HTTP `202` says the current gates passed and the command was handed to the simulated asset. It does not report completed motion. `GET /api/v2/sim/commands/{commandId}` returns the latest retained room record, but production does not advance an accepted record from subsequent simulated asset motion. The `Accepted` state above is not proof that the rover arrived. Results are bounded, so `404` can mean the command was never tracked or was evicted.
 
-Envelope-build failures and a newly observed duplicate or key conflict add neither a decision-audit record nor a new pollable result. A true duplicate may replay its existing result. Catalog, authority, and link refusals occur before claim, enter the decision audit, and remain unpollable. Translation and simulated-asset rejections happen after claim, so they are audited and pollable alongside accepted commands.
+Envelope-build failures, duplicate requests, and key conflicts add neither a new decision-audit record nor a new pollable result. A matching duplicate may replay its existing result. Catalog, authority, and link refusals occur before claim, enter the decision audit, and remain unpollable. Translation and simulated-asset rejections happen after claim, so they are audited and pollable alongside accepted commands.
 
 Control routes publish the process mode at `GET /api/v2/sim/control/mode` and the room-wide bounded audit at `GET /api/v2/sim/control/audit`. Per-asset routes report the holder, acquire a lease, or use `/renew`, `/release`, and `/preempt`. Each room owns its authority, leases are keyed by asset, and every retained audit record identifies the asset it concerns. The decision and lease windows expose dropped counts when older entries have been evicted.
 
