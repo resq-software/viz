@@ -32,10 +32,15 @@ namespace ResQ.Viz.Web.Hubs;
 /// Server-to-client methods:
 ///   - ReceiveFrame(VizFrame frame) — broadcast on every 6th simulation tick (~10 Hz).
 ///   - ReceiveSnapshotV2(VizSnapshotV2 snapshot) — the same tick, the multi-domain schema,
-///     sent only to connections that called <see cref="SubscribeSnapshots"/>.
+///     sent to connections that called <see cref="SubscribeSnapshots"/>, and as a keyframe to
+///     connections that called <see cref="SubscribeDeltas"/>.
+///   - ReceiveDeltaV2(VizDeltaV2 delta) — the change since the previous frame, sent only to
+///     connections that called <see cref="SubscribeDeltas"/>.
 ///
 /// Client-to-server methods:
 ///   - SubscribeSnapshots(bool subscribed) — opt in or out of the v2 stream.
+///   - SubscribeDeltas(bool subscribed) — trade full snapshots for keyframes plus deltas.
+///   - RequestKeyframe() — ask for a full frame after a gap. See <c>VizHub.Deltas.cs</c>.
 /// </summary>
 /// <remarks>
 /// <b>The two schemas are separate streams, and the v2 one is opt-in.</b> Every connection joins
@@ -57,7 +62,7 @@ namespace ResQ.Viz.Web.Hubs;
 /// reconnected handler. That is the same rule the room group already follows.
 /// </para>
 /// </remarks>
-public sealed class VizHub : Hub
+public sealed partial class VizHub : Hub
 {
     private readonly RoomSessionService _sessions;
     private readonly ILogger<VizHub> _logger;
@@ -94,6 +99,12 @@ public sealed class VizHub : Hub
     /// A subset of <see cref="RoomGroupName"/>'s membership, never a replacement for it: a
     /// subscribed connection is in both groups and receives both schemas, because a client
     /// migrating one panel at a time needs the v1 frame its unmigrated panels still read.
+    /// <para>
+    /// Disjoint from <see cref="DeltaGroupName"/>, though. A connection that opts into deltas
+    /// leaves this group for that one and its keyframes arrive there instead, because receiving
+    /// a whole snapshot <em>and</em> a delta describing the same frame is strictly worse than
+    /// receiving either alone. Its opt-in is remembered, so turning deltas off puts it back.
+    /// </para>
     /// </remarks>
     /// <param name="roomId">Room the group belongs to.</param>
     /// <returns>The group name.</returns>
@@ -102,8 +113,21 @@ public sealed class VizHub : Hub
     /// <summary>HubCallerContext.Items key used to remember the room across the connection lifetime.</summary>
     private const string ConnectionRoomKey = "sim.hub.room";
 
-    /// <summary>HubCallerContext.Items key recording whether this connection subscribed to v2.</summary>
+    /// <summary>
+    /// HubCallerContext.Items key recording whether this connection is currently <em>counted</em>
+    /// in <see cref="SimulationRoom.SnapshotSubscriberCount"/> and in the snapshot group.
+    /// </summary>
+    /// <remarks>
+    /// Kept distinct from <see cref="ConnectionSnapshotIntentKey"/> because a delta subscriber
+    /// leaves the snapshot group without having changed its mind about wanting v2 — it is
+    /// receiving the same picture in a cheaper shape. Conflating the two would either leak a
+    /// subscriber count when deltas are turned on or silently forget the client's v2 opt-in when
+    /// they are turned off again.
+    /// </remarks>
     private const string ConnectionSnapshotKey = "sim.hub.snapshots";
+
+    /// <summary>HubCallerContext.Items key recording whether this connection asked for v2 at all.</summary>
+    private const string ConnectionSnapshotIntentKey = "sim.hub.snapshots.intent";
 
     /// <inheritdoc/>
     public override async Task OnConnectedAsync()
@@ -170,13 +194,25 @@ public sealed class VizHub : Hub
             return VizSnapshotV2.CurrentSchemaVersion;
         }
 
-        var already = Context.Items.TryGetValue(ConnectionSnapshotKey, out var flag) && flag is true;
-        if (already == subscribed)
+        // The client's intent is recorded whether or not group membership changes, because a
+        // delta subscriber's snapshot membership is suspended rather than revoked: turning
+        // deltas off has to restore exactly what the client asked for here, and nothing else
+        // remembers it.
+        Context.Items[ConnectionSnapshotIntentKey] = subscribed;
+
+        var counted = Context.Items.TryGetValue(ConnectionSnapshotKey, out var flag) && flag is true;
+        var streamingDeltas = Context.Items.TryGetValue(ConnectionDeltaKey, out var deltaFlag)
+            && deltaFlag is true;
+
+        // A delta subscriber is never also a full-snapshot subscriber: it would receive a whole
+        // snapshot and a delta describing the same frame, which is worse than either alone.
+        var wanted = subscribed && !streamingDeltas;
+        if (counted == wanted)
         {
             return VizSnapshotV2.CurrentSchemaVersion;
         }
 
-        if (subscribed)
+        if (wanted)
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, SnapshotGroupName(room.Id));
             Context.Items[ConnectionSnapshotKey] = true;
@@ -191,7 +227,7 @@ public sealed class VizHub : Hub
 
         _logger.LogInformation(
             "Client {ConnectionId} {Action} v2 snapshots for room {RoomId} (subscribers={Count}).",
-            Context.ConnectionId, subscribed ? "subscribed to" : "unsubscribed from",
+            Context.ConnectionId, wanted ? "subscribed to" : "unsubscribed from",
             room.Id, room.SnapshotSubscriberCount);
 
         return VizSnapshotV2.CurrentSchemaVersion;
@@ -202,7 +238,17 @@ public sealed class VizHub : Hub
     {
         if (Context.Items.TryGetValue(ConnectionRoomKey, out var roomObj) && roomObj is SimulationRoom room)
         {
-            // The snapshot subscription is released first and unconditionally. A subscriber
+            // The delta subscription goes first, and unconditionally, for the reason spelled
+            // out below — it is the same leak, and this count is what decides whether the tick
+            // loop encodes a delta at all.
+            if (Context.Items.TryGetValue(ConnectionDeltaKey, out var deltaFlag) && deltaFlag is true)
+            {
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, DeltaGroupName(room.Id));
+                Context.Items[ConnectionDeltaKey] = false;
+                room.DecrementDeltaSubscribers();
+            }
+
+            // The snapshot subscription is released next and unconditionally. A subscriber
             // count that only fell when a client politely unsubscribed would ratchet upwards
             // over a session's reconnects, and the count is what decides whether the tick loop
             // assembles a v2 frame at all — so leaking it means paying for a schema nobody is

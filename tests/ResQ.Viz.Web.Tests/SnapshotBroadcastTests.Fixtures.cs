@@ -142,8 +142,20 @@ public sealed partial class SnapshotBroadcastTests
         /// <summary>Every v1 frame published, in order.</summary>
         public List<(string RoomId, VizFrame Frame)> Frames { get; } = [];
 
-        /// <summary>Every v2 snapshot published, in order.</summary>
+        /// <summary>Every v2 snapshot published to the full-snapshot group, in order.</summary>
         public List<(string RoomId, VizSnapshotV2 Snapshot)> Snapshots { get; } = [];
+
+        /// <summary>Every v2 keyframe published to the delta group, in order.</summary>
+        /// <remarks>
+        /// Kept apart from <see cref="Snapshots"/> even though the payload shape is identical,
+        /// because the two go to different audiences: a case asserting that a snapshot subscriber
+        /// is unaffected by deltas has to be able to tell "nothing reached the snapshot group"
+        /// from "nothing was published at all".
+        /// </remarks>
+        public List<(string RoomId, VizSnapshotV2 Snapshot)> Keyframes { get; } = [];
+
+        /// <summary>Every v2 delta published, in order.</summary>
+        public List<(string RoomId, VizDeltaV2 Delta)> Deltas { get; } = [];
 
         /// <inheritdoc />
         public Task BroadcastFrameAsync(string roomId, VizFrame frame, CancellationToken cancellationToken)
@@ -157,6 +169,22 @@ public sealed partial class SnapshotBroadcastTests
             string roomId, VizSnapshotV2 snapshot, CancellationToken cancellationToken)
         {
             Snapshots.Add((roomId, snapshot));
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public Task BroadcastKeyframeAsync(
+            string roomId, VizSnapshotV2 snapshot, CancellationToken cancellationToken)
+        {
+            Keyframes.Add((roomId, snapshot));
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public Task BroadcastDeltaAsync(
+            string roomId, VizDeltaV2 delta, CancellationToken cancellationToken)
+        {
+            Deltas.Add((roomId, delta));
             return Task.CompletedTask;
         }
     }

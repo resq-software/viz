@@ -83,7 +83,7 @@ public sealed partial class GroundAsset
             OperationalState: ResolveOperationalState(),
             Mode: ModeToken,
             Power: BuildPower(percent),
-            Health: BuildHealth(percent, context.SourceTime),
+            Health: _faultOnsets.Stamp(BuildHealth(percent, context.SourceTime), context.SourceTime),
             Link: new LinkState(
                 Transport: LinkTransport.Loopback,
                 IsConnected: true,
