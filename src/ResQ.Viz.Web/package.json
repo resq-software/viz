@@ -17,14 +17,14 @@
     "@resq-systems/analytics": "^2.0.2",
     "@resq-systems/logger": "^0.3.0",
     "@resq-systems/types": "^0.2.0",
-    "effect": "^4.0.0-rc.111",
-    "posthog-js": "^1.418.6",
+    "effect": "^4.0.0-rc.112",
+    "posthog-js": "^1.422.1",
     "three": "^0.185.1"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "@types/three": "^0.185.4",
-    "happy-dom": "^20.11.6",
+    "happy-dom": "^20.11.12",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^4.1.11"
