@@ -216,6 +216,7 @@ public sealed class ControlAuthorityRegistry
                 world => world.TryGet(assetId, out var asset) && asset is not null
                     ? ledger.TokenFor(asset)
                     : null),
+            () => room.WorldRevision,
             _options);
 
         room.AddLifecycleObserver(new AuthorityLifecycle(authority));
@@ -282,6 +283,7 @@ public sealed class ControlAuthorityRegistry
             lock (_worldResetGate)
             {
                 _lastWorldRevision = Math.Max(_lastWorldRevision, revision);
+                authority.InitializeWorldRevision(_lastWorldRevision);
             }
         }
 
@@ -298,7 +300,7 @@ public sealed class ControlAuthorityRegistry
                     return;
                 }
 
-                authority.Reset();
+                authority.ReconcileWorldReset(revision);
                 _lastWorldRevision = revision;
             }
         }

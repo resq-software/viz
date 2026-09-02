@@ -264,6 +264,72 @@ public partial class SimV2ControllerTests
         authority.FindLiveLease("air-1")!.HolderId.Should().Be("new-console");
     }
 
+    /// <summary>A lease acquired after commit survives that same world's delayed reset callback.</summary>
+    [Fact]
+    public async Task Same_Revision_Callback_Preserves_A_Lease_Acquired_After_World_Commit()
+    {
+        var scenarios = ScenarioServiceFor(
+            ("single", "new-air", VehicleClass.Multirotor),
+            ("single", "reused-air", VehicleClass.Multirotor));
+        var (ctrl, room) = CreateController(scenarios: scenarios);
+        room.AddDrone("missing-air", new System.Numerics.Vector3(0f, 15f, 0f));
+        room.AddDrone("reused-air", new System.Numerics.Vector3(10f, 15f, 0f));
+        var barrier = new BlockingFirstWorldResetObserver();
+        room.AddLifecycleObserver(barrier);
+        var authority = new ControlAuthorityRegistry(
+            TimeProvider.System, new ControlAuthorityOptions()).For(room);
+        var missing = authority.Acquire(
+            "missing-air", "old-console-a", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+        var reused = authority.Acquire(
+            "reused-air", "old-console-b", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+
+        var startTask = Task.Run(() => Body<ScenarioStartResponse>(ctrl.StartScenario("single")));
+        barrier.WaitForFirstReset();
+        var lease = authority.Acquire(
+            "new-air", "new-console", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+
+        barrier.ReleaseFirstReset();
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        authority.FindLiveLease("new-air").Should().Be(lease);
+        authority.ReadAudit().Should().NotContain(record =>
+            record.LeaseId == lease.LeaseId && record.EndReason != null);
+        var oldEndings = authority.ReadAudit().Where(record =>
+            record.EndReason != null
+            && (record.LeaseId == missing.LeaseId || record.LeaseId == reused.LeaseId)).ToList();
+        oldEndings.Should().HaveCount(2);
+        oldEndings.Should().OnlyContain(record =>
+            record.Kind == ControlAuditKind.Revoked
+            && record.EndReason == ControlLeaseEndReason.AuthorityReset);
+    }
+
+    /// <summary>A world replacement selectively revokes old instances with reset audit reasons.</summary>
+    [Fact]
+    public void World_Replacement_Revokes_Missing_And_Reused_Instances_As_Authority_Reset()
+    {
+        var scenarios = ScenarioServiceFor(("replacement", "reused-air", VehicleClass.Multirotor));
+        var (ctrl, room) = CreateController(scenarios: scenarios);
+        room.AddDrone("missing-air", new System.Numerics.Vector3(0f, 15f, 0f));
+        room.AddDrone("reused-air", new System.Numerics.Vector3(10f, 15f, 0f));
+        var authority = new ControlAuthorityRegistry(
+            TimeProvider.System, new ControlAuthorityOptions()).For(room);
+        var missing = authority.Acquire(
+            "missing-air", "console-a", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+        var reused = authority.Acquire(
+            "reused-air", "console-b", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+
+        Body<ScenarioStartResponse>(ctrl.StartScenario("replacement"));
+
+        authority.LiveLeases().Should().BeEmpty();
+        var endings = authority.ReadAudit().Where(record =>
+            record.EndReason != null
+            && (record.LeaseId == missing.LeaseId || record.LeaseId == reused.LeaseId)).ToList();
+        endings.Should().HaveCount(2);
+        endings.Should().OnlyContain(record =>
+            record.Kind == ControlAuditKind.Revoked
+            && record.EndReason == ControlLeaseEndReason.AuthorityReset);
+    }
+
     private static ScenarioService ScenarioServiceFor(
         params (string Scenario, string AssetId, VehicleClass VehicleClass)[] rows) =>
         ScenarioServiceFor([], rows);

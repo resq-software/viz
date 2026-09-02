@@ -109,6 +109,12 @@ public sealed partial class SimulationRoom
     // outside-lock notification so observers can reject an older callback that resumes late.
     private long _worldRevision;
 
+    /// <summary>Current committed world revision, read under the room lock.</summary>
+    internal long WorldRevision
+    {
+        get { lock (_lock) return _worldRevision; }
+    }
+
     /// <summary>Subscribes an observer to this room's asset lifecycle.</summary>
     /// <remarks>
     /// Idempotent by reference: subscribing the same observer twice registers it once, so a
