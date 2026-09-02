@@ -43,6 +43,7 @@ internal static class ScenarioRunOrchestrator
 
         var success = scenarios.TryReplace(
             canonicalName, room, out var current, out var failure);
+        var loggedName = ScenarioService.LogSafe(canonicalName);
         var status = success ? "success" : "failure";
         VizTelemetry.ScenarioRunDuration.Record(
             Stopwatch.GetElapsedTime(started).TotalMilliseconds,
@@ -53,7 +54,7 @@ internal static class ScenarioRunOrchestrator
         {
             VizTelemetry.ScenariosRun.Add(1);
             logger.LogInformation(
-                "Scenario '{Name}' started in room {RoomId}.", canonicalName, room.Id);
+                "Scenario '{Name}' started in room {RoomId}.", loggedName, room.Id);
             return new ScenarioRunOutcome(current, null);
         }
 
@@ -65,7 +66,7 @@ internal static class ScenarioRunOrchestrator
         logger.LogError(
             failure?.Exception,
             "Scenario '{Name}' failed to stage in room {RoomId} ({FailureCategory}).",
-            canonicalName,
+            loggedName,
             room.Id,
             category);
         return new ScenarioRunOutcome(null, failure);

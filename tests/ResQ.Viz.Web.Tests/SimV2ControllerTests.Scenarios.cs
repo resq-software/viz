@@ -237,6 +237,28 @@ public partial class SimV2ControllerTests
             .Which.Should().Be($"Scenario 'single' started in room {room.Id}.");
     }
 
+    /// <summary>Canonical scenario names cannot forge or grow an orchestrator log line.</summary>
+    [Fact]
+    public void Scenario_Run_Log_Sanitizes_The_Canonical_Configured_Name()
+    {
+        var canonicalName = "safe\r\nforged-" + new string('x', 180);
+        var scenarios = ScenarioServiceFor((canonicalName, "air-1", VehicleClass.Multirotor));
+        var logger = new RecordingLogger<SimV2Controller>();
+        var (ctrl, room) = CreateController(scenarios: scenarios, logger: logger);
+
+        var response = Body<ScenarioStartResponse>(ctrl.StartScenario(canonicalName));
+
+        response.Current.Name.Should().Be(canonicalName, "lookup and session state stay canonical");
+        var message = logger.Messages.Should().ContainSingle().Which;
+        message.Should().NotContain("\r").And.NotContain("\n");
+        const string prefix = "Scenario '";
+        var suffix = $"' started in room {room.Id}.";
+        message.Should().StartWith(prefix).And.EndWith(suffix);
+        var loggedName = message[prefix.Length..^suffix.Length];
+        loggedName.Length.Should().BeLessThanOrEqualTo(120);
+        loggedName.Should().StartWith("safeforged-");
+    }
+
     /// <summary>An observer cannot turn an already committed replacement into an ambiguous failure.</summary>
     [Fact]
     public void Throwing_World_Reset_Observer_Does_Not_Escape_After_Commit()
