@@ -123,11 +123,11 @@
         <h1 class="sr-only">ResQ Viz drone simulation viewer</h1>
         <!-- Aria-live telemetry summary for screen readers (updated by app.ts) -->
         <div id="a11y-telemetry" class="sr-only" aria-live="polite" aria-atomic="true"></div>
-        <!-- Empty world hint — shown when no drones exist -->
+        <!-- Empty world hint — shown when no assets exist -->
         <div id="empty-state" aria-live="polite">
             <div class="es-icon">&#x2B21;</div>
-            <div class="es-title">No active drones</div>
-            <div class="es-sub">Click a scenario in the sidebar to begin, or spawn a drone manually.</div>
+            <div class="es-title">No active assets</div>
+            <div class="es-sub">Choose a scenario in the operator rail, or spawn an asset manually.</div>
         </div>
     </main>
 
@@ -179,7 +179,8 @@
                 <button id="hud-follow-toggle" class="hud-toggle"        type="button" aria-label="Follow selected"  aria-pressed="false" title="Follow selected (F)"><span aria-hidden="true">&#x25CE;</span></button>
             </div>
             <div class="hud-action-group">
-                <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel"   title="Toggle panel [Tab]"><span aria-hidden="true">☰</span></button>
+                <button id="btn-editor-toggle" class="hud-action hud-action-text" type="button" aria-expanded="false" aria-controls="operator-editor-layer">Editor</button>
+                <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel" aria-expanded="true" aria-controls="sidebar" title="Toggle panel"><span aria-hidden="true">☰</span></button>
                 <button id="hud-cockpit-toggle"  class="hud-action" type="button" aria-label="Flight instruments"    aria-pressed="false" title="Flight instruments (I)"><span aria-hidden="true">◔</span></button>
                 <button id="hud-hints-toggle"    class="hud-action" type="button" aria-label="Keyboard shortcuts"    aria-pressed="false" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
                 <button id="hud-settings-toggle" class="hud-action" type="button" aria-label="Settings"              aria-expanded="false" aria-controls="settings-panel" title="Settings"><span aria-hidden="true">⚙</span></button>
@@ -189,6 +190,36 @@
 
     <!-- Left sidebar -->
     <aside id="sidebar">
+
+        <section id="operator-boot" class="operator-branch operator-boot" aria-hidden="false" aria-live="polite">
+            <span class="operator-boot-kicker">Operator console</span>
+            <strong>Establishing simulation link…</strong>
+        </section>
+
+        <section id="operator-v2-console" class="operator-branch operator-v2-console" hidden inert aria-hidden="true">
+            <section id="operator-mission" class="operator-card" aria-label="Active mission">
+                <span class="operator-section-kicker">Mission</span>
+                <strong>Waiting for authoritative scenario state</strong>
+            </section>
+
+            <div class="operator-primary-actions">
+                <button id="btn-spawn-asset" class="btn btn-primary" type="button">Spawn asset</button>
+                <button id="btn-environment" class="btn" type="button">Environment</button>
+            </div>
+
+            <section class="operator-fleet" aria-labelledby="fleet-heading">
+                <h2 id="fleet-heading" class="section-title" tabindex="-1">Fleet</h2>
+                <div id="fleet-filter" class="operator-mount" aria-label="Fleet filters"></div>
+                <div id="fleet-roster" class="operator-mount" aria-live="polite"></div>
+            </section>
+
+            <details id="advanced-safety" class="operator-card operator-advanced">
+                <summary>Advanced / Safety</summary>
+                <p>Authority, link drills, external reports, and audit controls load on demand.</p>
+            </details>
+        </section>
+
+        <section id="legacy-console" class="operator-branch legacy-console" hidden inert aria-hidden="true">
 
         <div class="panel-section panel-sim">
             <h2 class="section-title">Simulation</h2>
@@ -315,7 +346,14 @@
             </div>
         </details>
 
+        </section>
+
     </aside>
+
+    <!-- Body-level operator layers must not inherit the rail's transform. -->
+    <div id="operator-context-layer" class="operator-layer operator-context-layer"></div>
+    <div id="operator-modal-layer" class="operator-layer operator-modal-layer"></div>
+    <div id="operator-editor-layer" class="operator-layer operator-editor-layer" hidden inert aria-hidden="true"></div>
 
     <!-- Drone detail panel (hidden until a drone is clicked) -->
     <div id="drone-panel" class="hidden">
@@ -377,7 +415,6 @@
         <span><kbd>I</kbd> Flight instruments</span>
         <span><kbd>Space</kbd> Stop sim</span>
         <span><kbd>R</kbd> Reset sim</span>
-        <span><kbd>Tab</kbd> Sidebar</span>
         <span><kbd>1&#x2013;4</kbd> Scenarios</span>
         <span><kbd>Click drone</kbd> Select</span>
         <span><kbd>Click ground</kbd> Send drone here</span>

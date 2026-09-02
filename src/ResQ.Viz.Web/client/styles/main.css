@@ -60,7 +60,7 @@ button { font-family: inherit; }
 #scene-container {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: var(--layer-scene);
 }
 
 /* Subtle vignette to anchor the chrome over the canvas */
@@ -80,7 +80,7 @@ button { font-family: inherit; }
   position: fixed;
   inset: 0 0 auto 0;
   height: var(--hud-h);
-  z-index: 200;
+  z-index: var(--layer-hud);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -286,7 +286,7 @@ button { font-family: inherit; }
   left: 0;
   bottom: 0;
   width: var(--sidebar-w);
-  z-index: 100;
+  z-index: var(--layer-rail);
   background: var(--surface-1);
   border-right: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
@@ -539,7 +539,7 @@ input[type='range'] {
   position: fixed;
   bottom: 18px;
   left: calc(var(--sidebar-w) + 24px);
-  z-index: 150;
+  z-index: var(--layer-context);
   width: min(440px, calc(100vw - var(--sidebar-w) - 260px));
   background: var(--surface-2);
   border-radius: var(--r-3);
@@ -632,7 +632,7 @@ input[type='range'] {
   position: fixed;
   bottom: calc(var(--dvr-h) + 14px);
   right: 240px;
-  z-index: 150;
+  z-index: var(--layer-context);
   text-align: center;
   background: var(--surface-1);
   border-radius: var(--r-3);
@@ -660,7 +660,7 @@ input[type='range'] {
   position: fixed;
   top: calc(var(--hud-h) + 8px);
   right: 16px;
-  z-index: 250;
+  z-index: var(--layer-popover);
   width: 380px;
   max-width: calc(100vw - 32px);
   background: var(--surface-3);
@@ -1162,7 +1162,7 @@ body.partitioned .partition-banner {
 .loading-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--layer-blocking);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1585,11 +1585,9 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
 
 @media (max-width: 900px) {
   :root { --sidebar-w: 280px; }
-  /* Sidebar becomes an on-demand DRAWER: off-canvas by default (controls.ts
-     collapses it at this breakpoint) and a raised overlay when opened, so it
-     covers the full-width surfaces cleanly instead of sharing the row with them
-     or being poked through (z 460 sits above the DVR/event log/etc.). */
-  #sidebar { transform: translateX(-100%); z-index: 460; }
+  /* Sidebar becomes an on-demand drawer. OperatorShell owns its open, hidden,
+     and inert state; this rule supplies only the responsive off-canvas pose. */
+  #sidebar { transform: translateX(-100%); z-index: var(--layer-rail); }
   #sidebar:not(.collapsed) { transform: translateX(0); }
   #scene-container { left: 0 !important; width: 100% !important; }
 
@@ -1763,4 +1761,3 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
     --line: var(--line-strong);
   }
 }
-

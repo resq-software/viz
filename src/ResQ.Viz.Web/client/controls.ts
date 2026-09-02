@@ -7,7 +7,10 @@ import { getLogger } from './log';
 const log = getLogger('controls');
 
 export class ControlPanel {
-    constructor() {
+    private readonly _root: HTMLElement;
+
+    constructor(legacyRoot: HTMLElement) {
+        this._root = legacyRoot;
         this._bindSimButtons();
         this._bindScenarioCards();
         this._bindSpawn();
@@ -15,7 +18,6 @@ export class ControlPanel {
         this._bindFaultButtons();
         this._bindWeatherSliders();
         this._bindWeatherApply();
-        this._bindSidebarToggle();
         this._bindKeyboard();
     }
 
@@ -26,7 +28,7 @@ export class ControlPanel {
     }
 
     private _syncSelect(selectId: string, ids: string[]): void {
-        const sel = document.getElementById(selectId) as HTMLSelectElement | null;
+        const sel = this._root.querySelector<HTMLSelectElement>(`#${selectId}`);
         if (!sel) return;
         const current = sel.value;
         // Set membership instead of `ids.includes` / `options.some`: the old
@@ -61,7 +63,7 @@ export class ControlPanel {
     }
 
     private _bindScenarioCards(): void {
-        const cards = document.querySelectorAll<HTMLElement>('.scenario-card');
+        const cards = this._root.querySelectorAll<HTMLElement>('.scenario-card');
         // Initialise aria-pressed so AT users hear "not pressed" for every card.
         cards.forEach(card => card.setAttribute('aria-pressed', 'false'));
         cards.forEach(card => {
@@ -97,7 +99,7 @@ export class ControlPanel {
     }
 
     private _bindCommandButtons(): void {
-        document.querySelectorAll<HTMLElement>('.cmd-btn').forEach(btn => {
+        this._root.querySelectorAll<HTMLElement>('.cmd-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const cmd = btn.dataset['cmd'];
                 if (cmd) void this._sendCommand(cmd);
@@ -106,7 +108,7 @@ export class ControlPanel {
     }
 
     private _bindFaultButtons(): void {
-        document.querySelectorAll<HTMLElement>('.fault-btn').forEach(btn => {
+        this._root.querySelectorAll<HTMLElement>('.fault-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const fault = btn.dataset['fault'];
                 if (fault) void this._injectFault(fault);
@@ -116,8 +118,8 @@ export class ControlPanel {
 
     private _bindWeatherSliders(): void {
         const bind = (sliderId: string, displayId: string) => {
-            const s = document.getElementById(sliderId) as HTMLInputElement | null;
-            const d = document.getElementById(displayId);
+            const s = this._root.querySelector<HTMLInputElement>(`#${sliderId}`);
+            const d = this._root.querySelector<HTMLElement>(`#${displayId}`);
             if (s && d) s.addEventListener('input', () => { d.textContent = s.value; });
         };
         bind('wind-speed', 'wind-speed-val');
@@ -128,22 +130,9 @@ export class ControlPanel {
         this._on('btn-weather', () => this._applyWeather());
     }
 
-    private _bindSidebarToggle(): void {
-        const sidebar = document.getElementById('sidebar');
-        this._on('btn-sidebar-toggle', () => sidebar?.classList.toggle('collapsed'));
-        // On small viewports the sidebar is an on-demand overlay (styled in
-        // main.css): start collapsed so the scene + timeline own the full width,
-        // and re-apply the per-breakpoint default whenever the viewport crosses
-        // the mobile threshold. A manual toggle still overrides until the next
-        // crossing.
-        const mq = window.matchMedia('(max-width: 900px)');
-        const applyDefault = (mobile: boolean): void => { sidebar?.classList.toggle('collapsed', mobile); };
-        applyDefault(mq.matches);
-        mq.addEventListener('change', (e) => applyDefault(e.matches));
-    }
-
     private _bindKeyboard(): void {
         document.addEventListener('keydown', async (e) => {
+            if (!this._root.isConnected || this._root.hidden || this._root.hasAttribute('inert')) return;
             const target = e.target as Element | null;
             if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
             // Shift+Digit is reserved for camera presets (see app.ts). Skip so
@@ -152,7 +141,6 @@ export class ControlPanel {
             switch (e.code) {
                 // Space (play/pause) is owned by the editor Transport bar.
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
-                case 'Tab':    e.preventDefault(); document.getElementById('sidebar')?.classList.toggle('collapsed'); break;
                 case 'Digit1': await this._runScenario('single');   break;
                 case 'Digit2': await this._runScenario('swarm-5');  break;
                 case 'Digit3': await this._runScenario('swarm-20'); break;
@@ -164,7 +152,7 @@ export class ControlPanel {
 
     private async _spawnDrone(): Promise<void> {
         const getVal = (id: string, fallback: string) =>
-            (document.getElementById(id) as HTMLInputElement | null)?.value ?? fallback;
+            this._root.querySelector<HTMLInputElement>(`#${id}`)?.value ?? fallback;
         const x = parseFloat(getVal('spawn-x', '0'));
         const y = parseFloat(getVal('spawn-y', '50'));
         const z = parseFloat(getVal('spawn-z', '0'));
@@ -172,26 +160,28 @@ export class ControlPanel {
     }
 
     private async _sendCommand(type: string): Promise<void> {
-        const droneId = (document.getElementById('drone-select') as HTMLSelectElement | null)?.value;
+        const droneId = this._root.querySelector<HTMLSelectElement>('#drone-select')?.value;
         if (!droneId) return;
         await this._post(`/api/sim/drone/${droneId}/cmd`, { type });
     }
 
     private async _injectFault(type: string): Promise<void> {
-        const droneId = (document.getElementById('fault-drone-select') as HTMLSelectElement | null)?.value;
+        const droneId = this._root.querySelector<HTMLSelectElement>('#fault-drone-select')?.value;
         if (!droneId) return;
         await this._post('/api/sim/fault', { droneId, type });
     }
 
     private async _applyWeather(): Promise<void> {
-        const mode      = (document.getElementById('weather-mode')  as HTMLSelectElement | null)?.value ?? 'calm';
-        const windSpeed = parseFloat((document.getElementById('wind-speed') as HTMLInputElement | null)?.value ?? '5');
-        const windDir   = parseFloat((document.getElementById('wind-dir')   as HTMLInputElement | null)?.value ?? '0');
+        const mode = this._root.querySelector<HTMLSelectElement>('#weather-mode')?.value ?? 'calm';
+        const windSpeed = parseFloat(
+            this._root.querySelector<HTMLInputElement>('#wind-speed')?.value ?? '5');
+        const windDir = parseFloat(
+            this._root.querySelector<HTMLInputElement>('#wind-dir')?.value ?? '0');
         await this._post('/api/sim/weather', { mode, windSpeed, windDirection: windDir });
     }
 
     private _on(id: string, fn: () => void): void {
-        document.getElementById(id)?.addEventListener('click', fn);
+        this._root.querySelector<HTMLElement>(`#${id}`)?.addEventListener('click', fn);
     }
 
     /**

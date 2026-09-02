@@ -7,6 +7,7 @@ import '@fontsource-variable/dm-sans';
 import '@fontsource/dm-mono/latin-400.css';
 import '@fontsource/dm-mono/latin-500.css';
 import './styles/main.css';
+import './styles/operator.css';
 import { bootstrapAnalytics } from './analytics';
 import * as THREE from 'three';
 
@@ -27,6 +28,7 @@ import { OverlayManager }  from './overlays';
 import { FireSmoke }        from './smoke';
 import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
+import { OperatorShell }   from './operator/OperatorShell';
 import { Hud }            from './ui/hud';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
@@ -157,7 +159,8 @@ const downwashFx   = new DownwashFx(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
 const fireSmoke    = new FireSmoke(viz.scene);
-const controlPanel = new ControlPanel();
+const operatorShell = new OperatorShell(document);
+const controlPanel = new ControlPanel(document.getElementById('legacy-console')!);
 const hud          = new Hud();
 const windCompass  = new WindCompass();
 // Selected-drone glass cockpit — flight instruments driven by live telemetry.
@@ -2228,6 +2231,7 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
     loadingOverlay.onFrame();
     if (!_v2Active) {
         _v2Active = true;
+        operatorShell.setMode('v2');
         _ensureFleetUi();
         log.info('v2 snapshot stream is driving the scene', {
             schemaVersion: snapshot.schemaVersion,
@@ -2377,6 +2381,7 @@ async function _abandonDeltas(): Promise<void> {
  */
 function _leaveV2(): void {
     _v2Active = false;
+    operatorShell.setMode('legacy');
     _lastSnapshot = null;
     _descriptorCache.clear();
     // Deltas are a layer on top of a schema this client has just decided it

@@ -13,7 +13,7 @@
 // Only this file needs a DOM, so it opts into happy-dom via the docblock above
 // rather than switching the whole suite off the default node environment.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ControlPanel } from '../controls';
 import type { DroneState } from '../types';
@@ -29,18 +29,26 @@ function optionValues(selectId: string): string[] {
     return Array.from(sel.options, o => o.value);
 }
 
+function legacyRoot(): HTMLElement {
+    return document.getElementById('legacy-console') as HTMLElement;
+}
+
 beforeEach(() => {
     // ControlPanel's constructor reaches for many elements but guards every
     // lookup with `?.`, so the two selects it actually syncs are enough.
     document.body.innerHTML = `
-        <select id="drone-select"></select>
-        <select id="fault-drone-select"></select>
+        <section id="legacy-console">
+            <select id="drone-select"></select>
+            <select id="fault-drone-select"></select>
+        </section>
     `;
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe('ControlPanel.updateDroneList', () => {
     it('adds one option per drone', () => {
-        new ControlPanel().updateDroneList([drone('a'), drone('b')]);
+        new ControlPanel(legacyRoot()).updateDroneList([drone('a'), drone('b')]);
 
         for (const id of SELECT_IDS) {
             expect(optionValues(id)).toEqual(['a', 'b']);
@@ -50,7 +58,7 @@ describe('ControlPanel.updateDroneList', () => {
     it('does not append a duplicate option for a repeated id', () => {
         // The regression: `present` is a snapshot, so without recording the id
         // before appending, the second 'a' appended a second <option>.
-        new ControlPanel().updateDroneList([drone('a'), drone('a'), drone('b')]);
+        new ControlPanel(legacyRoot()).updateDroneList([drone('a'), drone('a'), drone('b')]);
 
         for (const id of SELECT_IDS) {
             expect(optionValues(id)).toEqual(['a', 'b']);
@@ -58,7 +66,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('stays stable when the same roster is re-sent', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([drone('a'), drone('b')]);
@@ -69,7 +77,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('removes options for drones that are gone', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b'), drone('c')]);
         panel.updateDroneList([drone('b')]);
 
@@ -79,7 +87,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('empties the select when the roster empties', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([]);
 
@@ -89,7 +97,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('keeps the current selection when that drone is still present', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         const sel = document.getElementById('drone-select') as HTMLSelectElement;
         sel.value = 'b';
@@ -100,12 +108,41 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('handles a roster that both drops and adds drones in one update', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([drone('b'), drone('c')]);
 
         for (const id of SELECT_IDS) {
             expect(optionValues(id)).toEqual(['b', 'c']);
         }
+    });
+});
+
+describe('ControlPanel keyboard isolation', () => {
+    it('leaves Tab to ordinary browser focus navigation', () => {
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'Tab',
+            bubbles: true,
+            cancelable: true,
+        });
+
+        document.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('does not run global shortcuts while the legacy branch is hidden and inert', () => {
+        const root = legacyRoot();
+        root.hidden = true;
+        root.setAttribute('inert', '');
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(root);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit1', bubbles: true }));
+
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });

@@ -135,6 +135,16 @@
   --dvr-h:        46px;
   --gutter:       16px;
 
+  /* Shared application layer contract. Keep every operator surface on this scale. */
+  --layer-scene: 0;
+  --layer-rail: 100;
+  --layer-context: 150;
+  --layer-editor: 180;
+  --layer-hud: 200;
+  --layer-popover: 240;
+  --layer-modal: 300;
+  --layer-blocking: 400;
+
   /* type — DM Mono data, DM Sans body, Syne display. */
   --mono:         var(--font-mono);
   --sans:         var(--font-body);
