@@ -6,13 +6,21 @@ export function handleOwnedEscape(
   event: KeyboardEvent,
   hasPendingTarget: boolean,
   hintsVisible: boolean,
+  contextPanelVisible: boolean,
   cancelTarget: () => void,
   closeHints: () => void,
+  closeContextPanel: () => void,
 ): boolean {
   if (event.key !== 'Escape' || event.defaultPrevented
       || event.ctrlKey || event.metaKey || event.altKey) return false;
 
-  const dismiss = hasPendingTarget ? cancelTarget : hintsVisible ? closeHints : null;
+  const dismiss = hasPendingTarget
+    ? cancelTarget
+    : hintsVisible
+      ? closeHints
+      : contextPanelVisible
+        ? closeContextPanel
+        : null;
   if (dismiss === null) return false;
   event.preventDefault();
   dismiss();

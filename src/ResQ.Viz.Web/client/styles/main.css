@@ -85,7 +85,8 @@ button { font-family: inherit; }
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
-  padding-inline: 16px;
+  padding-inline-start: max(16px, env(safe-area-inset-left));
+  padding-inline-end: max(16px, env(safe-area-inset-right));
   padding-block-start: env(safe-area-inset-top);
   padding-block-end: 0;
   background: var(--surface-2);
@@ -783,8 +784,8 @@ kbd {
 .settings-panel {
   position: fixed;
   top: var(--effective-hud-h);
-  right: 0;
-  width: 320px;
+  inset-inline-end: env(safe-area-inset-right);
+  width: min(320px, calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right)));
   /* Stop above the timeline bar so the DVR controls stay usable and don't poke
      through the panel's lower edge. */
   max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
@@ -1551,7 +1552,8 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .hud-action { width: 26px; }
   #hud-top {
     gap: 6px;
-    padding-inline: 10px;
+    padding-inline-start: max(10px, env(safe-area-inset-left));
+    padding-inline-end: max(10px, env(safe-area-inset-right));
     padding-block-start: env(safe-area-inset-top);
     padding-block-end: 0;
   }

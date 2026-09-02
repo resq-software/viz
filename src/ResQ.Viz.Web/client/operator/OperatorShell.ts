@@ -2,6 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OperatorMode, OperatorMounts } from './types';
+import { ManagedLayerVisibility } from '../ui/managedLayerVisibility';
+
+const EDITOR_CHROME_SELECTOR = [
+  '.resq-dock',
+  '.resq-dock-toggle',
+  '.resq-scenecfg',
+  '.resq-dvr',
+  '.resq-transport',
+  '.resq-pip',
+  '.fpv-osd',
+  '.cam-mode-pill',
+].join(',');
 
 /** Raised when the static page does not provide the shell contract. */
 export class OperatorShellSetupError extends Error {
@@ -51,12 +63,18 @@ export class OperatorShell {
   readonly mounts: OperatorMounts;
 
   private readonly _elements: ShellElements;
+  private readonly _doc: Document;
+  private readonly _investorLayers: ManagedLayerVisibility;
   private _mode: OperatorMode = 'booting';
   private _railOpen = true;
   private _editorOpen = false;
+  private _editorRequestedOpen = false;
   private _editorAvailable = true;
+  private _investorSuppressed = false;
+  private _investorObserver: MutationObserver | null = null;
 
   constructor(doc: Document) {
+    this._doc = doc;
     const found = new Map<RequiredId, HTMLElement>();
     const missing: string[] = [];
     for (const id of REQUIRED_IDS) {
@@ -87,10 +105,11 @@ export class OperatorShell {
       modal: get('operator-modal-layer'),
       editor: editorLayer,
     };
+    this._investorLayers = new ManagedLayerVisibility([this.mounts.context]);
 
     this._elements.railToggle.addEventListener('click', () => this.setRailOpen(!this._railOpen));
     this._elements.editorToggle.addEventListener(
-      'click', () => this.setEditorOpen(!this._editorOpen),
+      'click', () => this.setEditorOpen(!this._editorRequestedOpen),
     );
     this.setMode('booting');
     this.setRailOpen(true);
@@ -152,7 +171,41 @@ export class OperatorShell {
   }
 
   setEditorOpen(open: boolean): void {
-    const next = open && this._editorAvailable;
+    this._editorRequestedOpen = open && this._editorAvailable;
+    this._syncEditorOpen();
+  }
+
+  /** Suppresses cinematic chrome while retaining only still-valid Editor intent. */
+  setInvestorSuppressed(suppressed: boolean): void {
+    if (suppressed === this._investorSuppressed) return;
+    this._investorSuppressed = suppressed;
+    this._syncEditorOpen();
+
+    if (suppressed) {
+      this._investorLayers.addLayers(this._editorChrome());
+      this._investorLayers.setSuppressed(true);
+      const Observer = this._doc.defaultView?.MutationObserver;
+      if (Observer && this._doc.body) {
+        this._investorObserver = new Observer(() => {
+          this._investorLayers.addLayers(this._editorChrome());
+        });
+        this._investorObserver.observe(this._doc.body, { childList: true, subtree: true });
+      }
+      return;
+    }
+
+    this._investorObserver?.disconnect();
+    this._investorObserver = null;
+    this._investorLayers.setSuppressed(false);
+    // Recompute from the current media-query state. A viewport that crossed
+    // below 760px while cinematic mode was active must not reopen stale UI.
+    this._syncEditorOpen();
+  }
+
+  private _syncEditorOpen(): void {
+    const next = this._editorRequestedOpen
+      && this._editorAvailable
+      && !this._investorSuppressed;
     const { editorLayer, editorToggle } = this._elements;
     const active = editorLayer.ownerDocument.activeElement;
     if (!next && active instanceof Element && editorLayer.contains(active)) {
@@ -164,6 +217,10 @@ export class OperatorShell {
     this._setInert(editorLayer, !next);
     editorToggle.setAttribute('aria-expanded', String(next));
     editorToggle.setAttribute('aria-controls', 'operator-editor-layer');
+  }
+
+  private _editorChrome(): NodeListOf<HTMLElement> {
+    return this._doc.querySelectorAll<HTMLElement>(EDITOR_CHROME_SELECTOR);
   }
 
   focusFleetHeading(): void {

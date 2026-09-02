@@ -80,6 +80,36 @@ function effectivePadding(
   return value;
 }
 
+function effectiveInlinePadding(
+  css: string,
+  selector: string,
+  side: 'start' | 'end',
+  width: number,
+): string | undefined {
+  let value: string | undefined;
+  for (const rule of rulesAtWidth(css, width)) {
+    if (!rule.selectors.includes(selector)) continue;
+    for (const declaration of rule.body.split(';')) {
+      const split = declaration.indexOf(':');
+      if (split < 0) continue;
+      const property = declaration.slice(0, split).trim();
+      const next = declaration.slice(split + 1).trim();
+      if (property === 'padding') {
+        const values = next.split(/\s+/);
+        value = side === 'start'
+          ? (values.length < 2 ? values[0] : values[3] ?? values[1])
+          : (values.length < 2 ? values[0] : values[1]);
+      } else if (property === 'padding-inline') {
+        const values = next.split(/\s+/);
+        value = side === 'start' ? values[0] : (values[1] ?? values[0]);
+      } else if (property === `padding-inline-${side}`) {
+        value = next;
+      }
+    }
+  }
+  return value;
+}
+
 function effectiveProperty(
   css: string,
   selector: string,
@@ -147,6 +177,36 @@ describe('rendered shell contracts', () => {
       expect(effectiveProperty(assets, '.asset-panel', 'right', width))
         .toContain('env(safe-area-inset-right)');
     }
+  });
+
+  it('keeps medium and desktop chrome inside both inline safe edges', () => {
+    const main = read('../styles/main.css');
+    const editor = read('../styles/editor.css');
+    const assets = read('../styles/assets.css');
+
+    for (const width of [900, 1200]) {
+      expect(effectiveInlinePadding(main, '#hud-top', 'start', width), `HUD start at ${width}px`)
+        .toContain('env(safe-area-inset-left)');
+      expect(effectiveInlinePadding(main, '#hud-top', 'end', width), `HUD end at ${width}px`)
+        .toContain('env(safe-area-inset-right)');
+      expect(effectiveProperty(main, '.settings-panel', 'inset-inline-end', width))
+        .toContain('env(safe-area-inset-right)');
+      const settingsWidth = effectiveProperty(main, '.settings-panel', 'width', width) ?? '';
+      expect(settingsWidth).toContain('100vw');
+      expect(settingsWidth).toContain('env(safe-area-inset-left)');
+      expect(settingsWidth).toContain('env(safe-area-inset-right)');
+      expect(effectiveProperty(assets, '.asset-panel', 'right', width), `asset end at ${width}px`)
+        .toContain('env(safe-area-inset-right)');
+      expect(effectiveInlinePadding(editor, '.resq-dvr', 'end', width), `DVR end at ${width}px`)
+        .toContain('env(safe-area-inset-right)');
+    }
+
+    const desktopAssetHeight = effectiveProperty(assets, '.asset-panel', 'max-height', 1200) ?? '';
+    expect(effectiveProperty(assets, '.asset-panel', 'bottom', 1200))
+      .toContain('var(--effective-dvr-h)');
+    expect(desktopAssetHeight).toContain('100dvh');
+    expect(desktopAssetHeight).toContain('var(--effective-hud-h)');
+    expect(desktopAssetHeight).toContain('var(--effective-dvr-h)');
   });
 
   it('fits the compact DVR core controls and a flexible scrubber within 390px', () => {

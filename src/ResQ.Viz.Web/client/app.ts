@@ -35,7 +35,6 @@ import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
 import { setContextObscured } from './ui/contextObscuring';
 import { setSettingsVisibleState } from './ui/settingsVisibility';
 import { setHintsVisibleState } from './ui/hintsVisibility';
-import { ManagedLayerVisibility } from './ui/managedLayerVisibility';
 import { handleOwnedEscape } from './ui/escapeOwnership';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
@@ -356,17 +355,13 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
     });
 }));
 
-const investorLayers = new ManagedLayerVisibility([
-    operatorShell.mounts.context,
-    operatorShell.mounts.editor,
-]);
 const investorMode = new InvestorMode(
     viz.cameraController,
     () => {
         _setSettingsVisible(false);
         _setHintsVisible(false);
     },
-    (suppressed) => investorLayers.setSuppressed(suppressed),
+    (suppressed) => operatorShell.setInvestorSuppressed(suppressed),
 );
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
@@ -1437,8 +1432,10 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         e,
         _pendingPick !== null,
         hintsVisible,
+        (fleetUi?.subjectId ?? null) !== null,
         _cancelPick,
         () => _setHintsVisible(false),
+        _deselectAll,
     )) return;
 
     // Ctrl+Shift+R — investor-mode cinematic preset for screen recording.

@@ -270,6 +270,68 @@ describe('OperatorShell', () => {
     toggle.click();
     expect(shell.editorOpen).toBe(true);
   });
+
+  it('suppresses actual body-level editor chrome and restores the requested workspace', async () => {
+    mockEditorMedia(false);
+    const shell = new OperatorShell(document);
+    const context = shell.mounts.context;
+    const layer = shell.mounts.editor;
+    const dock = document.createElement('div');
+    dock.className = 'resq-dock';
+    dock.innerHTML = '<button id="body-editor-control">Author</button>';
+    const dvr = document.createElement('div');
+    dvr.className = 'resq-dvr';
+    document.body.append(dock, dvr);
+    shell.setEditorOpen(true);
+    (document.getElementById('body-editor-control') as HTMLButtonElement).focus();
+
+    shell.setInvestorSuppressed(true);
+
+    expect(shell.editorOpen).toBe(false);
+    expect(layer.hidden).toBe(true);
+    expect(layer.hasAttribute('inert')).toBe(true);
+    for (const surface of [context, dock, dvr]) {
+      expect(surface.hidden).toBe(true);
+      expect(surface.hasAttribute('inert')).toBe(true);
+      expect(surface.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(dock.contains(document.activeElement)).toBe(false);
+
+    const lateSceneConfig = document.createElement('div');
+    lateSceneConfig.className = 'resq-scenecfg';
+    document.body.append(lateSceneConfig);
+    await Promise.resolve();
+    expect(lateSceneConfig.hidden).toBe(true);
+    expect(lateSceneConfig.hasAttribute('inert')).toBe(true);
+
+    shell.setInvestorSuppressed(false);
+
+    expect(shell.editorOpen).toBe(true);
+    expect(layer.hidden).toBe(false);
+    for (const surface of [context, dock, dvr, lateSceneConfig]) {
+      expect(surface.hidden).toBe(false);
+      expect(surface.hasAttribute('inert')).toBe(false);
+    }
+  });
+
+  it('revalidates Editor availability instead of restoring stale state after Investor', () => {
+    const media = mockEditorMedia(false);
+    const shell = new OperatorShell(document);
+    const layer = shell.mounts.editor;
+    const toggle = document.getElementById('btn-editor-toggle') as HTMLButtonElement;
+    shell.setEditorOpen(true);
+
+    shell.setInvestorSuppressed(true);
+    media.setCompact(true);
+    shell.setInvestorSuppressed(false);
+
+    expect(shell.editorOpen).toBe(false);
+    expect(layer.hidden).toBe(true);
+    expect(layer.hasAttribute('inert')).toBe(true);
+    expect(layer.getAttribute('aria-hidden')).toBe('true');
+    expect(toggle.getAttribute('aria-disabled')).toBe('true');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
 });
 
 describe('the shipped operator shell contract', () => {

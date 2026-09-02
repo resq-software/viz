@@ -224,10 +224,6 @@ export class AssetPanel {
     footer.append(this._commandNote, this._retry, this._commandHost, this._status);
 
     this._root.append(header, this._body, footer);
-    this._root.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this._dismiss();
-    });
-
     (options.mount ?? document.body).appendChild(this._root);
   }
 

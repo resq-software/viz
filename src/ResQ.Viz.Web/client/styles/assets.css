@@ -60,7 +60,7 @@
 
 .asset-panel {
   position: fixed;
-  right: var(--gutter);
+  right: max(var(--gutter), env(safe-area-inset-right));
   /* Bottom-right is a contested corner: the DVR transport bar owns the full
      width below `--dvr-h`, and the mini-map sits on the HUD layer above this
      context panel. It is 214px tall (a 200px plot plus 7px of padding
@@ -73,12 +73,12 @@
      against the same two bars — and against the camera-mode pill's line, the
      same top edge `.telemetry-strip` takes — so a long card set grows upward
      into free space rather than under the HUD chrome. */
-  bottom: calc(var(--dvr-h) + 244px);
+  bottom: calc(var(--effective-dvr-h) + 244px);
   z-index: var(--layer-context);
   display: flex;
   flex-direction: column;
-  width: min(360px, calc(100vw - 2 * var(--gutter)));
-  max-height: min(70vh, 720px, calc(100vh - var(--hud-h) - 52px - var(--dvr-h) - 260px));
+  width: min(360px, calc(100vw - max(var(--gutter), env(safe-area-inset-left)) - max(var(--gutter), env(safe-area-inset-right))));
+  max-height: min(70dvh, 720px, calc(100dvh - var(--effective-hud-h) - 52px - var(--effective-dvr-h) - 260px));
   background: var(--surface-2);
   border-radius: var(--r-3);
   box-shadow: var(--ring), var(--shadow-2);
