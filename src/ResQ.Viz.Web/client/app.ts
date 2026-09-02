@@ -32,6 +32,7 @@ import { OperatorShell }   from './operator/OperatorShell';
 import { Hud }            from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
+import { setContextObscured } from './ui/contextObscuring';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -429,6 +430,11 @@ function _setSettingsVisible(v: boolean): void {
     // see the panel as permanently hidden (it ships with aria-hidden="true").
     settingsPanel?.setAttribute('aria-hidden', String(!v));
     settingsToggle?.setAttribute('aria-expanded', String(v));
+    setContextObscured(
+        document.querySelector<HTMLElement>('.asset-panel'),
+        v,
+        settingsClose ?? settingsToggle,
+    );
     // The overlapped widgets are hidden purely in CSS via
     // `body:has(#settings-panel.open)` in main.css — no body-class needed.
 }

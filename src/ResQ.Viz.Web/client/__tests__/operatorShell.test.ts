@@ -29,6 +29,29 @@ function layerValue(tokenCss: string, name: string): number {
   return Number(match?.[1] ?? Number.NaN);
 }
 
+function mockEditorMedia(initiallyCompact: boolean): { setCompact(value: boolean): void } {
+  let compact = initiallyCompact;
+  const listeners: Array<() => void> = [];
+  vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+    get matches() { return query === '(max-width: 759px)' && compact; },
+    media: query,
+    onchange: null,
+    addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => {
+      if (typeof listener === 'function') listeners.push(() => listener(new Event('change')));
+    },
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }) as unknown as MediaQueryList);
+  return {
+    setCompact(value: boolean): void {
+      compact = value;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 function installFixture(): void {
   document.body.innerHTML = `
     <header id="hud-top">
@@ -52,7 +75,7 @@ function installFixture(): void {
     </aside>
     <div id="operator-context-layer"></div>
     <div id="operator-modal-layer"></div>
-    <div id="operator-editor-layer"></div>
+    <div id="operator-editor-layer"><button id="editor-child">Editor child</button></div>
   `;
 }
 
@@ -200,31 +223,72 @@ describe('OperatorShell', () => {
   });
 
   it('disables Editor below 760px with an accessible explanation', () => {
-    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
-      matches: query === '(max-width: 759px)',
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }) as unknown as MediaQueryList);
+    mockEditorMedia(true);
     const shell = new OperatorShell(document);
     const toggle = document.getElementById('btn-editor-toggle') as HTMLButtonElement;
     const layer = document.getElementById('operator-editor-layer') as HTMLElement;
 
-    expect(toggle.disabled).toBe(true);
+    expect(toggle.disabled).toBe(false);
     expect(toggle.getAttribute('aria-disabled')).toBe('true');
     expect(toggle.getAttribute('aria-describedby')).toBe('editor-unavailable-note');
     expect(toggle.title).toBe('Desktop workspace required');
     shell.setEditorOpen(true);
     expect(shell.editorOpen).toBe(false);
     expect(layer.hidden).toBe(true);
+    toggle.click();
+    expect(shell.editorOpen).toBe(false);
+  });
+
+  it('evacuates editor focus before close and before becoming unavailable', () => {
+    const media = mockEditorMedia(false);
+    const shell = new OperatorShell(document);
+    const toggle = document.getElementById('btn-editor-toggle') as HTMLButtonElement;
+    const child = document.getElementById('editor-child') as HTMLButtonElement;
+    shell.setEditorOpen(true);
+    child.focus();
+
+    shell.setEditorOpen(false);
+    expect(document.activeElement).toBe(toggle);
+
+    shell.setEditorOpen(true);
+    child.focus();
+    media.setCompact(true);
+    expect(document.activeElement).toBe(toggle);
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('keeps the focused Editor toggle announced across breakpoints and opens when available', () => {
+    const media = mockEditorMedia(true);
+    const shell = new OperatorShell(document);
+    const toggle = document.getElementById('btn-editor-toggle') as HTMLButtonElement;
+    toggle.focus();
+
+    media.setCompact(false);
+    expect(document.activeElement).toBe(toggle);
+    expect(toggle.getAttribute('aria-disabled')).toBe('false');
+    toggle.click();
+    expect(shell.editorOpen).toBe(true);
   });
 });
 
 describe('the shipped operator shell contract', () => {
+  it('ships boot visible and both console branches isolated before JavaScript', () => {
+    const page = new DOMParser().parseFromString(read('../index.html'), 'text/html');
+    const boot = page.getElementById('operator-boot') as HTMLElement;
+    const v2 = page.getElementById('operator-v2-console') as HTMLElement;
+    const legacy = page.getElementById('legacy-console') as HTMLElement;
+
+    expect(boot.hidden).toBe(false);
+    expect(boot.hasAttribute('inert')).toBe(false);
+    expect(boot.getAttribute('aria-hidden')).toBe('false');
+    for (const branch of [v2, legacy]) {
+      expect(branch.hidden).toBe(true);
+      expect(branch.hasAttribute('inert')).toBe(true);
+      expect(branch.getAttribute('aria-hidden')).toBe('true');
+    }
+  });
+
   it('provides one valid hierarchy with stable mounts and no duplicate ids', () => {
     const page = new DOMParser().parseFromString(read('../index.html'), 'text/html');
 
@@ -252,6 +316,11 @@ describe('the shipped operator shell contract', () => {
     expect(emptyCopy).not.toContain('drone');
     expect(hints).not.toContain('Tab');
     expect(sidebarTitle).not.toContain('Tab');
+  });
+
+  it('leaves the fleet filter wrapper unlabeled for its mounted control', () => {
+    const page = new DOMParser().parseFromString(read('../index.html'), 'text/html');
+    expect(page.getElementById('fleet-filter')?.hasAttribute('aria-label')).toBe(false);
   });
 
   it('declares the approved layer scale and operator responsive stylesheet', () => {
@@ -362,7 +431,7 @@ describe('the shipped operator shell contract', () => {
     for (const id of ['hud-cockpit-toggle', 'hud-hints-toggle', 'hud-settings-toggle']) {
       expect(operator).toMatch(new RegExp(`@media \\(max-width: 759px\\)[\\s\\S]*?#${id}[\\s\\S]*?display:\\s*none`));
     }
-    expect(operator).toMatch(/#btn-editor-toggle:disabled[\s\S]*?cursor:\s*not-allowed/);
+    expect(operator).toMatch(/#btn-editor-toggle\[aria-disabled="true"\][\s\S]*?cursor:\s*not-allowed/);
     expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#hud-top[\s\S]*?overflow:\s*hidden/);
   });
 
@@ -372,5 +441,49 @@ describe('the shipped operator shell contract', () => {
     expect(operator).toMatch(/padding-inline-start:\s*max\(8px, env\(safe-area-inset-left\)\)/);
     expect(operator).toMatch(/padding-inline-end:\s*max\(8px, env\(safe-area-inset-right\)\)/);
     expect(operator).not.toMatch(/padding-inline:\s*max\([^;]*safe-area-inset-left/);
+  });
+
+  it('defines exact desktop, medium, and compact shell cascades', () => {
+    const operator = read('../styles/operator.css');
+    const main = read('../styles/main.css');
+    const editor = read('../styles/editor.css');
+    const assets = read('../styles/assets.css');
+
+    expect(operator).toMatch(/@media \(min-width: 1100px\)[\s\S]*?#sidebar[\s\S]*?\.operator-context-layer/);
+    expect(operator).toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?#sidebar[\s\S]*?transform:\s*translateX\(-100%\)[\s\S]*?\.operator-context-layer[\s\S]*?\.operator-editor-layer/);
+    expect(main).toMatch(/@media \(max-width: 1099px\)[\s\S]*?#scene-container[\s\S]*?left:\s*0/);
+    expect(editor).toMatch(/@media \(max-width: 1099px\)[\s\S]*?\.resq-dvr[\s\S]*?left:\s*0/);
+    expect(editor).toMatch(/@media \(max-width: 1099px\)[\s\S]*?\.resq-dock[\s\S]*?display:\s*none/);
+    expect(assets).toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?\.asset-panel[\s\S]*?left:/);
+  });
+
+  it('reserves effective safe-area HUD and DVR extents throughout the shell', () => {
+    const tokens = read('../styles/tokens.css');
+    const operator = read('../styles/operator.css');
+    const editor = read('../styles/editor.css');
+    const main = read('../styles/main.css');
+
+    expect(tokens).toContain('--effective-hud-h: calc(var(--hud-h) + env(safe-area-inset-top))');
+    expect(tokens).toContain('--effective-dvr-h: calc(var(--dvr-h) + env(safe-area-inset-bottom))');
+    expect(main).toMatch(/#hud-top[\s\S]*?height:\s*var\(--effective-hud-h\)[\s\S]*?padding-top:\s*env\(safe-area-inset-top\)/);
+    expect(operator).toMatch(/#sidebar[\s\S]*?top:\s*var\(--effective-hud-h\)[\s\S]*?bottom:\s*var\(--effective-dvr-h\)/);
+    expect(operator).toContain('var(--effective-hud-h)');
+    expect(operator).toContain('var(--effective-dvr-h)');
+    expect(editor).toMatch(/\.resq-dvr[\s\S]*?height:\s*var\(--effective-dvr-h\)[\s\S]*?padding-bottom:\s*env\(safe-area-inset-bottom\)/);
+  });
+
+  it('covers every compact sidebar, context, and DVR native target with 44px hit areas', () => {
+    const operator = read('../styles/operator.css');
+
+    for (const selector of [
+      '#sidebar button', '#sidebar select', '#sidebar input[type="text"]',
+      '#sidebar input[type="number"]', '#sidebar input[type="range"]', '#sidebar summary',
+      '#sidebar a[href]', '.operator-context-layer button', '.operator-context-layer select',
+      '.operator-context-layer input', '.operator-context-layer summary',
+      '.operator-context-layer a[href]', '.resq-dvr button', '.resq-dvr input[type="range"]',
+      '#sidebar label:has(input[type="checkbox"], input[type="radio"])',
+    ]) expect(operator, selector).toContain(selector);
+    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?min-height:\s*44px/);
+    expect(operator).toMatch(/\.resq-dvr button[\s\S]*?min-width:\s*44px[\s\S]*?height:\s*44px/);
   });
 });

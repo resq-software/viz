@@ -401,10 +401,20 @@ select.ap-field-input { width: auto; }
 
 /* The mini-map is dropped at this width (main.css), so the corner is free
    again and the panel drops back to sitting just above the transport bar. */
-@media (max-width: 900px) {
+@media (min-width: 760px) and (max-width: 1099px) {
   .asset-panel {
-    bottom: calc(var(--dvr-h) + 14px);
-    max-height: min(70vh, calc(100vh - var(--hud-h) - 52px - var(--dvr-h) - 30px));
+    left: var(--gutter);
+    right: var(--gutter);
+    bottom: calc(var(--effective-dvr-h) + 14px);
+    width: auto;
+    max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
+  }
+}
+
+@media (max-width: 759px) {
+  .asset-panel {
+    bottom: calc(var(--effective-dvr-h) + 14px);
+    max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
   }
 }
 

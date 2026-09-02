@@ -133,6 +133,8 @@
   --sidebar-w:    320px;
   --hud-h:        52px;
   --dvr-h:        46px;
+  --effective-hud-h: calc(var(--hud-h) + env(safe-area-inset-top));
+  --effective-dvr-h: calc(var(--dvr-h) + env(safe-area-inset-bottom));
   --gutter:       16px;
 
   /* Shared application layer contract. Keep every operator surface on this scale. */

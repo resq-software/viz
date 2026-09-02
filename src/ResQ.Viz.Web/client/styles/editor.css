@@ -613,8 +613,9 @@ body.fpv-mode .cam-mode-pill { display: none; }
   display: flex;
   align-items: center;
   gap: 16px;
-  height: var(--dvr-h);
+  height: var(--effective-dvr-h);
   padding: 0 18px;
+  padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface-2);
   border-top: 1px solid var(--line);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
@@ -867,7 +868,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
 
 /* Small laptop: the editor dock (Hierarchy + Inspector) is a desktop feature —
    drop it, its toggle, and the scene import/export pair that sits beside it. */
-@media (max-width: 1080px) {
+@media (max-width: 1099px) {
   .resq-dock,
   .resq-dock-toggle,
   .resq-scenecfg { display: none; }
@@ -875,7 +876,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
 
 /* Tablet / phone: retire the onboard FPV PiP; the timeline spans the full width
    (the sidebar is a drawer overlay here, not a layout participant). */
-@media (max-width: 900px) {
+@media (max-width: 1099px) {
   .resq-pip { display: none; }
   .resq-dvr { left: 0; padding: 0 12px; gap: 10px; }
 }

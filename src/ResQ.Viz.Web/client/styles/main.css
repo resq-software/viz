@@ -79,13 +79,14 @@ button { font-family: inherit; }
 #hud-top {
   position: fixed;
   inset: 0 0 auto 0;
-  height: var(--hud-h);
+  height: var(--effective-hud-h);
   z-index: var(--layer-hud);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
   padding: 0 16px;
+  padding-top: env(safe-area-inset-top);
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
@@ -904,6 +905,7 @@ body:has(#settings-panel.open) #wind-compass,
 body:has(#settings-panel.open) .resq-pip,
 body:has(#settings-panel.open) .cam-mode-pill,
 body:has(#settings-panel.open) .mission-chrome,
+body:has(#settings-panel.open) .asset-panel,
 body:has(#settings-panel.open) .cockpit { display: none; }
 
 .settings-header {
@@ -1577,6 +1579,12 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .telemetry-strip { display: none; }
 }
 
+@media (max-width: 1099px) {
+  #sidebar { transform: translateX(-100%); z-index: var(--layer-rail); }
+  #sidebar:not(.collapsed) { transform: translateX(0); }
+  #scene-container { left: 0 !important; width: 100% !important; }
+}
+
 @media (max-width: 960px) {
   #drone-panel { left: 16px; right: 16px; width: auto; max-width: none; }
   .event-log { max-width: calc(100vw - var(--sidebar-w) - 32px); }
@@ -1586,10 +1594,6 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   :root { --sidebar-w: 280px; }
   /* Sidebar becomes an on-demand drawer. OperatorShell owns its open, hidden,
      and inert state; this rule supplies only the responsive off-canvas pose. */
-  #sidebar { transform: translateX(-100%); z-index: var(--layer-rail); }
-  #sidebar:not(.collapsed) { transform: translateX(0); }
-  #scene-container { left: 0 !important; width: 100% !important; }
-
   /* Scene + core HUD are the experience; drop the extra floating widgets. */
   .minimap { display: none; }
 

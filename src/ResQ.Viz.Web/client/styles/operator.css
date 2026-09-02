@@ -101,14 +101,14 @@
   text-transform: uppercase;
 }
 
-#btn-editor-toggle:disabled {
+#btn-editor-toggle[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
 .operator-layer {
   position: fixed;
-  inset: var(--hud-h) 0 var(--dvr-h) 0;
+  inset: var(--effective-hud-h) 0 var(--effective-dvr-h) 0;
   pointer-events: none;
 }
 
@@ -129,20 +129,38 @@
 
 @media (min-width: 1100px) {
   #sidebar {
-    min-height: calc(100dvh - var(--hud-h));
+    top: var(--effective-hud-h);
+    bottom: var(--effective-dvr-h);
+    min-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
     padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  .operator-context-layer {
+    inset: var(--effective-hud-h) 0 var(--effective-dvr-h) auto;
+    width: min(380px, 40vw);
   }
 }
 
 @media (min-width: 760px) and (max-width: 1099px) {
   #sidebar {
-    max-height: calc(100dvh - var(--hud-h));
+    top: var(--effective-hud-h);
+    bottom: var(--effective-dvr-h);
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
     padding-bottom: max(24px, env(safe-area-inset-bottom));
+    transform: translateX(-100%);
+  }
+
+
+  #sidebar:not(.collapsed) { transform: translateX(0); }
+
+  .operator-context-layer {
+    inset: auto 0 var(--effective-dvr-h) 0;
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
   }
 
   .operator-editor-layer {
-    inset: var(--hud-h) 0 var(--dvr-h) 0;
-    min-height: calc(100dvh - var(--hud-h) - var(--dvr-h));
+    inset: var(--effective-hud-h) 0 var(--effective-dvr-h) 0;
+    min-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
     background: var(--background);
   }
 }
@@ -150,19 +168,48 @@
 @media (max-width: 759px) {
   #sidebar {
     width: min(100vw, var(--sidebar-w));
-    max-height: calc(100dvh - var(--hud-h));
+    top: var(--effective-hud-h);
+    bottom: var(--effective-dvr-h);
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
     padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
 
   .operator-context-layer {
-    inset: auto 0 var(--dvr-h) 0;
-    max-height: calc(100dvh - var(--hud-h) - var(--dvr-h));
+    inset: auto 0 var(--effective-dvr-h) 0;
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
   }
 
   .operator-primary-actions .btn,
   #sidebar button,
-  .operator-context-layer button {
+  #sidebar select,
+  #sidebar input[type="text"],
+  #sidebar input[type="number"],
+  #sidebar input[type="range"],
+  #sidebar summary,
+  #sidebar a[href],
+  #sidebar label:has(input[type="checkbox"], input[type="radio"]),
+  .operator-context-layer button,
+  .operator-context-layer select,
+  .operator-context-layer input,
+  .operator-context-layer summary,
+  .operator-context-layer a[href],
+  .resq-dvr button,
+  .resq-dvr input[type="range"] {
     min-height: 44px;
+  }
+
+  #sidebar button,
+  #sidebar summary,
+  #sidebar a[href],
+  .operator-context-layer button,
+  .operator-context-layer summary,
+  .operator-context-layer a[href],
+  .resq-dvr button {
+    min-width: 44px;
+  }
+
+  .resq-dvr button {
+    height: 44px;
   }
 
   #hud-top {

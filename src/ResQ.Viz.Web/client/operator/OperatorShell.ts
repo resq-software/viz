@@ -153,8 +153,12 @@ export class OperatorShell {
 
   setEditorOpen(open: boolean): void {
     const next = open && this._editorAvailable;
-    this._editorOpen = next;
     const { editorLayer, editorToggle } = this._elements;
+    const active = editorLayer.ownerDocument.activeElement;
+    if (!next && active instanceof Element && editorLayer.contains(active)) {
+      editorToggle.focus();
+    }
+    this._editorOpen = next;
     editorLayer.hidden = !next;
     editorLayer.setAttribute('aria-hidden', String(!next));
     this._setInert(editorLayer, !next);
@@ -179,14 +183,15 @@ export class OperatorShell {
   }
 
   private _setEditorAvailable(available: boolean): void {
-    this._editorAvailable = available;
     const toggle = this._elements.editorToggle;
-    toggle.disabled = !available;
+    // Close while the old available state still permits focus evacuation.
+    if (!available) this.setEditorOpen(false);
+    this._editorAvailable = available;
+    toggle.disabled = false;
     toggle.setAttribute('aria-disabled', String(!available));
     toggle.title = available ? 'Editor workspace' : 'Desktop workspace required';
     if (available) toggle.removeAttribute('aria-describedby');
     else toggle.setAttribute('aria-describedby', 'editor-unavailable-note');
-    if (!available) this.setEditorOpen(false);
   }
 
   private _setInert(element: HTMLElement, inert: boolean): void {
