@@ -253,18 +253,19 @@ public sealed class SimController : ControllerBase
     [EnableRateLimiting("destructive")]
     public IActionResult RunScenario(string name)
     {
-        if (!_scenarios.HasScenario(name))
+        if (!_scenarios.TryResolveScenarioName(name, out var canonicalName))
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
         var room = Room;
         using var activity = VizTelemetry.ActivitySource.StartActivity("scenario.run");
-        activity?.SetTag("scenario.name", name);
+        activity?.SetTag("scenario.name", canonicalName);
         room.Reset();
-        _scenarios.TryRun(name, room);
-        room.NotifyScenario(name);
+        _scenarios.TryRun(canonicalName, room);
+        room.NotifyScenario(canonicalName);
         VizTelemetry.ScenariosRun.Add(1);
-        _logger.LogInformation("Scenario '{Name}' started in room {RoomId}.", Sanitize(name), room.Id);
-        return Ok(new { scenario = name, status = "started" });
+        _logger.LogInformation(
+            "Scenario '{Name}' started in room {RoomId}.", Sanitize(canonicalName), room.Id);
+        return Ok(new { scenario = canonicalName, status = "started" });
     }
 
     /// <summary>Switches the terrain preset.</summary>

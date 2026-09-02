@@ -558,6 +558,18 @@ describe('a delta applied to its base reproduces the frame it was computed from'
     expect(merged.scenario).toBe(scenario);
   });
 
+  it('treats an explicit null replacement without a clear flag as unchanged', () => {
+    const scenario = { name: 'single', startedAtSimulationSeconds: 0, revision: 1 };
+    const base = snapshot('f1', 100, { scenario });
+
+    const merged = mergeSnapshot(base, delta('f2', 'f1', 101, 2, {
+      scenario: null,
+      scenarioCleared: false,
+    }));
+
+    expect(merged.scenario).toBe(scenario);
+  });
+
   it('replaces the active scenario when the delta carries one', () => {
     const base = snapshot('f1', 100, {
       scenario: { name: 'single', startedAtSimulationSeconds: 0, revision: 1 },
@@ -580,6 +592,18 @@ describe('a delta applied to its base reproduces the frame it was computed from'
 
     const merged = mergeSnapshot(base, delta('f2', 'f1', 101, 2, {
       scenario: null,
+      scenarioCleared: true,
+    }));
+
+    expect(merged.scenario).toBeNull();
+  });
+
+  it('clears when the flag is set even if the replacement field is absent', () => {
+    const base = snapshot('f1', 100, {
+      scenario: { name: 'single', startedAtSimulationSeconds: 0, revision: 1 },
+    });
+
+    const merged = mergeSnapshot(base, delta('f2', 'f1', 101, 2, {
       scenarioCleared: true,
     }));
 

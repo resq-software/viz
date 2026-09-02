@@ -186,6 +186,33 @@ public sealed partial class ScenarioService
     /// <summary>Returns true if the named scenario exists.</summary>
     public bool HasScenario(string name) => _scenarios.ContainsKey(name);
 
+    /// <summary>Resolves a case-insensitive request to the configured scenario key.</summary>
+    /// <param name="name">Requested scenario name.</param>
+    /// <param name="canonicalName">
+    /// Configured key when found; otherwise an empty string. Callers publish this value so every
+    /// client sees one stable name regardless of route casing.
+    /// </param>
+    /// <returns><see langword="true"/> when the requested scenario exists.</returns>
+    public bool TryResolveScenarioName(string name, out string canonicalName)
+    {
+        canonicalName = string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        foreach (var configuredName in _scenarios.Keys)
+        {
+            if (string.Equals(configuredName, name, StringComparison.OrdinalIgnoreCase))
+            {
+                canonicalName = configuredName;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Runs a named scenario by spawning its assets into the simulation room.
     /// Returns <see langword="false"/> if the scenario name is not found.
