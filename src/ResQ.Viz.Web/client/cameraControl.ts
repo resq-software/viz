@@ -83,6 +83,10 @@ export class UnityCamera {
         domElement.addEventListener('wheel',        this._onWheel, { passive: false });
         domElement.addEventListener('contextmenu',  e => e.preventDefault());
         document.addEventListener('keydown', e => {
+            // Space belongs to live/replay transport. Camera registers before
+            // the deferred DVR, so waiting for defaultPrevented would be a
+            // listener-order race: DVR can prevent only after this callback.
+            if (e.code === 'Space') return;
             if (!shouldIgnoreGlobalShortcut(e)) this._keys.add(e.code);
         });
         document.addEventListener('keyup',   e => { this._keys.delete(e.code); });

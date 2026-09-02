@@ -27,12 +27,17 @@ beforeEach(() => {
     <select id="select"></select>
     <textarea id="textarea"></textarea>
     <div id="editable" contenteditable="true"><span id="editable-child">Text</span></div>
+    <details><summary id="summary"><span id="summary-child">Details</span></summary></details>
+    <a id="link" href="#target"><span id="link-child">Link</span></a>
     <div id="plain"></div>
   `;
 });
 
 describe('shouldIgnoreGlobalShortcut', () => {
-  it.each(['button', 'button-child', 'input', 'select', 'textarea', 'editable-child'])(
+  it.each([
+    'button', 'button-child', 'input', 'select', 'textarea', 'editable-child',
+    'summary', 'summary-child', 'link', 'link-child',
+  ])(
     'ignores keyboard events from interactive target %s',
     id => {
       const target = document.getElementById(id)!;

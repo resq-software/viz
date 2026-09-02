@@ -23,7 +23,9 @@ export function shouldIgnoreGlobalShortcut(
 
   const target = event.target;
   if (target instanceof Element
-      && target.closest('input, select, textarea, button, [contenteditable]') !== null) {
+      && target.closest(
+        'input, select, textarea, button, summary, a[href], [contenteditable]',
+      ) !== null) {
     return true;
   }
 

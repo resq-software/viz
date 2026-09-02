@@ -69,6 +69,8 @@ beforeEach(() => {
             <button id="legacy-button"><span id="legacy-button-child">Action</span></button>
             <textarea id="legacy-textarea"></textarea>
             <div id="legacy-editable" contenteditable="true"><span id="legacy-editable-child">Text</span></div>
+            <details><summary id="legacy-summary"><span id="legacy-summary-child">Details</span></summary></details>
+            <a id="legacy-link" href="#target"><span id="legacy-link-child">Link</span></a>
         </section>
     `;
 });
@@ -191,7 +193,10 @@ describe('ControlPanel keyboard isolation', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it.each(['legacy-button', 'legacy-button-child', 'legacy-textarea', 'legacy-editable-child'])(
+    it.each([
+        'legacy-button', 'legacy-button-child', 'legacy-textarea', 'legacy-editable-child',
+        'legacy-summary', 'legacy-summary-child', 'legacy-link', 'legacy-link-child',
+    ])(
         'does not run or consume a shortcut from interactive target %s',
         id => {
             const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
