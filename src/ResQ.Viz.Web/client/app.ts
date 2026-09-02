@@ -62,7 +62,7 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { MiniMap } from './miniMap';
 import { SensorStatsOverlay } from './sensorStatsOverlay';
-import { apiGetJson, apiPost, apiPostJson, apiPostOrWarn } from './api';
+import { apiPost, apiPostOrWarn } from './api';
 import { getLogger } from './log';
 // SelectionStore stays static: it is the selection source of truth that legacy
 // HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
@@ -112,11 +112,13 @@ import type { FleetUi } from './assets/fleetUi';
 import type { PickedTarget } from './assets/panelCommands';
 import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
 import type {
-    AssetProfileCatalogResponse,
     ConsoleResources,
-    ScenarioCatalogResponse,
 } from './operator/ConsoleResources';
-import type { MissionPanel, MissionTransportView } from './operator/MissionPanel';
+import type {
+    MissionPanel,
+    MissionTransportView,
+    ScenarioCatalogLauncher,
+} from './operator/MissionPanel';
 
 const log = getLogger('app');
 
@@ -183,35 +185,37 @@ const operatorShell = new OperatorShell(document);
 const scenarioRuntime = new ScenarioRuntime({ onPresent: _presentAuthoritativeScenario });
 let consoleResources: ConsoleResources | null = null;
 let missionPanel: MissionPanel | null = null;
+let scenarioBrowser: ScenarioCatalogLauncher | null = null;
 let _missionUiLoading: Promise<void> | null = null;
+let _rawScenarioSession = { assetCount: 0, tick: 0 };
 let _resetRequestInFlight = false;
 let _missionTransport: MissionTransportView = {
     paused: false,
     speed: 1,
     simulationTimeSeconds: 0,
 };
+
+function _invalidateOperatorModals(): void {
+    scenarioBrowser?.invalidate();
+}
+
 const startupCoordinator = new StartupCoordinator({
     setMode: mode => {
+        if (mode !== 'v2') _invalidateOperatorModals();
         if (mode === 'legacy' && _v2Active) _leaveV2();
         operatorShell.setMode(mode);
         missionChrome.setEnabled(mode === 'legacy');
         if (mode === 'v2') void _ensureMissionUi();
     },
     setBootStatus: status => {
+        if (status === 'error') _invalidateOperatorModals();
         operatorShell.setBootStatus(status);
         if (operatorShell.mode === 'booting') loadingOverlay.setStartupStatus(status);
     },
     startLegacyScenario: async () =>
         (await apiPost('/api/sim/scenario/single')).success,
-    startV2Scenario: async name => {
-        const request = scenarioRuntime.requested(name);
-        const result = await apiPostJson<{ current: ScenarioSessionState }>(
-            '/api/v2/sim/scenarios/flood-response/start',
-        );
-        if (result.success) scenarioRuntime.requestAccepted(request, result.value.current);
-        else scenarioRuntime.requestFailed(request);
-        return result;
-    },
+    startV2Scenario: async name => (await import('./operator/consoleApi'))
+        .requestScenarioStart(scenarioRuntime, name, undefined, () => operatorShell.mode === 'v2'),
     schedule: (callback, ms) => window.setTimeout(callback, ms),
     cancel: id => window.clearTimeout(id),
 });
@@ -366,27 +370,19 @@ async function _initEditorSuite(): Promise<void> {
             ? scenarioRuntime.currentName
             : _legacyScenario,
         applyTerrain: (key) => { if (key in PRESETS) _switchPreset(key as PresetKey); },
-        applyScenario: (name) => {
-            if (!name) return;
-            // The name arrives from an imported scene-config file, and
-            // parseSceneConfig only validates structure — it explicitly leaves
-            // "is this a real scenario" to the caller. Interpolated raw, a value
-            // like `../../reset` would resolve to a different same-origin
-            // endpoint, so check it against the scenarios this build actually
-            // offers before building a path, and encode the segment regardless.
-            const known = new Set(
-                Array.from(
-                    document.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]'),
-                    (el) => el.dataset['scenario'] ?? '',
-                ).filter(Boolean),
-            );
-            if (!known.has(name)) {
-                log.warn('ignoring unknown scenario from imported scene config', { name });
-                return;
-            }
-            apiPostOrWarn(`/api/sim/scenario/${encodeURIComponent(name)}`, undefined, `scene:${name}`);
-            document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
-        },
+        applyScenario: (name) => name === null
+            ? { success: true }
+            : m_cfg.applyScenarioForMode(name, {
+                mode: () => operatorShell.mode,
+                v2ScenarioNames: () => consoleResources?.catalog.status === 'ready'
+                    ? consoleResources.catalog.value.scenarios.map(scenario => scenario.name)
+                    : null,
+                v2Session: () => _rawScenarioSession,
+                confirmV2Replace: scenario => window.confirm(
+                    `Start ${scenario}? This replaces the current simulation state.`,
+                ),
+                runtime: scenarioRuntime,
+            }),
     });
 
     // Inspector wiring lives here so the callbacks register with the instance
@@ -419,7 +415,10 @@ const investorMode = new InvestorMode(
         _setSettingsVisible(false);
         _setHintsVisible(false);
     },
-    (suppressed) => operatorShell.setInvestorSuppressed(suppressed),
+    (suppressed) => {
+        if (suppressed) _invalidateOperatorModals();
+        operatorShell.setInvestorSuppressed(suppressed);
+    },
 );
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
@@ -464,22 +463,33 @@ async function _ensureMissionUi(): Promise<void> {
         if (operatorShell.mode !== 'v2') return;
 
         const resources = new resourcesModule.ConsoleResources({
-            loadCatalog: () =>
-                apiGetJson<ScenarioCatalogResponse>('/api/v2/sim/scenarios'),
-            loadProfiles: () =>
-                apiGetJson<AssetProfileCatalogResponse>('/api/v2/sim/asset-profiles'),
+            loadCatalog: async () =>
+                (await import('./operator/consoleApi')).getScenarioCatalog(),
+            loadProfiles: async () =>
+                (await import('./operator/consoleApi')).getAssetProfiles(),
         });
+        let browser: ScenarioCatalogLauncher;
         const panel = new panelModule.MissionPanel({
             mount: operatorShell.mounts.mission,
             onTogglePause: _setMissionPaused,
             onReset: _resetMission,
-            // Task 9 replaces this event seam with its lazy searchable dialog.
-            onChange: () => document.dispatchEvent(new CustomEvent('resq:scenario-catalog-request')),
+            onChange: () => browser.open(),
             onRetryCatalog: () => resources.retry('catalog'),
+        });
+        browser = new panelModule.ScenarioCatalogLauncher({
+            mode: () => operatorShell.mode,
+            catalog: () => resources.catalog.status === 'ready' ? resources.catalog.value : null,
+            mount: operatorShell.mounts.modal,
+            trigger: panel.changeTrigger,
+            fallbackFocus: document.getElementById('fleet-heading')!,
+            runtime: scenarioRuntime,
+            getSession: () => ({ ..._rawScenarioSession, activeName: scenarioRuntime.currentName }),
+            onFailure: message => panel.setScenarioBrowserFailure(message),
         });
 
         consoleResources = resources;
         missionPanel = panel;
+        scenarioBrowser = browser;
         scenarioRuntime.subscribe(() => _renderMissionPanel());
         resources.subscribe(() => _renderMissionPanel());
         void resources.loadMissing();
@@ -2460,6 +2470,9 @@ function _wireConnection(c: HubConnection): void {
  * scene rather than freezing it.
  */
 function _ingestSnapshot(snapshot: VizSnapshotV2): void {
+    // Confirmation is a destructive safety gate and therefore uses raw wire
+    // inventory, before projection can omit an unresolved descriptor or pose.
+    _rawScenarioSession = { assetCount: snapshot.assets.length, tick: snapshot.tick };
     void startupCoordinator.onV2Snapshot({
         assetCount: snapshot.assets.length,
         scenario: snapshot.scenario,
@@ -2643,6 +2656,8 @@ async function _abandonDeltas(): Promise<void> {
  * only resolves against a v2 snapshot.
  */
 function _leaveV2(): void {
+    _invalidateOperatorModals();
+    _rawScenarioSession = { assetCount: 0, tick: 0 };
     _v2Active = false;
     _lastSnapshot = null;
     _descriptorCache.clear();
@@ -2731,6 +2746,7 @@ const connectionRetry = new RetryScheduler({
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
 window.addEventListener('beforeunload', () => {
     clearInterval(_fpsTick);
+    scenarioBrowser?.dispose();
     startupCoordinator.dispose();
     connectionRetry.dispose();
 });

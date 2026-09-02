@@ -1,0 +1,232 @@
+/* ResQ Viz - lazy operator dialog surfaces */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.operator-dialog {
+  width: min(900px, calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-width: none;
+  max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)));
+  margin: auto;
+  padding: 20px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-overlay);
+  box-shadow: var(--shadow-2);
+  font-family: var(--font-body);
+}
+
+.operator-dialog[open] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+}
+
+.operator-dialog::backdrop {
+  background: oklch(8% 0.02 269 / 0.78);
+  backdrop-filter: blur(3px);
+}
+
+.operator-dialog h2,
+.operator-dialog h3,
+.operator-dialog p {
+  margin: 0;
+}
+
+.operator-dialog h2 {
+  font-family: var(--font-display);
+  font-size: clamp(20px, 3vw, 28px);
+}
+
+.operator-dialog h3,
+.operator-dialog-search {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.operator-dialog-close {
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font: 20px/1 var(--font-body);
+}
+
+.operator-dialog-search,
+.operator-dialog-form,
+.operator-dialog-error,
+.operator-dialog-actions,
+.scenario-catalog-groups,
+.operator-dialog-empty {
+  grid-column: 1 / -1;
+}
+
+.operator-dialog-search,
+.operator-dialog-form {
+  display: grid;
+  gap: 7px;
+}
+
+.operator-dialog input,
+.operator-dialog select,
+.operator-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font: 12px var(--font-mono);
+}
+
+.operator-dialog :focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--info-soft);
+}
+
+.operator-dialog-error {
+  padding: 10px 12px;
+  color: var(--primary-text);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-control);
+  font: 11px/1.5 var(--font-mono);
+}
+
+.operator-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.scenario-catalog-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  min-height: 0;
+  padding: 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.scenario-catalog-group {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.scenario-catalog-card {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 13px;
+  color: var(--text-dim);
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  cursor: pointer;
+}
+
+.scenario-catalog-card:hover,
+.scenario-catalog-card[aria-current="true"] {
+  border-color: var(--info);
+  background: var(--info-soft);
+}
+
+.scenario-catalog-card:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.scenario-catalog-card strong {
+  padding-inline-end: 52px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+
+.scenario-catalog-card span {
+  color: var(--text-muted);
+  font: 10px/1.45 var(--font-mono);
+}
+
+.scenario-catalog-current {
+  position: absolute;
+  inset-block-start: 12px;
+  inset-inline-end: 12px;
+  color: var(--info) !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+}
+
+.operator-dialog-empty {
+  padding: 28px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Shared layer modes used by Environment and later compact form surfaces. */
+.operator-modal-layer.operator-modal,
+.operator-modal-layer.operator-sheet {
+  padding-block-start: max(12px, env(safe-area-inset-top));
+  padding-block-end: max(12px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 759px) {
+  .operator-dialog {
+    width: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right));
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    padding: 16px max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+    border-radius: var(--radius-panel-lg);
+  }
+
+  .scenario-catalog-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-dialog button,
+  .operator-dialog input,
+  .operator-dialog select,
+  .operator-dialog textarea {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operator-dialog,
+  .operator-dialog::backdrop {
+    scroll-behavior: auto;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .operator-dialog,
+  .scenario-catalog-card,
+  .operator-dialog input,
+  .operator-dialog select,
+  .operator-dialog textarea {
+    color: CanvasText;
+    background: Canvas;
+    border: 1px solid CanvasText;
+    forced-color-adjust: auto;
+  }
+
+  .operator-dialog :focus-visible {
+    outline: 2px solid Highlight;
+    box-shadow: none;
+  }
+}

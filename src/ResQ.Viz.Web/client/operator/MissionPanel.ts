@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ApiFailure } from '../api';
-import type { ResourceState, ScenarioCatalogResponse } from './ConsoleResources';
+import type { ResourceState } from './ConsoleResources';
+import type { ScenarioCatalogResponse } from './types';
 import type { MissionBaseKind, MissionView } from './ScenarioRuntime';
 import { scenarioPresentation } from './scenarioPresentation';
+
+export { ScenarioCatalogLauncher } from './ScenarioCatalogLauncher';
 
 export interface MissionTransportView {
   readonly paused: boolean;
@@ -56,6 +59,8 @@ interface MissionElements {
 export class MissionPanel {
   private readonly _elements: MissionElements;
   private _paused = false;
+  private _catalogFailure: string | null = null;
+  private _scenarioBrowserFailure: string | null = null;
 
   constructor(private readonly _options: MissionPanelOptions) {
     this._elements = this._build(_options.mount);
@@ -69,6 +74,17 @@ export class MissionPanel {
     this._elements.retryCatalog.addEventListener('click', () => {
       void this._options.onRetryCatalog();
     });
+  }
+
+  /** Stable trigger used as the scenario modal's focus-return target. */
+  get changeTrigger(): HTMLButtonElement {
+    return this._elements.change;
+  }
+
+  /** Shows or clears a lazy-chunk failure without conflating it with catalog data. */
+  setScenarioBrowserFailure(message: string | null): void {
+    this._scenarioBrowserFailure = message;
+    this._renderCatalogFailure();
   }
 
   render(state: MissionPanelState): void {
@@ -104,10 +120,20 @@ export class MissionPanel {
     setDisabled(this._elements.change, !catalogReady || destructivePending);
     setDisabled(this._elements.reset, destructivePending);
     const catalogError = catalog.status === 'error';
-    setHidden(this._elements.catalogStatus, !catalogError);
-    setHidden(this._elements.retryCatalog, !catalogError);
-    setText(this._elements.catalogStatus, catalogError ? failureText(catalog.failure) : '');
+    this._catalogFailure = catalogError ? failureText(catalog.failure) : null;
+    this._renderCatalogFailure();
     setAttribute(this._options.mount, 'aria-busy', String(catalog.status === 'loading'));
+  }
+
+  private _renderCatalogFailure(): void {
+    const message = this._catalogFailure ?? this._scenarioBrowserFailure;
+    setHidden(this._elements.catalogStatus, message === null);
+    setText(this._elements.catalogStatus, message ?? '');
+    setHidden(this._elements.retryCatalog, this._catalogFailure === null);
+    setText(
+      this._elements.change,
+      this._scenarioBrowserFailure === null ? 'Change…' : 'Retry scenario browser',
+    );
   }
 
   private _build(mount: HTMLElement): MissionElements {

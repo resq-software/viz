@@ -2,35 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ApiFailure, Result } from '../api';
-import type { AssetDomain, VehicleClass } from '../assets/types';
+import type { AssetProfileCatalogResponse, ScenarioCatalogResponse } from './types';
 
-export interface ScenarioDomainCounts {
-  readonly air: number;
-  readonly ground: number;
-  readonly surface: number;
-}
-
-export interface ScenarioSummary {
-  readonly name: string;
-  readonly assetCount: number;
-  readonly domainCounts: ScenarioDomainCounts;
-  readonly vehicleClassCounts: Readonly<Record<string, number>>;
-}
-
-export interface ScenarioCatalogResponse {
-  readonly scenarios: readonly ScenarioSummary[];
-}
-
-export interface AssetSpawnProfile {
-  readonly vehicleClass: VehicleClass;
-  readonly domain: AssetDomain;
-  readonly displayName: string;
-  readonly headingApplies: boolean;
-}
-
-export interface AssetProfileCatalogResponse {
-  readonly profiles: readonly AssetSpawnProfile[];
-}
+// Compatibility re-exports keep existing Task 8 consumers source-stable while
+// operator/types.ts remains the one transcription of the wire DTOs.
+export type { AssetProfileCatalogResponse, ScenarioCatalogResponse } from './types';
 
 export type ResourceState<T> =
   | { readonly status: 'idle' | 'loading' }

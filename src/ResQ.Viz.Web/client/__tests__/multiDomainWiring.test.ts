@@ -45,6 +45,18 @@ const appSrc = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../app.ts'),
   'utf8',
 );
+const catalogLoaderSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/ScenarioCatalogLoader.ts'),
+  'utf8',
+);
+const sceneConfigSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../editor/sceneConfig.ts'),
+  'utf8',
+);
+const catalogLauncherSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/ScenarioCatalogLauncher.ts'),
+  'utf8',
+);
 
 /** Modules that must never be reachable from the entry chunk by a static edge.
  *  An `import type { … }` line is erased at build time and is fine; a value
@@ -60,6 +72,11 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './operator/MissionPanel', why: 'operator mission DOM' },
   { path: './operator/ConsoleResources', why: 'operator resource orchestration' },
   { path: './operator/scenarioPresentation', why: 'scenario catalog presentation copy' },
+  { path: './operator/ScenarioCatalog', why: 'searchable scenario modal and stylesheet' },
+  { path: './operator/consoleApi', why: 'operator-only typed API routes' },
+  { path: './operator/ScenarioCatalogLoader', why: 'scenario modal orchestration' },
+  { path: './operator/OperatorModalHost', why: 'shared lazy modal ownership' },
+  { path: './operator/ScenarioCatalogLauncher', why: 'scenario import and retry ownership' },
 ];
 
 describe('entry-chunk boundaries', () => {
@@ -76,10 +93,14 @@ describe('entry-chunk boundaries', () => {
     ).toBe(false);
   });
 
-  it('reaches the fleet UI, the contact overlay and the chase cameras through dynamic imports', () => {
+  it('reaches optional operator surfaces through dynamic imports', () => {
     expect(appSrc).toMatch(/import\('\.\/assets\/fleetUi'\)/);
     expect(appSrc).toMatch(/import\('\.\/assets\/overlays\/TrackOverlay'\)/);
     expect(appSrc).toMatch(/import\('\.\/assets\/chaseCamera'\)/);
+    expect(catalogLauncherSrc).toMatch(/import\('\.\/ScenarioCatalogLoader'\)/);
+    expect(appSrc).toMatch(/import\('\.\/operator\/consoleApi'\)/);
+    expect(catalogLoaderSrc).toContain("from './ScenarioCatalog'");
+    expect(catalogLoaderSrc).toContain("from './consoleApi'");
   });
 
   it('subscribes to the v2 snapshot message and keeps handling the v1 frame', () => {
@@ -171,7 +192,8 @@ describe('entry-chunk boundaries', () => {
 
   it('uses the exact mode-specific defaults and removes drone-count startup', () => {
     expect(appSrc).toContain("apiPost('/api/sim/scenario/single')");
-    expect(appSrc).toContain("apiPostJson<{ current: ScenarioSessionState }>(\n            '/api/v2/sim/scenarios/flood-response/start',\n        )");
+    expect(appSrc).toMatch(/startV2Scenario:\s*async name =>[\s\S]*?import\('\.\/operator\/consoleApi'\)[\s\S]*?requestScenarioStart\(scenarioRuntime, name,/);
+    expect(appSrc).not.toContain("'/api/v2/sim/scenarios/flood-response/start'");
     expect(appSrc).not.toContain('_autoSpawnIfEmpty');
     expect(appSrc).not.toContain('/api/sim/state');
     expect(appSrc).not.toMatch(/\bapiGet\b/);
@@ -211,9 +233,8 @@ describe('entry-chunk boundaries', () => {
     const startupAt = appSrc.indexOf('const startupCoordinator = new StartupCoordinator');
     const controlsAt = appSrc.indexOf('const controlPanel = new ControlPanel');
     const startup = appSrc.slice(startupAt, controlsAt);
-    expect(startup).toMatch(/startV2Scenario:[\s\S]*?scenarioRuntime\.requested\(name\)/);
-    expect(startup).toMatch(/result\.success[\s\S]*?requestAccepted\(request, result\.value\.current\)/);
-    expect(startup).toMatch(/else scenarioRuntime\.requestFailed\(request\)/);
+    expect(startup).toMatch(/startV2Scenario:\s*async name =>[\s\S]*?requestScenarioStart\(scenarioRuntime, name,/);
+    expect(startup).not.toContain('resq:scenario-start');
 
     const resetAt = appSrc.indexOf('async function _resetMission');
     const visibilityAt = appSrc.indexOf("document.addEventListener('visibilitychange'", resetAt);
@@ -260,17 +281,62 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).not.toMatch(/\b_currentScenario\b/);
     expect(appSrc).toContain('_legacyScenario');
     expect(appSrc).toMatch(/getScenario:\s*\(\)\s*=>[\s\S]*?scenarioRuntime\.currentName/);
+    expect(appSrc).toContain('applyScenarioForMode');
+    expect(appSrc).toMatch(/runtime:\s*scenarioRuntime/);
+    expect(appSrc).toContain('v2Session: () => _rawScenarioSession');
+    expect(appSrc).toMatch(/confirmV2Replace:[\s\S]*?window\.confirm/);
+    expect(sceneConfigSrc).toMatch(/publishLegacyStart[\s\S]*?resq:scenario-start/);
+    expect(appSrc).not.toMatch(/applyScenario:[\s\S]*?\/api\/sim\/scenario\//);
   });
 
   it('loads independent typed resources only for v2 and retries on reconnect and visibility', () => {
-    expect(appSrc).toContain("apiGetJson<ScenarioCatalogResponse>('/api/v2/sim/scenarios')");
-    expect(appSrc).toContain("apiGetJson<AssetProfileCatalogResponse>('/api/v2/sim/asset-profiles')");
+    expect(appSrc).toMatch(/loadCatalog:\s*async \(\)\s*=>[\s\S]*?getScenarioCatalog\(\)/);
+    expect(appSrc).toMatch(/loadProfiles:\s*async \(\)\s*=>[\s\S]*?getAssetProfiles\(\)/);
     expect(appSrc).toMatch(/c\.onreconnected\([\s\S]*?_retryMissionResources\(\)/);
     expect(appSrc).toMatch(/visibilitychange[\s\S]*?document\.hidden[\s\S]*?_retryMissionResources\('visibility'\)/);
   });
 
   it('keeps legacy mission chrome synchronized with negotiated mode', () => {
     expect(appSrc).toMatch(/setMode:\s*mode\s*=>\s*\{[\s\S]*?missionChrome\.setEnabled\(mode === 'legacy'\)/);
+  });
+
+  it('owns the lazy scenario modal across load failure and shell transitions', () => {
+    const mode = appSrc.slice(
+      appSrc.indexOf('setMode: mode =>'),
+      appSrc.indexOf('setBootStatus:', appSrc.indexOf('setMode: mode =>')),
+    );
+    expect(mode.indexOf('_invalidateOperatorModals()')).toBeGreaterThanOrEqual(0);
+    expect(mode.indexOf('_invalidateOperatorModals()')).toBeLessThan(
+      mode.indexOf('operatorShell.setMode(mode)'),
+    );
+    expect(appSrc).toMatch(/setBootStatus:\s*status\s*=>[\s\S]*?status === 'error'[\s\S]*?_invalidateOperatorModals\(\)/);
+    expect(appSrc).toMatch(/suppressed[\s\S]*?_invalidateOperatorModals\(\)[\s\S]*?setInvestorSuppressed/);
+
+    expect(appSrc).toMatch(/new panelModule\.ScenarioCatalogLauncher\(\{[\s\S]*?operatorShell\.mounts\.modal[\s\S]*?panel\.changeTrigger/);
+    expect(catalogLauncherSrc).toContain("import('./ScenarioCatalogLoader')");
+    expect(catalogLauncherSrc).toMatch(/_generation[\s\S]*?_options\.mode\(\) !== 'v2'/);
+    expect(catalogLauncherSrc).toMatch(/\.catch\([\s\S]*?_loading = null/);
+    expect(catalogLauncherSrc).toContain('The scenario browser could not load.');
+    expect(catalogLoaderSrc).toContain('owner.activate(');
+    expect(catalogLoaderSrc).not.toContain('owner.begin()');
+    expect(appSrc).not.toContain('let _scenarioCatalog:');
+    expect(appSrc).not.toContain('_scenarioCatalogLoading');
+  });
+
+  it('confirms replacement from the raw v2 inventory before projection can drop assets', () => {
+    const ingestAt = appSrc.indexOf('function _ingestSnapshot');
+    const gapAt = appSrc.indexOf('function _onDeltaGap', ingestAt);
+    const ingest = appSrc.slice(ingestAt, gapAt);
+    const rawAt = ingest.indexOf('_rawScenarioSession =');
+    const projectionAt = ingest.indexOf('projectSnapshot');
+    expect(appSrc).toContain('let _rawScenarioSession = { assetCount: 0, tick: 0 }');
+    expect(rawAt).toBeGreaterThanOrEqual(0);
+    expect(rawAt).toBeLessThan(projectionAt);
+    expect(ingest).toMatch(/assetCount:\s*snapshot\.assets\.length[\s\S]*?tick:\s*snapshot\.tick/);
+
+    expect(appSrc).toContain('getSession: () => ({ ..._rawScenarioSession');
+    expect(appSrc).not.toContain('_lastSnapshot?.assets.length');
+    expect(appSrc).not.toContain('_lastSnapshot?.frame.tick');
   });
 });
 

@@ -112,7 +112,13 @@ export class StartupCoordinator {
     // a concurrent legacy fallback cannot issue another destructive mutation.
     this._defaultDecided = true;
     if (snapshot.scenario !== null) return;
-    await this._deps.startV2Scenario(V2_DEFAULT);
+    // A lazy route chunk can fail independently of the live v2 stream. The
+    // shell remains viable and the one-time destructive attempt stays claimed.
+    try {
+      await this._deps.startV2Scenario(V2_DEFAULT);
+    } catch {
+      // Auxiliary startup failure is presented by the v2 resource surface.
+    }
   }
 
   /** Cancels an unresolved attempt after the connection itself fails. */

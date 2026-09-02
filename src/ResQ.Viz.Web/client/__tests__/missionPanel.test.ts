@@ -140,6 +140,7 @@ describe('MissionPanel', () => {
       catalog: readyCatalog,
     });
     const change = h.mount.querySelector<HTMLButtonElement>('[data-action="change"]')!;
+    expect(h.panel.changeTrigger).toBe(change);
     change.focus();
 
     h.panel.render({
@@ -153,6 +154,34 @@ describe('MissionPanel', () => {
 
     expect(h.mount.querySelector('[data-action="change"]')).toBe(change);
     expect(document.activeElement).toBe(change);
+  });
+
+  it('turns its stable Change trigger into a visible scenario-browser retry', () => {
+    const h = harness();
+    h.panel.render({
+      mission: { kind: 'none', pendingName: null },
+      transport: { paused: false, speed: 1, simulationTimeSeconds: 0 },
+      catalog: readyCatalog,
+    });
+    const trigger = h.panel.changeTrigger;
+
+    h.panel.setScenarioBrowserFailure('The scenario browser could not load.');
+    h.panel.render({
+      mission: { kind: 'none', pendingName: null },
+      transport: { paused: false, speed: 1, simulationTimeSeconds: 0 },
+      catalog: readyCatalog,
+    });
+
+    expect(h.panel.changeTrigger).toBe(trigger);
+    expect(trigger.textContent).toBe('Retry scenario browser');
+    expect(trigger.disabled).toBe(false);
+    expect(h.mount.textContent).toContain('The scenario browser could not load.');
+    trigger.click();
+    expect(h.onChange).toHaveBeenCalledOnce();
+
+    h.panel.setScenarioBrowserFailure(null);
+    expect(trigger.textContent).toBe('Change…');
+    expect(h.mount.textContent).not.toContain('The scenario browser could not load.');
   });
 
   it.each([

@@ -60,6 +60,16 @@ afterEach(() => {
 });
 
 describe('v2 startup default', () => {
+  it('contains a lazy-route load failure without an unhandled startup rejection', async () => {
+    const h = harness({
+      startV2Scenario: vi.fn().mockRejectedValue(new Error('chunk unavailable')),
+    });
+
+    await expect(h.coordinator.onV2Snapshot({ assetCount: 0, scenario: null }))
+      .resolves.toBeUndefined();
+    expect(h.modes).toEqual(['v2']);
+  });
+
   it('starts Flood Response once for an empty hydrated room', async () => {
     const h = harness();
 

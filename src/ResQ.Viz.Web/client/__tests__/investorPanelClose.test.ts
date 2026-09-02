@@ -157,7 +157,9 @@ describe('investor panel closing', () => {
     const operator = read('../styles/operator.css');
 
     expect(app).toMatch(/new InvestorMode\(\s*viz\.cameraController,\s*\(\) => \{[\s\S]*?_setSettingsVisible\(false\)[\s\S]*?_setHintsVisible\(false\)/);
-    expect(app).toMatch(/new InvestorMode\([\s\S]*?\(suppressed\) => operatorShell\.setInvestorSuppressed\(suppressed\)/);
+    expect(app).toMatch(
+      /new InvestorMode\([\s\S]*?\(suppressed\) => \{[\s\S]*?if \(suppressed\) _invalidateOperatorModals\(\);[\s\S]*?operatorShell\.setInvestorSuppressed\(suppressed\)/,
+    );
     expect(investor).not.toContain("getElementById('settings-panel')");
     expect(investor).not.toContain("getElementById('shortcuts-panel')");
     expect(operator).toMatch(/body\.investor-mode \.operator-context-layer,[\s\S]*?body\.investor-mode \.operator-editor-layer[\s\S]*?display:\s*none\s*!important[\s\S]*?pointer-events:\s*none/);
