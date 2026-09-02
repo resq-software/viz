@@ -86,6 +86,54 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/c\.on\('ReceiveFrame'/);
     expect(appSrc).toMatch(/invoke<string>\('SubscribeSnapshots', true\)/);
   });
+
+  it('routes startup negotiation through the coordinator before stream early returns', () => {
+    expect(appSrc).toContain("import { StartupCoordinator } from './operator/StartupCoordinator'");
+    expect(appSrc).toMatch(/new StartupCoordinator\(\{[\s\S]*?setMode:\s*mode\s*=>/);
+
+    const receiveFrameAt = appSrc.indexOf("c.on('ReceiveFrame'");
+    const receiveSnapshotAt = appSrc.indexOf("c.on('ReceiveSnapshotV2'");
+    const receiveFrame = appSrc.slice(receiveFrameAt, receiveSnapshotAt);
+    expect(receiveFrame).toMatch(/startupCoordinator\.onV1Frame\(drones\.length\)/);
+    expect(receiveFrame.indexOf('startupCoordinator.onV1Frame(drones.length)'))
+      .toBeLessThan(receiveFrame.indexOf('if (_v2Active) return'));
+
+    const ingestAt = appSrc.indexOf('function _ingestSnapshot');
+    const gapAt = appSrc.indexOf('function _onDeltaGap');
+    const ingest = appSrc.slice(ingestAt, gapAt);
+    expect(ingest).toMatch(/startupCoordinator\.onV2Snapshot\(\{\s*assetCount:\s*snapshot\.assets\.length,\s*scenario:\s*snapshot\.scenario,?\s*\}\)/);
+    expect(ingest.indexOf('startupCoordinator.onV2Snapshot'))
+      .toBeLessThan(ingest.indexOf('projectSnapshot'));
+  });
+
+  it('releases stale v2 render ownership only when startup enters legacy', () => {
+    expect(appSrc).toMatch(
+      /setMode:\s*mode\s*=>\s*\{[\s\S]*?if \(mode === 'legacy' && _v2Active\) _leaveV2\(\);[\s\S]*?operatorShell\.setMode\(mode\);[\s\S]*?\}/,
+    );
+  });
+
+  it('routes subscription rejection and connection lifecycle through startup coordination', () => {
+    expect(appSrc).toMatch(/function _subscribeSnapshots[\s\S]*?startupCoordinator\.onV2Rejected\(\)/);
+    const snapshotHandler = appSrc.slice(
+      appSrc.indexOf("c.on('ReceiveSnapshotV2'"),
+      appSrc.indexOf("c.on('ReceiveDeltaV2'"),
+    );
+    expect(snapshotHandler).toMatch(
+      /startupCoordinator\.onV2Rejected\(\);[\s\S]*?if \(_v2Active\) \{[\s\S]*?_leaveV2\(\);\s*\}[\s\S]*?return;/,
+    );
+    expect(appSrc).toMatch(/c\.onreconnected\([\s\S]*?startupCoordinator\.startNegotiation\(\)/);
+    expect(appSrc).toMatch(/connection\.start\(\)[\s\S]*?startupCoordinator\.startNegotiation\(\)[\s\S]*?_subscribeSnapshots\(\)/);
+    expect(appSrc).toMatch(/catch[\s\S]*?startupCoordinator\.onConnectionFailed\(\)/);
+    expect(appSrc).toMatch(/beforeunload[\s\S]*?startupCoordinator\.dispose\(\)/);
+  });
+
+  it('uses the exact mode-specific defaults and removes drone-count startup', () => {
+    expect(appSrc).toContain("apiPost('/api/sim/scenario/single')");
+    expect(appSrc).toContain("apiPostJson<{ current: ScenarioSessionState }>(\n            '/api/v2/sim/scenarios/flood-response/start',\n        )");
+    expect(appSrc).not.toContain('_autoSpawnIfEmpty');
+    expect(appSrc).not.toContain('/api/sim/state');
+    expect(appSrc).not.toMatch(/\bapiGet\b/);
+  });
 });
 
 describe('registerDomainRenderers', () => {

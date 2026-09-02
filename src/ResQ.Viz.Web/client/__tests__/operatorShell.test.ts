@@ -383,6 +383,17 @@ describe('the shipped operator shell contract', () => {
     expect(sidebarTitle).not.toContain('Tab');
   });
 
+  it('ships an explicit, text-labeled legacy compatibility notice', () => {
+    const page = new DOMParser().parseFromString(read('../index.html'), 'text/html');
+    const notice = page.getElementById('legacy-mode-notice');
+    const operatorCss = read('../styles/operator.css');
+
+    expect(notice?.closest('#legacy-console')?.id).toBe('legacy-console');
+    expect(notice?.getAttribute('role')).toBe('status');
+    expect(notice?.textContent?.trim()).toBe('Legacy mode: v2 unavailable');
+    expect(operatorCss).toMatch(/\.legacy-mode-notice[\s\S]*?color:\s*var\(--warning\)/);
+  });
+
   it('leaves the fleet filter wrapper unlabeled for its mounted control', () => {
     const page = new DOMParser().parseFromString(read('../index.html'), 'text/html');
     expect(page.getElementById('fleet-filter')?.hasAttribute('aria-label')).toBe(false);
@@ -414,15 +425,27 @@ describe('the shipped operator shell contract', () => {
     expect(operatorCss).toContain(':focus-visible');
   });
 
-  it('constructs the shell before legacy controls and switches existing stream hooks', () => {
+  it('constructs the shell before legacy controls and delegates stream modes to startup', () => {
     const app = read('../app.ts');
     const shellAt = app.indexOf('new OperatorShell(document)');
+    const startupAt = app.indexOf('new StartupCoordinator({');
     const controlsAt = app.indexOf("new ControlPanel(document.getElementById('legacy-console')!)");
 
     expect(shellAt).toBeGreaterThanOrEqual(0);
-    expect(controlsAt).toBeGreaterThan(shellAt);
-    expect(app).toMatch(/function _ingestSnapshot[\s\S]*?operatorShell\.setMode\('v2'\)/);
-    expect(app).toMatch(/function _leaveV2[\s\S]*?operatorShell\.setMode\('legacy'\)/);
+    expect(startupAt).toBeGreaterThan(shellAt);
+    expect(controlsAt).toBeGreaterThan(startupAt);
+    expect(app).toMatch(/new StartupCoordinator\(\{[\s\S]*?setMode:\s*mode\s*=>\s*\{[\s\S]*?operatorShell\.setMode\(mode\)/);
+
+    const ingest = app.slice(
+      app.indexOf('function _ingestSnapshot'),
+      app.indexOf('function _onDeltaGap'),
+    );
+    const leave = app.slice(
+      app.indexOf('function _leaveV2'),
+      app.indexOf('function _subscribeSnapshots'),
+    );
+    expect(ingest).not.toContain('operatorShell.setMode');
+    expect(leave).not.toContain('operatorShell.setMode');
   });
 
   it('keeps every operative global z-index inside the shared scale', () => {

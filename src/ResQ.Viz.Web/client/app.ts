@@ -29,6 +29,7 @@ import { FireSmoke }        from './smoke';
 import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
 import { OperatorShell }   from './operator/OperatorShell';
+import { StartupCoordinator } from './operator/StartupCoordinator';
 import { Hud }            from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
@@ -59,7 +60,7 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { MiniMap } from './miniMap';
 import { SensorStatsOverlay } from './sensorStatsOverlay';
-import { apiPost, apiGet, apiPostOrWarn } from './api';
+import { apiPost, apiPostJson, apiPostOrWarn } from './api';
 import { getLogger } from './log';
 // SelectionStore stays static: it is the selection source of truth that legacy
 // HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
@@ -95,7 +96,12 @@ import {
 } from './assets/sceneFrame';
 import type { SceneAsset, SceneFrame, SceneSnapshot } from './assets/sceneFrame';
 import { AssetDomain } from './assets/types';
-import type { ExternalTrackState, VizDeltaV2, VizSnapshotV2 } from './assets/types';
+import type {
+    ExternalTrackState,
+    ScenarioSessionState,
+    VizDeltaV2,
+    VizSnapshotV2,
+} from './assets/types';
 // Type-only, so the delta merge stays out of the entry chunk entirely: the
 // module is fetched by `_subscribeDeltas`, and only on a server that offers
 // the stream.
@@ -166,6 +172,20 @@ const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
 const fireSmoke    = new FireSmoke(viz.scene);
 const operatorShell = new OperatorShell(document);
+const startupCoordinator = new StartupCoordinator({
+    setMode: mode => {
+        if (mode === 'legacy' && _v2Active) _leaveV2();
+        operatorShell.setMode(mode);
+    },
+    startLegacyScenario: async () =>
+        (await apiPost('/api/sim/scenario/single')).success,
+    startV2Scenario: async () =>
+        apiPostJson<{ current: ScenarioSessionState }>(
+            '/api/v2/sim/scenarios/flood-response/start',
+        ),
+    schedule: (callback, ms) => window.setTimeout(callback, ms),
+    cancel: id => window.clearTimeout(id),
+});
 const controlPanel = new ControlPanel(document.getElementById('legacy-console')!);
 const hud          = new Hud();
 const windCompass  = new WindCompass();
@@ -2136,6 +2156,8 @@ function _fitOnce(positions: THREE.Vector3[], count: number): void {
 
 function _wireConnection(c: HubConnection): void {
     c.on('ReceiveFrame', (frame: VizFrame) => {
+        const drones = frame.drones ?? [];
+        startupCoordinator.onV1Frame(drones.length);
         loadingOverlay.onFrame();
         dvr?.record(frame);
         // Both streams describe the same tick. Once v2 is driving, the v1 frame
@@ -2149,7 +2171,6 @@ function _wireConnection(c: HubConnection): void {
         _renderFrame(frame);
         dvr?.updateServer(frame);
 
-        const drones = frame.drones ?? [];
         // v1 carries one mesh flag and the server sets it from the backhaul kill
         // switch (`VizFrameBuilder.Build`), so it is read as the backhaul here —
         // which is what the banner it raises has always said. Connectivity is
@@ -2168,6 +2189,7 @@ function _wireConnection(c: HubConnection): void {
         // it agreed to before the change; falling back to v1 is always available
         // and is strictly better than reading fields that may have moved.
         if (!isSupportedSchema(snapshot.schemaVersion)) {
+            startupCoordinator.onV2Rejected();
             if (_v2Active) {
                 log.warn('v2 snapshot schema is not one this client reads; falling back to v1', {
                     schemaVersion: snapshot.schemaVersion,
@@ -2223,6 +2245,7 @@ function _wireConnection(c: HubConnection): void {
     c.onreconnecting(() => {
         hud.setStatus('reconnecting');
         loadingOverlay.onReconnecting();
+        startupCoordinator.onConnectionFailed();
         // Group membership dies with the connection, and the room may have been
         // reset while we were away, so the held frame is no longer a base this
         // client can vouch for. Dropping it costs nothing on screen: the last
@@ -2232,6 +2255,7 @@ function _wireConnection(c: HubConnection): void {
     c.onreconnected(()  => {
         hud.setStatus('connected');
         loadingOverlay.onReconnected();
+        startupCoordinator.startNegotiation();
         // Snapshot subscription is connection-scoped: the server drops it with
         // the connection, and a reconnect is not always preceded by a disconnect
         // the server saw. Re-asking is idempotent on both sides — and asking for
@@ -2239,7 +2263,11 @@ function _wireConnection(c: HubConnection): void {
         // subscription with a keyframe.
         void _subscribeSnapshots().then(_subscribeDeltas);
     });
-    c.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
+    c.onclose(()        => {
+        hud.setStatus('disconnected');
+        loadingOverlay.onDisconnected();
+        startupCoordinator.onConnectionFailed();
+    });
 }
 
 /**
@@ -2255,10 +2283,13 @@ function _wireConnection(c: HubConnection): void {
  * scene rather than freezing it.
  */
 function _ingestSnapshot(snapshot: VizSnapshotV2): void {
+    void startupCoordinator.onV2Snapshot({
+        assetCount: snapshot.assets.length,
+        scenario: snapshot.scenario,
+    });
     loadingOverlay.onFrame();
     if (!_v2Active) {
         _v2Active = true;
-        operatorShell.setMode('v2');
         _ensureFleetUi();
         log.info('v2 snapshot stream is driving the scene', {
             schemaVersion: snapshot.schemaVersion,
@@ -2408,7 +2439,6 @@ async function _abandonDeltas(): Promise<void> {
  */
 function _leaveV2(): void {
     _v2Active = false;
-    operatorShell.setMode('legacy');
     _lastSnapshot = null;
     _descriptorCache.clear();
     // Deltas are a layer on top of a schema this client has just decided it
@@ -2470,7 +2500,9 @@ async function _subscribeSnapshots(): Promise<void> {
         log.warn('server speaks a v2 schema this client does not read; staying on v1', {
             schemaVersion: version,
         });
-        _leaveV2();
+        startupCoordinator.onV2Rejected();
+        if (_v2Active) _leaveV2();
+        else void _abandonDeltas();
         // Unsubscribing is best-effort. Failing to get out of the group is not
         // worth surfacing: every snapshot that arrives is refused by the
         // per-frame schema check above.
@@ -2479,28 +2511,19 @@ async function _subscribeSnapshots(): Promise<void> {
         // The overwhelmingly likely cause is a server that predates the v2
         // stream, which is a supported configuration and not an error.
         log.info('no v2 snapshot stream on this server; using the v1 frame', { err });
-        _leaveV2();
+        startupCoordinator.onV2Rejected();
+        if (_v2Active) _leaveV2();
+        else void _abandonDeltas();
     }
 }
 
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
-window.addEventListener('beforeunload', () => clearInterval(_fpsTick));
+window.addEventListener('beforeunload', () => {
+    clearInterval(_fpsTick);
+    startupCoordinator.dispose();
+});
 
 let _starting = false;
-
-async function _autoSpawnIfEmpty(): Promise<void> {
-    const state = await apiGet<unknown[]>('/api/sim/state');
-    if (!state.success) {
-        log.warn('auto-spawn skipped — /api/sim/state unreachable', { error: state.error.message });
-        return;
-    }
-    if (state.value.length === 0) {
-        const spawn = await apiPost('/api/sim/scenario/single');
-        if (!spawn.success) {
-            log.warn('auto-spawn scenario/single failed', { error: spawn.error.message });
-        }
-    }
-}
 
 async function start(): Promise<void> {
     if (_starting) return;
@@ -2508,6 +2531,7 @@ async function start(): Promise<void> {
     try {
         if (!await _ensureSessionReady()) {
             hud.setStatus('disconnected');
+            startupCoordinator.onConnectionFailed();
             setTimeout(() => { _starting = false; void start(); }, 5000);
             return;
         }
@@ -2525,17 +2549,18 @@ async function start(): Promise<void> {
         }
         await connection.start();
         hud.setStatus('connected');
-        // Ask for the multi-domain stream. Awaited rather than fired off so a
-        // server that has it is driving assets before the first auto-spawn lands;
-        // a server that does not simply falls through to the v1 frame.
+        // Start the accepted-but-silent window before awaiting the subscription
+        // invoke: v1 frames can prove fallback viability while that call is slow.
+        startupCoordinator.startNegotiation();
+        // Ask for the multi-domain stream. A server that does not have it proves
+        // rejection immediately; one that accepts but sends nothing gets the
+        // five-second viable-v1 fallback above.
         await _subscribeSnapshots();
-        // Layered on the above and awaited for the same reason: a server that
-        // has the stream is sending deltas before the first auto-spawn lands.
-        // A server that does not falls through to full snapshots.
+        // Deltas are optional; full snapshots remain the v2 recovery path.
         await _subscribeDeltas();
-        await _autoSpawnIfEmpty();
     } catch {
         hud.setStatus('disconnected');
+        startupCoordinator.onConnectionFailed();
         setTimeout(() => { _starting = false; void start(); }, 5000);
         return;
     }
