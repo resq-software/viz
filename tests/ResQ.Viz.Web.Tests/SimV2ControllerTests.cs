@@ -19,6 +19,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ResQ.Viz.Web.Controllers;
 using ResQ.Viz.Web.Filters;
@@ -59,14 +60,15 @@ public partial class SimV2ControllerTests
     private static (SimV2Controller ctrl, SimulationRoom room) CreateController(
         IAssetFactory? factory = null,
         VizFrameBuilder? frames = null,
-        ScenarioService? scenarios = null)
+        ScenarioService? scenarios = null,
+        ILogger<SimV2Controller>? logger = null)
     {
         var room = CreateRoom();
         IAssetFactory[] factories = factory is null ? [] : [factory];
         var ctrl = new SimV2Controller(
             frames ?? new VizFrameBuilder(),
             factories,
-            NullLogger<SimV2Controller>.Instance,
+            logger ?? NullLogger<SimV2Controller>.Instance,
             authority: null,
             scenarios: scenarios);
 

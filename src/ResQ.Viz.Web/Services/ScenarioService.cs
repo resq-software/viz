@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-using System.Numerics;
 using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -222,6 +223,45 @@ public sealed partial class ScenarioService
         return false;
     }
 
+    /// <summary>Stages and atomically replaces a room with one validated scenario.</summary>
+    /// <param name="name">Canonical configured scenario name.</param>
+    /// <param name="room">Room whose population and scenario state are replaced.</param>
+    /// <param name="committed">Exact scenario state committed with the new population.</param>
+    /// <returns>
+    /// <see langword="true"/> when the scenario existed and its complete population was committed;
+    /// otherwise <see langword="false"/> with the previous room left unchanged.
+    /// </returns>
+    public bool TryReplace(
+        string name,
+        SimulationRoom room,
+        [NotNullWhen(true)] out ScenarioSessionState? committed)
+    {
+        ArgumentNullException.ThrowIfNull(room);
+        if (!_scenarios.TryGetValue(name, out var entries))
+        {
+            committed = null;
+            return false;
+        }
+
+        return room.TryReplaceScenario(
+            name,
+            candidate =>
+            {
+                foreach (var entry in entries)
+                {
+                    if (entry.Domain == AssetDomain.Air)
+                    {
+                        candidate.AddDrone(entry.Id, entry.Pos, entry.Vendor);
+                    }
+                    else
+                    {
+                        StageNonAir(candidate, entry);
+                    }
+                }
+            },
+            out committed);
+    }
+
     /// <summary>Builds one immutable discovery summary from validated entries.</summary>
     /// <param name="name">Canonical configured scenario name.</param>
     /// <param name="entries">Validated entries in configured order.</param>
@@ -342,5 +382,23 @@ public sealed partial class ScenarioService
                 "Asset '{AssetId}' skipped: the room refused it ({ReasonCode}).",
                 LogSafe(assetId), reasonCode);
         }
+    }
+
+    /// <summary>Builds one non-air entry into an unpublished candidate world.</summary>
+    private void StageNonAir(ScenarioPopulationBuilder candidate, in Entry entry)
+    {
+        var vehicleClass = entry.VehicleClass;
+        var assetId = entry.Id;
+        var factory = _assetFactories.FirstOrDefault(f => f.CanCreate(vehicleClass))
+            ?? throw new InvalidOperationException(
+                $"No motion model is registered for vehicle class '{vehicleClass}'.");
+        var plan = new AssetSpawnPlan(
+            assetId,
+            vehicleClass,
+            AssetProfiles.Create(assetId, vehicleClass, vendor: entry.Vendor),
+            entry.Pos,
+            entry.HeadingRad);
+
+        candidate.AddAsset(assetId, _ => factory.Create(plan));
     }
 }

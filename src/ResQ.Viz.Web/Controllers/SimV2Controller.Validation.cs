@@ -73,6 +73,7 @@ public sealed partial class SimV2Controller
         StatusCodes.Status409Conflict => "Request conflicts with current state",
         StatusCodes.Status429TooManyRequests => "Session capacity reached",
         StatusCodes.Status501NotImplemented => "Not supported by this build",
+        StatusCodes.Status503ServiceUnavailable => "Service unavailable",
         _ => "Request rejected",
     };
 

@@ -69,7 +69,7 @@ public sealed partial class SimulationRoom
     private readonly ILogger _logger;
     private readonly UpdatableWeatherSystem _weather;
     private readonly TerrainNoiseService _terrain;
-    private readonly SwarmCoordinator _swarm;
+    private SwarmCoordinator _swarm;
     private readonly AssetCommandLog _commands = new();
 
     // The world owns the tick count and simulation time (both long/derived, so neither drifts
@@ -275,6 +275,7 @@ public sealed partial class SimulationRoom
     /// <summary>Resets the simulation by discarding all drones and restarting the world clock.</summary>
     public void Reset()
     {
+        long worldRevision;
         lock (_lock)
         {
             // A fresh world rather than a cleared one: it drops the registry, the counters and
@@ -295,12 +296,13 @@ public sealed partial class SimulationRoom
             _speed = 1;
             _pendingSteps = 0;
             _broadcastTick = 0;
+            worldRevision = ++_worldRevision;
         }
 
         // Outside the lock, and after the swap: every asset the old world held is gone, so
         // anything holding authority over one has to hear about it now rather than at whatever
         // request next happens to look. See IRoomLifecycleObserver.
-        NotifyWorldReset();
+        NotifyWorldReset(worldRevision);
         Touch();
         _logger.LogInformation("[room {RoomId}] Simulation reset.", Id);
     }

@@ -17,6 +17,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using ResQ.Viz.Web.Models;
+using ResQ.Viz.Web.Services;
 
 namespace ResQ.Viz.Web.Controllers;
 
@@ -58,12 +59,19 @@ public sealed partial class SimV2Controller
         }
 
         var room = Room;
-        room.Reset();
-        _scenarios.TryRun(canonicalName, room);
-        room.NotifyScenario(canonicalName);
+        if (!_scenarios.TryReplace(canonicalName, room, out var current))
+        {
+            return Failure(
+                StatusCodes.Status503ServiceUnavailable,
+                ScenarioProblems.ReplacementFailed,
+                "The scenario population could not be staged; the current session was preserved.");
+        }
 
-        var current = room.CaptureAssetFrame().Scenario
-            ?? throw new InvalidOperationException("A loaded scenario was not published by its room.");
+        using var activity = VizTelemetry.ActivitySource.StartActivity("scenario.run");
+        activity?.SetTag("scenario.name", canonicalName);
+        VizTelemetry.ScenariosRun.Add(1);
+        _logger.LogInformation(
+            "Scenario '{Name}' started in room {RoomId}.", Sanitize(canonicalName), room.Id);
         return Ok(new ScenarioStartResponse(current));
     }
 

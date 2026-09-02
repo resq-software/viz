@@ -63,4 +63,7 @@ public static class ScenarioProblems
 
     /// <summary>This controller was constructed without a scenario catalog.</summary>
     public const string CatalogUnavailable = "scenario.catalogUnavailable";
+
+    /// <summary>The candidate scenario population could not be staged safely.</summary>
+    public const string ReplacementFailed = "scenario.replacementFailed";
 }
