@@ -1,8 +1,13 @@
-// ResQ Viz - DVR pure-helper tests (playback clock + time format)
+// @vitest-environment happy-dom
+// ResQ Viz - DVR helper and mode-transition tests
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from 'vitest';
-import { advancePlayhead, fmtClock } from '../editor/dvr';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { advancePlayhead, Dvr, fmtClock } from '../editor/dvr';
+import { FrameRecorder } from '../editor/recorder';
+import type { VizFrame } from '../types';
+
+beforeEach(() => document.body.replaceChildren());
 
 describe('advancePlayhead', () => {
     it('advances by elapsed/100ms × speed', () => {
@@ -44,5 +49,47 @@ describe('fmtClock', () => {
     it('floors fractional seconds and clamps negatives', () => {
         expect(fmtClock(13.9)).toBe('0:13');
         expect(fmtClock(-5)).toBe('0:00');
+    });
+});
+
+describe('Dvr mode transitions', () => {
+    it('notifies replay and Go Live synchronously without waiting for another frame', () => {
+        const recorder = new FrameRecorder(4);
+        recorder.capture({ drones: [], hazards: [], detections: [], time: 1 } as VizFrame);
+        const modes: boolean[] = [];
+        const dvr = new Dvr({
+            recorder,
+            onApply: vi.fn(),
+            onServerPause: vi.fn(),
+            onServerStep: vi.fn(),
+            onServerSpeed: vi.fn(),
+            onServerReset: vi.fn(),
+            onModeChange: live => modes.push(live),
+        });
+
+        document.querySelector<HTMLButtonElement>('.dvr-tostart')!.click();
+        expect(dvr.isLive).toBe(false);
+        document.querySelector<HTMLButtonElement>('.dvr-live')!.click();
+
+        expect(dvr.isLive).toBe(true);
+        expect(modes).toEqual([false, true]);
+    });
+
+    it('delegates two sequential legacy-compatible Reset clicks independently', () => {
+        const reset = vi.fn();
+        new Dvr({
+            recorder: new FrameRecorder(4),
+            onApply: vi.fn(),
+            onServerPause: vi.fn(),
+            onServerStep: vi.fn(),
+            onServerSpeed: vi.fn(),
+            onServerReset: reset,
+        });
+
+        const button = document.querySelector<HTMLButtonElement>('.dvr-reset')!;
+        button.click();
+        button.click();
+
+        expect(reset).toHaveBeenCalledTimes(2);
     });
 });

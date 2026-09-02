@@ -23,6 +23,8 @@ export interface DvrOptions {
     onServerSpeed: (factor: number) => void;
     /** Reset the server sim (any mode). */
     onServerReset: () => void;
+    /** Reports transitions between the live edge and buffered replay. */
+    onModeChange?: (live: boolean) => void;
 }
 
 /**
@@ -185,10 +187,12 @@ export class Dvr {
 
     private _goLive(): void {
         this._stopPlayback();
+        const changed = !this._live;
         this._live = true;
         const max = Math.max(0, this._recorder.length - 1);
         this._playhead = max;
         this._el.scrub.value = String(max);
+        if (changed) this._opts.onModeChange?.(true);
         this._render(); // live frames resume via isLive in the ReceiveFrame handler
     }
 
@@ -234,6 +238,7 @@ export class Dvr {
     private _enterReplay(): void {
         if (!this._live) return;
         this._live = false;
+        this._opts.onModeChange?.(false);
         this._render();
     }
 

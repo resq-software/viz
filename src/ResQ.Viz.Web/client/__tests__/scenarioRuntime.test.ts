@@ -83,6 +83,18 @@ describe('ScenarioRuntime authoritative revisions', () => {
     expect(onPresent).toHaveBeenCalledOnce();
     expect(runtime.view).toMatchObject({ kind: 'active', name: 'flood-response' });
   });
+
+  it('does not repeat presentation when the next equal frame follows resumeLive', () => {
+    const onPresent = vi.fn();
+    const runtime = new ScenarioRuntime({ onPresent });
+    const flood = scenario('flood-response', 2);
+
+    runtime.apply(flood, 8, 'replay');
+    runtime.resumeLive();
+    runtime.apply(flood, 8, 'live');
+
+    expect(onPresent).toHaveBeenCalledOnce();
+  });
 });
 
 describe('ScenarioRuntime request confirmation', () => {
@@ -93,6 +105,24 @@ describe('ScenarioRuntime request confirmation', () => {
   ): void {
     runtime.requestAccepted(token, current);
   }
+
+  it('publishes Requesting synchronously, then distinguishes accepted pending state', () => {
+    const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+    runtime.apply(null, 2, 'live');
+
+    const token = runtime.requested('flood-response');
+    expect(runtime.requestInFlight).toBe(true);
+    expect(runtime.view).toMatchObject({
+      kind: 'pending', baseKind: 'custom', requestStage: 'requesting',
+      pendingName: 'flood-response',
+    });
+
+    accepted(runtime, token, scenario('flood-response', 2));
+    expect(runtime.view).toMatchObject({
+      kind: 'pending', baseKind: 'custom', requestStage: 'accepted',
+      pendingName: 'flood-response',
+    });
+  });
 
   it('shows an accepted start as pending until a matching streamed revision arrives', () => {
     const runtime = new ScenarioRuntime({ onPresent: () => undefined });

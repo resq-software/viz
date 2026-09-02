@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 
 import { MissionChrome } from '../missionChrome';
 import { MissionPanel } from '../operator/MissionPanel';
+import { ScenarioRuntime } from '../operator/ScenarioRuntime';
 import { scenarioPresentation } from '../operator/scenarioPresentation';
 import type { ApiFailure } from '../api';
 
@@ -38,6 +39,43 @@ function harness() {
     onRetryCatalog,
   });
   return { mount, panel, onTogglePause, onReset, onChange, onRetryCatalog };
+}
+
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+function resetHarness() {
+  const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+  runtime.apply(null, 2, 'live');
+  const response = deferred<boolean>();
+  const post = vi.fn(() => response.promise);
+  const mount = document.createElement('section');
+  document.body.appendChild(mount);
+  let active = Promise.resolve();
+  const panel = new MissionPanel({
+    mount,
+    onTogglePause: vi.fn(),
+    onChange: vi.fn(),
+    onRetryCatalog: vi.fn(),
+    onReset: () => {
+      if (runtime.requestInFlight) return;
+      const request = runtime.requested(null);
+      active = post().then(ok => {
+        if (ok) runtime.requestAccepted(request);
+        else runtime.requestFailed(request);
+      });
+      return active;
+    },
+  });
+  runtime.subscribe(mission => panel.render({
+    mission,
+    transport: { paused: false, speed: 1, simulationTimeSeconds: 19 },
+    catalog: readyCatalog,
+  }));
+  return { runtime, mount, response, post, settled: () => active };
 }
 
 const readyCatalog = { status: 'ready' as const, value: { scenarios: [] } };
@@ -158,6 +196,65 @@ describe('MissionPanel', () => {
     expect(h.mount.textContent).toContain('Resetting mission');
   });
 
+  it('disables destructive actions synchronously while Reset is requesting', async () => {
+    const h = resetHarness();
+    const reset = h.mount.querySelector<HTMLButtonElement>('[data-action="reset"]')!;
+
+    reset.click();
+    reset.click();
+
+    expect(h.post).toHaveBeenCalledOnce();
+    expect(reset.disabled).toBe(true);
+    expect(h.mount.querySelector('[data-action="change"]')?.getAttribute('aria-disabled')).toBe('true');
+    expect(h.mount.querySelector('.operator-mission-pending')?.textContent)
+      .toContain('Requesting mission reset');
+
+    h.response.resolve(false);
+    await h.settled();
+    expect(reset.disabled).toBe(false);
+    expect(h.mount.querySelector('.operator-mission-title')?.textContent).toBe('Custom session');
+  });
+
+  it('keeps a successful Reset pending until the streamed empty clear arrives', async () => {
+    const h = resetHarness();
+    const reset = h.mount.querySelector<HTMLButtonElement>('[data-action="reset"]')!;
+    reset.click();
+    h.response.resolve(true);
+    await h.settled();
+
+    expect(reset.disabled).toBe(true);
+    expect(h.mount.querySelector('.operator-mission-pending')?.textContent)
+      .toContain('awaiting published state');
+
+    h.runtime.apply(null, 0, 'live');
+    expect(reset.disabled).toBe(false);
+    expect(h.mount.querySelector('.operator-mission-title')?.textContent).toBe('No active mission');
+  });
+
+  it('distinguishes a scenario request in flight from an accepted start', () => {
+    const h = harness();
+    const base = {
+      kind: 'pending' as const,
+      baseKind: 'custom' as const,
+      name: 'flood-response',
+      pendingName: 'flood-response',
+      pendingKind: 'scenario' as const,
+    };
+    const transport = { paused: false, speed: 1, simulationTimeSeconds: 19 };
+
+    h.panel.render({
+      mission: { ...base, requestStage: 'requesting' }, transport, catalog: readyCatalog,
+    });
+    expect(h.mount.querySelector('.operator-mission-pending')?.textContent)
+      .toContain('Requesting Flood Response');
+
+    h.panel.render({
+      mission: { ...base, requestStage: 'accepted' }, transport, catalog: readyCatalog,
+    });
+    expect(h.mount.querySelector('.operator-mission-pending')?.textContent)
+      .toContain('Starting Flood Response — awaiting published state');
+  });
+
   it.each([
     {
       baseKind: 'custom' as const,
@@ -229,6 +326,37 @@ describe('MissionPanel', () => {
     observer.disconnect();
 
     expect(mutations).toEqual([]);
+  });
+
+  it('unhides the pending live region before changing its announcement text', async () => {
+    const h = harness();
+    h.panel.render({
+      mission: { kind: 'none', pendingName: null },
+      transport: { paused: false, speed: 1, simulationTimeSeconds: 0 },
+      catalog: readyCatalog,
+    });
+    const pending = h.mount.querySelector<HTMLElement>('.operator-mission-pending')!;
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver(changes => records.push(...changes));
+    observer.observe(pending, { attributes: true, childList: true, subtree: true });
+
+    h.panel.render({
+      mission: {
+        kind: 'pending', baseKind: 'none', name: null,
+        pendingName: null, pendingKind: 'reset', requestStage: 'requesting',
+      },
+      transport: { paused: false, speed: 1, simulationTimeSeconds: 0 },
+      catalog: readyCatalog,
+    });
+    await Promise.resolve();
+    observer.disconnect();
+
+    const unhiddenAt = records.findIndex(record =>
+      record.type === 'attributes' && record.attributeName === 'hidden');
+    const textAt = records.findIndex(record => record.type === 'childList');
+    expect(unhiddenAt).toBeGreaterThanOrEqual(0);
+    expect(unhiddenAt).toBeLessThan(textAt);
+    expect(pending.hidden).toBe(false);
   });
 
   it('keeps transport usable, disables Change, and exposes typed catalog recovery', () => {

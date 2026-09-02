@@ -21,6 +21,7 @@ export interface MissionDisplayState {
   readonly revision?: number;
   readonly pendingName: string | null;
   readonly pendingKind?: 'scenario' | 'reset';
+  readonly requestStage?: 'requesting' | 'accepted';
 }
 
 export interface MissionPanelState {
@@ -89,8 +90,14 @@ export class MissionPanel {
     setText(this._elements.speed, `${transport.speed}×`);
 
     const pending = pendingText(mission);
-    setText(this._elements.pending, pending);
-    setHidden(this._elements.pending, pending === '');
+    if (pending === '') {
+      setHidden(this._elements.pending, true);
+      setText(this._elements.pending, '');
+    } else {
+      // Put the live region in the accessibility tree before its text changes.
+      setHidden(this._elements.pending, false);
+      setText(this._elements.pending, pending);
+    }
 
     const catalogReady = catalog.status === 'ready';
     const destructivePending = mission.kind === 'pending';
@@ -166,6 +173,11 @@ function missionTitle(mission: MissionDisplayState, activeName: string | null): 
 
 function pendingText(mission: MissionDisplayState): string {
   if (mission.kind !== 'pending') return '';
+  if (mission.requestStage === 'requesting') {
+    return mission.pendingKind === 'reset'
+      ? 'Requesting mission reset…'
+      : `Requesting ${scenarioPresentation(mission.pendingName ?? '').displayName}…`;
+  }
   if (mission.pendingKind === 'reset') return 'Resetting mission — awaiting published state';
   return mission.pendingName === null
     ? ''

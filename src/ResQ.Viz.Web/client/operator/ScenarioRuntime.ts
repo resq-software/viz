@@ -27,6 +27,7 @@ export type MissionView =
       readonly revision?: number;
       readonly pendingName: string | null;
       readonly pendingKind: 'scenario' | 'reset';
+      readonly requestStage: 'requesting' | 'accepted';
     };
 
 type MissionBaseView = Exclude<MissionView, { readonly kind: 'pending' }>;
@@ -88,6 +89,11 @@ export class ScenarioRuntime {
   /** The active streamed name, excluding a merely requested replacement. */
   get currentName(): string | null {
     return this._scenario?.name ?? null;
+  }
+
+  /** True from synchronous request creation through failure or stream confirmation. */
+  get requestInFlight(): boolean {
+    return this._request !== null;
   }
 
   subscribe(listener: MissionListener): () => void {
@@ -164,6 +170,7 @@ export class ScenarioRuntime {
       observedRevision: null,
       resetConfirmationSequence: null,
     };
+    this._refreshView();
     return token;
   }
 
@@ -264,7 +271,7 @@ export class ScenarioRuntime {
     const base = this._baseView();
     const pending = this._request;
     let next: MissionView = base;
-    if (pending?.accepted) {
+    if (pending !== null) {
       const active = base.kind === 'active' ? base : null;
       next = {
         kind: 'pending',
@@ -276,6 +283,7 @@ export class ScenarioRuntime {
         }),
         pendingName: pending.token.targetName,
         pendingKind: pending.token.targetName === null ? 'reset' : 'scenario',
+        requestStage: pending.accepted ? 'accepted' : 'requesting',
       };
     }
 
@@ -312,5 +320,7 @@ function sameView(left: MissionView, right: MissionView): boolean {
     && ('baseKind' in left ? left.baseKind : null)
       === ('baseKind' in right ? right.baseKind : null)
     && ('pendingKind' in left ? left.pendingKind : null)
-      === ('pendingKind' in right ? right.pendingKind : null);
+      === ('pendingKind' in right ? right.pendingKind : null)
+    && ('requestStage' in left ? left.requestStage : null)
+      === ('requestStage' in right ? right.requestStage : null);
 }

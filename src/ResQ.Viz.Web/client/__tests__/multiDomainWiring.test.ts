@@ -224,6 +224,38 @@ describe('entry-chunk boundaries', () => {
     expect(reset).toMatch(/requestFailed\(request\)/);
   });
 
+  it('guards Reset reentry and releases the submitting latch on every outcome', () => {
+    expect(appSrc).toContain('let _resetRequestInFlight = false');
+    const resetAt = appSrc.indexOf('async function _resetMission');
+    const visibilityAt = appSrc.indexOf("document.addEventListener('visibilitychange'", resetAt);
+    const reset = appSrc.slice(resetAt, visibilityAt);
+    expect(reset).toMatch(/if \(operatorShell\.mode !== 'v2'\s*\|\| _resetRequestInFlight\s*\|\| scenarioRuntime\.requestInFlight\) return/);
+    expect(reset.indexOf('_resetRequestInFlight = true')).toBeLessThan(reset.indexOf('apiPost'));
+    expect(reset).toMatch(/try\s*\{[\s\S]*?apiPost\('\/api\/sim\/reset'\)[\s\S]*?catch[\s\S]*?requestFailed\(request\)[\s\S]*?finally[\s\S]*?_resetRequestInFlight = false/);
+    const initAt = appSrc.indexOf('async function _initEditorSuite');
+    const investorAt = appSrc.indexOf('const investorMode', initAt);
+    const init = appSrc.slice(initAt, investorAt);
+    expect(init).toMatch(/onServerReset:\s*\(\)\s*=>\s*\{[\s\S]*?operatorShell\.mode === 'legacy'[\s\S]*?apiPostOrWarn\('\/api\/sim\/reset'[\s\S]*?operatorShell\.mode === 'v2'[\s\S]*?_resetMission\(\)/);
+  });
+
+  it('applies the held v2 snapshot immediately when DVR returns Live', () => {
+    const initAt = appSrc.indexOf('async function _initEditorSuite');
+    const investorAt = appSrc.indexOf('const investorMode', initAt);
+    const init = appSrc.slice(initAt, investorAt);
+    expect(init).toMatch(/onModeChange:\s*live\s*=>\s*\{[\s\S]*?if \(live\) _resumeHeldSnapshot\(\)/);
+
+    const resumeAt = appSrc.indexOf('function _resumeHeldSnapshot');
+    const nextAt = appSrc.indexOf('\nfunction ', resumeAt + 1);
+    const resume = appSrc.slice(resumeAt, nextAt);
+    const transportAt = resume.indexOf('_missionTransport =');
+    const runtimeAt = resume.indexOf('scenarioRuntime.resumeLive()');
+    const renderAt = resume.indexOf('_applyLiveSnapshot(latest, true)');
+    expect(resume).toContain('const latest = _lastSnapshot');
+    expect(transportAt).toBeGreaterThanOrEqual(0);
+    expect(transportAt).toBeLessThan(runtimeAt);
+    expect(runtimeAt).toBeLessThan(renderAt);
+  });
+
   it('uses authoritative v2 scene-config truth and an explicitly legacy-only fallback', () => {
     expect(appSrc).not.toMatch(/\b_currentScenario\b/);
     expect(appSrc).toContain('_legacyScenario');

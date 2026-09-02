@@ -184,6 +184,7 @@ const scenarioRuntime = new ScenarioRuntime({ onPresent: _presentAuthoritativeSc
 let consoleResources: ConsoleResources | null = null;
 let missionPanel: MissionPanel | null = null;
 let _missionUiLoading: Promise<void> | null = null;
+let _resetRequestInFlight = false;
 let _missionTransport: MissionTransportView = {
     paused: false,
     speed: 1,
@@ -347,7 +348,14 @@ async function _initEditorSuite(): Promise<void> {
             void apiPostOrWarn(paused ? '/api/sim/pause' : '/api/sim/resume', undefined, 'transport'),
         onServerStep: () => void apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'),
         onServerSpeed: (factor) => void apiPostOrWarn('/api/sim/speed', { factor }, 'speed'),
-        onServerReset: () => void apiPostOrWarn('/api/sim/reset', undefined, 'reset'),
+        onServerReset: () => {
+            if (operatorShell.mode === 'legacy') {
+                apiPostOrWarn('/api/sim/reset', undefined, 'reset');
+            } else if (operatorShell.mode === 'v2') {
+                void _resetMission();
+            }
+        },
+        onModeChange: live => { if (live) _resumeHeldSnapshot(); },
     });
     // Declarative scene config — export/import the terrain + scenario setup as a
     // shareable JSON descriptor (AirSim settings.json analog). V2 reads only the
@@ -532,12 +540,23 @@ async function _setMissionPaused(paused: boolean): Promise<void> {
 }
 
 async function _resetMission(): Promise<void> {
+    if (operatorShell.mode !== 'v2'
+        || _resetRequestInFlight
+        || scenarioRuntime.requestInFlight) return;
+    _resetRequestInFlight = true;
     const request = scenarioRuntime.requested(null);
-    const result = await apiPost('/api/sim/reset');
-    if (result.success) scenarioRuntime.requestAccepted(request);
-    else {
+    try {
+        const result = await apiPost('/api/sim/reset');
+        if (result.success) scenarioRuntime.requestAccepted(request);
+        else {
+            scenarioRuntime.requestFailed(request);
+            log.warn('mission reset failed', { error: result.error.message });
+        }
+    } catch (error: unknown) {
         scenarioRuntime.requestFailed(request);
-        log.warn('mission reset failed', { error: result.error.message });
+        log.error('mission reset failed unexpectedly', error);
+    } finally {
+        _resetRequestInFlight = false;
     }
 }
 
@@ -2480,8 +2499,26 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
     scenarioRuntime.apply(projected.scenario, snapshot.assets.length, interactionMode);
     if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
 
+    _applyLiveSnapshot(projected);
+}
+
+/** Restores the newest held v2 picture synchronously when DVR returns Live. */
+function _resumeHeldSnapshot(): void {
+    const latest = _lastSnapshot;
+    if (!_v2Active || latest === null) return;
+    _missionTransport = {
+        paused: latest.frame.paused ?? false,
+        speed: latest.frame.speed ?? 1,
+        simulationTimeSeconds: latest.frame.time ?? 0,
+    };
+    scenarioRuntime.resumeLive();
+    _applyLiveSnapshot(latest, true);
+}
+
+/** Renders one authoritative Live projection and its live-only side effects. */
+function _applyLiveSnapshot(projected: SceneSnapshot, snap = false): void {
     _renderMissionPanel();
-    _renderSnapshot(projected);
+    _renderSnapshot(projected, snap);
     dvr?.updateServer(projected.frame);
     // Roster and event announcements run over EVERY asset, not the visible
     // subset. The filter narrows what is drawn, not what happened: a vessel
