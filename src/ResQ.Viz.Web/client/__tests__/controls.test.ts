@@ -40,7 +40,12 @@ function installShellFixture(): HTMLElement {
         <button id="btn-editor-toggle" type="button"></button>
         <span id="editor-unavailable-note">Desktop workspace required</span>
         <aside id="sidebar">
-            <section id="operator-boot"></section>
+            <section id="operator-boot">
+                <div id="operator-boot-status">
+                    <strong id="operator-boot-title"></strong>
+                    <p id="operator-boot-detail"></p>
+                </div>
+            </section>
             <section id="operator-v2-console">
                 <div id="operator-mission"></div>
                 <div id="fleet-filter"></div>

@@ -4,6 +4,9 @@
 /** Which mutually exclusive shell branch is visible. */
 export type OperatorMode = 'booting' | 'v2' | 'legacy';
 
+/** What the boot branch tells the operator about the current connection attempt. */
+export type OperatorBootStatus = 'connecting' | 'error';
+
 /** Stable mount points consumed by lazy operator surfaces. */
 export interface OperatorMounts {
   readonly mission: HTMLElement;

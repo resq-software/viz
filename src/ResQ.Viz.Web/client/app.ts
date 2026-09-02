@@ -177,6 +177,10 @@ const startupCoordinator = new StartupCoordinator({
         if (mode === 'legacy' && _v2Active) _leaveV2();
         operatorShell.setMode(mode);
     },
+    setBootStatus: status => {
+        operatorShell.setBootStatus(status);
+        if (operatorShell.mode === 'booting') loadingOverlay.setStartupStatus(status);
+    },
     startLegacyScenario: async () =>
         (await apiPost('/api/sim/scenario/single')).success,
     startV2Scenario: async () =>

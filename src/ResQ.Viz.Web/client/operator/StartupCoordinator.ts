@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ScenarioSessionState } from '../assets/types';
-import type { OperatorMode } from './types';
+import type { OperatorBootStatus, OperatorMode } from './types';
 
 const FALLBACK_DELAY_MS = 5_000;
 const LEGACY_DEFAULT = 'single';
@@ -23,6 +23,7 @@ export interface StartupMutationResult {
 /** All effects owned outside the deterministic startup state machine. */
 export interface StartupCoordinatorDependencies {
   readonly setMode: (mode: OperatorMode) => void;
+  readonly setBootStatus: (status: OperatorBootStatus) => void;
   readonly startLegacyScenario: (name: string) => Promise<boolean>;
   readonly startV2Scenario: (name: string) => Promise<StartupMutationResult>;
   readonly schedule: (callback: () => void, delayMs: number) => number;
@@ -38,6 +39,7 @@ export interface StartupCoordinatorDependencies {
  */
 export class StartupCoordinator {
   private _mode: OperatorMode = 'booting';
+  private _bootStatus: OperatorBootStatus | null = null;
   private _v1AssetCount: number | null = null;
   private _v2Readable = false;
   private _v2Rejected = false;
@@ -53,14 +55,17 @@ export class StartupCoordinator {
     if (this._disposed
       || this._fallbackTimer !== null
       || this._v2Readable
-      || this._v2Rejected
       || this._fallbackElapsed) return;
+    this._setBootStatus('connecting');
     this._fallbackElapsed = false;
     this._fallbackTimer = this._deps.schedule(() => {
       this._fallbackTimer = null;
       if (this._disposed || this._v2Readable) return;
       this._fallbackElapsed = true;
-      this._tryEnterLegacy();
+      if (!this._tryEnterLegacy()) {
+        this._setMode('booting');
+        this._setBootStatus('error');
+      }
     }, FALLBACK_DELAY_MS);
   }
 
@@ -78,11 +83,11 @@ export class StartupCoordinator {
     if (this._disposed) return;
     this._v2Readable = false;
     this._v2Rejected = true;
-    this._cancelFallback();
     if (this._v1AssetCount === null) {
       if (this._mode === 'v2') this._setMode('booting');
       return;
     }
+    this._cancelFallback();
     this._tryEnterLegacy();
   }
 
@@ -114,6 +119,7 @@ export class StartupCoordinator {
   onConnectionFailed(): void {
     if (this._disposed) return;
     this._cancelFallback();
+    this._setBootStatus('error');
     // Viability belongs to one SignalR connection. The room-session default
     // decision deliberately does not: reconnecting must not make either preset
     // eligible again, but it must prove the two streams again from fresh frames.
@@ -130,20 +136,27 @@ export class StartupCoordinator {
     this._cancelFallback();
   }
 
-  private _tryEnterLegacy(): void {
+  private _tryEnterLegacy(): boolean {
     const assetCount = this._v1AssetCount;
-    if (assetCount === null || this._v2Readable || this._disposed) return;
+    if (assetCount === null || this._v2Readable || this._disposed) return false;
     this._setMode('legacy');
 
-    if (this._defaultDecided) return;
+    if (this._defaultDecided) return true;
     this._defaultDecided = true;
     if (assetCount === 0) void this._deps.startLegacyScenario(LEGACY_DEFAULT);
+    return true;
   }
 
   private _setMode(mode: OperatorMode): void {
     if (this._mode === mode) return;
     this._mode = mode;
     this._deps.setMode(mode);
+  }
+
+  private _setBootStatus(status: OperatorBootStatus): void {
+    if (this._bootStatus === status) return;
+    this._bootStatus = status;
+    this._deps.setBootStatus(status);
   }
 
   private _cancelFallback(): void {

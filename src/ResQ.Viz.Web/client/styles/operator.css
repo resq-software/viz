@@ -50,6 +50,27 @@
   font-size: 14px;
 }
 
+.operator-boot-status {
+  display: grid;
+  gap: 6px;
+}
+
+.operator-boot-detail {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.operator-boot[data-state="error"] {
+  border-color: var(--primary-text);
+  background: var(--primary-soft);
+}
+
+.operator-boot[data-state="error"] :is(.operator-boot-kicker, strong) {
+  color: var(--primary-text);
+}
+
 .operator-boot-kicker,
 .operator-section-kicker {
   color: var(--info);

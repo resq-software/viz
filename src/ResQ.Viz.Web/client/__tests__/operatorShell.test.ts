@@ -60,7 +60,13 @@ function installFixture(): void {
       <span id="editor-unavailable-note">Desktop workspace required</span>
     </header>
     <aside id="sidebar">
-      <section id="operator-boot">Connecting</section>
+      <section id="operator-boot">
+        <span>Operator console</span>
+        <div id="operator-boot-status" role="status" aria-live="polite" aria-atomic="true" data-state="connecting">
+          <strong id="operator-boot-title">Establishing simulation link…</strong>
+          <p id="operator-boot-detail">Negotiating live simulation streams.</p>
+        </div>
+      </section>
       <section id="operator-v2-console">
         <div id="operator-mission"></div>
         <div id="fleet-filter"></div>
@@ -111,6 +117,37 @@ describe('OperatorShell', () => {
     expectBranch('operator-boot', false);
     expectBranch('operator-v2-console', false);
     expectBranch('legacy-console', true);
+  });
+
+  it('owns accessible connecting and error presentation inside the boot branch', () => {
+    const shell = new OperatorShell(document);
+    const boot = document.getElementById('operator-boot') as HTMLElement;
+    const status = document.getElementById('operator-boot-status') as HTMLElement;
+    const title = document.getElementById('operator-boot-title') as HTMLElement;
+    const detail = document.getElementById('operator-boot-detail') as HTMLElement;
+
+    expect(shell.bootStatus).toBe('connecting');
+    expect(status.getAttribute('role')).toBe('status');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+
+    shell.setBootStatus('error');
+    expect(shell.bootStatus).toBe('error');
+    expect(boot.dataset['state']).toBe('error');
+    expect(status.dataset['state']).toBe('error');
+    expect(status.getAttribute('role')).toBe('alert');
+    expect(status.getAttribute('aria-live')).toBe('assertive');
+    expect(title.textContent).toBe('Simulation link unavailable');
+    expect(detail.textContent).toBe(
+      'Check the simulation host and network connection. Retrying automatically.',
+    );
+
+    shell.setBootStatus('connecting');
+    expect(shell.bootStatus).toBe('connecting');
+    expect(boot.dataset['state']).toBe('connecting');
+    expect(status.getAttribute('role')).toBe('status');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(title.textContent).toBe('Establishing simulation link…');
+    expect(detail.textContent).toBe('Negotiating live simulation streams.');
   });
 
   it('resolves stable mounts outside the translated sidebar where required', () => {
@@ -347,6 +384,16 @@ describe('the shipped operator shell contract', () => {
     expect(boot.hidden).toBe(false);
     expect(boot.hasAttribute('inert')).toBe(false);
     expect(boot.getAttribute('aria-hidden')).toBe('false');
+    const status = page.getElementById('operator-boot-status') as HTMLElement;
+    expect(boot.dataset['state']).toBe('connecting');
+    expect(status.dataset['state']).toBe('connecting');
+    expect(status.getAttribute('role')).toBe('status');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.getAttribute('aria-atomic')).toBe('true');
+    expect(page.getElementById('operator-boot-title')?.textContent?.trim())
+      .toBe('Establishing simulation link…');
+    expect(page.getElementById('operator-boot-detail')?.textContent?.trim())
+      .toBe('Negotiating live simulation streams.');
     for (const branch of [v2, legacy]) {
       expect(branch.hidden).toBe(true);
       expect(branch.hasAttribute('inert')).toBe(true);
@@ -423,6 +470,13 @@ describe('the shipped operator shell contract', () => {
     expect(operatorCss).toContain('100dvh');
     expect(operatorCss).toContain('prefers-reduced-motion');
     expect(operatorCss).toContain(':focus-visible');
+  });
+
+  it('styles the boot error with a semantic token as well as explicit text', () => {
+    const operatorCss = read('../styles/operator.css');
+    expect(operatorCss).toMatch(
+      /\.operator-boot\[data-state=['"]error['"]\][\s\S]*?border-color:\s*var\(--primary-text\)/,
+    );
   });
 
   it('constructs the shell before legacy controls and delegates stream modes to startup', () => {

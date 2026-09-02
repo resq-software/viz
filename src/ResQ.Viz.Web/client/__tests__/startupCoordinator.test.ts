@@ -7,11 +7,12 @@ import {
   StartupCoordinator,
   type StartupCoordinatorDependencies,
 } from '../operator/StartupCoordinator';
-import type { OperatorMode } from '../operator/types';
+import type { OperatorBootStatus, OperatorMode } from '../operator/types';
 
 interface Harness {
   readonly coordinator: StartupCoordinator;
   readonly modes: OperatorMode[];
+  readonly bootStatuses: OperatorBootStatus[];
   readonly v1Starts: string[];
   readonly v2Starts: string[];
   readonly schedule: ReturnType<typeof vi.fn<StartupCoordinatorDependencies['schedule']>>;
@@ -20,6 +21,7 @@ interface Harness {
 
 function harness(overrides: Partial<StartupCoordinatorDependencies> = {}): Harness {
   const modes: OperatorMode[] = [];
+  const bootStatuses: OperatorBootStatus[] = [];
   const v1Starts: string[] = [];
   const v2Starts: string[] = [];
   const schedule = vi.fn<StartupCoordinatorDependencies['schedule']>(
@@ -30,6 +32,7 @@ function harness(overrides: Partial<StartupCoordinatorDependencies> = {}): Harne
   );
   const coordinator = new StartupCoordinator({
     setMode: mode => modes.push(mode),
+    setBootStatus: status => bootStatuses.push(status),
     startLegacyScenario: async name => {
       v1Starts.push(name);
       return true;
@@ -45,7 +48,7 @@ function harness(overrides: Partial<StartupCoordinatorDependencies> = {}): Harne
     cancel,
     ...overrides,
   });
-  return { coordinator, modes, v1Starts, v2Starts, schedule, cancel };
+  return { coordinator, modes, bootStatuses, v1Starts, v2Starts, schedule, cancel };
 }
 
 function lastMode(h: Harness): OperatorMode | undefined {
@@ -135,7 +138,7 @@ describe('legacy fallback', () => {
     expect(h.v2Starts).toEqual([]);
   });
 
-  it('does not claim legacy without a v1 frame', async () => {
+  it('shows a persistent boot error when neither stream is viable after five seconds', async () => {
     vi.useFakeTimers();
     const h = harness();
 
@@ -143,6 +146,20 @@ describe('legacy fallback', () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(h.modes).toEqual([]);
+    expect(h.bootStatuses).toEqual(['connecting', 'error']);
+  });
+
+  it('keeps the error timer after v2 rejection when no v1 frame has arrived', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+
+    h.coordinator.startNegotiation();
+    h.coordinator.onV2Rejected();
+    expect(h.cancel).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(h.modes).toEqual([]);
+    expect(h.bootStatuses).toEqual(['connecting', 'error']);
   });
 
   it('enters legacy when the first v1 frame arrives after the timeout', async () => {
@@ -154,7 +171,20 @@ describe('legacy fallback', () => {
     h.coordinator.onV1Frame(0);
 
     expect(lastMode(h)).toBe('legacy');
+    expect(h.bootStatuses).toEqual(['connecting', 'error']);
     expect(h.v1Starts).toEqual(['single']);
+  });
+
+  it('promotes a late v2 snapshot after a no-stream boot error', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+
+    h.coordinator.startNegotiation();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await h.coordinator.onV2Snapshot({ assetCount: 1, scenario: null });
+
+    expect(h.bootStatuses).toEqual(['connecting', 'error']);
+    expect(lastMode(h)).toBe('v2');
   });
 
   it('enters legacy without starting Single for a populated room', () => {
@@ -278,13 +308,28 @@ describe('negotiation lifecycle', () => {
     h.coordinator.onConnectionFailed();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(h.modes).toEqual([]);
+    expect(h.bootStatuses).toEqual(['connecting', 'error']);
     expect(h.v1Starts).toEqual([]);
 
     h.coordinator.startNegotiation();
+    expect(h.bootStatuses).toEqual(['connecting', 'error', 'connecting']);
     h.coordinator.onV1Frame(0);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lastMode(h)).toBe('legacy');
     expect(h.v1Starts).toEqual(['single']);
+  });
+
+  it('recovers from connection error through a fresh negotiation and readable v2', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+
+    h.coordinator.startNegotiation();
+    h.coordinator.onConnectionFailed();
+    h.coordinator.startNegotiation();
+    await h.coordinator.onV2Snapshot({ assetCount: 2, scenario: null });
+
+    expect(h.bootStatuses).toEqual(['connecting', 'error', 'connecting']);
+    expect(h.modes).toEqual(['v2']);
   });
 
   it('renegotiates stream viability after a previously readable v2 connection reconnects', async () => {
@@ -300,6 +345,22 @@ describe('negotiation lifecycle', () => {
     expect(h.modes).toEqual(['v2', 'legacy']);
     expect(h.v1Starts).toEqual([]);
     expect(h.v2Starts).toEqual([]);
+  });
+
+  it('activates boot before publishing a no-stream reconnect error', async () => {
+    vi.useFakeTimers();
+    const effects: string[] = [];
+    const h = harness({
+      setMode: mode => effects.push(`mode:${mode}`),
+      setBootStatus: status => effects.push(`status:${status}`),
+    });
+
+    await h.coordinator.onV2Snapshot({ assetCount: 2, scenario: null });
+    h.coordinator.onConnectionFailed();
+    h.coordinator.startNegotiation();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(effects.slice(-2)).toEqual(['mode:booting', 'status:error']);
   });
 
   it('dispose cancels fallback permanently', async () => {

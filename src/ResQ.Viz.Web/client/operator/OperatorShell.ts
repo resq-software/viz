@@ -1,7 +1,7 @@
 // ResQ Viz - operator shell branch and mount ownership
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OperatorMode, OperatorMounts } from './types';
+import type { OperatorBootStatus, OperatorMode, OperatorMounts } from './types';
 import { ManagedLayerVisibility } from '../ui/managedLayerVisibility';
 
 const EDITOR_CHROME_SELECTOR = [
@@ -28,6 +28,9 @@ export class OperatorShellSetupError extends Error {
 interface ShellElements {
   readonly sidebar: HTMLElement;
   readonly boot: HTMLElement;
+  readonly bootStatus: HTMLElement;
+  readonly bootTitle: HTMLElement;
+  readonly bootDetail: HTMLElement;
   readonly v2: HTMLElement;
   readonly legacy: HTMLElement;
   readonly fleetHeading: HTMLElement;
@@ -39,6 +42,9 @@ interface ShellElements {
 const REQUIRED_IDS = [
   'sidebar',
   'operator-boot',
+  'operator-boot-status',
+  'operator-boot-title',
+  'operator-boot-detail',
   'operator-v2-console',
   'legacy-console',
   'operator-mission',
@@ -66,6 +72,7 @@ export class OperatorShell {
   private readonly _doc: Document;
   private readonly _investorLayers: ManagedLayerVisibility;
   private _mode: OperatorMode = 'booting';
+  private _bootStatus: OperatorBootStatus = 'connecting';
   private _railOpen = true;
   private _editorOpen = false;
   private _editorRequestedOpen = false;
@@ -89,6 +96,9 @@ export class OperatorShell {
     this._elements = {
       sidebar: get('sidebar'),
       boot: get('operator-boot'),
+      bootStatus: get('operator-boot-status'),
+      bootTitle: get('operator-boot-title'),
+      bootDetail: get('operator-boot-detail'),
       v2: get('operator-v2-console'),
       legacy: get('legacy-console'),
       fleetHeading: get('fleet-heading'),
@@ -111,6 +121,7 @@ export class OperatorShell {
     this._elements.editorToggle.addEventListener(
       'click', () => this.setEditorOpen(!this._editorRequestedOpen),
     );
+    this.setBootStatus('connecting');
     this.setMode('booting');
     this.setRailOpen(true);
     this.setEditorOpen(false);
@@ -125,6 +136,10 @@ export class OperatorShell {
 
   get mode(): OperatorMode {
     return this._mode;
+  }
+
+  get bootStatus(): OperatorBootStatus {
+    return this._bootStatus;
   }
 
   get editorOpen(): boolean {
@@ -153,6 +168,29 @@ export class OperatorShell {
     this._setBranchActive(this._elements.boot, mode === 'booting');
     this._setBranchActive(this._elements.v2, mode === 'v2');
     this._setBranchActive(this._elements.legacy, mode === 'legacy');
+  }
+
+  /** Updates the single accessible status surface inside the boot branch. */
+  setBootStatus(status: OperatorBootStatus): void {
+    this._bootStatus = status;
+    const { boot, bootStatus, bootTitle, bootDetail } = this._elements;
+    boot.dataset['state'] = status;
+    bootStatus.dataset['state'] = status;
+    bootStatus.setAttribute('aria-atomic', 'true');
+
+    if (status === 'error') {
+      bootStatus.setAttribute('role', 'alert');
+      bootStatus.setAttribute('aria-live', 'assertive');
+      bootTitle.textContent = 'Simulation link unavailable';
+      bootDetail.textContent =
+        'Check the simulation host and network connection. Retrying automatically.';
+      return;
+    }
+
+    bootStatus.setAttribute('role', 'status');
+    bootStatus.setAttribute('aria-live', 'polite');
+    bootTitle.textContent = 'Establishing simulation link…';
+    bootDetail.textContent = 'Negotiating live simulation streams.';
   }
 
   setRailOpen(open: boolean): void {

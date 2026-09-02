@@ -112,6 +112,13 @@ describe('entry-chunk boundaries', () => {
     );
   });
 
+  it('routes boot presentation through OperatorShell instead of ad hoc DOM writes', () => {
+    expect(appSrc).toMatch(
+      /new StartupCoordinator\(\{[\s\S]*?setBootStatus:\s*status\s*=>\s*\{[\s\S]*?operatorShell\.setBootStatus\(status\);[\s\S]*?if \(operatorShell\.mode === 'booting'\) loadingOverlay\.setStartupStatus\(status\);[\s\S]*?\}/,
+    );
+    expect(appSrc).not.toMatch(/getElementById\(['"]operator-boot-(?:status|title|detail)['"]\)/);
+  });
+
   it('routes subscription rejection and connection lifecycle through startup coordination', () => {
     expect(appSrc).toMatch(/function _subscribeSnapshots[\s\S]*?startupCoordinator\.onV2Rejected\(\)/);
     const snapshotHandler = appSrc.slice(

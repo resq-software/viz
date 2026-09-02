@@ -192,9 +192,12 @@
     <!-- Left sidebar -->
     <aside id="sidebar">
 
-        <section id="operator-boot" class="operator-branch operator-boot" aria-hidden="false" aria-live="polite">
+        <section id="operator-boot" class="operator-branch operator-boot" data-state="connecting" aria-hidden="false">
             <span class="operator-boot-kicker">Operator console</span>
-            <strong>Establishing simulation link…</strong>
+            <div id="operator-boot-status" class="operator-boot-status" data-state="connecting" role="status" aria-live="polite" aria-atomic="true">
+                <strong id="operator-boot-title">Establishing simulation link…</strong>
+                <p id="operator-boot-detail" class="operator-boot-detail">Negotiating live simulation streams.</p>
+            </div>
         </section>
 
         <section id="operator-v2-console" class="operator-branch operator-v2-console" hidden inert aria-hidden="true">

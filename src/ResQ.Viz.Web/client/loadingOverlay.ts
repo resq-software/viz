@@ -15,6 +15,8 @@
 // This gives the cold-load and outage states a product surface instead
 // of a black canvas + browser-console error.
 
+import type { OperatorBootStatus } from './operator/types';
+
 const PHASES = [
     'Initializing geometry cache',
     'Establishing mesh link',
@@ -78,6 +80,27 @@ export class LoadingOverlay {
         this._el.appendChild(inner);
         document.body.appendChild(this._el);
 
+        this._startPhaseCycle();
+    }
+
+    /** Mirrors startup negotiation where it cannot be obscured by this layer. */
+    setStartupStatus(status: OperatorBootStatus): void {
+        // Once anything live has rendered, reconnect preserves that last good
+        // picture and the established non-blocking outage lifecycle owns this
+        // layer. The rail may still move to its boot error state independently.
+        if (this._firstFrameSeen) return;
+        if (status === 'error') {
+            this._showStartupErrorCard();
+            return;
+        }
+
+        this._clearAllTimers();
+        this._el.classList.remove('disconnected');
+        this._el.classList.add('visible');
+        this._el.setAttribute('role', 'status');
+        this._el.setAttribute('aria-live', 'polite');
+        this._titleEl.textContent = 'ResQ Viz';
+        this._subtitleEl.textContent = 'Live coordination';
         this._startPhaseCycle();
     }
 
@@ -163,6 +186,19 @@ export class LoadingOverlay {
         this._titleEl.textContent    = 'Connection lost';
         this._phaseEl.textContent    = 'Retrying…';
         this._subtitleEl.textContent = 'Check the host and try reloading if it persists.';
+    }
+
+    /** Cold-start failure copy; unlike an outage, no working connection existed yet. */
+    private _showStartupErrorCard(): void {
+        this._clearAllTimers();
+        this._el.classList.remove('connecting');
+        this._el.classList.add('visible', 'disconnected');
+        this._el.setAttribute('role', 'alert');
+        this._el.setAttribute('aria-live', 'assertive');
+        this._titleEl.textContent = 'Simulation link unavailable';
+        this._phaseEl.textContent = 'Retrying automatically…';
+        this._subtitleEl.textContent =
+            'Check the simulation host and network connection, or reload this page.';
     }
 
     private _startPhaseCycle(): void {
