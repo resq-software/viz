@@ -129,6 +129,17 @@ function effectiveProperty(
 }
 
 describe('rendered shell contracts', () => {
+  it('keeps interactive roster churn out of live regions', () => {
+    const page = new DOMParser().parseFromString(read('../index.html'), 'text/html');
+    const roster = page.getElementById('fleet-roster');
+    const telemetry = page.getElementById('a11y-telemetry');
+
+    expect(roster?.hasAttribute('aria-live')).toBe(false);
+    expect(roster?.getAttribute('role')).toBeNull();
+    expect(telemetry?.getAttribute('aria-live')).toBe('polite');
+    expect(telemetry?.getAttribute('aria-atomic')).toBe('true');
+  });
+
   it('preserves safe-area block padding after every matching responsive override', () => {
     const main = read('../styles/main.css');
     const editor = read('../styles/editor.css');

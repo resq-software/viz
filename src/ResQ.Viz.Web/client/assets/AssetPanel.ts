@@ -34,13 +34,13 @@ import { buildAssetCards, buildTrackCards } from './panelCards';
 import type { PanelCard } from './panelCards';
 import {
   DESTRUCTIVE_COMMANDS,
-  PARAMETER_SPECS,
   VERTICAL_REFERENCES,
   evaluateCommand,
   loadAssetCapabilities,
   newIdempotencyKey,
   pointTarget,
   postAssetCommand,
+  parameterSpec,
   surfaceElevationUnderAssetM,
   targetForAsset,
 } from './panelCommands';
@@ -167,8 +167,7 @@ export class AssetPanel {
   private _retryTimer: ReturnType<typeof setTimeout> | null = null;
   private _retryAttempt = 0;
   private _commandSignature = '';
-  private _busy = false;
-  private _busyGeneration: number | null = null;
+  private _busyOperation: { readonly generation: number; readonly token: symbol } | null = null;
 
   constructor(options: AssetPanelOptions) {
     if (!options?.mount) throw new Error('AssetPanel requires an explicit mount');
@@ -638,7 +637,7 @@ export class AssetPanel {
   private _syncBounds(parts: CommandParts, view: AssetView, motion: MotionConstraints): void {
     const ctx = this._boundsContext(parts, view);
     for (const [key, input] of parts.inputs) {
-      const spec = PARAMETER_SPECS[key];
+      const spec = parameterSpec(key);
       if (!spec) continue;
       const { min, max } = spec.bounds(motion, ctx);
       // An unbounded side carries no attribute at all rather than a placeholder:
@@ -660,7 +659,7 @@ export class AssetPanel {
     // that goes grey with nothing to say reads as broken rather than as busy.
     const reason = availability.reason
       ?? this._parameterProblem(parts, motion, view)
-      ?? (this._busy ? 'a command is already in flight' : null);
+      ?? (this._busyOperation !== null ? 'a command is already in flight' : null);
     const enabled = reason === null;
 
     // `aria-disabled` rather than the `disabled` attribute. A disabled control
@@ -699,7 +698,7 @@ export class AssetPanel {
   ): string | null {
     const ctx = this._boundsContext(parts, view);
     for (const [key, input] of parts.inputs) {
-      const spec = PARAMETER_SPECS[key];
+      const spec = parameterSpec(key);
       if (!spec) return `this client cannot supply the "${key}" parameter`;
       const value = Number(input.value);
       if (input.value.trim() === '' || !Number.isFinite(value)) {
@@ -732,7 +731,7 @@ export class AssetPanel {
     let datum: HTMLSelectElement | null = null;
 
     for (const key of capability.requiredParameters) {
-      const spec = PARAMETER_SPECS[key];
+      const spec = parameterSpec(key);
       // An unsupported key is not skipped silently: `evaluateCommand` has already
       // blocked the command and named the key, and the button stays visible so the
       // operator can see what the asset accepts and this client cannot yet send.
@@ -810,54 +809,56 @@ export class AssetPanel {
         : `${humanise(capability.kind)} is not available.`);
       return;
     }
-    if (this._busy) return;
+    if (this._busyOperation !== null) return;
 
     const assetId = this._subjectId;
     const view = this._view;
     if (!assetId || !view || !this._report) return;
     const generation = this._generation;
+    const picker = capability.requiresTarget ? this._pickTarget : null;
+    if (capability.requiresTarget && !picker) return;
 
-    let target: unknown;
-    if (capability.requiresTarget) {
-      const picker = this._pickTarget;
-      if (!picker) return;
-      this._announce(`Pick a destination for ${humanise(capability.kind).toLowerCase()}.`);
-      const picked = await picker(capability.kind, humanise(capability.kind));
-      if (!this._isCurrentAsset(assetId, generation)) return;
-      if (!picked) {
-        this._announce('Destination cancelled.');
-        return;
-      }
-      // A map pick answers *where*, not *how high*: its `Y` is the surface the ray
-      // hit. `targetForAsset` decides the height by domain — the surface for
-      // something that drives or floats on it, the reported altitude for something
-      // that flies — so a picked `goTo` is not a commanded descent into terrain.
-      target = pointTarget(targetForAsset(picked, view));
-    }
-
-    const parameters: Record<string, string> = {};
-    for (const [key, input] of parts.inputs) {
-      const spec = PARAMETER_SPECS[key];
-      if (!spec) return;
-      parameters[key] = String(spec.toWire(Number(input.value)));
-      // An altitude without its datum is refused at the boundary, and rightly:
-      // above-ground and mean-sea-level differ by the hill under the asset.
-      if (spec.needsVerticalReference && parts.datum) {
-        parameters['verticalReference'] = parts.datum.value;
-      }
-    }
-
-    const request: AssetCommandRequestBody = {
-      kind: capability.kind,
-      idempotencyKey: newIdempotencyKey(),
-      ...(target === undefined ? {} : { target }),
-      ...(Object.keys(parameters).length === 0 ? {} : { parameters }),
-    };
-
-    this._busy = true;
-    this._busyGeneration = generation;
+    const operation = { generation, token: Symbol(capability.kind) };
+    this._busyOperation = operation;
     parts.wrap.classList.add('is-busy');
+    this._renderCommands(view);
+
     try {
+      let target: unknown;
+      if (capability.requiresTarget && picker) {
+        this._announce(`Pick a destination for ${humanise(capability.kind).toLowerCase()}.`);
+        const picked = await picker(capability.kind, humanise(capability.kind));
+        if (!this._isCurrentAsset(assetId, generation)) return;
+        if (!picked) {
+          this._announce('Destination cancelled.');
+          return;
+        }
+        // A map pick answers *where*, not *how high*: its `Y` is the surface the ray
+        // hit. `targetForAsset` decides the height by domain — the surface for
+        // something that drives or floats on it, the reported altitude for something
+        // that flies — so a picked `goTo` is not a commanded descent into terrain.
+        target = pointTarget(targetForAsset(picked, view));
+      }
+
+      const parameters: Record<string, string> = {};
+      for (const [key, input] of parts.inputs) {
+        const spec = parameterSpec(key);
+        if (!spec) return;
+        parameters[key] = String(spec.toWire(Number(input.value)));
+        // An altitude without its datum is refused at the boundary, and rightly:
+        // above-ground and mean-sea-level differ by the hill under the asset.
+        if (spec.needsVerticalReference && parts.datum) {
+          parameters['verticalReference'] = parts.datum.value;
+        }
+      }
+
+      const request: AssetCommandRequestBody = {
+        kind: capability.kind,
+        idempotencyKey: newIdempotencyKey(),
+        ...(target === undefined ? {} : { target }),
+        ...(Object.keys(parameters).length === 0 ? {} : { parameters }),
+      };
+
       const outcome = await this._issue(assetId, request);
       if (this._isCurrentAsset(assetId, generation)) this._announce(outcome.message);
     } catch (err: unknown) {
@@ -866,10 +867,13 @@ export class AssetPanel {
         this._announce(`${humanise(capability.kind)} failed to send.`);
       }
     } finally {
-      if (this._isCurrentAsset(assetId, generation) && this._busyGeneration === generation) {
-        this._busy = false;
-        this._busyGeneration = null;
+      if (this._busyOperation?.token === operation.token
+        && this._busyOperation.generation === generation) {
+        this._busyOperation = null;
         parts.wrap.classList.remove('is-busy');
+        if (this._isCurrentAsset(assetId, generation) && this._view) {
+          this._renderCommands(this._view);
+        }
       }
     }
   }
@@ -899,8 +903,7 @@ export class AssetPanel {
 
   private _invalidateSubject(): void {
     this._generation += 1;
-    this._busy = false;
-    this._busyGeneration = null;
+    this._busyOperation = null;
   }
 
   private _isCurrentAsset(assetId: string, generation: number): boolean {

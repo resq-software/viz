@@ -102,12 +102,6 @@ export function permitsState(policy: string, state: number): boolean {
   }
 }
 
-/** Parameter keys this client can collect and range-check. A required key outside
- *  this set disables the command *and says so*, instead of sending a request the
- *  validator refuses for a missing parameter. */
-export const SUPPORTED_PARAMETERS: ReadonlySet<string> =
-  new Set(['speed', 'altitude', 'course', 'radius']);
-
 /** Commands that reduce energy in the system, styled as destructive. */
 export const DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set(['emergencyStop', 'stop']);
 
@@ -174,7 +168,7 @@ export function evaluateCommand(
   }
 
   for (const key of parameters) {
-    if (!SUPPORTED_PARAMETERS.has(key)) {
+    if (parameterSpec(key) === null) {
       return deny(`this client cannot supply the "${key}" parameter`);
     }
   }
@@ -300,9 +294,10 @@ function currentHeadingRad(view: AssetView): number | null {
 }
 
 /** The parameters this client can collect, keyed by the wire name in
- *  `CommandParameters`. */
-export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
-  speed: {
+ *  `CommandParameters`. A Map has no prototype names for hostile wire keys to
+ *  inherit, and all consumers go through {@link parameterSpec}. */
+const PARAMETER_SPECS: ReadonlyMap<string, ParameterSpec> = new Map([
+  ['speed', {
     label: 'Speed',
     unit: 'm/s',
     step: 0.5,
@@ -310,8 +305,8 @@ export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
     toWire: (v) => v,
     initial: (view, m) =>
       clamp(Math.abs(currentSpeedMps(view) ?? m.maxSpeedMps / 2), m.minSpeedMps, m.maxSpeedMps),
-  },
-  altitude: {
+  }],
+  ['altitude', {
     label: 'Altitude',
     unit: 'm',
     step: 1,
@@ -325,8 +320,8 @@ export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
       const d = view.domainState;
       return isAirDomainState(d) ? Math.round(d.altitudeAboveGroundM) : 40;
     },
-  },
-  course: {
+  }],
+  ['course', {
     label: 'Course',
     unit: '° true',
     step: 1,
@@ -337,16 +332,21 @@ export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
       const heading = currentHeadingRad(view);
       return heading === null ? 0 : Math.round(normaliseDeg((heading * 180) / Math.PI));
     },
-  },
-  radius: {
+  }],
+  ['radius', {
     label: 'Radius',
     unit: 'm',
     step: 5,
     bounds: () => ({ min: 1, max: 5_000 }),
     toWire: (v) => v,
     initial: () => 50,
-  },
-};
+  }],
+]);
+
+/** Supported parameter metadata, or null for every unknown/prototype-like key. */
+export function parameterSpec(key: string): ParameterSpec | null {
+  return PARAMETER_SPECS.get(key) ?? null;
+}
 
 // ── Targets ─────────────────────────────────────────────────────────────────
 
