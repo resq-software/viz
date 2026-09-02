@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ControlPanel } from '../controls';
+import { OperatorShell } from '../operator/OperatorShell';
 import type { DroneState } from '../types';
 
 function drone(id: string): DroneState {
@@ -33,6 +34,31 @@ function legacyRoot(): HTMLElement {
     return document.getElementById('legacy-console') as HTMLElement;
 }
 
+function installShellFixture(): HTMLElement {
+    document.body.innerHTML = `
+        <button id="btn-sidebar-toggle" type="button"></button>
+        <button id="btn-editor-toggle" type="button"></button>
+        <span id="editor-unavailable-note">Desktop workspace required</span>
+        <aside id="sidebar">
+            <section id="operator-boot"></section>
+            <section id="operator-v2-console">
+                <div id="operator-mission"></div>
+                <div id="fleet-filter"></div>
+                <h2 id="fleet-heading" tabindex="-1">Fleet</h2>
+                <div id="fleet-roster"></div>
+                <details id="advanced-safety"><summary>Advanced</summary></details>
+                <button id="btn-spawn-asset"></button>
+                <button id="btn-environment"></button>
+            </section>
+            <section id="legacy-console"></section>
+        </aside>
+        <div id="operator-context-layer"></div>
+        <div id="operator-modal-layer"></div>
+        <div id="operator-editor-layer"></div>
+    `;
+    return legacyRoot();
+}
+
 beforeEach(() => {
     // ControlPanel's constructor reaches for many elements but guards every
     // lookup with `?.`, so the two selects it actually syncs are enough.
@@ -40,6 +66,9 @@ beforeEach(() => {
         <section id="legacy-console">
             <select id="drone-select"></select>
             <select id="fault-drone-select"></select>
+            <button id="legacy-button"><span id="legacy-button-child">Action</span></button>
+            <textarea id="legacy-textarea"></textarea>
+            <div id="legacy-editable" contenteditable="true"><span id="legacy-editable-child">Text</span></div>
         </section>
     `;
 });
@@ -144,5 +173,87 @@ describe('ControlPanel keyboard isolation', () => {
         document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit1', bubbles: true }));
 
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not run legacy shortcuts while the rail ancestor is closed', () => {
+        const root = installShellFixture();
+        const shell = new OperatorShell(document);
+        shell.setMode('legacy');
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(root);
+        shell.setRailOpen(false);
+
+        for (const code of ['KeyR', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5']) {
+            document.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+        }
+
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['legacy-button', 'legacy-button-child', 'legacy-textarea', 'legacy-editable-child'])(
+        'does not run or consume a shortcut from interactive target %s',
+        id => {
+            const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+                new Response(null, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            new ControlPanel(legacyRoot());
+            const event = new KeyboardEvent('keydown', {
+                code: 'KeyR', bubbles: true, cancelable: true,
+            });
+
+            document.getElementById(id)!.dispatchEvent(event);
+
+            expect(event.defaultPrevented).toBe(false);
+            expect(fetchMock).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        { ctrlKey: true },
+        { metaKey: true },
+        { altKey: true },
+    ])('does not run or consume a reserved modifier shortcut', modifiers => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'KeyR', bubbles: true, cancelable: true, ...modifiers,
+        });
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves an already handled event alone', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'KeyR', bubbles: true, cancelable: true,
+        });
+        event.preventDefault();
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps an ordinary unmodified body shortcut working', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'KeyR', bubbles: true, cancelable: true,
+        });
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sim/reset');
     });
 });

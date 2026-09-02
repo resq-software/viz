@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
+import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { TERRAIN_MIN_ABOVE, terrainHeight } from './terrain';
 import { prefersReducedMotion } from './reducedMotion';
 
@@ -81,7 +82,9 @@ export class UnityCamera {
         domElement.addEventListener('mouseup',      this._onMouseUp);
         domElement.addEventListener('wheel',        this._onWheel, { passive: false });
         domElement.addEventListener('contextmenu',  e => e.preventDefault());
-        document.addEventListener('keydown', e => { this._keys.add(e.code); });
+        document.addEventListener('keydown', e => {
+            if (!shouldIgnoreGlobalShortcut(e)) this._keys.add(e.code);
+        });
         document.addEventListener('keyup',   e => { this._keys.delete(e.code); });
         // Release RMB if mouse leaves window
         document.addEventListener('mouseup', e => {

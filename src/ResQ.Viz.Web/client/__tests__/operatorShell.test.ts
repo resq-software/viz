@@ -3,7 +3,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OperatorShell, OperatorShellSetupError } from '../operator/OperatorShell';
 
@@ -33,7 +33,8 @@ function installFixture(): void {
   document.body.innerHTML = `
     <header id="hud-top">
       <button id="btn-sidebar-toggle" type="button"></button>
-      <button id="btn-editor-toggle" type="button"></button>
+      <button id="btn-editor-toggle" type="button" aria-describedby="editor-unavailable-note"></button>
+      <span id="editor-unavailable-note">Desktop workspace required</span>
     </header>
     <aside id="sidebar">
       <section id="operator-boot">Connecting</section>
@@ -41,12 +42,13 @@ function installFixture(): void {
         <div id="operator-mission"></div>
         <div id="fleet-filter"></div>
         <h2 id="fleet-heading" tabindex="-1">Fleet</h2>
+        <button id="fleet-action" type="button">Fleet action</button>
         <div id="fleet-roster"></div>
         <details id="advanced-safety"><summary>Advanced / Safety</summary></details>
         <button id="btn-spawn-asset" type="button"></button>
         <button id="btn-environment" type="button"></button>
       </section>
-      <section id="legacy-console">Legacy</section>
+      <section id="legacy-console"><button id="legacy-action" type="button">Legacy action</button></section>
     </aside>
     <div id="operator-context-layer"></div>
     <div id="operator-modal-layer"></div>
@@ -62,6 +64,7 @@ function expectBranch(id: string, active: boolean): void {
 }
 
 beforeEach(installFixture);
+afterEach(() => vi.restoreAllMocks());
 
 describe('OperatorShell', () => {
   it('starts in booting mode with both consoles isolated', () => {
@@ -152,6 +155,73 @@ describe('OperatorShell', () => {
     expect(() => new OperatorShell(document)).toThrowError(OperatorShellSetupError);
     expect(() => new OperatorShell(document)).toThrowError(/operator-mission/);
   });
+
+  it('moves legacy focus to the v2 fleet heading before retiring legacy', () => {
+    const shell = new OperatorShell(document);
+    shell.setMode('legacy');
+    (document.getElementById('legacy-action') as HTMLButtonElement).focus();
+
+    shell.setMode('v2');
+
+    expect(document.activeElement?.id).toBe('fleet-heading');
+    expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
+  });
+
+  it('moves v2 focus to the external rail toggle before retiring v2', () => {
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    (document.getElementById('fleet-action') as HTMLButtonElement).focus();
+
+    shell.setMode('legacy');
+
+    expect(document.activeElement?.id).toBe('btn-sidebar-toggle');
+    expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
+  });
+
+  it('evacuates focus to the rail toggle before closing the rail', () => {
+    const shell = new OperatorShell(document);
+    shell.setMode('legacy');
+    (document.getElementById('legacy-action') as HTMLButtonElement).focus();
+
+    shell.setRailOpen(false);
+
+    expect(document.activeElement?.id).toBe('btn-sidebar-toggle');
+    expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
+  });
+
+  it('does not steal focus already outside the rail when closing it', () => {
+    const shell = new OperatorShell(document);
+    const editorToggle = document.getElementById('btn-editor-toggle') as HTMLButtonElement;
+    editorToggle.focus();
+
+    shell.setRailOpen(false);
+
+    expect(document.activeElement).toBe(editorToggle);
+  });
+
+  it('disables Editor below 760px with an accessible explanation', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+      matches: query === '(max-width: 759px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }) as unknown as MediaQueryList);
+    const shell = new OperatorShell(document);
+    const toggle = document.getElementById('btn-editor-toggle') as HTMLButtonElement;
+    const layer = document.getElementById('operator-editor-layer') as HTMLElement;
+
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute('aria-disabled')).toBe('true');
+    expect(toggle.getAttribute('aria-describedby')).toBe('editor-unavailable-note');
+    expect(toggle.title).toBe('Desktop workspace required');
+    shell.setEditorOpen(true);
+    expect(shell.editorOpen).toBe(false);
+    expect(layer.hidden).toBe(true);
+  });
 });
 
 describe('the shipped operator shell contract', () => {
@@ -168,6 +238,8 @@ describe('the shipped operator shell contract', () => {
     expect(page.getElementById('operator-editor-layer')?.closest('#sidebar')).toBeNull();
     expect(page.getElementById('btn-sidebar-toggle')?.closest('#sidebar')).toBeNull();
     expect(page.getElementById('btn-editor-toggle')?.textContent?.trim()).toBe('Editor');
+    expect(page.getElementById('editor-unavailable-note')?.textContent?.trim())
+      .toBe('Desktop workspace required');
   });
 
   it('uses asset language and no longer advertises Tab as a sidebar shortcut', () => {
@@ -278,5 +350,19 @@ describe('the shipped operator shell contract', () => {
 
     expect(Number.isFinite(blocking)).toBe(true);
     for (const name of names) expect(blocking).toBeGreaterThan(layerValue(tokens, name));
+  });
+
+  it('defines the approved compact phone interaction and HUD contract', () => {
+    const operator = read('../styles/operator.css');
+
+    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?\.operator-primary-actions \.btn[\s\S]*?min-height:\s*44px/);
+    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#sidebar button[\s\S]*?\.operator-context-layer button[\s\S]*?min-height:\s*44px/);
+    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#btn-editor-toggle[\s\S]*?#btn-sidebar-toggle[\s\S]*?min-height:\s*44px/);
+    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?\.hud-zone-center[\s\S]*?display:\s*none/);
+    for (const id of ['hud-cockpit-toggle', 'hud-hints-toggle', 'hud-settings-toggle']) {
+      expect(operator).toMatch(new RegExp(`@media \\(max-width: 759px\\)[\\s\\S]*?#${id}[\\s\\S]*?display:\\s*none`));
+    }
+    expect(operator).toMatch(/#btn-editor-toggle:disabled[\s\S]*?cursor:\s*not-allowed/);
+    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#hud-top[\s\S]*?overflow:\s*hidden/);
   });
 });

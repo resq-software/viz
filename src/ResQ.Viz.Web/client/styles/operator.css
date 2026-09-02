@@ -101,6 +101,11 @@
   text-transform: uppercase;
 }
 
+#btn-editor-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .operator-layer {
   position: fixed;
   inset: var(--hud-h) 0 var(--dvr-h) 0;
@@ -152,6 +157,45 @@
   .operator-context-layer {
     inset: auto 0 var(--dvr-h) 0;
     max-height: calc(100dvh - var(--hud-h) - var(--dvr-h));
+  }
+
+  .operator-primary-actions .btn,
+  #sidebar button,
+  .operator-context-layer button {
+    min-height: 44px;
+  }
+
+  #hud-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px;
+    padding-inline: max(8px, env(safe-area-inset-left));
+    overflow: hidden;
+  }
+
+  .hud-zone-center,
+  #hud-cockpit-toggle,
+  #hud-hints-toggle,
+  #hud-settings-toggle {
+    display: none;
+  }
+
+  .hud-zone-right {
+    min-width: 0;
+    justify-self: end;
+  }
+
+  .hud-action-group {
+    gap: 4px;
+  }
+
+  #btn-editor-toggle,
+  #btn-sidebar-toggle {
+    min-height: 44px;
+    height: 44px;
+  }
+
+  #btn-sidebar-toggle {
+    width: 44px;
   }
 }
 

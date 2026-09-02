@@ -41,6 +41,7 @@ const REQUIRED_IDS = [
   'operator-editor-layer',
   'btn-sidebar-toggle',
   'btn-editor-toggle',
+  'editor-unavailable-note',
 ] as const;
 
 type RequiredId = (typeof REQUIRED_IDS)[number];
@@ -53,6 +54,7 @@ export class OperatorShell {
   private _mode: OperatorMode = 'booting';
   private _railOpen = true;
   private _editorOpen = false;
+  private _editorAvailable = true;
 
   constructor(doc: Document) {
     const found = new Map<RequiredId, HTMLElement>();
@@ -93,6 +95,13 @@ export class OperatorShell {
     this.setMode('booting');
     this.setRailOpen(true);
     this.setEditorOpen(false);
+
+    const compactEditor = doc.defaultView?.matchMedia('(max-width: 759px)');
+    if (compactEditor) {
+      const applyEditorAvailability = (): void => this._setEditorAvailable(!compactEditor.matches);
+      applyEditorAvailability();
+      compactEditor.addEventListener('change', applyEditorAvailability);
+    }
   }
 
   get mode(): OperatorMode {
@@ -104,6 +113,23 @@ export class OperatorShell {
   }
 
   setMode(mode: OperatorMode): void {
+    const previous = this._branchFor(this._mode);
+    const active = previous.ownerDocument.activeElement;
+    const evacuate = mode !== this._mode
+      && active instanceof Element
+      && previous.contains(active);
+
+    if (evacuate && mode === 'v2') {
+      // A hidden/inert target cannot receive focus. Activate it first, focus its
+      // stable heading, then retire the other branches below.
+      this._setBranchActive(this._elements.v2, true);
+      this._elements.fleetHeading.focus();
+    } else if (evacuate) {
+      // The rail toggle is outside every branch, so it remains operable while
+      // the incoming legacy/boot branch becomes available.
+      this._elements.railToggle.focus();
+    }
+
     this._mode = mode;
     this._setBranchActive(this._elements.boot, mode === 'booting');
     this._setBranchActive(this._elements.v2, mode === 'v2');
@@ -113,6 +139,10 @@ export class OperatorShell {
   setRailOpen(open: boolean): void {
     this._railOpen = open;
     const { sidebar, railToggle } = this._elements;
+    const active = sidebar.ownerDocument.activeElement;
+    if (!open && active instanceof Element && sidebar.contains(active)) {
+      railToggle.focus();
+    }
     sidebar.classList.toggle('collapsed', !open);
     sidebar.hidden = !open;
     sidebar.setAttribute('aria-hidden', String(!open));
@@ -122,12 +152,13 @@ export class OperatorShell {
   }
 
   setEditorOpen(open: boolean): void {
-    this._editorOpen = open;
+    const next = open && this._editorAvailable;
+    this._editorOpen = next;
     const { editorLayer, editorToggle } = this._elements;
-    editorLayer.hidden = !open;
-    editorLayer.setAttribute('aria-hidden', String(!open));
-    this._setInert(editorLayer, !open);
-    editorToggle.setAttribute('aria-expanded', String(open));
+    editorLayer.hidden = !next;
+    editorLayer.setAttribute('aria-hidden', String(!next));
+    this._setInert(editorLayer, !next);
+    editorToggle.setAttribute('aria-expanded', String(next));
     editorToggle.setAttribute('aria-controls', 'operator-editor-layer');
   }
 
@@ -139,6 +170,23 @@ export class OperatorShell {
     branch.hidden = !active;
     branch.setAttribute('aria-hidden', String(!active));
     this._setInert(branch, !active);
+  }
+
+  private _branchFor(mode: OperatorMode): HTMLElement {
+    if (mode === 'v2') return this._elements.v2;
+    if (mode === 'legacy') return this._elements.legacy;
+    return this._elements.boot;
+  }
+
+  private _setEditorAvailable(available: boolean): void {
+    this._editorAvailable = available;
+    const toggle = this._elements.editorToggle;
+    toggle.disabled = !available;
+    toggle.setAttribute('aria-disabled', String(!available));
+    toggle.title = available ? 'Editor workspace' : 'Desktop workspace required';
+    if (available) toggle.removeAttribute('aria-describedby');
+    else toggle.setAttribute('aria-describedby', 'editor-unavailable-note');
+    if (!available) this.setEditorOpen(false);
   }
 
   private _setInert(element: HTMLElement, inert: boolean): void {

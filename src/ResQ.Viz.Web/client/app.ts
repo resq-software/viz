@@ -30,6 +30,7 @@ import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
 import { OperatorShell }   from './operator/OperatorShell';
 import { Hud }            from './ui/hud';
+import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -1407,13 +1408,11 @@ followBtn?.addEventListener('click', () => {
 // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
 window.addEventListener('keydown', (e: KeyboardEvent) => {
-    const target = e.target as Element | null;
-    if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
-
     // Ctrl+Shift+R — investor-mode cinematic preset for screen recording.
     // Modifier combo is checked before the switch so the raw `KeyR`
     // slot stays free for future bindings.
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyR') {
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyR'
+        && !shouldIgnoreGlobalShortcut(e, { allowCtrl: true })) {
         e.preventDefault();
         investorMode.toggle(() => {
             const ready = (_lastFrame?.drones ?? []).filter(d => isDroneReady(d));
@@ -1424,6 +1423,8 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         });
         return;
     }
+
+    if (shouldIgnoreGlobalShortcut(e)) return;
 
     // Shift+1..8 — named camera presets for demo framing (see cameraPresets.ts).
     // Shift is checked first so the unshifted `Digit1..4` in controls.ts
