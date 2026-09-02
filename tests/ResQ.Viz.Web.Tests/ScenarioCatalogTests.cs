@@ -81,6 +81,84 @@ public sealed partial class ScenarioCatalogTests
     /// <summary>Assets of every domain a single session admits, mirroring <c>SimV2Controller</c>'s cap.</summary>
     private const int SessionAssetCap = 200;
 
+    /// <summary>The immutable discovery catalog is derived from every validated configured row.</summary>
+    [Fact]
+    public void Scenario_Summaries_Match_All_Validated_Configured_Presets()
+    {
+        var service = new ScenarioService(AppConfiguration());
+        var expected = new[]
+        {
+            Summary("single", 1, 0, 0, (VehicleClass.Multirotor, 1)),
+            Summary("swarm-5", 5, 0, 0, (VehicleClass.Multirotor, 5)),
+            Summary("swarm-20", 20, 0, 0, (VehicleClass.Multirotor, 20)),
+            Summary("sar", 3, 0, 0, (VehicleClass.Multirotor, 3)),
+            Summary("multi-agency-sar", 12, 0, 0, (VehicleClass.Multirotor, 12)),
+            Summary("wildfire-interface", 5, 0, 0, (VehicleClass.Multirotor, 5)),
+            Summary("hurricane-melissa", 6, 0, 0, (VehicleClass.Multirotor, 6)),
+            Summary("flood-riverine", 5, 0, 0, (VehicleClass.Multirotor, 5)),
+            Summary("urban-collapse", 6, 0, 0, (VehicleClass.Multirotor, 6)),
+            Summary("alpine-sar", 4, 0, 0, (VehicleClass.Multirotor, 4)),
+            Summary("canyon-sar", 4, 0, 0, (VehicleClass.Multirotor, 4)),
+            Summary(
+                "mixed-ground", 3, 3, 0,
+                (VehicleClass.Multirotor, 3), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.DifferentialRover, 1), (VehicleClass.TrackedRover, 1)),
+            Summary(
+                "ground-convoy", 1, 3, 0,
+                (VehicleClass.Multirotor, 1), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.DifferentialRover, 1), (VehicleClass.TrackedRover, 1)),
+            Summary(
+                "coastal-search", 3, 2, 3,
+                (VehicleClass.Multirotor, 3), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.TrackedRover, 1), (VehicleClass.SurfaceVessel, 3)),
+            Summary(
+                "coastal-transit", 1, 0, 3,
+                (VehicleClass.Multirotor, 1), (VehicleClass.SurfaceVessel, 3)),
+            Summary(
+                "flood-response", 3, 3, 2,
+                (VehicleClass.Multirotor, 3), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.DifferentialRover, 1), (VehicleClass.TrackedRover, 1),
+                (VehicleClass.SurfaceVessel, 2)),
+            Summary(
+                "port-incident", 2, 3, 3,
+                (VehicleClass.Multirotor, 2), (VehicleClass.AckermannRover, 2),
+                (VehicleClass.TrackedRover, 1), (VehicleClass.SurfaceVessel, 3)),
+            Summary(
+                "link-loss-divergence", 1, 1, 1,
+                (VehicleClass.Multirotor, 1), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.SurfaceVessel, 1)),
+            Summary(
+                "mixed-load-150", 50, 50, 50,
+                (VehicleClass.Multirotor, 50), (VehicleClass.AckermannRover, 17),
+                (VehicleClass.DifferentialRover, 17), (VehicleClass.TrackedRover, 16),
+                (VehicleClass.SurfaceVessel, 50)),
+        };
+
+        service.ScenarioSummaries.Should().BeEquivalentTo(expected);
+
+        var summaries = service.ScenarioSummaries.Should()
+            .BeAssignableTo<IList<ScenarioSummary>>().Subject;
+        Action clearSummaries = () => summaries.Clear();
+        clearSummaries.Should().Throw<NotSupportedException>();
+
+        var classCounts = service.ScenarioSummaries[0].VehicleClassCounts.Should()
+            .BeAssignableTo<IDictionary<string, int>>().Subject;
+        Action clearClassCounts = () => classCounts.Clear();
+        clearClassCounts.Should().Throw<NotSupportedException>();
+    }
+
+    private static ScenarioSummary Summary(
+        string name,
+        int air,
+        int ground,
+        int surface,
+        params (VehicleClass Class, int Count)[] classes) =>
+        new(
+            Name: name,
+            AssetCount: air + ground + surface,
+            DomainCounts: new ScenarioDomainCounts(air, ground, surface),
+            VehicleClassCounts: classes.ToDictionary(x => x.Class.ToString(), x => x.Count));
+
     // ─── Every preset spawns what it declares ───────────────────────────────
 
     /// <summary>A preset spawns one asset per configured row, in order, in the declared domain.</summary>

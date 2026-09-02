@@ -15,6 +15,7 @@
  */
 
 using System.Numerics;
+using System.Collections.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -104,6 +105,7 @@ public sealed partial class ScenarioService
     ];
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<Entry>> _scenarios;
+    private readonly IReadOnlyList<ScenarioSummary> _scenarioSummaries;
     private readonly IReadOnlyList<IAssetFactory> _assetFactories;
     private readonly ILogger _logger;
 
@@ -168,10 +170,17 @@ public sealed partial class ScenarioService
         }
 
         _scenarios = dict;
+        _scenarioSummaries = dict
+            .Select(pair => BuildSummary(pair.Key, pair.Value))
+            .ToList()
+            .AsReadOnly();
     }
 
     /// <summary>Names of all available scenario presets.</summary>
     public IEnumerable<string> ScenarioNames => _scenarios.Keys;
+
+    /// <summary>Immutable discovery summaries derived from the validated scenario entries.</summary>
+    public IReadOnlyList<ScenarioSummary> ScenarioSummaries => _scenarioSummaries;
 
     /// <summary>Motion models this loader may spawn a non-air entry through.</summary>
     /// <remarks>
@@ -211,6 +220,27 @@ public sealed partial class ScenarioService
         }
 
         return false;
+    }
+
+    /// <summary>Builds one immutable discovery summary from validated entries.</summary>
+    /// <param name="name">Canonical configured scenario name.</param>
+    /// <param name="entries">Validated entries in configured order.</param>
+    /// <returns>The scenario summary.</returns>
+    private static ScenarioSummary BuildSummary(string name, IReadOnlyList<Entry> entries)
+    {
+        var vehicleClassCounts = new ReadOnlyDictionary<string, int>(
+            entries
+                .GroupBy(entry => entry.VehicleClass)
+                .ToDictionary(group => group.Key.ToString(), group => group.Count(), StringComparer.Ordinal));
+
+        return new ScenarioSummary(
+            Name: name,
+            AssetCount: entries.Count,
+            DomainCounts: new ScenarioDomainCounts(
+                Air: entries.Count(entry => entry.Domain == AssetDomain.Air),
+                Ground: entries.Count(entry => entry.Domain == AssetDomain.Ground),
+                Surface: entries.Count(entry => entry.Domain == AssetDomain.Surface)),
+            VehicleClassCounts: vehicleClassCounts);
     }
 
     /// <summary>

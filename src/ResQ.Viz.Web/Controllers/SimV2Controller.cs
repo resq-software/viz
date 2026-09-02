@@ -89,6 +89,7 @@ public sealed partial class SimV2Controller : ControllerBase
     private readonly VizFrameBuilder _frames;
     private readonly IReadOnlyList<IAssetFactory> _factories;
     private readonly ControlAuthorityRegistry _authority;
+    private readonly ScenarioService? _scenarios;
     private readonly ILogger<SimV2Controller> _logger;
 
     /// <summary>Initialises the controller with the frame builder and any registered asset factories.</summary>
@@ -117,15 +118,22 @@ public sealed partial class SimV2Controller : ControllerBase
     /// default registry is used then, keyed by room exactly as the injected one is, so a lease
     /// taken through it survives between requests instead of silently evaporating.
     /// </param>
+    /// <param name="scenarios">
+    /// Validated scenario catalog and loader. Optional so direct controller constructions that do
+    /// not use scenario actions remain compatible; those actions return a typed unsupported
+    /// response when it is absent.
+    /// </param>
     public SimV2Controller(
         VizFrameBuilder frames,
         IEnumerable<IAssetFactory> factories,
         ILogger<SimV2Controller> logger,
-        ControlAuthorityRegistry? authority = null)
+        ControlAuthorityRegistry? authority = null,
+        ScenarioService? scenarios = null)
     {
         _frames = frames;
         _factories = factories.ToArray();
         _authority = authority ?? ControlAuthorityRegistry.Shared;
+        _scenarios = scenarios;
         _logger = logger;
     }
 

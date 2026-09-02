@@ -57,14 +57,18 @@ public partial class SimV2ControllerTests
         new(id: "test-room-v2", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
 
     private static (SimV2Controller ctrl, SimulationRoom room) CreateController(
-        IAssetFactory? factory = null, VizFrameBuilder? frames = null)
+        IAssetFactory? factory = null,
+        VizFrameBuilder? frames = null,
+        ScenarioService? scenarios = null)
     {
         var room = CreateRoom();
         IAssetFactory[] factories = factory is null ? [] : [factory];
         var ctrl = new SimV2Controller(
             frames ?? new VizFrameBuilder(),
             factories,
-            NullLogger<SimV2Controller>.Instance);
+            NullLogger<SimV2Controller>.Instance,
+            authority: null,
+            scenarios: scenarios);
 
         // Same shortcut SimControllerTests uses: stash the resolved room where
         // RequireRoomAttribute would have put it, so these stay unit tests.
@@ -73,6 +77,13 @@ public partial class SimV2ControllerTests
         ctrl.ControllerContext = new ControllerContext { HttpContext = http };
         return (ctrl, room);
     }
+
+    /// <summary>The shipped scenario configuration copied beside the test assembly.</summary>
+    private static IConfiguration ScenarioConfiguration() =>
+        new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false)
+            .Build();
 
     private static FramedPose Pose(
         CoordinateFrame frame, float x, float y, float z, Quaternion orientation = default) =>
