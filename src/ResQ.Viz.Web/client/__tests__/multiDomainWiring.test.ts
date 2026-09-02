@@ -57,6 +57,9 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './assets/AssetFilter', why: 'facet control' },
   { path: './assets/overlays/TrackOverlay', why: 'external-contact overlay' },
   { path: './assets/chaseCamera', why: 'domain chase cameras' },
+  { path: './operator/MissionPanel', why: 'operator mission DOM' },
+  { path: './operator/ConsoleResources', why: 'operator resource orchestration' },
+  { path: './operator/scenarioPresentation', why: 'scenario catalog presentation copy' },
 ];
 
 describe('entry-chunk boundaries', () => {
@@ -172,6 +175,70 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).not.toContain('_autoSpawnIfEmpty');
     expect(appSrc).not.toContain('/api/sim/state');
     expect(appSrc).not.toMatch(/\bapiGet\b/);
+  });
+
+  it('keeps only the deterministic scenario runtime eager and lazily mounts mission UI', () => {
+    expect(appSrc).toContain("import { ScenarioRuntime } from './operator/ScenarioRuntime'");
+    expect(appSrc).toMatch(/import\('\.\/operator\/ConsoleResources'\)/);
+    expect(appSrc).toMatch(/import\('\.\/operator\/MissionPanel'\)/);
+    expect(appSrc).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
+  });
+
+  it('feeds authoritative mission state after projection and before replay returns', () => {
+    const ingest = appSrc.slice(
+      appSrc.indexOf('function _ingestSnapshot'),
+      appSrc.indexOf('function _onDeltaGap'),
+    );
+    const startupAt = ingest.indexOf('startupCoordinator.onV2Snapshot');
+    const projectionAt = ingest.indexOf('projectSnapshot');
+    const runtimeAt = ingest.indexOf('scenarioRuntime.apply');
+    const replayAt = ingest.indexOf("if (dvr && !dvr.isLive)");
+
+    expect(startupAt).toBeGreaterThanOrEqual(0);
+    expect(startupAt).toBeLessThan(projectionAt);
+    expect(projectionAt).toBeLessThan(runtimeAt);
+    expect(runtimeAt).toBeLessThan(replayAt);
+    expect(ingest).toMatch(/scenarioRuntime\.apply\([\s\S]*?projected\.scenario,[\s\S]*?snapshot\.assets\.length/);
+    expect(ingest).not.toContain('projected.assets.length, interactionMode');
+  });
+
+  it('runs scenario presentation effects only through the runtime callback', () => {
+    expect(appSrc).toMatch(/new ScenarioRuntime\(\{[\s\S]*?onPresent:\s*_presentAuthoritativeScenario/);
+    expect(appSrc).toMatch(/function _presentAuthoritativeScenario[\s\S]*?_deselectAll\(\)[\s\S]*?recorder\?\.clear\(\)[\s\S]*?_fittedToSwarm = false[\s\S]*?resq:scenario-start/);
+  });
+
+  it('wraps default starts and resets in request generations without optimistic activation', () => {
+    const startupAt = appSrc.indexOf('const startupCoordinator = new StartupCoordinator');
+    const controlsAt = appSrc.indexOf('const controlPanel = new ControlPanel');
+    const startup = appSrc.slice(startupAt, controlsAt);
+    expect(startup).toMatch(/startV2Scenario:[\s\S]*?scenarioRuntime\.requested\(name\)/);
+    expect(startup).toMatch(/result\.success[\s\S]*?requestAccepted\(request, result\.value\.current\)/);
+    expect(startup).toMatch(/else scenarioRuntime\.requestFailed\(request\)/);
+
+    const resetAt = appSrc.indexOf('async function _resetMission');
+    const visibilityAt = appSrc.indexOf("document.addEventListener('visibilitychange'", resetAt);
+    const reset = appSrc.slice(resetAt, visibilityAt);
+    expect(reset).toMatch(/scenarioRuntime\.requested\(null\)/);
+    expect(reset).toMatch(/apiPost\('\/api\/sim\/reset'\)/);
+    expect(reset).toMatch(/requestAccepted\(request\)/);
+    expect(reset).toMatch(/requestFailed\(request\)/);
+  });
+
+  it('uses authoritative v2 scene-config truth and an explicitly legacy-only fallback', () => {
+    expect(appSrc).not.toMatch(/\b_currentScenario\b/);
+    expect(appSrc).toContain('_legacyScenario');
+    expect(appSrc).toMatch(/getScenario:\s*\(\)\s*=>[\s\S]*?scenarioRuntime\.currentName/);
+  });
+
+  it('loads independent typed resources only for v2 and retries on reconnect and visibility', () => {
+    expect(appSrc).toContain("apiGetJson<ScenarioCatalogResponse>('/api/v2/sim/scenarios')");
+    expect(appSrc).toContain("apiGetJson<AssetProfileCatalogResponse>('/api/v2/sim/asset-profiles')");
+    expect(appSrc).toMatch(/c\.onreconnected\([\s\S]*?_retryMissionResources\(\)/);
+    expect(appSrc).toMatch(/visibilitychange[\s\S]*?document\.hidden[\s\S]*?_retryMissionResources\('visibility'\)/);
+  });
+
+  it('keeps legacy mission chrome synchronized with negotiated mode', () => {
+    expect(appSrc).toMatch(/setMode:\s*mode\s*=>\s*\{[\s\S]*?missionChrome\.setEnabled\(mode === 'legacy'\)/);
   });
 });
 

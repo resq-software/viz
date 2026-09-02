@@ -30,6 +30,7 @@ import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
 import { OperatorShell }   from './operator/OperatorShell';
 import { RetryScheduler } from './operator/RetryScheduler';
+import { ScenarioRuntime } from './operator/ScenarioRuntime';
 import { StartupCoordinator } from './operator/StartupCoordinator';
 import { Hud }            from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
@@ -61,7 +62,7 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { MiniMap } from './miniMap';
 import { SensorStatsOverlay } from './sensorStatsOverlay';
-import { apiPost, apiPostJson, apiPostOrWarn } from './api';
+import { apiGetJson, apiPost, apiPostJson, apiPostOrWarn } from './api';
 import { getLogger } from './log';
 // SelectionStore stays static: it is the selection source of truth that legacy
 // HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
@@ -110,6 +111,12 @@ import type { DeltaTracker } from './assets/deltaApply';
 import type { FleetUi } from './assets/fleetUi';
 import type { PickedTarget } from './assets/panelCommands';
 import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
+import type {
+    AssetProfileCatalogResponse,
+    ConsoleResources,
+    ScenarioCatalogResponse,
+} from './operator/ConsoleResources';
+import type { MissionPanel, MissionTransportView } from './operator/MissionPanel';
 
 const log = getLogger('app');
 
@@ -173,10 +180,21 @@ const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
 const fireSmoke    = new FireSmoke(viz.scene);
 const operatorShell = new OperatorShell(document);
+const scenarioRuntime = new ScenarioRuntime({ onPresent: _presentAuthoritativeScenario });
+let consoleResources: ConsoleResources | null = null;
+let missionPanel: MissionPanel | null = null;
+let _missionUiLoading: Promise<void> | null = null;
+let _missionTransport: MissionTransportView = {
+    paused: false,
+    speed: 1,
+    simulationTimeSeconds: 0,
+};
 const startupCoordinator = new StartupCoordinator({
     setMode: mode => {
         if (mode === 'legacy' && _v2Active) _leaveV2();
         operatorShell.setMode(mode);
+        missionChrome.setEnabled(mode === 'legacy');
+        if (mode === 'v2') void _ensureMissionUi();
     },
     setBootStatus: status => {
         operatorShell.setBootStatus(status);
@@ -184,10 +202,15 @@ const startupCoordinator = new StartupCoordinator({
     },
     startLegacyScenario: async () =>
         (await apiPost('/api/sim/scenario/single')).success,
-    startV2Scenario: async () =>
-        apiPostJson<{ current: ScenarioSessionState }>(
+    startV2Scenario: async name => {
+        const request = scenarioRuntime.requested(name);
+        const result = await apiPostJson<{ current: ScenarioSessionState }>(
             '/api/v2/sim/scenarios/flood-response/start',
-        ),
+        );
+        if (result.success) scenarioRuntime.requestAccepted(request, result.value.current);
+        else scenarioRuntime.requestFailed(request);
+        return result;
+    },
     schedule: (callback, ms) => window.setTimeout(callback, ms),
     cancel: id => window.clearTimeout(id),
 });
@@ -216,7 +239,8 @@ let recorder = null as FrameRecorder | null;
 let dvr = null as Dvr | null;
 
 const selection = new SelectionStore();
-let _currentScenario: string | null = null;
+/** Last locally-started v1 scenario; never used as v2 mission truth. */
+let _legacyScenario: string | null = null;
 
 async function _initEditorSuite(): Promise<void> {
     const [m_dock, m_outliner, m_inspector, m_gizmo, m_pip, m_osd, m_cam, m_rec, m_dvr, m_cfg] =
@@ -326,12 +350,13 @@ async function _initEditorSuite(): Promise<void> {
         onServerReset: () => void apiPostOrWarn('/api/sim/reset', undefined, 'reset'),
     });
     // Declarative scene config — export/import the terrain + scenario setup as a
-    // shareable JSON descriptor (AirSim settings.json analog). `_currentScenario`
-    // tracks the last explicitly-started scenario (set by the resq:scenario-start
-    // listener below).
+    // shareable JSON descriptor (AirSim settings.json analog). V2 reads only the
+    // streamed runtime; legacy retains the local event-backed compatibility value.
     new m_cfg.SceneConfigPanel({
         getTerrain: () => _currentPresetKey,
-        getScenario: () => _currentScenario,
+        getScenario: () => operatorShell.mode === 'v2'
+            ? scenarioRuntime.currentName
+            : _legacyScenario,
         applyTerrain: (key) => { if (key in PRESETS) _switchPreset(key as PresetKey); },
         applyScenario: (name) => {
             if (!name) return;
@@ -408,6 +433,118 @@ const loadingOverlay = new LoadingOverlay();
 // Mission chrome — top-center scenario/time/phase strip. Self-wires via the
 // `resq:scenario-start` event; app.ts feeds it sim-time each frame.
 const missionChrome = new MissionChrome();
+// Startup is neither compatibility mode nor an invitation to retain stale v1
+// scenario copy. StartupCoordinator enables this only after legacy is viable.
+missionChrome.setEnabled(false);
+
+/** Lazily installs the mission DOM and its two independently retryable resources. */
+async function _ensureMissionUi(): Promise<void> {
+    if (operatorShell.mode !== 'v2') return;
+    if (missionPanel && consoleResources) {
+        _renderMissionPanel();
+        void consoleResources.loadMissing();
+        return;
+    }
+    if (_missionUiLoading) return _missionUiLoading;
+
+    const loading = Promise.all([
+        import('./operator/ConsoleResources'),
+        import('./operator/MissionPanel'),
+    ]).then(([resourcesModule, panelModule]) => {
+        // A v2 chunk can finish after negotiation fell back. Do not replace the
+        // legacy branch's DOM or start v2-only GETs while it owns the console.
+        if (operatorShell.mode !== 'v2') return;
+
+        const resources = new resourcesModule.ConsoleResources({
+            loadCatalog: () =>
+                apiGetJson<ScenarioCatalogResponse>('/api/v2/sim/scenarios'),
+            loadProfiles: () =>
+                apiGetJson<AssetProfileCatalogResponse>('/api/v2/sim/asset-profiles'),
+        });
+        const panel = new panelModule.MissionPanel({
+            mount: operatorShell.mounts.mission,
+            onTogglePause: _setMissionPaused,
+            onReset: _resetMission,
+            // Task 9 replaces this event seam with its lazy searchable dialog.
+            onChange: () => document.dispatchEvent(new CustomEvent('resq:scenario-catalog-request')),
+            onRetryCatalog: () => resources.retry('catalog'),
+        });
+
+        consoleResources = resources;
+        missionPanel = panel;
+        scenarioRuntime.subscribe(() => _renderMissionPanel());
+        resources.subscribe(() => _renderMissionPanel());
+        void resources.loadMissing();
+    }).catch((error: unknown) => {
+        if (operatorShell.mode !== 'v2') return;
+        log.error('mission console failed to load', error);
+        _renderMissionLoadFailure();
+    }).finally(() => {
+        if (_missionUiLoading === loading) _missionUiLoading = null;
+    });
+
+    _missionUiLoading = loading;
+    return loading;
+}
+
+function _renderMissionPanel(): void {
+    if (!missionPanel || !consoleResources) return;
+    missionPanel.render({
+        mission: scenarioRuntime.view,
+        transport: _missionTransport,
+        catalog: consoleResources.catalog,
+    });
+}
+
+function _renderMissionLoadFailure(): void {
+    const mount = operatorShell.mounts.mission;
+    const kicker = document.createElement('span');
+    kicker.className = 'operator-section-kicker';
+    kicker.textContent = 'Mission';
+    const title = document.createElement('strong');
+    title.textContent = 'Mission controls unavailable';
+    const detail = document.createElement('p');
+    detail.className = 'operator-resource-error';
+    detail.setAttribute('role', 'alert');
+    detail.textContent = 'The mission surface could not load.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn';
+    retry.textContent = 'Retry mission controls';
+    retry.addEventListener('click', () => { void _ensureMissionUi(); });
+    mount.replaceChildren(kicker, title, detail, retry);
+}
+
+function _retryMissionResources(source: 'reconnect' | 'visibility' = 'reconnect'): void {
+    if (operatorShell.mode !== 'v2') return;
+    if (!consoleResources) {
+        void _ensureMissionUi();
+        return;
+    }
+    void (source === 'visibility'
+        ? consoleResources.onVisibilityReturn()
+        : consoleResources.onReconnect());
+}
+
+async function _setMissionPaused(paused: boolean): Promise<void> {
+    const result = await apiPost(paused ? '/api/sim/pause' : '/api/sim/resume');
+    if (!result.success) log.warn('mission transport request failed', { error: result.error.message });
+}
+
+async function _resetMission(): Promise<void> {
+    const request = scenarioRuntime.requested(null);
+    const result = await apiPost('/api/sim/reset');
+    if (result.success) scenarioRuntime.requestAccepted(request);
+    else {
+        scenarioRuntime.requestFailed(request);
+        log.warn('mission reset failed', { error: result.error.message });
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    _retryMissionResources('visibility');
+});
 
 // Event log — left-edge SIGINT-style ticker. Self-wires scenario-starts;
 // app.ts pushes partition transitions explicitly since it owns that state.
@@ -1655,8 +1792,22 @@ const _seenHazardIds    = new Map<string, string>();   // id → type
 // the first `det-1` of scenario B; same for hazards. Without this the
 // event log stays silent for the first few seconds after a preset change
 // if the two scenarios happen to share ids.
+function _presentAuthoritativeScenario(scenario: ScenarioSessionState): void {
+    // A scenario replacement commits population and identity in one captured
+    // frame. Clear old interaction state before rendering that matching fleet,
+    // then re-arm the ordinary fit at the end of `_ingestSnapshot`.
+    _deselectAll();
+    recorder?.clear();
+    _fittedToSwarm = false;
+    document.dispatchEvent(new CustomEvent('resq:scenario-start', {
+        detail: { name: scenario.name },
+    }));
+}
+
 document.addEventListener('resq:scenario-start', (e) => {
-    _currentScenario = (e as CustomEvent<{ name?: string }>).detail?.name ?? _currentScenario;
+    if (operatorShell.mode === 'legacy') {
+        _legacyScenario = (e as CustomEvent<{ name?: string }>).detail?.name ?? _legacyScenario;
+    }
     _seenDetectionIds.clear();
     _seenHazardIds.clear();
 
@@ -2261,6 +2412,7 @@ function _wireConnection(c: HubConnection): void {
         hud.setStatus('connected');
         loadingOverlay.onReconnected();
         startupCoordinator.startNegotiation();
+        _retryMissionResources();
         // Snapshot subscription is connection-scoped: the server drops it with
         // the connection, and a reconnect is not always preceded by a disconnect
         // the server saw. Re-asking is idempotent on both sides — and asking for
@@ -2317,8 +2469,18 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
     const projected = projectSnapshot(
         snapshot, Date.now(), _descriptorCache, _simulationClock,
     );
+    const interactionMode = dvr && !dvr.isLive ? 'replay' : 'live';
+    if (interactionMode === 'live') {
+        _missionTransport = {
+            paused: projected.frame.paused ?? false,
+            speed: projected.frame.speed ?? 1,
+            simulationTimeSeconds: projected.frame.time ?? 0,
+        };
+    }
+    scenarioRuntime.apply(projected.scenario, snapshot.assets.length, interactionMode);
     if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
 
+    _renderMissionPanel();
     _renderSnapshot(projected);
     dvr?.updateServer(projected.frame);
     // Roster and event announcements run over EVERY asset, not the visible
