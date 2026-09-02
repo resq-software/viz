@@ -29,6 +29,7 @@ import { FireSmoke }        from './smoke';
 import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
 import { OperatorShell }   from './operator/OperatorShell';
+import { RetryScheduler } from './operator/RetryScheduler';
 import { StartupCoordinator } from './operator/StartupCoordinator';
 import { Hud }            from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
@@ -2271,6 +2272,7 @@ function _wireConnection(c: HubConnection): void {
         hud.setStatus('disconnected');
         loadingOverlay.onDisconnected();
         startupCoordinator.onConnectionFailed();
+        connectionRetry.request();
     });
 }
 
@@ -2521,22 +2523,31 @@ async function _subscribeSnapshots(): Promise<void> {
     }
 }
 
+const connectionRetry = new RetryScheduler({
+    retry: () => { void start(); },
+    schedule: (callback, ms) => window.setTimeout(callback, ms),
+    cancel: id => window.clearTimeout(id),
+});
+
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
 window.addEventListener('beforeunload', () => {
     clearInterval(_fpsTick);
     startupCoordinator.dispose();
+    connectionRetry.dispose();
 });
 
 let _starting = false;
 
 async function start(): Promise<void> {
     if (_starting) return;
+    connectionRetry.cancel();
     _starting = true;
     try {
         if (!await _ensureSessionReady()) {
             hud.setStatus('disconnected');
             startupCoordinator.onConnectionFailed();
-            setTimeout(() => { _starting = false; void start(); }, 5000);
+            _starting = false;
+            connectionRetry.request();
             return;
         }
         if (!connection) {
@@ -2565,10 +2576,12 @@ async function start(): Promise<void> {
     } catch {
         hud.setStatus('disconnected');
         startupCoordinator.onConnectionFailed();
-        setTimeout(() => { _starting = false; void start(); }, 5000);
+        _starting = false;
+        connectionRetry.request();
         return;
     }
     _starting = false;
+    connectionRetry.cancel();
 }
 void start();
 

@@ -134,6 +134,24 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/beforeunload[\s\S]*?startupCoordinator\.dispose\(\)/);
   });
 
+  it('uses one retry scheduler for initial failures and exhausted reconnects', () => {
+    expect(appSrc).toContain("import { RetryScheduler } from './operator/RetryScheduler'");
+    expect(appSrc).toMatch(/new RetryScheduler\(\{[\s\S]*?retry:\s*\(\)\s*=>\s*\{\s*void start\(\);\s*\}/);
+
+    const onClose = appSrc.slice(
+      appSrc.indexOf('c.onclose'),
+      appSrc.indexOf('function _ingestSnapshot'),
+    );
+    expect(onClose).toContain('connectionRetry.request()');
+
+    const startAt = appSrc.indexOf('async function start(');
+    const start = appSrc.slice(startAt, appSrc.indexOf('\nvoid start();', startAt));
+    expect(start.indexOf('connectionRetry.cancel()')).toBeLessThan(start.indexOf('_starting = true'));
+    expect(start.match(/connectionRetry\.request\(\)/g)).toHaveLength(2);
+    expect(start).not.toMatch(/setTimeout\([\s\S]*?void start\(\)/);
+    expect(appSrc).toMatch(/beforeunload[\s\S]*?connectionRetry\.dispose\(\)/);
+  });
+
   it('uses the exact mode-specific defaults and removes drone-count startup', () => {
     expect(appSrc).toContain("apiPost('/api/sim/scenario/single')");
     expect(appSrc).toContain("apiPostJson<{ current: ScenarioSessionState }>(\n            '/api/v2/sim/scenarios/flood-response/start',\n        )");

@@ -32,6 +32,7 @@ export class LoadingOverlay {
     private readonly _phaseEl: HTMLSpanElement;
     private readonly _titleEl: HTMLSpanElement;
     private readonly _subtitleEl: HTMLSpanElement;
+    private readonly _retryEl: HTMLButtonElement;
 
     private _phaseIdx = 0;
     private _phaseTimer:        number | null = null;
@@ -41,10 +42,9 @@ export class LoadingOverlay {
 
     constructor() {
         this._el = document.createElement('div');
-        this._el.className = 'loading-overlay visible';
-        this._el.setAttribute('role', 'status');
-        this._el.setAttribute('aria-live', 'polite');
+        this._el.className = 'loading-overlay';
         this._el.setAttribute('aria-atomic', 'true');
+        this._el.setAttribute('aria-label', 'Connection status');
 
         const inner = document.createElement('div');
         inner.className = 'loading-overlay-inner';
@@ -75,12 +75,13 @@ export class LoadingOverlay {
         retry.type = 'button';
         retry.textContent = 'Reload';
         retry.addEventListener('click', () => window.location.reload());
+        this._retryEl = retry;
 
         inner.append(spinner, this._titleEl, this._phaseEl, this._subtitleEl, retry);
         this._el.appendChild(inner);
         document.body.appendChild(this._el);
 
-        this._startPhaseCycle();
+        this._showConnecting();
     }
 
     /** Mirrors startup negotiation where it cannot be obscured by this layer. */
@@ -94,14 +95,7 @@ export class LoadingOverlay {
             return;
         }
 
-        this._clearAllTimers();
-        this._el.classList.remove('disconnected');
-        this._el.classList.add('visible');
-        this._el.setAttribute('role', 'status');
-        this._el.setAttribute('aria-live', 'polite');
-        this._titleEl.textContent = 'ResQ Viz';
-        this._subtitleEl.textContent = 'Live coordination';
-        this._startPhaseCycle();
+        this._showConnecting();
     }
 
     /**
@@ -126,7 +120,7 @@ export class LoadingOverlay {
             }
         } else {
             // Still in cold-load; swap the phase cycle for a persistent status.
-            this._setStatus('Reconnecting…');
+            this._showColdStatus('Reconnecting…');
         }
     }
 
@@ -137,7 +131,7 @@ export class LoadingOverlay {
             this._disconnectedTimer = null;
         }
         if (!this._firstFrameSeen) {
-            this._setStatus('Reconnecting…');
+            this._showColdStatus('Reconnecting…');
         }
     }
 
@@ -152,15 +146,15 @@ export class LoadingOverlay {
         if (this._firstFrameSeen) {
             this._hide();
         } else {
-            this._el.classList.remove('disconnected');
-            this._startPhaseCycle();
+            this._showConnecting();
         }
     }
 
     /** Hide the overlay (keep it mounted for future outages). */
     private _hide(): void {
         this._clearAllTimers();
-        this._el.classList.remove('visible', 'connecting', 'disconnected');
+        this._el.classList.remove('connecting', 'disconnected');
+        this._setVisible(false);
         // Reset title/subtitle so if the overlay re-shows later, it comes
         // back in a known good state.
         this._titleEl.textContent    = 'ResQ Viz';
@@ -179,10 +173,37 @@ export class LoadingOverlay {
         this._phaseEl.textContent = text;
     }
 
+    private _showColdStatus(text: string): void {
+        this._clearAllTimers();
+        this._el.classList.remove('disconnected');
+        this._el.classList.add('connecting');
+        this._setColdSemantics();
+        this._setVisible(true);
+        this._setRetryAvailable(false);
+        this._titleEl.textContent = 'ResQ Viz';
+        this._subtitleEl.textContent = 'Live coordination';
+        this._setStatus(text);
+    }
+
+    private _showConnecting(): void {
+        this._clearAllTimers();
+        this._el.classList.remove('disconnected');
+        this._setColdSemantics();
+        this._setVisible(true);
+        this._setRetryAvailable(false);
+        this._titleEl.textContent = 'ResQ Viz';
+        this._subtitleEl.textContent = 'Live coordination';
+        this._startPhaseCycle();
+    }
+
     private _showDisconnectedCard(): void {
         this._clearAllTimers();
         this._el.classList.remove('connecting');
-        this._el.classList.add('visible', 'disconnected');
+        this._el.classList.add('disconnected');
+        this._el.setAttribute('role', 'alert');
+        this._el.setAttribute('aria-live', 'assertive');
+        this._setVisible(true);
+        this._setRetryAvailable(true);
         this._titleEl.textContent    = 'Connection lost';
         this._phaseEl.textContent    = 'Retrying…';
         this._subtitleEl.textContent = 'Check the host and try reloading if it persists.';
@@ -192,13 +213,37 @@ export class LoadingOverlay {
     private _showStartupErrorCard(): void {
         this._clearAllTimers();
         this._el.classList.remove('connecting');
-        this._el.classList.add('visible', 'disconnected');
-        this._el.setAttribute('role', 'alert');
-        this._el.setAttribute('aria-live', 'assertive');
+        this._el.classList.add('disconnected');
+        this._setColdSemantics();
+        this._setVisible(true);
+        this._setRetryAvailable(true);
         this._titleEl.textContent = 'Simulation link unavailable';
         this._phaseEl.textContent = 'Retrying automatically…';
         this._subtitleEl.textContent =
             'Check the simulation host and network connection, or reload this page.';
+    }
+
+    private _setColdSemantics(): void {
+        // OperatorShell owns the one live region during cold negotiation. This
+        // blocking mirror remains readable and keeps Reload operable without
+        // causing a duplicate announcement of the same transition.
+        this._el.setAttribute('role', 'group');
+        this._el.setAttribute('aria-live', 'off');
+    }
+
+    private _setVisible(visible: boolean): void {
+        this._el.classList.toggle('visible', visible);
+        this._el.hidden = !visible;
+        this._el.setAttribute('aria-hidden', String(!visible));
+        if (visible) this._el.removeAttribute('inert');
+        else this._el.setAttribute('inert', '');
+        if (!visible) this._setRetryAvailable(false);
+    }
+
+    private _setRetryAvailable(available: boolean): void {
+        this._retryEl.hidden = !available;
+        this._retryEl.disabled = !available;
+        this._retryEl.tabIndex = available ? 0 : -1;
     }
 
     private _startPhaseCycle(): void {

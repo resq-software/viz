@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { LoadingOverlay } from '../loadingOverlay';
 import { OperatorShell, OperatorShellSetupError } from '../operator/OperatorShell';
 
 function read(relative: string): string {
@@ -148,6 +149,20 @@ describe('OperatorShell', () => {
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(title.textContent).toBe('Establishing simulation link…');
     expect(detail.textContent).toBe('Negotiating live simulation streams.');
+  });
+
+  it('keeps the boot rail as the only assertive owner during a cold error', () => {
+    const shell = new OperatorShell(document);
+    const overlay = new LoadingOverlay();
+
+    shell.setBootStatus('error');
+    overlay.setStartupStatus('error');
+
+    const activeAssertive = Array.from(
+      document.querySelectorAll<HTMLElement>('[aria-live="assertive"]'),
+    ).filter(element => !element.closest('[hidden], [aria-hidden="true"]'));
+    expect(activeAssertive).toHaveLength(1);
+    expect(activeAssertive[0]?.id).toBe('operator-boot-status');
   });
 
   it('resolves stable mounts outside the translated sidebar where required', () => {
