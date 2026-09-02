@@ -5,6 +5,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { AssetPanel } from '../assets/AssetPanel';
+import type { ExternalTrackState } from '../assets/types';
+import {
+  CoordinateFrame,
+  DataFreshness,
+  TrackClassification,
+  TrackSourceKind,
+} from '../assets/types';
 import { setContextObscured } from '../ui/contextObscuring';
 
 function read(relative: string): string {
@@ -12,46 +20,95 @@ function read(relative: string): string {
 }
 
 describe('settings context obscuring', () => {
-  it('evacuates focus and remains inert through repeated panel rendering', () => {
+  it('persists through repeated AssetPanel renders and restores its intended visibility', () => {
     document.body.innerHTML = `
-      <aside class="asset-panel"><button id="asset-action">Command</button></aside>
+      <div id="asset-panel-mount"></div>
       <button id="settings-close">Close settings</button>
     `;
-    const panel = document.querySelector<HTMLElement>('.asset-panel')!;
+    const assetPanel = new AssetPanel({ mount: document.getElementById('asset-panel-mount')! });
+    const subject = { kind: 'track' as const, track: track() };
+    assetPanel.render(subject);
+    const panel = assetPanel.element;
     const close = document.getElementById('settings-close') as HTMLButtonElement;
-    (document.getElementById('asset-action') as HTMLButtonElement).focus();
+    panel.querySelector<HTMLButtonElement>('.ap-close')!.focus();
 
     setContextObscured(panel, true, close);
 
     expect(document.activeElement).toBe(close);
+    expect(panel.hasAttribute('data-context-obscured')).toBe(true);
+    expect(panel.hidden).toBe(true);
     expect(panel.hasAttribute('inert')).toBe(true);
     expect(panel.getAttribute('aria-hidden')).toBe('true');
     expect(panel.style.pointerEvents).toBe('none');
 
-    // A 10 Hz AssetPanel.render() makes the panel visible again, but must not
-    // restore interaction while Settings still owns the context layer.
-    panel.hidden = false;
+    assetPanel.render(subject);
+    assetPanel.render(subject);
+    expect(panel.hasAttribute('data-context-obscured')).toBe(true);
+    expect(panel.hidden).toBe(true);
     expect(panel.hasAttribute('inert')).toBe(true);
     expect(panel.getAttribute('aria-hidden')).toBe('true');
     expect(panel.style.pointerEvents).toBe('none');
 
     setContextObscured(panel, false, close);
+    assetPanel.render(subject);
+    expect(panel.hasAttribute('data-context-obscured')).toBe(false);
+    expect(panel.hidden).toBe(false);
     expect(panel.hasAttribute('inert')).toBe(false);
     expect(panel.getAttribute('aria-hidden')).toBe('false');
     expect(panel.style.pointerEvents).toBe('');
 
-    panel.hidden = true;
-    setContextObscured(panel, true, close);
-    setContextObscured(panel, false, close);
+    assetPanel.render(null);
+    expect(panel.hidden).toBe(true);
     expect(panel.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('is wired into Settings and hidden by the Settings-open CSS rule', () => {
+  it('obscures a fleet panel created after Settings has already opened', () => {
     const app = read('../app.ts');
     const css = read('../styles/main.css');
 
     expect(app).toContain("import { setContextObscured } from './ui/contextObscuring'");
     expect(app).toMatch(/function _setSettingsVisible[\s\S]*?setContextObscured\([\s\S]*?\.asset-panel/);
+    expect(app).toMatch(/fleetUi = new m\.FleetUi\([\s\S]*?setContextObscured\([\s\S]*?fleetUi\.panel\.element[\s\S]*?settingsPanel\?\.classList\.contains\('open'\)/);
     expect(css).toMatch(/body:has\(#settings-panel\.open\)[\s\S]*?\.asset-panel[\s\S]*?display:\s*none\s*!important/);
+    expect(read('../styles/assets.css')).toMatch(/\.asset-panel\[data-context-obscured\][\s\S]*?display:\s*none[\s\S]*?pointer-events:\s*none/);
   });
 });
+
+function track(): ExternalTrackState {
+  return {
+    trackId: 'track-1',
+    classification: TrackClassification.Vessel,
+    pose: {
+      frame: CoordinateFrame.LocalEus,
+      originId: null,
+      position: { x: 10, y: 0, z: -5 },
+      orientation: { x: 0, y: 0, z: 0, w: 1 },
+      covariance: null,
+      geo: null,
+    },
+    twist: {
+      frame: CoordinateFrame.LocalEus,
+      linear: { x: 1, y: 0, z: 0 },
+      angular: { x: 0, y: 0, z: 0 },
+      originId: null,
+      covariance: null,
+    },
+    sources: [{
+      sourceId: 'ais-1',
+      kind: TrackSourceKind.Transponder,
+      observedAt: '2026-08-30T12:00:00.000Z',
+      quality: 0.9,
+    }],
+    quality: {
+      confidence: 0.8,
+      positionAccuracyM: null,
+      velocityAccuracyMps: null,
+      updateCount: 3,
+      isFused: false,
+    },
+    lastUpdateTime: '2026-08-30T12:00:00.000Z',
+    freshness: DataFreshness.Fresh,
+    label: 'MV Example',
+    transponder: null,
+  };
+}

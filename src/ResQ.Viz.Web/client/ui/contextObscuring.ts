@@ -17,14 +17,22 @@ export function setContextObscured(
     if (!previousPointerEvents.has(surface)) {
       previousPointerEvents.set(surface, surface.style.pointerEvents);
     }
+    if (!surface.hasAttribute('data-context-visible')) {
+      surface.setAttribute('data-context-visible', String(!surface.hidden));
+    }
+    surface.setAttribute('data-context-obscured', '');
+    surface.hidden = true;
     surface.setAttribute('inert', '');
     surface.setAttribute('aria-hidden', 'true');
     surface.style.pointerEvents = 'none';
     return;
   }
 
+  surface.removeAttribute('data-context-obscured');
   surface.removeAttribute('inert');
-  surface.setAttribute('aria-hidden', String(surface.hidden));
+  const visible = surface.getAttribute('data-context-visible') === 'true';
+  surface.hidden = !visible;
+  surface.setAttribute('aria-hidden', String(!visible));
   surface.style.pointerEvents = previousPointerEvents.get(surface) ?? '';
   previousPointerEvents.delete(surface);
 }

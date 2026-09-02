@@ -33,6 +33,7 @@ import { Hud }            from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
 import { setContextObscured } from './ui/contextObscuring';
+import { setSettingsVisibleState } from './ui/settingsVisibility';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -425,11 +426,7 @@ const settingsClose  = document.getElementById('settings-close');
 const settingsReset  = document.getElementById('settings-reset');
 
 function _setSettingsVisible(v: boolean): void {
-    settingsPanel?.classList.toggle('open', v);
-    // Mirror visual state into AT-visible attributes so screen readers don't
-    // see the panel as permanently hidden (it ships with aria-hidden="true").
-    settingsPanel?.setAttribute('aria-hidden', String(!v));
-    settingsToggle?.setAttribute('aria-expanded', String(v));
+    setSettingsVisibleState(settingsPanel, settingsToggle, v);
     setContextObscured(
         document.querySelector<HTMLElement>('.asset-panel'),
         v,
@@ -1233,6 +1230,11 @@ function _ensureFleetUi(): void {
                 // refreshed immediately rather than at the next 10 Hz frame.
                 onFilterChange: () => { if (_lastSnapshot) _renderSnapshot(_lastSnapshot, true); },
             });
+            setContextObscured(
+                fleetUi.panel.element,
+                settingsPanel?.classList.contains('open') === true,
+                settingsClose ?? settingsToggle,
+            );
         })
         .catch((err: unknown) => {
             _fleetUiLoading = false;

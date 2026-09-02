@@ -162,8 +162,8 @@ export class AssetPanel {
 
     this._root = document.createElement('aside');
     this._root.className = 'asset-panel';
-    this._root.hidden = true;
     this._root.setAttribute('aria-label', 'Selected asset');
+    this._syncVisibility(false);
 
     const header = document.createElement('header');
     header.className = 'ap-head';
@@ -248,7 +248,7 @@ export class AssetPanel {
 
   /** Hides the panel and forgets its subject. */
   hide(): void {
-    this._root.hidden = true;
+    this._syncVisibility(false);
     this._subjectId = null;
     this._view = null;
     this._forgetReport();
@@ -277,7 +277,7 @@ export class AssetPanel {
       this.hide();
       return;
     }
-    this._root.hidden = false;
+    this._syncVisibility(true);
     if (subject.kind === 'track') {
       this._renderTrack(subject.track, simulationNowMs);
     } else {
@@ -298,6 +298,14 @@ export class AssetPanel {
   private _dismiss(): void {
     this.hide();
     this._closeFn?.();
+  }
+
+  /** Keeps visual and accessibility visibility coherent across frame renders. */
+  private _syncVisibility(hasSubject: boolean): void {
+    this._root.setAttribute('data-context-visible', String(hasSubject));
+    const hidden = !hasSubject || this._root.hasAttribute('data-context-obscured');
+    this._root.hidden = hidden;
+    this._root.setAttribute('aria-hidden', String(hidden));
   }
 
   // ── Asset ─────────────────────────────────────────────────────────────────

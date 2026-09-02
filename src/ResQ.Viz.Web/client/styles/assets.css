@@ -51,6 +51,11 @@
   display: none;
 }
 
+.asset-panel[data-context-obscured] {
+  display: none;
+  pointer-events: none;
+}
+
 /* ── Asset detail panel ─────────────────────────────────────────────────── */
 
 .asset-panel {
