@@ -78,7 +78,7 @@ export function humaniseScenarioName(name: string): string {
 
 /** Resolves curated copy, with a safe visible fallback for future server presets. */
 export function scenarioPresentation(name: string): ScenarioPresentation {
-  const copy = COPY[name] ?? {
+  const copy = Object.prototype.hasOwnProperty.call(COPY, name) ? COPY[name]! : {
     displayName: humaniseScenarioName(name),
     category: 'Other',
     purpose: 'Configured scenario',
