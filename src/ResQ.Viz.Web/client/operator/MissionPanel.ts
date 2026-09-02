@@ -3,7 +3,7 @@
 
 import type { ApiFailure } from '../api';
 import type { ResourceState, ScenarioCatalogResponse } from './ConsoleResources';
-import type { MissionView } from './ScenarioRuntime';
+import type { MissionBaseKind, MissionView } from './ScenarioRuntime';
 import { scenarioPresentation } from './scenarioPresentation';
 
 export interface MissionTransportView {
@@ -15,6 +15,7 @@ export interface MissionTransportView {
 /** Allows focused panel fixtures to omit runtime-only revision metadata. */
 export interface MissionDisplayState {
   readonly kind: MissionView['kind'];
+  readonly baseKind?: MissionBaseKind;
   readonly name?: string | null;
   readonly startedAtSimulationSeconds?: number;
   readonly revision?: number;
@@ -153,9 +154,12 @@ function action(name: string, label: string): HTMLButtonElement {
 }
 
 function missionTitle(mission: MissionDisplayState, activeName: string | null): string {
-  if (mission.kind === 'unknown') return 'Waiting for authoritative scenario state';
-  if (mission.kind === 'none') return 'No active mission';
-  if (mission.kind === 'custom') return 'Custom session';
+  const baseKind = mission.kind === 'pending'
+    ? (mission.baseKind ?? (activeName === null ? 'none' : 'active'))
+    : mission.kind;
+  if (baseKind === 'unknown') return 'Waiting for authoritative scenario state';
+  if (baseKind === 'none') return 'No active mission';
+  if (baseKind === 'custom') return 'Custom session';
   if (activeName !== null) return scenarioPresentation(activeName).displayName;
   return 'No active mission';
 }

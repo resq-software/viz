@@ -124,6 +124,35 @@ describe('ScenarioRuntime request confirmation', () => {
     expect(onPresent.mock.calls.map(([state]) => state.revision)).toEqual([2, 4]);
   });
 
+  it('does not treat a lower pre-response match as confirmation of the returned revision', () => {
+    const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+    runtime.apply(scenario('single', 2), 1, 'live');
+    const token = runtime.requested('flood-response');
+
+    // Another console happened to publish the same target name first.
+    runtime.apply(scenario('flood-response', 3), 8, 'live');
+    accepted(runtime, token, scenario('flood-response', 4));
+
+    expect(runtime.view).toMatchObject({
+      kind: 'pending', baseKind: 'active', name: 'flood-response',
+      pendingName: 'flood-response', revision: 3,
+    });
+
+    runtime.apply(scenario('flood-response', 4), 8, 'live');
+    expect(runtime.view).toMatchObject({ kind: 'active', revision: 4 });
+  });
+
+  it('accepts an expected matching revision that reached the stream before the response', () => {
+    const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+    runtime.apply(scenario('single', 2), 1, 'live');
+    const token = runtime.requested('flood-response');
+
+    runtime.apply(scenario('flood-response', 4), 8, 'live');
+    accepted(runtime, token, scenario('flood-response', 4));
+
+    expect(runtime.view).toMatchObject({ kind: 'active', revision: 4 });
+  });
+
   it('lets a newer remote revision supersede an accepted request', () => {
     const runtime = new ScenarioRuntime({ onPresent: () => undefined });
     runtime.apply(scenario('single', 2), 1, 'live');
@@ -133,6 +162,46 @@ describe('ScenarioRuntime request confirmation', () => {
     runtime.apply(scenario('coastal-search', 6), 8, 'live');
 
     expect(runtime.view).toMatchObject({ kind: 'active', name: 'coastal-search', revision: 6 });
+  });
+
+  it('lets a newer same-name revision supersede an accepted request', () => {
+    const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+    runtime.apply(scenario('single', 2), 1, 'live');
+    const token = runtime.requested('flood-response');
+    accepted(runtime, token, scenario('flood-response', 4));
+
+    runtime.apply(scenario('flood-response', 6), 8, 'live');
+
+    expect(runtime.view).toMatchObject({ kind: 'active', name: 'flood-response', revision: 6 });
+  });
+
+  it.each([
+    { assetCount: 0, expectedBase: 'none' as const },
+    { assetCount: 2, expectedBase: 'custom' as const },
+  ])('retains the $expectedBase base while a scenario start is pending', ({ assetCount, expectedBase }) => {
+    const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+    runtime.apply(null, assetCount, 'live');
+
+    const token = runtime.requested('flood-response');
+    accepted(runtime, token, scenario('flood-response', 2));
+
+    expect(runtime.view).toMatchObject({
+      kind: 'pending', baseKind: expectedBase,
+      name: 'flood-response', pendingName: 'flood-response',
+    });
+  });
+
+  it('retains Custom session while an accepted reset awaits an empty clear', () => {
+    const runtime = new ScenarioRuntime({ onPresent: () => undefined });
+    runtime.apply(null, 2, 'live');
+
+    const token = runtime.requested(null);
+    runtime.requestAccepted(token);
+
+    expect(runtime.view).toMatchObject({
+      kind: 'pending', baseKind: 'custom', name: null,
+      pendingName: null, pendingKind: 'reset',
+    });
   });
 
   it('ignores a stale acceptance after a newer request generation', () => {

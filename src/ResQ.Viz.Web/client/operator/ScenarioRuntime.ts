@@ -4,6 +4,7 @@
 import type { ScenarioSessionState } from '../assets/types';
 
 export type ScenarioInteractionMode = 'live' | 'replay';
+export type MissionBaseKind = 'unknown' | 'none' | 'custom' | 'active';
 
 export type MissionView =
   | { readonly kind: 'unknown'; readonly pendingName: null }
@@ -18,6 +19,8 @@ export type MissionView =
     }
   | {
       readonly kind: 'pending';
+      /** Authoritative title retained while the request awaits streamed confirmation. */
+      readonly baseKind: MissionBaseKind;
       /** Current active name, or the requested name when no named scenario is active. */
       readonly name: string | null;
       readonly startedAtSimulationSeconds?: number;
@@ -25,6 +28,8 @@ export type MissionView =
       readonly pendingName: string | null;
       readonly pendingKind: 'scenario' | 'reset';
     };
+
+type MissionBaseView = Exclude<MissionView, { readonly kind: 'pending' }>;
 
 export interface ScenarioRequestToken {
   readonly generation: number;
@@ -44,7 +49,9 @@ interface PendingRequest {
   readonly token: ScenarioRequestToken;
   accepted: boolean;
   expectedRevision: number | null;
-  streamConfirmed: boolean;
+  matchingRevision: number | null;
+  observedRevision: number | null;
+  resetConfirmationSequence: number | null;
 }
 
 interface DeferredState {
@@ -153,7 +160,9 @@ export class ScenarioRuntime {
       token,
       accepted: false,
       expectedRevision: null,
-      streamConfirmed: false,
+      matchingRevision: null,
+      observedRevision: null,
+      resetConfirmationSequence: null,
     };
     return token;
   }
@@ -168,7 +177,7 @@ export class ScenarioRuntime {
     pending.accepted = true;
     pending.expectedRevision = current?.revision ?? null;
 
-    if (pending.streamConfirmed || this._isAlreadyResolved(pending)) {
+    if (this._isAlreadyResolved(pending)) {
       this._request = null;
     }
     this._refreshView();
@@ -210,44 +219,34 @@ export class ScenarioRuntime {
 
     const target = pending.token.targetName;
     if (target === null) {
-      if (scenario === null && assetCount === 0) pending.streamConfirmed = true;
-    } else if (scenario !== null
-      && scenario !== undefined
-      && scenario.revision > pending.token.baselineRevision
-      && scenario.name === target) {
-      pending.streamConfirmed = true;
+      if (scenario === null && assetCount === 0) {
+        pending.resetConfirmationSequence = applySequence;
+      }
+    } else if (scenario !== null && scenario !== undefined
+      && scenario.revision > pending.token.baselineRevision) {
+      pending.observedRevision = Math.max(pending.observedRevision ?? -1, scenario.revision);
+      if (scenario.name === target) {
+        pending.matchingRevision = Math.max(pending.matchingRevision ?? -1, scenario.revision);
+      }
     }
 
-    if (pending.accepted && (pending.streamConfirmed || this._streamSupersedes(pending, scenario))) {
+    if (pending.accepted && this._isAlreadyResolved(pending)) {
       this._request = null;
     }
-  }
-
-  private _streamSupersedes(
-    pending: PendingRequest,
-    scenario: ScenarioSessionState | null | undefined,
-  ): boolean {
-    return pending.expectedRevision !== null
-      && scenario !== null
-      && scenario !== undefined
-      && scenario.revision > pending.expectedRevision;
   }
 
   private _isAlreadyResolved(pending: PendingRequest): boolean {
     const target = pending.token.targetName;
     if (target === null) {
-      return this._scenario === null
-        && this._assetCount === 0
-        && this._applySequence > pending.token.baselineApplySequence;
+      return pending.resetConfirmationSequence !== null
+        && pending.resetConfirmationSequence > pending.token.baselineApplySequence;
     }
 
-    const current = this._scenario;
-    if (current === null || current === undefined) return false;
     if (pending.expectedRevision !== null) {
-      return current.revision > pending.expectedRevision
-        || (current.revision === pending.expectedRevision && current.name === target);
+      return (pending.matchingRevision ?? -1) >= pending.expectedRevision
+        || (pending.observedRevision ?? -1) > pending.expectedRevision;
     }
-    return current.revision > pending.token.baselineRevision && current.name === target;
+    return pending.matchingRevision !== null;
   }
 
   private _matchingRequest(
@@ -269,6 +268,7 @@ export class ScenarioRuntime {
       const active = base.kind === 'active' ? base : null;
       next = {
         kind: 'pending',
+        baseKind: base.kind,
         name: active?.name ?? pending.token.targetName,
         ...(active === null ? {} : {
           startedAtSimulationSeconds: active.startedAtSimulationSeconds,
@@ -284,7 +284,7 @@ export class ScenarioRuntime {
     for (const listener of this._listeners) listener(next);
   }
 
-  private _baseView(): MissionView {
+  private _baseView(): MissionBaseView {
     const scenario = this._scenario;
     if (scenario === undefined) return { kind: 'unknown', pendingName: null };
     if (scenario === null) {
@@ -309,6 +309,8 @@ function sameView(left: MissionView, right: MissionView): boolean {
     && ('startedAtSimulationSeconds' in left ? left.startedAtSimulationSeconds : null)
       === ('startedAtSimulationSeconds' in right ? right.startedAtSimulationSeconds : null)
     && left.pendingName === right.pendingName
+    && ('baseKind' in left ? left.baseKind : null)
+      === ('baseKind' in right ? right.baseKind : null)
     && ('pendingKind' in left ? left.pendingKind : null)
       === ('pendingKind' in right ? right.pendingKind : null);
 }

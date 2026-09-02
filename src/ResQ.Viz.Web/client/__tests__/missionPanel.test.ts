@@ -158,6 +158,49 @@ describe('MissionPanel', () => {
     expect(h.mount.textContent).toContain('Resetting mission');
   });
 
+  it.each([
+    {
+      baseKind: 'custom' as const,
+      pendingKind: 'scenario' as const,
+      name: 'flood-response',
+      pendingName: 'flood-response',
+      title: 'Custom session',
+      pending: 'Starting Flood Response',
+    },
+    {
+      baseKind: 'none' as const,
+      pendingKind: 'scenario' as const,
+      name: 'flood-response',
+      pendingName: 'flood-response',
+      title: 'No active mission',
+      pending: 'Starting Flood Response',
+    },
+    {
+      baseKind: 'custom' as const,
+      pendingKind: 'reset' as const,
+      name: null,
+      pendingName: null,
+      title: 'Custom session',
+      pending: 'Resetting mission',
+    },
+  ])('keeps the $baseKind title separate from $pendingKind pending copy', input => {
+    const h = harness();
+    h.panel.render({
+      mission: {
+        kind: 'pending',
+        baseKind: input.baseKind,
+        pendingKind: input.pendingKind,
+        name: input.name,
+        pendingName: input.pendingName,
+      },
+      transport: { paused: false, speed: 1, simulationTimeSeconds: 19 },
+      catalog: readyCatalog,
+    });
+
+    expect(h.mount.querySelector('.operator-mission-title')?.textContent).toBe(input.title);
+    expect(h.mount.querySelector('.operator-mission-pending')?.textContent).toContain(input.pending);
+  });
+
   it('performs no DOM writes when a 10 Hz render repeats identical state', async () => {
     const h = harness();
     const state = {
