@@ -152,6 +152,20 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/beforeunload[\s\S]*?connectionRetry\.dispose\(\)/);
   });
 
+  it('clears stale overlay errors after every successful explicit connection start', () => {
+    const startAt = appSrc.indexOf('async function start(');
+    const start = appSrc.slice(startAt, appSrc.indexOf('\nvoid start();', startAt));
+    const connectedAt = start.indexOf('await connection.start()');
+    const overlayAt = start.indexOf('loadingOverlay.onReconnected()');
+    const negotiateAt = start.indexOf('startupCoordinator.startNegotiation()');
+    const subscribeAt = start.indexOf('await _subscribeSnapshots()');
+
+    expect(connectedAt).toBeGreaterThanOrEqual(0);
+    expect(overlayAt).toBeGreaterThan(connectedAt);
+    expect(negotiateAt).toBeGreaterThan(overlayAt);
+    expect(subscribeAt).toBeGreaterThan(negotiateAt);
+  });
+
   it('uses the exact mode-specific defaults and removes drone-count startup', () => {
     expect(appSrc).toContain("apiPost('/api/sim/scenario/single')");
     expect(appSrc).toContain("apiPostJson<{ current: ScenarioSessionState }>(\n            '/api/v2/sim/scenarios/flood-response/start',\n        )");

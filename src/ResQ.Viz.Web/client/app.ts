@@ -2563,6 +2563,7 @@ async function start(): Promise<void> {
             _wireConnection(connection);
         }
         await connection.start();
+        loadingOverlay.onReconnected();
         hud.setStatus('connected');
         // Start the accepted-but-silent window before awaiting the subscription
         // invoke: v1 frames can prove fallback viability while that call is slow.
