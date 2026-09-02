@@ -3,6 +3,7 @@
 
 import '../styles/editor.css';
 import type { VizFrame } from '../types';
+import { shouldIgnoreGlobalShortcut } from '../ui/hotkeys';
 import { FrameRecorder, clampIndex } from './recorder';
 import { nextSpeed } from './transport';
 
@@ -307,9 +308,7 @@ export class Dvr {
 
     private _bindKeyboard(): void {
         document.addEventListener('keydown', (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT') return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (shouldIgnoreGlobalShortcut(e)) return;
             if (e.code === 'Space') {
                 e.preventDefault();
                 this._onPlayPause();
