@@ -105,7 +105,7 @@ public sealed partial class ControlAuthority
         }
     }
 
-    /// <summary>Ends any lease over an asset that is being removed.</summary>
+    /// <summary>Ends a lease only when it no longer names the current asset instance.</summary>
     /// <remarks>
     /// Called by the room the instant an asset is removed
     /// (<see cref="SimulationRoom.TryRemoveAsset"/>, through
@@ -113,6 +113,13 @@ public sealed partial class ControlAuthority
     /// does rather than at whatever request next happens to sweep. It is an accuracy
     /// improvement, not the safety net: the sweep every operation runs would drop the lease
     /// regardless, which is why nothing here breaks if a future removal path forgets to call it.
+    /// <para>
+    /// The callback carries an id, not an instance token, and runs outside the room lock. A new
+    /// asset can therefore reuse that id and acquire a lease before an old callback arrives. The
+    /// current instance is compared with the lease here: a matching lease belongs to the
+    /// replacement and the delayed callback is a no-op; a missing or different instance ends the
+    /// old lease as <see cref="ControlLeaseEndReason.AssetRemoved"/>.
+    /// </para>
     /// <para>
     /// Must be called <em>outside</em> the room's lock. It takes this authority's lock and the
     /// probe then takes the room's, so calling it with the room's lock already held would invert
@@ -131,16 +138,18 @@ public sealed partial class ControlAuthority
                 return false;
             }
 
-            // A lease that had already lapsed ended at its expiry. Relabelling that as a removal
-            // would report a cause that did not happen and move the instant it happened at.
-            var stillLive = lease.IsLive(now);
-            End(
-                lease,
-                stillLive ? ControlLeaseEndReason.AssetRemoved : ControlLeaseEndReason.Expired,
-                stillLive ? now : lease.ExpiresAt,
-                now,
-                null,
-                null);
+            if (!lease.IsLive(now))
+            {
+                End(lease, ControlLeaseEndReason.Expired, lease.ExpiresAt, now, null, null);
+                return true;
+            }
+
+            if (StillNamesTheSameInstance(assetId, lease))
+            {
+                return false;
+            }
+
+            End(lease, ControlLeaseEndReason.AssetRemoved, now, now, null, null);
             return true;
         }
     }
