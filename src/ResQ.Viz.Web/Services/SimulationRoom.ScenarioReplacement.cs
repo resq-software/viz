@@ -21,6 +21,9 @@ using ResQ.Viz.Web.Services.Assets;
 
 namespace ResQ.Viz.Web.Services;
 
+/// <summary>Sanitized category plus internal exception for a failed staging attempt.</summary>
+internal sealed record ScenarioReplacementFailure(string Category, Exception Exception);
+
 /// <summary>A candidate scenario population that is not visible until its room commits it.</summary>
 /// <remarks>
 /// Internal so no caller can retain the candidate or its world. The scenario service receives it
@@ -64,11 +67,13 @@ public sealed partial class SimulationRoom
     /// <param name="name">Canonical configured scenario name.</param>
     /// <param name="stage">Populates the candidate world. It must not call back into this room.</param>
     /// <param name="committed">Exact scenario state committed with the candidate population.</param>
+    /// <param name="failure">Stable failure category plus the internal exception, on failure.</param>
     /// <returns><see langword="true"/> when the candidate was committed.</returns>
     internal bool TryReplaceScenario(
         string name,
         Action<ScenarioPopulationBuilder> stage,
-        [NotNullWhen(true)] out ScenarioSessionState? committed)
+        [NotNullWhen(true)] out ScenarioSessionState? committed,
+        [NotNullWhen(false)] out ScenarioReplacementFailure? failure)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(stage);
@@ -99,9 +104,10 @@ public sealed partial class SimulationRoom
                 candidateSwarm.SetScenario(name, candidate.Drones);
                 candidateSwarm.SetTerrainPreset(_terrainPreset, _terrain, candidate.Drones);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 committed = null;
+                failure = new ScenarioReplacementFailure("population.stage", ex);
                 return false;
             }
 
@@ -137,6 +143,7 @@ public sealed partial class SimulationRoom
         NotifyWorldReset(worldRevision);
         Touch();
         committed = next;
+        failure = null;
         return true;
     }
 }

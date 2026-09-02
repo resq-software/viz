@@ -234,12 +234,30 @@ public sealed partial class ScenarioService
     public bool TryReplace(
         string name,
         SimulationRoom room,
-        [NotNullWhen(true)] out ScenarioSessionState? committed)
+        [NotNullWhen(true)] out ScenarioSessionState? committed) =>
+        TryReplace(name, room, out committed, out _);
+
+    /// <summary>Atomically replaces a room population and reports a bounded failure category.</summary>
+    /// <param name="name">Canonical configured scenario name.</param>
+    /// <param name="room">Room whose population and scenario state are replaced.</param>
+    /// <param name="committed">Exact scenario state committed with the new population.</param>
+    /// <param name="failure">Stable failure category plus the internal exception, on failure.</param>
+    /// <returns>
+    /// <see langword="true"/> when the scenario existed and its complete population was committed;
+    /// otherwise <see langword="false"/> with the previous room left unchanged.
+    /// </returns>
+    internal bool TryReplace(
+        string name,
+        SimulationRoom room,
+        [NotNullWhen(true)] out ScenarioSessionState? committed,
+        [NotNullWhen(false)] out ScenarioReplacementFailure? failure)
     {
         ArgumentNullException.ThrowIfNull(room);
         if (!_scenarios.TryGetValue(name, out var entries))
         {
             committed = null;
+            failure = new ScenarioReplacementFailure(
+                "catalog.resolve", new InvalidOperationException("Scenario was not present in the catalog."));
             return false;
         }
 
@@ -259,7 +277,8 @@ public sealed partial class ScenarioService
                     }
                 }
             },
-            out committed);
+            out committed,
+            out failure);
     }
 
     /// <summary>Builds one immutable discovery summary from validated entries.</summary>

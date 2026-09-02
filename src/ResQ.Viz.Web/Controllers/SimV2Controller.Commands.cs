@@ -359,9 +359,15 @@ public sealed partial class SimV2Controller
     /// <summary>Answers a repeated idempotency key without executing anything a second time.</summary>
     /// <returns>The response to send, or null when the command is genuinely new.</returns>
     private ObjectResult? ReplayDuplicate(
-        AssetCommandLog log, CommandIdempotencyDecision decision, DateTimeOffset now)
+        AssetCommandLogSession session, CommandIdempotencyDecision decision, DateTimeOffset now)
     {
         if (decision.Outcome == CommandIdempotencyOutcome.New)
+        {
+            return null;
+        }
+
+        var resolution = session.ResolveReplay(decision, now);
+        if (!resolution.IsCurrent)
         {
             return null;
         }
@@ -376,15 +382,6 @@ public sealed partial class SimV2Controller
                 commandId: priorId == Guid.Empty ? null : priorId);
         }
 
-        var replayed = log.TryGet(priorId, out var stored)
-            ? stored
-            : new CommandResult(
-                priorId,
-                decision.Existing?.State ?? CommandState.Accepted,
-                now,
-                0,
-                "Duplicate of an earlier command with the same idempotency key.");
-
-        return Accepted(CommandLocation(priorId), replayed);
+        return Accepted(CommandLocation(priorId), resolution.Result!);
     }
 }

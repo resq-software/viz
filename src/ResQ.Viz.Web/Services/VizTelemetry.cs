@@ -131,4 +131,14 @@ public static class VizTelemetry
     public static readonly Counter<long> ScenariosRun =
         Meter.CreateCounter<long>("resq.viz.scenarios_run", unit: "{scenario}",
             description: "Scenario runs started.");
+
+    /// <summary>Scenario replacement attempts that failed before commit.</summary>
+    public static readonly Counter<long> ScenarioRunFailures =
+        Meter.CreateCounter<long>("resq.viz.scenario_run_failures", unit: "{scenario}",
+            description: "Scenario replacement attempts that failed before commit.");
+
+    /// <summary>Wall-clock duration of scenario replacement attempts, successful or failed.</summary>
+    public static readonly Histogram<double> ScenarioRunDuration =
+        Meter.CreateHistogram<double>("resq.viz.scenario_run_duration", unit: "ms",
+            description: "Time spent staging and committing a scenario replacement.");
 }

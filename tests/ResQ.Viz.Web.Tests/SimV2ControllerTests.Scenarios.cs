@@ -206,8 +206,14 @@ public partial class SimV2ControllerTests
         after.Assets.Select(a => a.AssetId).Should().Equal(before.Assets.Select(a => a.AssetId));
         after.Assets.Select(a => a.Pose).Should().Equal(before.Assets.Select(a => a.Pose));
         telemetry.ScenarioRuns.Should().Be(0);
-        telemetry.CompletedActivities.Should().BeEmpty();
-        logger.Messages.Should().BeEmpty();
+        telemetry.ScenarioFailures.Should().Be(1);
+        telemetry.Durations.Should().ContainSingle(sample => sample.Status == "failure");
+        telemetry.CompletedActivities.Should().ContainSingle().Which.Should().Match<Activity>(activity =>
+            activity.Status == ActivityStatusCode.Error
+            && Equals(activity.GetTagItem("scenario.name"), "broken")
+            && Equals(activity.GetTagItem("error.type"), "population.stage"));
+        logger.Messages.Should().ContainSingle(message =>
+            message.Contains("population.stage", StringComparison.Ordinal));
     }
 
     /// <summary>A successful v2 start emits the same activity, metric and structured log as v1.</summary>
@@ -223,6 +229,8 @@ public partial class SimV2ControllerTests
 
         response.Current.Name.Should().Be("single");
         telemetry.ScenarioRuns.Should().Be(1);
+        telemetry.ScenarioFailures.Should().Be(0);
+        telemetry.Durations.Should().ContainSingle(sample => sample.Status == "success");
         telemetry.CompletedActivities.Should().ContainSingle()
             .Which.GetTagItem("scenario.name").Should().Be("single");
         logger.Messages.Should().ContainSingle()
@@ -449,18 +457,35 @@ public partial class SimV2ControllerTests
         private readonly MeterListener _meter = new();
         private readonly ActivityListener _activity = new();
         private long _scenarioRuns;
+        private long _scenarioFailures;
 
         public ScenarioTelemetryProbe()
         {
             _meter.InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Name == "resq.viz.scenarios_run")
+                if (instrument.Name is "resq.viz.scenarios_run"
+                    or "resq.viz.scenario_run_failures"
+                    or "resq.viz.scenario_run_duration")
                 {
                     listener.EnableMeasurementEvents(instrument);
                 }
             };
-            _meter.SetMeasurementEventCallback<long>((_, measurement, _, _) =>
-                Interlocked.Add(ref _scenarioRuns, measurement));
+            _meter.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+            {
+                if (instrument.Name == "resq.viz.scenarios_run")
+                {
+                    Interlocked.Add(ref _scenarioRuns, measurement);
+                }
+                else
+                {
+                    Interlocked.Add(ref _scenarioFailures, measurement);
+                }
+            });
+            _meter.SetMeasurementEventCallback<double>((_, measurement, tags, _) =>
+            {
+                var status = tags.ToArray().FirstOrDefault(tag => tag.Key == "status").Value?.ToString();
+                Durations.Enqueue((measurement, status));
+            });
             _meter.Start();
 
             _activity.ShouldListenTo = source => source.Name == VizTelemetry.ServiceName;
@@ -473,6 +498,10 @@ public partial class SimV2ControllerTests
         }
 
         public long ScenarioRuns => Interlocked.Read(ref _scenarioRuns);
+
+        public long ScenarioFailures => Interlocked.Read(ref _scenarioFailures);
+
+        public ConcurrentQueue<(double Milliseconds, string? Status)> Durations { get; } = new();
 
         public ConcurrentQueue<Activity> CompletedActivities { get; } = new();
 

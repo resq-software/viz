@@ -59,7 +59,8 @@ public sealed partial class SimV2Controller
         }
 
         var room = Room;
-        if (!_scenarios.TryReplace(canonicalName, room, out var current))
+        var run = ScenarioRunOrchestrator.Run(_scenarios, canonicalName, room, _logger);
+        if (!run.IsSuccess)
         {
             return Failure(
                 StatusCodes.Status503ServiceUnavailable,
@@ -67,12 +68,7 @@ public sealed partial class SimV2Controller
                 "The scenario population could not be staged; the current session was preserved.");
         }
 
-        using var activity = VizTelemetry.ActivitySource.StartActivity("scenario.run");
-        activity?.SetTag("scenario.name", canonicalName);
-        VizTelemetry.ScenariosRun.Add(1);
-        _logger.LogInformation(
-            "Scenario '{Name}' started in room {RoomId}.", Sanitize(canonicalName), room.Id);
-        return Ok(new ScenarioStartResponse(current));
+        return Ok(new ScenarioStartResponse(run.Current!));
     }
 
     /// <summary>Builds the typed response used when no scenario service was supplied.</summary>

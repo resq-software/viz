@@ -79,7 +79,8 @@ public sealed partial class SimV2Controller
             return null;
         }
 
-        var preempted = WasPreempted(authority, envelope.AssetId, envelope.IssuerId, envelope.ControlLeaseId);
+        var preempted = authority.WasPreempted(
+            envelope.AssetId, envelope.IssuerId, envelope.ControlLeaseId);
         var heldByAnother = lease is not null
             && !string.Equals(lease.HolderId, envelope.IssuerId, StringComparison.Ordinal);
 
@@ -118,33 +119,6 @@ public sealed partial class SimV2Controller
         return Failure(StatusFor(code), code, detail, envelope.AssetId, envelope.CommandId);
     }
 
-    /// <summary>Whether this issuer's control of this asset ended in a preemption.</summary>
-    /// <remarks>
-    /// A release, an expiry and a preemption all leave the issuer without authority; only the
-    /// trail says which happened, without guessing from timing.
-    /// </remarks>
-    private static bool WasPreempted(
-        ControlAuthority authority, string assetId, string issuerId, string? leaseId)
-    {
-        ControlAuditRecord? last = null;
-
-        foreach (var record in authority.ReadAudit())
-        {
-            if (!string.Equals(record.AssetId, assetId, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            if (string.Equals(record.HolderId, issuerId, StringComparison.Ordinal)
-                || (leaseId is not null && string.Equals(record.LeaseId, leaseId, StringComparison.Ordinal)))
-            {
-                last = record;
-            }
-        }
-
-        return last?.Kind == ControlAuditKind.Preempted;
-    }
-
     /// <summary>Whether a validation reason code is decided before the authority gate runs.</summary>
     /// <remarks>
     /// The gate order is a contract: payload, deadline and asset resolution are settled first, so
@@ -171,6 +145,48 @@ public sealed partial class SimV2Controller
             decision, at, TraceId, envelope.AssetId, envelope.IssuerId,
             commandId: envelope.CommandId, kind: envelope.Kind,
             leaseId: envelope.ControlLeaseId, reasonCode: reasonCode, detail: detail);
+
+    /// <summary>Reports a dispatch whose old-world result could not be recorded in the new generation.</summary>
+    private ObjectResult CommandResultBecameStale(
+        SimulationRoom room,
+        AssetCommandEnvelope envelope,
+        DateTimeOffset now,
+        CommandDecision decision)
+    {
+        const string reason = CommandRejectionReasons.WorldChangedAfterDispatch;
+        var detail =
+            $"Command '{envelope.CommandId}' reached the prior asset world, but that world was "
+            + "replaced before its result could be tracked. No result or idempotency claim was "
+            + "written into the current world.";
+        RecordCommandDecision(room, envelope, decision, now, reason, detail);
+        _logger.LogWarning(
+            "[room {RoomId}] Command {CommandId} ({Kind}) completed against a replaced world: "
+            + "{ReasonCode} (trace {TraceId}).",
+            room.Id, envelope.CommandId, Sanitize(envelope.Kind), reason, TraceId);
+        return Failure(
+            StatusCodes.Status409Conflict,
+            reason,
+            detail,
+            envelope.AssetId,
+            envelope.CommandId);
+    }
+
+    /// <summary>Reports a duplicate decision invalidated by replacement before it could replay.</summary>
+    private ObjectResult CommandWorldChangedBeforeDispatch(
+        SimulationRoom room,
+        AssetCommandEnvelope envelope,
+        DateTimeOffset now)
+    {
+        const string reason = CommandAuthorityReasons.AssetInstanceChanged;
+        var detail = "The simulation world changed before the duplicate command could be replayed; no command was dispatched.";
+        RecordCommandDecision(room, envelope, CommandDecision.Rejected, now, reason, detail);
+        return Failure(
+            StatusCodes.Status409Conflict,
+            reason,
+            detail,
+            envelope.AssetId,
+            envelope.CommandId);
+    }
 
     // ── Lease endpoint validation ──────────────────────────────────────────────
 

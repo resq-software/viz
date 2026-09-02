@@ -278,24 +278,32 @@ public sealed partial class SimulationRoom
 
         lock (_lock)
         {
-            result = _assets.SendCommand(in command);
-
-            if (result.IsAccepted
-                && _assets.TryGet(command.AssetId, out var asset)
-                && asset is { Domain: AssetDomain.Air })
-            {
-                if (command.Kind == AssetCommandKind.ResumeAutonomy)
-                {
-                    _swarm.AttachAuto(command.AssetId);
-                }
-                else
-                {
-                    _swarm.DetachManual(command.AssetId);
-                }
-            }
+            result = SendAssetCommandCore(in command);
         }
 
         Touch();
+        return result;
+    }
+
+    /// <summary>Dispatches under the room lock and synchronizes air-asset swarm ownership.</summary>
+    private AssetCommandResult SendAssetCommandCore(in SimulatedAssetCommand command)
+    {
+        var result = _assets.SendCommand(in command);
+
+        if (result.IsAccepted
+            && _assets.TryGet(command.AssetId, out var asset)
+            && asset is { Domain: AssetDomain.Air })
+        {
+            if (command.Kind == AssetCommandKind.ResumeAutonomy)
+            {
+                _swarm.AttachAuto(command.AssetId);
+            }
+            else
+            {
+                _swarm.DetachManual(command.AssetId);
+            }
+        }
+
         return result;
     }
 

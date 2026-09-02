@@ -257,18 +257,14 @@ public sealed class SimController : ControllerBase
             return NotFound(new { error = $"Scenario '{name}' not found. Available: {string.Join(", ", _scenarios.ScenarioNames)}" });
 
         var room = Room;
-        if (!_scenarios.TryReplace(canonicalName, room, out _))
+        var run = ScenarioRunOrchestrator.Run(_scenarios, canonicalName, room, _logger);
+        if (!run.IsSuccess)
         {
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new { error = "Scenario replacement failed; the current session was preserved." });
         }
 
-        using var activity = VizTelemetry.ActivitySource.StartActivity("scenario.run");
-        activity?.SetTag("scenario.name", canonicalName);
-        VizTelemetry.ScenariosRun.Add(1);
-        _logger.LogInformation(
-            "Scenario '{Name}' started in room {RoomId}.", Sanitize(canonicalName), room.Id);
         return Ok(new { scenario = canonicalName, status = "started" });
     }
 
