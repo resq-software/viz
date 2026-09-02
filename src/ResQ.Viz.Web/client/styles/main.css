@@ -297,6 +297,7 @@ button { font-family: inherit; }
   overflow-y: auto;
   overflow-x: hidden;
   padding: 18px 16px 24px;
+  padding-inline-start: max(16px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -784,8 +785,12 @@ kbd {
 .settings-panel {
   position: fixed;
   top: var(--effective-hud-h);
-  inset-inline-end: env(safe-area-inset-right);
-  width: min(320px, calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  inset-inline-end: 0;
+  box-sizing: border-box;
+  width: min(
+    calc(320px + env(safe-area-inset-right)),
+    calc(100vw - env(safe-area-inset-left))
+  );
   /* Stop above the timeline bar so the DVR controls stay usable and don't poke
      through the panel's lower edge. */
   max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
@@ -799,6 +804,7 @@ kbd {
   z-index: var(--layer-context);
   transform: translateX(100%);
   transition: transform var(--t-mid) var(--ease);
+  padding-inline-end: env(safe-area-inset-right);
   padding-block-end: max(1rem, env(safe-area-inset-bottom));
   box-shadow: -16px 0 36px rgba(0, 0, 0, 0.45);
 }

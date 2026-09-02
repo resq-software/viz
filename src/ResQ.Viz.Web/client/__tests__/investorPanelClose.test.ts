@@ -95,10 +95,12 @@ describe('investor panel closing', () => {
 
     investor.toggle(() => new THREE.Vector3());
 
+    expect(context.hidden).toBe(false);
+    expect(context.getAttribute('aria-hidden')).toBe('false');
+    expect(editor.hidden).toBe(true);
+    expect(editor.getAttribute('aria-hidden')).toBe('true');
     for (const layer of [context, editor]) {
-      expect(layer.hidden).toBe(true);
       expect(layer.hasAttribute('inert')).toBe(true);
-      expect(layer.getAttribute('aria-hidden')).toBe('true');
       expect(layer.hasAttribute('data-investor-suppressed')).toBe(true);
       expect(layer.contains(document.activeElement)).toBe(false);
     }
@@ -118,6 +120,35 @@ describe('investor panel closing', () => {
     expect(asset.hidden).toBe(false);
     expect(settings.classList.contains('open')).toBe(false);
     expect(hints.hidden).toBe(true);
+  });
+
+  it('layers suppression without restoring stale component visibility', () => {
+    document.body.innerHTML = `
+      <div id="context" aria-hidden="false"></div>
+      <div id="pip" hidden aria-hidden="true"></div>
+    `;
+    const context = document.getElementById('context')!;
+    const pip = document.getElementById('pip')!;
+    const layers = new ManagedLayerVisibility([context, pip]);
+
+    layers.setSuppressed(true);
+    // Live owners continue updating while Investor runs: context closes and the
+    // selected-aircraft PiP becomes eligible to show.
+    context.hidden = true;
+    context.setAttribute('aria-hidden', 'true');
+    pip.hidden = false;
+    pip.setAttribute('aria-hidden', 'false');
+
+    layers.setSuppressed(false);
+
+    expect(context.hidden).toBe(true);
+    expect(context.getAttribute('aria-hidden')).toBe('true');
+    expect(pip.hidden).toBe(false);
+    expect(pip.getAttribute('aria-hidden')).toBe('false');
+    for (const layer of [context, pip]) {
+      expect(layer.hasAttribute('inert')).toBe(false);
+      expect(layer.hasAttribute('data-investor-suppressed')).toBe(false);
+    }
   });
 
   it('wires app ownership and contains no direct panel DOM mutation', () => {

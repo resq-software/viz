@@ -6,7 +6,7 @@ export function handleOwnedEscape(
   event: KeyboardEvent,
   hasPendingTarget: boolean,
   hintsVisible: boolean,
-  contextPanelVisible: boolean,
+  isContextPanelVisible: () => boolean,
   cancelTarget: () => void,
   closeHints: () => void,
   closeContextPanel: () => void,
@@ -18,7 +18,7 @@ export function handleOwnedEscape(
     ? cancelTarget
     : hintsVisible
       ? closeHints
-      : contextPanelVisible
+      : isContextPanelVisible()
         ? closeContextPanel
         : null;
   if (dismiss === null) return false;

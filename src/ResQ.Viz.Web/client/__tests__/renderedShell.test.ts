@@ -189,12 +189,16 @@ describe('rendered shell contracts', () => {
         .toContain('env(safe-area-inset-left)');
       expect(effectiveInlinePadding(main, '#hud-top', 'end', width), `HUD end at ${width}px`)
         .toContain('env(safe-area-inset-right)');
-      expect(effectiveProperty(main, '.settings-panel', 'inset-inline-end', width))
-        .toContain('env(safe-area-inset-right)');
+      expect(effectiveProperty(main, '.settings-panel', 'inset-inline-end', width)).toBe('0');
       const settingsWidth = effectiveProperty(main, '.settings-panel', 'width', width) ?? '';
       expect(settingsWidth).toContain('100vw');
       expect(settingsWidth).toContain('env(safe-area-inset-left)');
       expect(settingsWidth).toContain('env(safe-area-inset-right)');
+      expect(effectiveInlinePadding(main, '.settings-panel', 'end', width))
+        .toContain('env(safe-area-inset-right)');
+      expect(effectiveProperty(main, '.settings-panel', 'box-sizing', width)).toBe('border-box');
+      expect(effectiveInlinePadding(main, '#sidebar', 'start', width), `sidebar start at ${width}px`)
+        .toContain('env(safe-area-inset-left)');
       expect(effectiveProperty(assets, '.asset-panel', 'right', width), `asset end at ${width}px`)
         .toContain('env(safe-area-inset-right)');
       expect(effectiveInlinePadding(editor, '.resq-dvr', 'end', width), `DVR end at ${width}px`)

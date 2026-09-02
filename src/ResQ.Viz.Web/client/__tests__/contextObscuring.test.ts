@@ -3,7 +3,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AssetPanel } from '../assets/AssetPanel';
 import type { ExternalTrackState } from '../assets/types';
@@ -14,6 +14,7 @@ import {
   TrackSourceKind,
 } from '../assets/types';
 import { setContextObscured } from '../ui/contextObscuring';
+import { handleOwnedEscape } from '../ui/escapeOwnership';
 
 function read(relative: string): string {
   return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
@@ -31,6 +32,7 @@ describe('settings context obscuring', () => {
     const panel = assetPanel.element;
     const close = document.getElementById('settings-close') as HTMLButtonElement;
     panel.querySelector<HTMLButtonElement>('.ap-close')!.focus();
+    expect(assetPanel.isVisible).toBe(true);
 
     setContextObscured(panel, true, close);
 
@@ -40,6 +42,17 @@ describe('settings context obscuring', () => {
     expect(panel.hasAttribute('inert')).toBe(true);
     expect(panel.getAttribute('aria-hidden')).toBe('true');
     expect(panel.style.pointerEvents).toBe('none');
+    expect(assetPanel.subjectId).toBe('track-1');
+    expect(assetPanel.isVisible).toBe(false);
+
+    const clearSelection = vi.fn();
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    expect(handleOwnedEscape(
+      escape, false, false, () => assetPanel.isVisible, vi.fn(), vi.fn(), clearSelection,
+    )).toBe(false);
+    expect(escape.defaultPrevented).toBe(false);
+    expect(clearSelection).not.toHaveBeenCalled();
+    expect(assetPanel.subjectId).toBe('track-1');
 
     assetPanel.render(subject);
     assetPanel.render(subject);
@@ -56,6 +69,16 @@ describe('settings context obscuring', () => {
     expect(panel.hasAttribute('inert')).toBe(false);
     expect(panel.getAttribute('aria-hidden')).toBe('false');
     expect(panel.style.pointerEvents).toBe('');
+    expect(assetPanel.isVisible).toBe(true);
+
+    const mount = document.getElementById('asset-panel-mount')!;
+    mount.setAttribute('inert', '');
+    expect(assetPanel.isVisible).toBe(false);
+    mount.removeAttribute('inert');
+    mount.hidden = true;
+    expect(assetPanel.isVisible).toBe(false);
+    mount.hidden = false;
+    expect(assetPanel.isVisible).toBe(true);
 
     assetPanel.render(null);
     expect(panel.hidden).toBe(true);

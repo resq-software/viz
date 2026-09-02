@@ -71,6 +71,17 @@ export type PanelSubject =
   }
   | { readonly kind: 'track'; readonly track: ExternalTrackState };
 
+function isRenderedAndAccessible(element: HTMLElement): boolean {
+  const view = element.ownerDocument.defaultView;
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    if (current.hidden || current.hasAttribute('inert')
+        || current.getAttribute('aria-hidden') === 'true') return false;
+    const style = view?.getComputedStyle(current);
+    if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+  }
+  return true;
+}
+
 /** Construction options. Every collaborator is injectable, so the panel can be
  *  driven with no server and no scene in a test. */
 export interface AssetPanelOptions {
@@ -235,6 +246,11 @@ export class AssetPanel {
   /** Identifier of whatever is shown, or null when hidden. */
   get subjectId(): string | null {
     return this._subjectId;
+  }
+
+  /** Whether the selected subject currently has an operable rendered panel. */
+  get isVisible(): boolean {
+    return this._subjectId !== null && isRenderedAndAccessible(this._root);
   }
 
   /** Called when the operator dismisses the panel. */

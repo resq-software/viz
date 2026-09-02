@@ -170,6 +170,11 @@ export class FleetUi {
     return this._panel.subjectId;
   }
 
+  /** Whether Escape may currently treat the context panel as its active owner. */
+  get contextVisible(): boolean {
+    return this._panel.isVisible;
+  }
+
   /** Detaches both widgets. */
   dispose(): void {
     this._panel.dispose();

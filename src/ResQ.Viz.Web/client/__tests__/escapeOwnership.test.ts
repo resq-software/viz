@@ -24,7 +24,9 @@ describe('early Escape ownership', () => {
     prevented.preventDefault();
 
     for (const event of [prevented, escape({ ctrlKey: true }), escape({ metaKey: true }), escape({ altKey: true })]) {
-      expect(handleOwnedEscape(event, true, true, true, cancelTarget, closeHints, closePanel)).toBe(false);
+      expect(handleOwnedEscape(
+        event, true, true, () => true, cancelTarget, closeHints, closePanel,
+      )).toBe(false);
     }
     expect(cancelTarget).not.toHaveBeenCalled();
     expect(closeHints).not.toHaveBeenCalled();
@@ -38,7 +40,7 @@ describe('early Escape ownership', () => {
     const targetEscape = escape();
 
     expect(handleOwnedEscape(
-      targetEscape, true, true, true, cancelTarget, closeHints, closePanel,
+      targetEscape, true, true, () => true, cancelTarget, closeHints, closePanel,
     )).toBe(true);
     expect(targetEscape.defaultPrevented).toBe(true);
     expect(cancelTarget).toHaveBeenCalledTimes(1);
@@ -47,7 +49,7 @@ describe('early Escape ownership', () => {
 
     const hintsEscape = escape();
     expect(handleOwnedEscape(
-      hintsEscape, false, true, true, cancelTarget, closeHints, closePanel,
+      hintsEscape, false, true, () => true, cancelTarget, closeHints, closePanel,
     )).toBe(true);
     expect(hintsEscape.defaultPrevented).toBe(true);
     expect(closeHints).toHaveBeenCalledTimes(1);
@@ -55,7 +57,7 @@ describe('early Escape ownership', () => {
 
     const panelEscape = escape();
     expect(handleOwnedEscape(
-      panelEscape, false, false, true, cancelTarget, closeHints, closePanel,
+      panelEscape, false, false, () => true, cancelTarget, closeHints, closePanel,
     )).toBe(true);
     expect(panelEscape.defaultPrevented).toBe(true);
     expect(closePanel).toHaveBeenCalledTimes(1);
@@ -69,14 +71,14 @@ describe('early Escape ownership', () => {
     const closePanel = vi.fn(() => { selected = false; });
 
     expect(handleOwnedEscape(
-      escape(), targeting, false, selected, cancelTarget, closeHints, closePanel,
+      escape(), targeting, false, () => selected, cancelTarget, closeHints, closePanel,
     )).toBe(true);
     expect(targeting).toBe(false);
     expect(selected).toBe(true);
     expect(closePanel).not.toHaveBeenCalled();
 
     expect(handleOwnedEscape(
-      escape(), targeting, false, selected, cancelTarget, closeHints, closePanel,
+      escape(), targeting, false, () => selected, cancelTarget, closeHints, closePanel,
     )).toBe(true);
     expect(selected).toBe(false);
     expect(closePanel).toHaveBeenCalledTimes(1);
@@ -87,7 +89,7 @@ describe('early Escape ownership', () => {
     const button = document.getElementById('native') as HTMLButtonElement;
     const closeHints = vi.fn();
     button.addEventListener('keydown', (event) => {
-      handleOwnedEscape(event, false, true, false, vi.fn(), closeHints, vi.fn());
+      handleOwnedEscape(event, false, true, () => false, vi.fn(), closeHints, vi.fn());
     });
     button.focus();
     const fromButton = escape({ bubbles: true });
@@ -97,9 +99,35 @@ describe('early Escape ownership', () => {
 
     const ownerless = escape();
     expect(handleOwnedEscape(
-      ownerless, false, false, false, vi.fn(), vi.fn(), vi.fn(),
+      ownerless, false, false, () => false, vi.fn(), vi.fn(), vi.fn(),
     )).toBe(false);
     expect(ownerless.defaultPrevented).toBe(false);
+  });
+
+  it('measures context visibility only for a plain Escape with no higher owner', () => {
+    const panelVisible = vi.fn(() => true);
+    const closePanel = vi.fn();
+    const callbacks = [vi.fn(), vi.fn(), closePanel] as const;
+
+    expect(handleOwnedEscape(
+      new KeyboardEvent('keydown', { key: 'x' }), false, false, panelVisible, ...callbacks,
+    )).toBe(false);
+    expect(handleOwnedEscape(
+      escape({ ctrlKey: true }), false, false, panelVisible, ...callbacks,
+    )).toBe(false);
+    expect(handleOwnedEscape(
+      escape(), true, false, panelVisible, ...callbacks,
+    )).toBe(true);
+    expect(handleOwnedEscape(
+      escape(), false, true, panelVisible, ...callbacks,
+    )).toBe(true);
+    expect(panelVisible).not.toHaveBeenCalled();
+
+    expect(handleOwnedEscape(
+      escape(), false, false, panelVisible, ...callbacks,
+    )).toBe(true);
+    expect(panelVisible).toHaveBeenCalledTimes(1);
+    expect(closePanel).toHaveBeenCalledTimes(1);
   });
 
   it('runs before the shared global-shortcut guard in app', () => {
@@ -111,7 +139,8 @@ describe('early Escape ownership', () => {
     expect(keyboard.indexOf('handleOwnedEscape(')).toBeLessThan(
       keyboard.indexOf('shouldIgnoreGlobalShortcut(e)'),
     );
-    expect(keyboard).toMatch(/handleOwnedEscape\([\s\S]*?fleetUi\?\.subjectId[\s\S]*?_deselectAll/);
+    expect(keyboard).toMatch(/handleOwnedEscape\([\s\S]*?\(\) => fleetUi\?\.contextVisible[\s\S]*?_deselectAll/);
+    expect(keyboard).not.toMatch(/handleOwnedEscape\([\s\S]*?fleetUi\?\.subjectId/);
     expect(read('../assets/AssetPanel.ts')).not.toMatch(
       /addEventListener\(['"]keydown['"][\s\S]{0,160}?Escape/,
     );

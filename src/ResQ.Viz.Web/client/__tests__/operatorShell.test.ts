@@ -291,9 +291,10 @@ describe('OperatorShell', () => {
     expect(layer.hidden).toBe(true);
     expect(layer.hasAttribute('inert')).toBe(true);
     for (const surface of [context, dock, dvr]) {
-      expect(surface.hidden).toBe(true);
+      expect(surface.hidden).toBe(false);
       expect(surface.hasAttribute('inert')).toBe(true);
-      expect(surface.getAttribute('aria-hidden')).toBe('true');
+      expect(surface.getAttribute('aria-hidden')).toBeNull();
+      expect(surface.hasAttribute('data-investor-suppressed')).toBe(true);
     }
     expect(dock.contains(document.activeElement)).toBe(false);
 
@@ -301,8 +302,9 @@ describe('OperatorShell', () => {
     lateSceneConfig.className = 'resq-scenecfg';
     document.body.append(lateSceneConfig);
     await Promise.resolve();
-    expect(lateSceneConfig.hidden).toBe(true);
+    expect(lateSceneConfig.hidden).toBe(false);
     expect(lateSceneConfig.hasAttribute('inert')).toBe(true);
+    expect(lateSceneConfig.hasAttribute('data-investor-suppressed')).toBe(true);
 
     shell.setInvestorSuppressed(false);
 
@@ -311,6 +313,7 @@ describe('OperatorShell', () => {
     for (const surface of [context, dock, dvr, lateSceneConfig]) {
       expect(surface.hidden).toBe(false);
       expect(surface.hasAttribute('inert')).toBe(false);
+      expect(surface.hasAttribute('data-investor-suppressed')).toBe(false);
     }
   });
 

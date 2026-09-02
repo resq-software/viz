@@ -126,19 +126,10 @@ body.investor-mode .operator-editor-layer {
   pointer-events: none;
 }
 
-/* These editor-era surfaces still mount directly under body. The shell also
-   applies hidden/inert state; this selector prevents a one-frame flash when a
-   deferred surface is appended during Investor mode, before its observer runs. */
-body.investor-mode :is(
-  .resq-dock,
-  .resq-dock-toggle,
-  .resq-scenecfg,
-  .resq-dvr,
-  .resq-transport,
-  .resq-pip,
-  .fpv-osd,
-  .cam-mode-pill
-) {
+/* Additive suppression leaves component-owned hidden/ARIA state live while
+   Investor is active. This attribute hides immediately; inert is synchronized
+   by the shell, including for deferred body-level editor chrome. */
+[data-investor-suppressed] {
   display: none !important;
   pointer-events: none;
 }

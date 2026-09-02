@@ -1432,7 +1432,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         e,
         _pendingPick !== null,
         hintsVisible,
-        (fleetUi?.subjectId ?? null) !== null,
+        () => fleetUi?.contextVisible ?? false,
         _cancelPick,
         () => _setHintsVisible(false),
         _deselectAll,
