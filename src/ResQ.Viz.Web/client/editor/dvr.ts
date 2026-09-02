@@ -4,6 +4,7 @@
 import '../styles/editor.css';
 import type { VizFrame } from '../types';
 import { shouldIgnoreGlobalShortcut } from '../ui/hotkeys';
+import { GLOBAL_SHORTCUTS } from '../ui/globalShortcuts';
 import { FrameRecorder, clampIndex } from './recorder';
 import { nextSpeed } from './transport';
 
@@ -309,10 +310,10 @@ export class Dvr {
     private _bindKeyboard(): void {
         document.addEventListener('keydown', (e: KeyboardEvent) => {
             if (shouldIgnoreGlobalShortcut(e)) return;
-            if (e.code === 'Space') {
+            if (e.code === GLOBAL_SHORTCUTS.transportPlayPause) {
                 e.preventDefault();
                 this._onPlayPause();
-            } else if (e.code === 'Period') {
+            } else if (e.code === GLOBAL_SHORTCUTS.transportStep) {
                 e.preventDefault();
                 this._onStep();
             }

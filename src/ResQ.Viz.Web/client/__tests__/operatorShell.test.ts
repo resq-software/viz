@@ -365,4 +365,12 @@ describe('the shipped operator shell contract', () => {
     expect(operator).toMatch(/#btn-editor-toggle:disabled[\s\S]*?cursor:\s*not-allowed/);
     expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#hud-top[\s\S]*?overflow:\s*hidden/);
   });
+
+  it('uses the matching logical safe-area inset on each compact HUD edge', () => {
+    const operator = read('../styles/operator.css');
+
+    expect(operator).toMatch(/padding-inline-start:\s*max\(8px, env\(safe-area-inset-left\)\)/);
+    expect(operator).toMatch(/padding-inline-end:\s*max\(8px, env\(safe-area-inset-right\)\)/);
+    expect(operator).not.toMatch(/padding-inline:\s*max\([^;]*safe-area-inset-left/);
+  });
 });

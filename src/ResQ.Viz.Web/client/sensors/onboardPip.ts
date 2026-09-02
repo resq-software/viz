@@ -4,6 +4,8 @@
 import '../styles/editor.css';
 import * as THREE from 'three';
 import type { SelectionStore } from '../editor/selection';
+import { GLOBAL_SHORTCUTS } from '../ui/globalShortcuts';
+import { shouldIgnoreGlobalShortcut } from '../ui/hotkeys';
 
 /** A WebGL scissor/viewport rect (CSS px, bottom-left origin). */
 export interface ScissorRect {
@@ -230,14 +232,12 @@ export class OnboardPip {
 
     private _bindKeyboard(): void {
         document.addEventListener('keydown', (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT') return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            if (e.code === 'KeyP') {
+            if (shouldIgnoreGlobalShortcut(e)) return;
+            if (e.code === GLOBAL_SHORTCUTS.onboardPip) {
                 e.preventDefault();
                 this._enabled = !this._enabled;
                 this._sync();
-            } else if (e.code === 'KeyO') {
+            } else if (e.code === GLOBAL_SHORTCUTS.onboardPipMode) {
                 e.preventDefault();
                 this._mode = nextPipMode(this._mode);
                 this._sync();

@@ -23,8 +23,8 @@ export function nextSpeed(current: number): number {
  *
  * Buttons POST to `/api/sim/{pause,resume,step,speed,reset}` and update
  * optimistically; the authoritative `paused`/`speed` fields on each incoming
- * frame reconcile the displayed state via {@link Transport.update}. Also binds
- * Space (play/pause) and `.` (step). Server-authority note: transport acts on
+ * frame reconcile the displayed state via {@link Transport.update}. Keyboard
+ * transport belongs to the DVR's unified live/replay bar. Server-authority note: transport acts on
  * the whole world, so there's no per-entity conflict like the gizmos will have.
  */
 export class Transport {
@@ -47,7 +47,6 @@ export class Transport {
             void apiPostOrWarn('/api/sim/reset', undefined, 'reset');
         });
 
-        this._bindKeyboard();
         this._render();
     }
 
@@ -98,28 +97,6 @@ export class Transport {
         this._playBtn.setAttribute('aria-pressed', String(!this._paused));
         this._speedBtn.textContent = `${this._speed}×`;
         this._speedBtn.setAttribute('aria-label', `Speed ${this._speed}×, click to change`);
-    }
-
-    private _bindKeyboard(): void {
-        document.addEventListener('keydown', (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            // BUTTON matters as much as INPUT/SELECT here: Space is the browser's
-            // activation key for a focused button, and preventDefault() below
-            // would swallow it — so a keyboard user on rt-step / rt-speed /
-            // rt-reset would toggle play instead of pressing the control they are
-            // actually on. TEXTAREA and contenteditable get the same exemption.
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT'
-                || t?.tagName === 'BUTTON' || t?.tagName === 'TEXTAREA'
-                || (t as HTMLElement | null)?.isContentEditable) return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            if (e.code === 'Space') {
-                e.preventDefault();
-                this._togglePlay();
-            } else if (e.code === 'Period') {
-                e.preventDefault();
-                this._step();
-            }
-        });
     }
 
     private _build(): {

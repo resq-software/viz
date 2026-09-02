@@ -31,6 +31,7 @@ import { ControlPanel }    from './controls';
 import { OperatorShell }   from './operator/OperatorShell';
 import { Hud }            from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
+import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -1469,7 +1470,9 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
         case 'KeyC': _stopDomainChase(); cameraMode?.cycle(); break; // FREE → CHASE → FPV
-        case 'KeyI': void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false)); break; // flight-instrument cockpit
+        case GLOBAL_SHORTCUTS.cockpit:
+            void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false));
+            break; // flight-instrument cockpit
         case 'KeyM': {
             // Toggle the reposition gizmo ("move mode") — opt-in, so a plain
             // selection no longer obscures the scene with handles. Gated to the

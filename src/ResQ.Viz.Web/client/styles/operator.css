@@ -168,7 +168,8 @@
   #hud-top {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px;
-    padding-inline: max(8px, env(safe-area-inset-left));
+    padding-inline-start: max(8px, env(safe-area-inset-left));
+    padding-inline-end: max(8px, env(safe-area-inset-right));
     overflow: hidden;
   }
 

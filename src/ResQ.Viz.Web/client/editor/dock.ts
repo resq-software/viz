@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '../styles/editor.css';
+import { GLOBAL_SHORTCUTS } from '../ui/globalShortcuts';
+import { shouldIgnoreGlobalShortcut } from '../ui/hotkeys';
 
 /** localStorage key persisting the collapsed state across reloads. */
 const COLLAPSE_KEY = 'resq-viz-editor-collapsed';
@@ -50,10 +52,8 @@ export class EditorDock {
 
     private _bindKeyboard(): void {
         document.addEventListener('keydown', (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT') return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            if (e.code === 'Backslash') {
+            if (shouldIgnoreGlobalShortcut(e)) return;
+            if (e.code === GLOBAL_SHORTCUTS.editorDock) {
                 e.preventDefault();
                 this._setCollapsed(!this._collapsed);
             }
