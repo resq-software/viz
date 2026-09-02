@@ -275,6 +275,11 @@ public sealed partial class SimV2Controller : ControllerBase
                 envelope.AssetId, envelope.CommandId);
         }
 
+        if (dispatch.RoomResult.RefusalReason == AssetLinkReasons.Unreachable)
+        {
+            return LinkRefusal(room, envelope, now);
+        }
+
         var claimed = dispatch.RoomResult.ClaimDecision!.Value;
         if (claimed.Outcome != CommandIdempotencyOutcome.New)
         {

@@ -31,7 +31,8 @@ internal sealed record CommandDispatchCandidate(
 internal readonly record struct RoomCommandDispatchResult(
     bool IsCurrent,
     AssetCommandResult Outcome,
-    CommandIdempotencyDecision? ClaimDecision);
+    CommandIdempotencyDecision? ClaimDecision,
+    string? RefusalReason = null);
 
 public sealed partial class SimulationRoom
 {
@@ -69,6 +70,12 @@ public sealed partial class SimulationRoom
                 || !logSession.IsCurrent)
             {
                 return new RoomCommandDispatchResult(false, default, null);
+            }
+
+            if (!_assets.IsLinkAvailable(candidate.AssetId))
+            {
+                return new RoomCommandDispatchResult(
+                    true, default, null, AssetLinkReasons.Unreachable);
             }
 
             claim = logSession.Claim(envelope, now);

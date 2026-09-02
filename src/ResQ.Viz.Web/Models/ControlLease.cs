@@ -199,6 +199,11 @@ public sealed record ControlLease(
 /// <see cref="ControlAuditKind.Denied"/> record.
 /// </param>
 /// <param name="Justification">Operator-supplied reason, required for a preemption.</param>
+/// <param name="AssetInstanceId">
+/// Opaque identity of the asset instance the transition concerned, or null when an attempted
+/// operation could not resolve one. Prevents persistent history for a recycled id from being
+/// attributed to its replacement.
+/// </param>
 public sealed record ControlAuditRecord(
     long Sequence,
     ControlAuditKind Kind,
@@ -210,7 +215,8 @@ public sealed record ControlAuditRecord(
     string? ActorId,
     ControlLeaseEndReason? EndReason,
     string? DenialCode,
-    string? Justification);
+    string? Justification,
+    string? AssetInstanceId = null);
 
 /// <summary>Outcome of one lease operation: the lease it produced, or a coded refusal.</summary>
 /// <remarks>

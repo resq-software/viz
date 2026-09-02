@@ -133,8 +133,82 @@ public sealed class CommandGenerationTests
 
         result.ReasonCode.Should().Be(CommandAuthorityReasons.LeasePreempted);
         asset.Applied.Should().Be(0);
+        authority.ReadAudit().Should().ContainSingle(record =>
+            record.Kind == ControlAuditKind.Preempted
+            && record.AssetInstanceId == oldLease.AssetInstanceId);
+        authority.WasPreempted("rover-1", "old-holder", oldLease.LeaseId).Should().BeTrue();
         room.Commands.OpenSession().Classify(envelope, Now)
             .Outcome.Should().Be(CommandIdempotencyOutcome.New);
+    }
+
+    /// <summary>A link cut after the first check is refused before the atomic claim and dispatch.</summary>
+    [Fact]
+    public void Final_Dispatch_Rechecks_The_Link_Before_Claiming_The_Key()
+    {
+        var room = CreateRoom();
+        var asset = new RecordingAsset("rover-1");
+        room.TryAddAsset(asset, out _).Should().BeTrue();
+        var authority = new ControlAuthorityRegistry(
+            TimeProvider.System, new ControlAuthorityOptions()).For(room);
+        var candidate = room.CaptureCommandCandidate("rover-1");
+        var envelope = Envelope("link-race-key", commandOrdinal: 6);
+        var session = room.Commands.OpenSession();
+        room.TryGetAssetLinkAvailable("rover-1", out var initiallyUp).Should().BeTrue();
+        initiallyUp.Should().BeTrue();
+
+        room.TrySetAssetLinkAvailable("rover-1", available: false, out _).Should().BeTrue();
+
+        var refused = authority.DispatchCommand(
+            "rover-1", "console", leaseId: null,
+            () => room.DispatchCommand(
+                candidate!, session, envelope, Now, Command("rover-1")));
+
+        refused.RoomResult.RefusalReason.Should().Be(AssetLinkReasons.Unreachable);
+        asset.Applied.Should().Be(0);
+        room.Commands.TryGet(envelope.CommandId, out _).Should().BeFalse();
+        room.Commands.OpenSession().Classify(envelope, Now)
+            .Outcome.Should().Be(CommandIdempotencyOutcome.New);
+
+        room.TrySetAssetLinkAvailable("rover-1", available: true, out _).Should().BeTrue();
+        var accepted = authority.DispatchCommand(
+            "rover-1", "console", leaseId: null,
+            () => room.DispatchCommand(
+                candidate!, room.Commands.OpenSession(), envelope, Now, Command("rover-1")));
+
+        accepted.RoomResult.Outcome.IsAccepted.Should().BeTrue();
+        asset.Applied.Should().Be(1);
+    }
+
+    /// <summary>An old instance's preemption cannot classify a denial on a replacement asset.</summary>
+    [Fact]
+    public void Preemption_History_Does_Not_Cross_A_Same_Id_Instance_Replacement()
+    {
+        var room = CreateRoom();
+        room.TryAddAsset(new RecordingAsset("rover-1"), out _).Should().BeTrue();
+        var authority = new ControlAuthorityRegistry(
+            TimeProvider.System, new ControlAuthorityOptions()).For(room);
+        var oldLease = authority.Acquire(
+            "rover-1", "old-holder", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+        authority.Preempt(
+            "rover-1", "incident-command", ControlRole.Emergency,
+            TimeSpan.FromMinutes(1), "Immediate safety response.")
+            .IsAccepted.Should().BeTrue();
+        authority.ReadAudit().Should().ContainSingle(record =>
+            record.Kind == ControlAuditKind.Preempted
+            && record.AssetInstanceId == oldLease.AssetInstanceId);
+
+        room.TryRemoveAsset("rover-1", out _).Should().BeTrue();
+        room.TryAddAsset(new RecordingAsset("rover-1"), out _).Should().BeTrue();
+        var replacementLease = authority.Acquire(
+            "rover-1", "new-holder", ControlRole.Operator, TimeSpan.FromMinutes(1)).Lease!;
+        replacementLease.AssetInstanceId.Should().NotBe(oldLease.AssetInstanceId);
+
+        var result = authority.DispatchCommand(
+            "rover-1", "old-holder", oldLease.LeaseId,
+            () => throw new InvalidOperationException("A denied caller must not reach dispatch."));
+
+        result.ReasonCode.Should().Be(CommandAuthorityReasons.NotHolder);
+        authority.WasPreempted("rover-1", "old-holder", oldLease.LeaseId).Should().BeFalse();
     }
 
     /// <summary>A stale log session cannot repopulate results or claim keys after clear.</summary>

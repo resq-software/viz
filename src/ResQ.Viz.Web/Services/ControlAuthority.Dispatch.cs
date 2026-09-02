@@ -41,6 +41,7 @@ public sealed partial class ControlAuthority
         {
             var now = _clock.GetUtcNow();
             Maintain(now);
+            var currentInstance = ResolveInstance(assetId);
 
             if (_live.TryGetValue(assetId, out var lease))
             {
@@ -49,7 +50,7 @@ public sealed partial class ControlAuthority
                         && !string.Equals(lease.LeaseId, leaseId, StringComparison.Ordinal)))
                 {
                     return new AuthorizedCommandDispatch(
-                        WasPreemptedCore(assetId, issuerId, leaseId)
+                        WasPreemptedCore(assetId, issuerId, leaseId, currentInstance)
                             ? CommandAuthorityReasons.LeasePreempted
                             : string.Equals(lease.HolderId, issuerId, StringComparison.Ordinal)
                                 ? CommandAuthorityReasons.LeaseNotLive
@@ -60,7 +61,7 @@ public sealed partial class ControlAuthority
             else if (leaseId is not null)
             {
                 return new AuthorizedCommandDispatch(
-                    WasPreemptedCore(assetId, issuerId, leaseId)
+                    WasPreemptedCore(assetId, issuerId, leaseId, currentInstance)
                         ? CommandAuthorityReasons.LeasePreempted
                         : CommandAuthorityReasons.LeaseNotLive,
                     default);
@@ -78,17 +79,24 @@ public sealed partial class ControlAuthority
     {
         lock (_gate)
         {
-            return WasPreemptedCore(assetId, issuerId, leaseId);
+            return WasPreemptedCore(assetId, issuerId, leaseId, ResolveInstance(assetId));
         }
     }
 
     /// <summary>Lock-held implementation shared by command validation and final dispatch.</summary>
-    private bool WasPreemptedCore(string assetId, string issuerId, string? leaseId)
+    private bool WasPreemptedCore(
+        string assetId, string issuerId, string? leaseId, string? currentInstance)
     {
+        if (currentInstance is null)
+        {
+            return false;
+        }
+
         ControlAuditRecord? last = null;
         foreach (var record in _audit)
         {
             if (string.Equals(record.AssetId, assetId, StringComparison.Ordinal)
+                && string.Equals(record.AssetInstanceId, currentInstance, StringComparison.Ordinal)
                 && (string.Equals(record.HolderId, issuerId, StringComparison.Ordinal)
                     || (leaseId is not null
                         && string.Equals(record.LeaseId, leaseId, StringComparison.Ordinal))))

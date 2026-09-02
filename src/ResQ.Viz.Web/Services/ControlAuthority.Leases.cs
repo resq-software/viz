@@ -237,7 +237,7 @@ public sealed partial class ControlAuthority
     {
         Record(
             ControlAuditKind.Denied, now, now, assetId, leaseId, holderId, actorId, null,
-            denialCode, null);
+            denialCode, null, null);
         return ControlLeaseResult.Deny(denialCode);
     }
 
@@ -305,7 +305,8 @@ public sealed partial class ControlAuthority
 
         _live[assetId] = lease;
         Record(
-            ControlAuditKind.Acquired, now, now, assetId, leaseId, holderId, holderId, null, null, null);
+            ControlAuditKind.Acquired, now, now, assetId, leaseId, holderId, holderId,
+            null, null, null, assetInstance);
         return ControlLeaseResult.Accept(lease);
     }
 
@@ -316,7 +317,7 @@ public sealed partial class ControlAuthority
         _live[lease.AssetId] = renewed;
         Record(
             ControlAuditKind.Renewed, now, now, lease.AssetId, lease.LeaseId, lease.HolderId,
-            lease.HolderId, null, null, null);
+            lease.HolderId, null, null, null, lease.AssetInstanceId);
         return ControlLeaseResult.Accept(renewed);
     }
 
@@ -336,7 +337,7 @@ public sealed partial class ControlAuthority
         var ended = lease with { EndedAt = at, EndReason = reason };
         Record(
             KindOf(reason), at, observedAt, lease.AssetId, lease.LeaseId, lease.HolderId, actorId,
-            reason, null, justification);
+            reason, null, justification, lease.AssetInstanceId);
         return ended;
     }
 
