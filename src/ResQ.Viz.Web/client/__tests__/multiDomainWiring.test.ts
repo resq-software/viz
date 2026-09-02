@@ -287,6 +287,13 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/confirmV2Replace:[\s\S]*?window\.confirm/);
     expect(sceneConfigSrc).toMatch(/publishLegacyStart[\s\S]*?resq:scenario-start/);
     expect(appSrc).not.toMatch(/applyScenario:[\s\S]*?\/api\/sim\/scenario\//);
+    const configAt = appSrc.indexOf('new m_cfg.SceneConfigPanel');
+    const inspectorAt = appSrc.indexOf('// Inspector wiring', configAt);
+    const config = appSrc.slice(configAt, inspectorAt);
+    expect(config).toContain('Object.prototype.hasOwnProperty.call(PRESETS, key)');
+    expect(config).not.toContain('canApplyTerrain: key => key in PRESETS');
+    expect(config).toMatch(/applyTerrain:[\s\S]*?_switchPreset\([\s\S]*?_markOperatorOverride\(\)/);
+    expect(config.indexOf('_switchPreset(')).toBeLessThan(config.indexOf('_markOperatorOverride()'));
   });
 
   it('loads independent typed resources only for v2 and retries on reconnect and visibility', () => {

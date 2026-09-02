@@ -38,6 +38,7 @@ export class ScenarioCatalog {
   private readonly _search: HTMLInputElement;
   private readonly _groups: HTMLElement;
   private readonly _error: HTMLElement;
+  private readonly _closeButton: HTMLButtonElement;
   private readonly _options: ScenarioCatalogOptions;
   private _requestInFlight = false;
   private _generation = 0;
@@ -49,6 +50,7 @@ export class ScenarioCatalog {
     this._search = built.search;
     this._groups = built.groups;
     this._error = built.error;
+    this._closeButton = built.close;
     options.mount.appendChild(this._dialog);
     options.trigger.setAttribute('aria-haspopup', 'dialog');
     options.trigger.setAttribute('aria-controls', this._dialog.id);
@@ -71,7 +73,7 @@ export class ScenarioCatalog {
     if (!this._dialog.open) this._dialog.showModal();
     this._options.trigger.setAttribute('aria-expanded', 'true');
     this.refreshSession();
-    this._search.focus();
+    (this._search.disabled ? this._closeButton : this._search).focus();
   }
 
   /** Patches only the streamed active marker; search results and focus stay intact. */
@@ -157,6 +159,7 @@ export class ScenarioCatalog {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'scenario-catalog-card';
+    button.disabled = this._requestInFlight;
     button.dataset['scenario'] = summary.name;
     const title = document.createElement('strong');
     title.textContent = copy.displayName;
@@ -221,6 +224,7 @@ export class ScenarioCatalog {
 
   private _setBusy(busy: boolean): void {
     this._dialog.setAttribute('aria-busy', String(busy));
+    this._search.disabled = busy;
     for (const button of this._dialog.querySelectorAll<HTMLButtonElement>('.scenario-catalog-card')) {
       button.disabled = busy;
     }

@@ -369,7 +369,11 @@ async function _initEditorSuite(): Promise<void> {
         getScenario: () => operatorShell.mode === 'v2'
             ? scenarioRuntime.currentName
             : _legacyScenario,
-        applyTerrain: (key) => { if (key in PRESETS) _switchPreset(key as PresetKey); },
+        canApplyTerrain: key => Object.prototype.hasOwnProperty.call(PRESETS, key),
+        applyTerrain: (key) => {
+            _switchPreset(key as PresetKey);
+            _markOperatorOverride();
+        },
         applyScenario: (name) => name === null
             ? { success: true }
             : m_cfg.applyScenarioForMode(name, {

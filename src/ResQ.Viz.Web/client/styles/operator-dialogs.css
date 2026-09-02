@@ -203,6 +203,10 @@
   .operator-dialog textarea {
     min-height: 44px;
   }
+
+  .operator-dialog-close {
+    min-width: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

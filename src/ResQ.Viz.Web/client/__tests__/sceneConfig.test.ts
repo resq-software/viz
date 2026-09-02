@@ -256,3 +256,135 @@ describe('mode-aware imported scenarios', () => {
         });
     });
 });
+
+function selectSceneFile(input: HTMLInputElement, contents: string): void {
+    Object.defineProperty(input, 'files', {
+        configurable: true,
+        value: [new File([contents], 'scene.json', { type: 'application/json' })],
+    });
+    input.dispatchEvent(new Event('change'));
+}
+
+function sceneJson(terrain: string, scenario: string | null = 'flood-response'): string {
+    return JSON.stringify({ version: 1, terrain, scenario });
+}
+
+describe('SceneConfigPanel import transaction', () => {
+    function panelHarness(overrides: Partial<ConstructorParameters<typeof SceneConfigPanel>[0]> = {}) {
+        const applyTerrain = vi.fn();
+        const applyScenario = vi.fn().mockResolvedValue({ success: true });
+        const panel = new SceneConfigPanel({
+            getTerrain: () => 'alpine',
+            getScenario: () => 'single',
+            canApplyTerrain: () => true,
+            applyTerrain,
+            applyScenario,
+            ...overrides,
+        });
+        const root = document.querySelector<HTMLElement>('.resq-scenecfg')!;
+        const input = root.querySelector<HTMLInputElement>('input[type="file"]')!;
+        const importButton = root.querySelector<HTMLButtonElement>('[aria-label="Import scene"]')!;
+        return { panel, root, input, importButton, applyTerrain, applyScenario };
+    }
+
+    it('preflights the scenario before applying terrain and resets busy state after success', async () => {
+        let resolve!: (value: { readonly success: true }) => void;
+        const scenario = new Promise<{ readonly success: true }>(done => { resolve = done; });
+        const calls: string[] = [];
+        const h = panelHarness({
+            applyScenario: vi.fn(() => {
+                calls.push('scenario');
+                return scenario;
+            }),
+            applyTerrain: vi.fn(terrain => { calls.push(`terrain:${terrain}`); }),
+        });
+
+        selectSceneFile(h.input, sceneJson('coastal'));
+        await vi.waitFor(() => expect(calls).toEqual(['scenario']));
+        expect(h.importButton.disabled).toBe(true);
+        expect(h.importButton.getAttribute('aria-disabled')).toBe('true');
+        expect(h.root.getAttribute('aria-busy')).toBe('true');
+
+        resolve({ success: true });
+        await vi.waitFor(() => expect(calls).toEqual(['scenario', 'terrain:coastal']));
+        expect(h.importButton.disabled).toBe(false);
+        expect(h.importButton.getAttribute('aria-disabled')).toBe('false');
+        expect(h.root.getAttribute('aria-busy')).toBe('false');
+    });
+
+    it.each([
+        'scenario.cancelled',
+        'scenario.catalogUnavailable',
+        'scenario.consoleUnavailable',
+        'scenario.replacementFailed',
+    ])('leaves terrain untouched after %s', async code => {
+        const h = panelHarness({
+            applyScenario: vi.fn().mockResolvedValue({
+                success: false,
+                code,
+                detail: 'The imported scenario was not applied.',
+            }),
+        });
+
+        selectSceneFile(h.input, sceneJson('coastal'));
+
+        await vi.waitFor(() => expect(h.root.textContent).toContain(code));
+        expect(h.applyTerrain).not.toHaveBeenCalled();
+        expect(h.importButton.disabled).toBe(false);
+        expect(h.root.getAttribute('aria-busy')).toBe('false');
+    });
+
+    it.each([
+        ['invalid JSON', '{'],
+        ['invalid descriptor', JSON.stringify({ version: 1, scenario: 'single' })],
+    ])('leaves terrain and scenario untouched for %s', async (_label, contents) => {
+        const h = panelHarness();
+
+        selectSceneFile(h.input, contents);
+
+        await vi.waitFor(() => expect(
+            h.root.querySelector<HTMLElement>('.scfg-status')?.hidden,
+        ).toBe(false));
+        expect(h.applyScenario).not.toHaveBeenCalled();
+        expect(h.applyTerrain).not.toHaveBeenCalled();
+        expect(h.importButton.disabled).toBe(false);
+    });
+
+    it.each(['unknown', 'toString', 'constructor', '__proto__'])(
+        'rejects unavailable terrain %s before starting its scenario',
+        async terrain => {
+            const available = { alpine: true };
+            const h = panelHarness({
+                canApplyTerrain: key => Object.prototype.hasOwnProperty.call(available, key),
+            });
+
+            selectSceneFile(h.input, sceneJson(terrain));
+
+            await vi.waitFor(() => expect(h.root.textContent).toContain('scene.terrainNotFound'));
+            expect(h.applyScenario).not.toHaveBeenCalled();
+            expect(h.applyTerrain).not.toHaveBeenCalled();
+        },
+    );
+
+    it('ignores a rapid second selection and permits it after the first run resets', async () => {
+        let resolve!: (value: { readonly success: true }) => void;
+        const first = new Promise<{ readonly success: true }>(done => { resolve = done; });
+        const applyScenario = vi.fn()
+            .mockImplementationOnce(() => first)
+            .mockResolvedValue({ success: true });
+        const h = panelHarness({ applyScenario });
+
+        selectSceneFile(h.input, sceneJson('alpine'));
+        await vi.waitFor(() => expect(applyScenario).toHaveBeenCalledOnce());
+        selectSceneFile(h.input, sceneJson('coastal'));
+        expect(applyScenario).toHaveBeenCalledOnce();
+
+        resolve({ success: true });
+        await vi.waitFor(() => expect(h.applyTerrain).toHaveBeenCalledWith('alpine'));
+        expect(h.applyTerrain).not.toHaveBeenCalledWith('coastal');
+
+        selectSceneFile(h.input, sceneJson('coastal'));
+        await vi.waitFor(() => expect(applyScenario).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(h.applyTerrain).toHaveBeenCalledWith('coastal'));
+    });
+});

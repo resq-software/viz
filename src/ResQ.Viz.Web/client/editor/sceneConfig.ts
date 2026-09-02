@@ -62,6 +62,8 @@ export interface SceneConfigDeps {
     getScenario: () => string | null;
     /** Apply a terrain preset (caller validates the key). */
     applyTerrain: (key: string) => void;
+    /** Whether the imported terrain can be applied without partially importing the scene. */
+    readonly canApplyTerrain?: (key: string) => boolean;
     /** Run a scenario by name (no-op for null) and return displayable refusal details. */
     applyScenario: (
         name: string | null,
@@ -167,15 +169,26 @@ export class SceneConfigPanel {
     private readonly _d: SceneConfigDeps;
     private readonly _fileInput: HTMLInputElement;
     private readonly _status: HTMLElement;
+    private readonly _root: HTMLElement;
+    private readonly _importButton: HTMLButtonElement;
+    private _importInFlight = false;
+    private _importGeneration = 0;
 
     constructor(deps: SceneConfigDeps) {
         this._d = deps;
         const built = this._build();
         this._fileInput = built.fileInput;
         this._status = built.status;
+        this._root = built.root;
+        this._importButton = built.importBtn;
         built.exportBtn.addEventListener('click', () => this._export());
         built.importBtn.addEventListener('click', () => this._fileInput.click());
-        this._fileInput.addEventListener('change', () => void this._import());
+        this._fileInput.addEventListener('change', () => {
+            const file = this._fileInput.files?.[0];
+            this._fileInput.value = ''; // allow re-importing the same file
+            if (!file || this._importInFlight) return;
+            void this._import(file);
+        });
     }
 
     private _export(): void {
@@ -194,32 +207,68 @@ export class SceneConfigPanel {
         log.info('scene exported', { terrain: config.terrain, scenario: config.scenario });
     }
 
-    private async _import(): Promise<void> {
-        const file = this._fileInput.files?.[0];
-        this._fileInput.value = ''; // allow re-importing the same file
-        if (!file) return;
-        let raw: unknown;
-        try {
-            raw = JSON.parse(await file.text());
-        } catch {
-            log.warn('scene import failed — not valid JSON');
-            this._showFailure('scene.invalidJson', 'The selected file is not valid JSON.');
-            return;
-        }
-        const config = parseSceneConfig(raw);
-        if (!config) {
-            log.warn('scene import failed — not a recognisable scene descriptor');
-            this._showFailure('scene.invalidConfig', 'The selected file is not a recognized scene descriptor.');
-            return;
-        }
-        this._d.applyTerrain(config.terrain);
-        const outcome = await this._d.applyScenario(config.scenario);
-        if (outcome && !outcome.success) {
-            this._showFailure(outcome.code, outcome.detail);
-            return;
-        }
+    private async _import(file: File): Promise<void> {
+        const generation = ++this._importGeneration;
+        this._importInFlight = true;
+        this._setImportBusy(true);
         this._showFailure(null, '');
-        log.info('scene imported', { terrain: config.terrain, scenario: config.scenario });
+        try {
+            let raw: unknown;
+            try {
+                raw = JSON.parse(await file.text());
+            } catch {
+                log.warn('scene import failed — not valid JSON');
+                this._showFailure('scene.invalidJson', 'The selected file is not valid JSON.');
+                return;
+            }
+            if (generation !== this._importGeneration) return;
+
+            const config = parseSceneConfig(raw);
+            if (!config) {
+                log.warn('scene import failed — not a recognisable scene descriptor');
+                this._showFailure('scene.invalidConfig', 'The selected file is not a recognized scene descriptor.');
+                return;
+            }
+            if (this._d.canApplyTerrain && !this._d.canApplyTerrain(config.terrain)) {
+                this._showFailure(
+                    'scene.terrainNotFound',
+                    `Terrain '${config.terrain}' is not available in this viewer.`,
+                );
+                return;
+            }
+
+            let outcome: void | SceneScenarioApplyResult;
+            try {
+                outcome = await this._d.applyScenario(config.scenario);
+            } catch (error: unknown) {
+                this._showFailure(
+                    'network',
+                    error instanceof Error ? error.message : String(error),
+                );
+                return;
+            }
+            if (generation !== this._importGeneration) return;
+            if (outcome && !outcome.success) {
+                this._showFailure(outcome.code, outcome.detail);
+                return;
+            }
+
+            this._d.applyTerrain(config.terrain);
+            this._showFailure(null, '');
+            log.info('scene imported', { terrain: config.terrain, scenario: config.scenario });
+        } finally {
+            if (generation === this._importGeneration) {
+                this._importInFlight = false;
+                this._setImportBusy(false);
+            }
+        }
+    }
+
+    private _setImportBusy(busy: boolean): void {
+        this._root.setAttribute('aria-busy', String(busy));
+        this._importButton.disabled = busy;
+        this._importButton.setAttribute('aria-disabled', String(busy));
+        this._fileInput.disabled = busy;
     }
 
     private _showFailure(code: string | null, detail: string): void {
@@ -228,6 +277,7 @@ export class SceneConfigPanel {
     }
 
     private _build(): {
+        root: HTMLElement;
         exportBtn: HTMLButtonElement;
         importBtn: HTMLButtonElement;
         fileInput: HTMLInputElement;
@@ -262,7 +312,7 @@ export class SceneConfigPanel {
 
         root.append(exportBtn, importBtn, fileInput, status);
         document.body.appendChild(root);
-        return { exportBtn, importBtn, fileInput, status };
+        return { root, exportBtn, importBtn, fileInput, status };
     }
 }
 

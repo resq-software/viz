@@ -127,6 +127,9 @@ describe('ScenarioCatalog', () => {
     expect(css).toContain('safe-area-inset-bottom');
     expect(css).toMatch(/\.operator-dialog :focus-visible/);
     expect(css).toMatch(/@media \(max-width: 759px\)[\s\S]*?min-height:\s*44px/);
+    expect(css).toMatch(
+      /@media \(max-width: 759px\)[\s\S]*?\.operator-dialog-close\s*\{[\s\S]*?min-width:\s*44px/,
+    );
     expect(css).toMatch(/@media \(forced-colors: active\)/);
     for (const shared of [
       '.operator-dialog-form', '.operator-dialog-error', '.operator-dialog-actions',
@@ -266,6 +269,24 @@ describe('ScenarioCatalog', () => {
     expect(target.disabled).toBe(true);
     result.resolve(problem());
     await vi.waitFor(() => expect(target.disabled).toBe(false));
+  });
+
+  it('keeps search and programmatically rebuilt cards disabled until the request settles', async () => {
+    const result = deferred<Result<ScenarioStartResponse, ApiFailure>>();
+    const h = harness({ startScenario: vi.fn(() => result.promise) });
+    h.catalog.open();
+    h.mount.querySelector<HTMLButtonElement>('[data-scenario="flood-response"]')!.click();
+    const search = h.mount.querySelector<HTMLInputElement>('input[type="search"]')!;
+
+    expect(search.disabled).toBe(true);
+    search.value = 'single';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    const rebuilt = h.mount.querySelector<HTMLButtonElement>('[data-scenario="single"]')!;
+    expect(rebuilt.disabled).toBe(true);
+
+    result.resolve(problem());
+    await vi.waitFor(() => expect(search.disabled).toBe(false));
+    expect(rebuilt.disabled).toBe(false);
   });
 
   it('focuses search, traps Tab in both directions, consumes Escape, and restores the trigger', () => {
@@ -436,10 +457,11 @@ describe('ScenarioCatalog', () => {
     h.onClose.mockClear();
     h.catalog.open();
     const search = h.mount.querySelector<HTMLInputElement>('input[type="search"]')!;
+    const close = h.mount.querySelector<HTMLButtonElement>('.operator-dialog-close')!;
 
     expect(h.mount.querySelector('dialog')?.getAttribute('aria-busy')).toBe('true');
     expect(h.mount.querySelector<HTMLButtonElement>('[data-scenario="single"]')?.disabled).toBe(true);
-    expect(document.activeElement).toBe(search);
+    expect(document.activeElement).toBe(close);
     result.resolve(outcome);
     await vi.waitFor(() => {
       expect(h.mount.querySelector('dialog')?.getAttribute('aria-busy')).toBe('false');
@@ -448,7 +470,7 @@ describe('ScenarioCatalog', () => {
     expect(h.catalog.isOpen).toBe(true);
     expect(h.mount.querySelector<HTMLButtonElement>('[data-scenario="single"]')?.disabled).toBe(false);
     expect(h.mount.textContent).not.toContain('late.failure');
-    expect(document.activeElement).toBe(search);
+    expect(document.activeElement).toBe(close);
     expect(h.onClose).not.toHaveBeenCalled();
   });
 
