@@ -567,8 +567,8 @@ input[type='range'] {
 
 #key-hints {
   position: fixed;
-  top: calc(var(--hud-h) + 8px);
-  right: 16px;
+  top: calc(var(--effective-hud-h) + 8px);
+  inset-inline-end: max(16px, env(safe-area-inset-right));
   z-index: var(--layer-popover);
   width: 380px;
   max-width: calc(100vw - 32px);
@@ -782,12 +782,12 @@ kbd {
 
 .settings-panel {
   position: fixed;
-  top: var(--hud-h);
+  top: var(--effective-hud-h);
   right: 0;
   width: 320px;
   /* Stop above the timeline bar so the DVR controls stay usable and don't poke
      through the panel's lower edge. */
-  max-height: calc(100vh - var(--hud-h) - var(--dvr-h));
+  max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
   overflow-y: auto;
   background: var(--surface-3);
   border-left: 1px solid var(--line);
@@ -798,7 +798,7 @@ kbd {
   z-index: var(--layer-context);
   transform: translateX(100%);
   transition: transform var(--t-mid) var(--ease);
-  padding-bottom: 1rem;
+  padding-block-end: max(1rem, env(safe-area-inset-bottom));
   box-shadow: -16px 0 36px rgba(0, 0, 0, 0.45);
 }
 .settings-panel.open { transform: translateX(0); }
@@ -1521,7 +1521,12 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .event-log,
   .sensor-stats-overlay { left: 16px; right: 16px; max-width: none; }
 
-  #key-hints { width: auto; left: 16px; right: 16px; top: calc(var(--hud-h) + 8px); }
+  #key-hints {
+    width: auto;
+    inset-inline-start: max(16px, env(safe-area-inset-left));
+    inset-inline-end: max(16px, env(safe-area-inset-right));
+    top: calc(var(--effective-hud-h) + 8px);
+  }
   #key-hints::before { display: none; }
   #key-hints.hidden { transform: scale(0.98) translateY(-6px); }
   .key-hints-grid { grid-template-columns: 1fr; }

@@ -408,8 +408,8 @@ select.ap-field-input { width: auto; }
    again and the panel drops back to sitting just above the transport bar. */
 @media (min-width: 760px) and (max-width: 1099px) {
   .asset-panel {
-    left: var(--gutter);
-    right: var(--gutter);
+    left: max(var(--gutter), env(safe-area-inset-left));
+    right: max(var(--gutter), env(safe-area-inset-right));
     bottom: calc(var(--effective-dvr-h) + 14px);
     width: auto;
     max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
@@ -418,6 +418,9 @@ select.ap-field-input { width: auto; }
 
 @media (max-width: 759px) {
   .asset-panel {
+    left: max(var(--gutter), env(safe-area-inset-left));
+    right: max(var(--gutter), env(safe-area-inset-right));
+    width: auto;
     bottom: calc(var(--effective-dvr-h) + 14px);
     max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
   }
@@ -425,7 +428,8 @@ select.ap-field-input { width: auto; }
 
 @media (max-width: 720px) {
   .asset-panel {
-    left: var(--gutter);
+    left: max(var(--gutter), env(safe-area-inset-left));
+    right: max(var(--gutter), env(safe-area-inset-right));
     width: auto;
     max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
   }

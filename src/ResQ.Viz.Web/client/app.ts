@@ -35,6 +35,8 @@ import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
 import { setContextObscured } from './ui/contextObscuring';
 import { setSettingsVisibleState } from './ui/settingsVisibility';
 import { setHintsVisibleState } from './ui/hintsVisibility';
+import { ManagedLayerVisibility } from './ui/managedLayerVisibility';
+import { handleOwnedEscape } from './ui/escapeOwnership';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -354,10 +356,18 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
     });
 }));
 
-const investorMode = new InvestorMode(viz.cameraController, () => {
-    _setSettingsVisible(false);
-    _setHintsVisible(false);
-});
+const investorLayers = new ManagedLayerVisibility([
+    operatorShell.mounts.context,
+    operatorShell.mounts.editor,
+]);
+const investorMode = new InvestorMode(
+    viz.cameraController,
+    () => {
+        _setSettingsVisible(false);
+        _setHintsVisible(false);
+    },
+    (suppressed) => investorLayers.setSuppressed(suppressed),
+);
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
 const cameraPresets = new CameraPresets({
@@ -1420,19 +1430,16 @@ followBtn?.addEventListener('click', () => {
 // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
 window.addEventListener('keydown', (e: KeyboardEvent) => {
-    // Escape owns dismissal even when focus is inside the popover's native
-    // controls. It must run before the global-shortcut typing guard, which
-    // correctly suppresses ordinary shortcuts on buttons and links.
-    if (e.key === 'Escape') {
-        if (_pendingPick) {
-            _cancelPick();
-            return;
-        }
-        if (hintsVisible) {
-            _setHintsVisible(false);
-            return;
-        }
-    }
+    // Modal Escape ownership precedes the native-control shortcut guard, but
+    // respects a prior owner and command modifiers. Pending targeting wins over
+    // hints because it changes what the next scene click means.
+    if (handleOwnedEscape(
+        e,
+        _pendingPick !== null,
+        hintsVisible,
+        _cancelPick,
+        () => _setHintsVisible(false),
+    )) return;
 
     // Ctrl+Shift+R — investor-mode cinematic preset for screen recording.
     // Modifier combo is checked before the switch so the raw `KeyR`

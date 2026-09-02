@@ -120,6 +120,12 @@
 .operator-editor-layer  { z-index: var(--layer-editor); }
 .operator-modal-layer   { z-index: var(--layer-modal); }
 
+body.investor-mode .operator-context-layer,
+body.investor-mode .operator-editor-layer {
+  display: none !important;
+  pointer-events: none;
+}
+
 :is(.operator-v2-console, .operator-layer, #sidebar) :focus-visible,
 :is(#btn-sidebar-toggle, #btn-editor-toggle):focus-visible {
   outline: 2px solid var(--info);
@@ -156,6 +162,8 @@
   .operator-context-layer {
     inset: auto 0 var(--effective-dvr-h) 0;
     max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
   }
 
   .operator-editor-layer {
@@ -177,6 +185,8 @@
   .operator-context-layer {
     inset: auto 0 var(--effective-dvr-h) 0;
     max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
   }
 
   .operator-primary-actions .btn,

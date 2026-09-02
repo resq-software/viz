@@ -111,6 +111,44 @@ describe('rendered shell contracts', () => {
     }
   });
 
+  it('keeps every remaining managed sheet inside the final safe-area cascade', () => {
+    const main = read('../styles/main.css');
+    const editor = read('../styles/editor.css');
+    const operator = read('../styles/operator.css');
+    const assets = read('../styles/assets.css');
+
+    expect(effectiveProperty(main, '.settings-panel', 'top', 1200)).toBe('var(--effective-hud-h)');
+    const settingsHeight = effectiveProperty(main, '.settings-panel', 'max-height', 1200) ?? '';
+    expect(settingsHeight).toContain('100dvh');
+    expect(settingsHeight).toContain('var(--effective-hud-h)');
+    expect(settingsHeight).toContain('var(--effective-dvr-h)');
+    expect(effectiveProperty(main, '.settings-panel', 'padding-block-end', 1200))
+      .toContain('env(safe-area-inset-bottom)');
+
+    for (const width of [390, 900, 1200]) {
+      expect(effectiveProperty(main, '#key-hints', 'top', width), `hints top at ${width}px`)
+        .toBe('calc(var(--effective-hud-h) + 8px)');
+      expect(effectiveProperty(main, '#key-hints', 'inset-inline-end', width), `hints end at ${width}px`)
+        .toContain('env(safe-area-inset-right)');
+    }
+    for (const width of [390, 900]) {
+      expect(effectiveProperty(main, '#key-hints', 'inset-inline-start', width), `hints start at ${width}px`)
+        .toContain('env(safe-area-inset-left)');
+      expect(effectiveProperty(editor, '.resq-dvr', 'padding-inline-start', width), `DVR start at ${width}px`)
+        .toContain('env(safe-area-inset-left)');
+      expect(effectiveProperty(editor, '.resq-dvr', 'padding-inline-end', width), `DVR end at ${width}px`)
+        .toContain('env(safe-area-inset-right)');
+      expect(effectiveProperty(operator, '.operator-context-layer', 'padding-inline-start', width))
+        .toContain('env(safe-area-inset-left)');
+      expect(effectiveProperty(operator, '.operator-context-layer', 'padding-inline-end', width))
+        .toContain('env(safe-area-inset-right)');
+      expect(effectiveProperty(assets, '.asset-panel', 'left', width))
+        .toContain('env(safe-area-inset-left)');
+      expect(effectiveProperty(assets, '.asset-panel', 'right', width))
+        .toContain('env(safe-area-inset-right)');
+    }
+  });
+
   it('fits the compact DVR core controls and a flexible scrubber within 390px', () => {
     const editor = read('../styles/editor.css');
     const operator = read('../styles/operator.css');

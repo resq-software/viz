@@ -81,8 +81,8 @@ describe('keyboard hints visibility', () => {
     expect(app).toMatch(/hintsToggle\?\.addEventListener\('click'[\s\S]*?_setHintsVisible\(!hintsVisible\)/);
     expect(app).toMatch(/hintsClose\?\.addEventListener\('click'[\s\S]*?_setHintsVisible\(false\)/);
     expect(app).toMatch(/document\.addEventListener\('click'[\s\S]*?_setHintsVisible\(false\)/);
-    expect(app).toMatch(/e\.key === 'Escape'[\s\S]*?_setHintsVisible\(false\)/);
-    expect(keyboard.indexOf("e.key === 'Escape'")).toBeLessThan(
+    expect(app).toMatch(/handleOwnedEscape\([\s\S]*?\(\) => _setHintsVisible\(false\)/);
+    expect(keyboard.indexOf('handleOwnedEscape(')).toBeLessThan(
       keyboard.indexOf('shouldIgnoreGlobalShortcut(e)'),
     );
   });

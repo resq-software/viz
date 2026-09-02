@@ -62,6 +62,7 @@ export class InvestorMode {
     constructor(
         private readonly _camera: UnityCamera,
         private readonly _closeOpenPanels: () => void = () => {},
+        private readonly _setManagedLayersSuppressed: (suppressed: boolean) => void = () => {},
     ) {}
 
     get enabled(): boolean { return this._enabled; }
@@ -90,6 +91,7 @@ export class InvestorMode {
 
         document.body.classList.add('investor-mode');
         this._closeOpenPanels();
+        this._setManagedLayersSuppressed(true);
         this._mountWordmark();
 
         // Skip the sweeping 90s dolly for reduced-motion users (WCAG 2.3.3):
@@ -103,6 +105,7 @@ export class InvestorMode {
     private _uninstall(): void {
         this._enabled = false;
 
+        this._setManagedLayersSuppressed(false);
         document.body.classList.remove('investor-mode');
         this._unmountWordmark();
 

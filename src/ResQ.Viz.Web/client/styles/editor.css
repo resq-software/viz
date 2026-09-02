@@ -883,7 +883,8 @@ body.fpv-mode .cam-mode-pill { display: none; }
   .resq-dvr {
     left: 0;
     gap: 10px;
-    padding-inline: 12px;
+    padding-inline-start: max(12px, env(safe-area-inset-left));
+    padding-inline-end: max(12px, env(safe-area-inset-right));
     padding-block-start: 0;
     padding-block-end: env(safe-area-inset-bottom);
   }
@@ -902,7 +903,8 @@ body.fpv-mode .cam-mode-pill { display: none; }
 @media (max-width: 560px) {
   .resq-dvr {
     gap: 8px;
-    padding-inline: 8px;
+    padding-inline-start: max(8px, env(safe-area-inset-left));
+    padding-inline-end: max(8px, env(safe-area-inset-right));
     padding-block-start: 0;
     padding-block-end: env(safe-area-inset-bottom);
   }
