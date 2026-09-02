@@ -37,6 +37,7 @@ interface ShellElements {
   readonly railToggle: HTMLButtonElement;
   readonly editorToggle: HTMLButtonElement;
   readonly editorLayer: HTMLElement;
+  readonly contextLayer: HTMLElement;
 }
 
 const REQUIRED_IDS = [
@@ -74,6 +75,8 @@ export class OperatorShell {
   private _mode: OperatorMode = 'booting';
   private _bootStatus: OperatorBootStatus = 'connecting';
   private _railOpen = true;
+  private _contextOpen = false;
+  private _railBeforeContext: boolean | null = null;
   private _editorOpen = false;
   private _editorRequestedOpen = false;
   private _editorAvailable = true;
@@ -93,6 +96,7 @@ export class OperatorShell {
 
     const get = <T extends HTMLElement>(id: RequiredId): T => found.get(id) as T;
     const editorLayer = get<HTMLElement>('operator-editor-layer');
+    const contextLayer = get<HTMLElement>('operator-context-layer');
     this._elements = {
       sidebar: get('sidebar'),
       boot: get('operator-boot'),
@@ -105,25 +109,34 @@ export class OperatorShell {
       railToggle: get<HTMLButtonElement>('btn-sidebar-toggle'),
       editorToggle: get<HTMLButtonElement>('btn-editor-toggle'),
       editorLayer,
+      contextLayer,
     };
     this.mounts = {
       mission: get('operator-mission'),
       filter: get('fleet-filter'),
       roster: get('fleet-roster'),
       advancedSafety: get('advanced-safety'),
-      context: get('operator-context-layer'),
+      context: contextLayer,
       modal: get('operator-modal-layer'),
       editor: editorLayer,
     };
     this._investorLayers = new ManagedLayerVisibility([this.mounts.context]);
 
-    this._elements.railToggle.addEventListener('click', () => this.setRailOpen(!this._railOpen));
+    this._elements.railToggle.addEventListener('click', () => {
+      if (this._contextOpen && this._usesContextDrawer()) {
+        this.setContextOpen(false);
+        this.setRailOpen(true);
+        return;
+      }
+      this.setRailOpen(!this._railOpen);
+    });
     this._elements.editorToggle.addEventListener(
       'click', () => this.setEditorOpen(!this._editorRequestedOpen),
     );
     this.setBootStatus('connecting');
     this.setMode('booting');
     this.setRailOpen(true);
+    this.setContextOpen(false);
     this.setEditorOpen(false);
 
     const compactEditor = doc.defaultView?.matchMedia('(max-width: 759px)');
@@ -132,6 +145,7 @@ export class OperatorShell {
       applyEditorAvailability();
       compactEditor.addEventListener('change', applyEditorAvailability);
     }
+    doc.defaultView?.addEventListener('resize', () => this._syncContextViewport());
   }
 
   get mode(): OperatorMode {
@@ -146,7 +160,12 @@ export class OperatorShell {
     return this._editorOpen;
   }
 
+  get contextOpen(): boolean {
+    return this._contextOpen;
+  }
+
   setMode(mode: OperatorMode): void {
+    if (mode !== 'v2' && this._contextOpen) this.setContextOpen(false);
     const previous = this._branchFor(this._mode);
     const active = previous.ownerDocument.activeElement;
     const evacuate = mode !== this._mode
@@ -208,6 +227,33 @@ export class OperatorShell {
     railToggle.setAttribute('aria-controls', 'sidebar');
   }
 
+  /** Owns the body-level selection context and compact drawer exclusivity. */
+  setContextOpen(open: boolean): void {
+    if (open && this._mode !== 'v2') return;
+    if (open === this._contextOpen) {
+      this._syncContextLayer();
+      return;
+    }
+
+    if (!open) {
+      const active = this._doc.activeElement;
+      if (active instanceof Element && this._elements.contextLayer.contains(active)) {
+        this._elements.railToggle.focus();
+      }
+    }
+
+    this._contextOpen = open;
+    if (open && this._usesContextDrawer()) {
+      this._railBeforeContext = this._railOpen;
+      this.setRailOpen(false);
+    } else if (!open && this._railBeforeContext !== null) {
+      const restore = this._railBeforeContext;
+      this._railBeforeContext = null;
+      this.setRailOpen(restore);
+    }
+    this._syncContextLayer();
+  }
+
   setEditorOpen(open: boolean): void {
     this._editorRequestedOpen = open && this._editorAvailable;
     this._syncEditorOpen();
@@ -235,6 +281,7 @@ export class OperatorShell {
     this._investorObserver?.disconnect();
     this._investorObserver = null;
     this._investorLayers.setSuppressed(false);
+    this._syncContextLayer();
     // Recompute from the current media-query state. A viewport that crossed
     // below 760px while cinematic mode was active must not reopen stale UI.
     this._syncEditorOpen();
@@ -261,14 +308,46 @@ export class OperatorShell {
     return this._doc.querySelectorAll<HTMLElement>(EDITOR_CHROME_SELECTOR);
   }
 
-  focusFleetHeading(): void {
+  focusFleetHeading(): boolean {
+    if (this._mode !== 'v2') return false;
+    if (this._contextOpen && this._usesContextDrawer()) this.setContextOpen(false);
+    if (!this._railOpen) this.setRailOpen(true);
     this._elements.fleetHeading.focus();
+    return this._doc.activeElement === this._elements.fleetHeading;
   }
 
   private _setBranchActive(branch: HTMLElement, active: boolean): void {
     branch.hidden = !active;
     branch.setAttribute('aria-hidden', String(!active));
     this._setInert(branch, !active);
+  }
+
+  private _syncContextLayer(): void {
+    if (this._investorSuppressed) return;
+    const hidden = !this._contextOpen;
+    const layer = this._elements.contextLayer;
+    layer.hidden = hidden;
+    layer.setAttribute('aria-hidden', String(hidden));
+    this._setInert(layer, hidden);
+  }
+
+  private _usesContextDrawer(): boolean {
+    return (this._doc.defaultView?.innerWidth ?? 1100) < 1100;
+  }
+
+  private _syncContextViewport(): void {
+    if (!this._contextOpen) return;
+    if (this._usesContextDrawer()) {
+      if (this._railBeforeContext === null) {
+        this._railBeforeContext = this._railOpen;
+        this.setRailOpen(false);
+      }
+      return;
+    }
+    if (this._railBeforeContext === null) return;
+    const restore = this._railBeforeContext;
+    this._railBeforeContext = null;
+    this.setRailOpen(restore);
   }
 
   private _branchFor(mode: OperatorMode): HTMLElement {

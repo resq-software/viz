@@ -224,6 +224,77 @@ describe('persistence', () => {
 });
 
 describe('AssetFilter control', () => {
+  it('requires an explicit mount instead of falling back to document.body', () => {
+    expect(() => new AssetFilter({ storage: null } as never)).toThrow(/mount/i);
+    expect(document.body.querySelector('.asset-filter')).toBeNull();
+  });
+
+  it('keeps All and every supported domain tab visible with raw inventory counts', () => {
+    const mount = document.createElement('div');
+    const filter = new AssetFilter({ mount, storage: null });
+    filter.update([asset('air-1')]);
+
+    const tabs = [...mount.querySelectorAll<HTMLButtonElement>('.af-domain-tab')]
+      .filter(tab => !tab.hidden);
+    expect(tabs.map(tab => tab.dataset['domainTab'])).toEqual(['all', 'air', 'ground', 'surface']);
+    expect(tabs.map(tab => tab.textContent)).toEqual(['All1', 'Air1', 'Ground0', 'Surface0']);
+    expect(tabs.every(tab => tab.getAttribute('role') !== 'tab')).toBe(true);
+    expect(tabs[0]?.getAttribute('aria-pressed')).toBe('true');
+    expect(tabs[0]?.getAttribute('aria-label')).toBe('All, 1 asset');
+    expect(tabs[2]?.getAttribute('aria-label')).toBe('Ground, 0 assets');
+    expect(tabs[2]?.disabled).toBe(false);
+    filter.dispose();
+  });
+
+  it('quick tabs replace only the domain selection and preserve every other facet', () => {
+    const mount = document.createElement('div');
+    const filter = new AssetFilter({ mount, storage: null });
+    filter.setSelection({ domain: ['air', 'surface'], agency: ['coastguard'], state: ['active'] });
+    filter.update(MIXED);
+
+    mount.querySelector<HTMLButtonElement>('[data-domain-tab="ground"]')!.click();
+    expect(filter.selection.domain).toEqual(['ground']);
+    expect(filter.selection.agency).toEqual(['coastguard']);
+    expect(filter.selection.state).toEqual(['active']);
+
+    mount.querySelector<HTMLButtonElement>('[data-domain-tab="all"]')!.click();
+    expect(filter.selection.domain).toEqual([]);
+    expect(filter.selection.agency).toEqual(['coastguard']);
+    expect(filter.selection.state).toEqual(['active']);
+    filter.dispose();
+  });
+
+  it('shows Custom for a persisted multi-domain selection and keeps expanded checkboxes', () => {
+    const storage = memoryStorage();
+    saveSelection({ ...emptySelection(), domain: ['ground', 'surface'] }, storage);
+    const mount = document.createElement('div');
+    const filter = new AssetFilter({ mount, storage });
+    filter.update(MIXED);
+
+    const custom = mount.querySelector<HTMLButtonElement>('[data-domain-tab="custom"]');
+    expect(custom?.hidden).toBe(false);
+    expect(custom?.getAttribute('aria-pressed')).toBe('true');
+    expect(mount.querySelector('details.af-expanded')).not.toBeNull();
+    expect(mount.querySelectorAll('[data-facet="domain"] input[type="checkbox"]')).toHaveLength(3);
+    filter.dispose();
+  });
+
+  it('uses Custom for any nonstandard domain selection and opens the expanded control', () => {
+    const mount = document.createElement('div');
+    const filter = new AssetFilter({ mount, storage: null });
+    filter.setSelection({ domain: ['fixed'] });
+    filter.update([asset('relay-1', { domain: AssetDomain.Fixed })]);
+
+    const custom = mount.querySelector<HTMLButtonElement>('[data-domain-tab="custom"]')!;
+    const expanded = mount.querySelector<HTMLDetailsElement>('details.af-expanded')!;
+    expect(custom.hidden).toBe(false);
+    expect(custom.getAttribute('aria-pressed')).toBe('true');
+    expect(custom.getAttribute('aria-label')).toBe('Custom domain filter, 1 asset');
+    custom.click();
+    expect(expanded.open).toBe(true);
+    filter.dispose();
+  });
+
   it('renders one checkbox per offered value and filters on toggle', () => {
     const mount = document.createElement('div');
     const filter = new AssetFilter({ mount, storage: null });

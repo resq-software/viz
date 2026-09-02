@@ -201,7 +201,9 @@ async function settle(): Promise<void> {
   await Promise.resolve();
 }
 
-function mountPanel(options: AssetPanelOptions = {}): { panel: AssetPanel; mount: HTMLElement } {
+function mountPanel(
+  options: Omit<AssetPanelOptions, 'mount'> = {},
+): { panel: AssetPanel; mount: HTMLElement } {
   const mount = document.createElement('div');
   document.body.appendChild(mount);
   return { panel: new AssetPanel({ mount, ...options }), mount };

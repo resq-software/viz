@@ -46,8 +46,10 @@
    either widget later inherits the guarantee instead of needing its own rule. */
 .asset-panel[hidden],
 .asset-filter[hidden],
+.asset-roster[hidden],
 .asset-panel [hidden],
-.asset-filter [hidden] {
+.asset-filter [hidden],
+.asset-roster [hidden] {
   display: none;
 }
 
@@ -335,7 +337,51 @@ select.ap-field-input { width: auto; }
 
 .af-clear { padding: 4px 8px; font-size: 9px; }
 
-.af-facets { display: flex; flex-direction: column; gap: 8px; }
+.af-domain-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  gap: 4px;
+}
+
+.af-domain-tab {
+  appearance: none;
+  min-width: 0;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: oklch(100% 0 0 / 0.03);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9px;
+  transition: background var(--t-fast), box-shadow var(--t-fast), color var(--t-fast);
+}
+
+.af-domain-tab:hover { background: oklch(100% 0 0 / 0.07); }
+.af-domain-tab[aria-pressed="true"] {
+  background: var(--info-soft);
+  box-shadow: inset 0 0 0 1px var(--info-glow);
+  color: var(--info);
+}
+
+.af-domain-tab-count { color: var(--text-muted); }
+
+.af-expanded summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.af-facets { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
 
 /* A real <fieldset>/<legend>, so the group is named in the accessibility tree
    without a hand-rolled aria-labelledby. The legend stays in normal flow — UAs
@@ -386,21 +432,131 @@ select.ap-field-input { width: auto; }
 /* A value with nothing behind it right now stays selectable but recedes. */
 .af-chip.is-empty { opacity: 0.5; }
 
+/* ── Keyed fleet roster ────────────────────────────────────────────────── */
+
+.asset-roster {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+.ar-search-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--hint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ar-search {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: oklch(100% 0 0 / 0.05);
+  box-shadow: var(--ring);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+}
+
+.ar-scroll {
+  max-height: min(42dvh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 140, 170, 0.3) transparent;
+}
+
+.ar-group + .ar-group { margin-top: 12px; }
+
+.ar-group-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 5px;
+  color: var(--hint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ar-count {
+  min-width: 2ch;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.ar-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.ar-item { min-width: 0; }
+
+.ar-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "domain name state"
+    "id id health"
+    "outside outside outside";
+  gap: 2px 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: oklch(100% 0 0 / 0.025);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--t-fast), box-shadow var(--t-fast);
+}
+
+.ar-row:hover { background: oklch(100% 0 0 / 0.06); box-shadow: var(--ring-strong); }
+.ar-row.is-selected { background: var(--info-soft); box-shadow: inset 0 0 0 1px var(--info-glow); }
+.ar-domain { grid-area: domain; color: var(--info); font: 500 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.ar-name { grid-area: name; min-width: 0; overflow: hidden; color: var(--text); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.ar-id { grid-area: id; min-width: 0; overflow: hidden; color: var(--text-muted); font: 9px/1.3 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.ar-state { grid-area: state; color: var(--text-muted); font: 9px/1 var(--mono); }
+.ar-health { grid-area: health; color: var(--warning); font: 9px/1.2 var(--mono); text-align: right; }
+.ar-outside { grid-area: outside; color: var(--warning); font: 9px/1.2 var(--mono); }
+
+.ar-empty {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ar-empty p { margin: 0 0 6px; }
+.ar-clear { min-height: 28px; padding: 4px 8px; font-size: 9px; }
+
 /* ── Motion, contrast and forced colours ────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
   .asset-panel.is-pulsing .ap-badge { animation: none; }
-  .af-chip, .ap-close, .ap-cmd-btn { transition: none; }
+  .af-chip, .af-domain-tab, .ar-row, .ap-close, .ap-cmd-btn { transition: none; }
 }
 
 @media (forced-colors: active) {
-  .asset-panel, .asset-filter, .af-chip {
+  .asset-panel, .asset-filter, .asset-roster, .af-chip, .af-domain-tab, .ar-row {
     background: Canvas;
     border: 1px solid CanvasText;
     backdrop-filter: none;
   }
   /* Selected and blocked must stay distinguishable when the palette is replaced. */
   .af-chip:has(.af-chip-input:checked) { forced-color-adjust: none; outline: 2px solid Highlight; }
+  .af-domain-tab[aria-pressed="true"], .ar-row.is-selected { outline: 2px solid Highlight; }
   .ap-cmd.is-blocked .ap-cmd-btn { opacity: 1; text-decoration: line-through; }
 }
 
@@ -417,6 +573,13 @@ select.ap-field-input { width: auto; }
 }
 
 @media (max-width: 759px) {
+  .af-domain-tab,
+  .ar-row,
+  .ar-search,
+  .ar-clear {
+    min-height: 44px;
+  }
+
   .asset-panel {
     left: max(var(--gutter), env(safe-area-inset-left));
     right: max(var(--gutter), env(safe-area-inset-right));

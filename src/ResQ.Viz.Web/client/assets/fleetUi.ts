@@ -1,10 +1,10 @@
 // ResQ Viz - the mixed-fleet operator surface, in its own chunk
 // SPDX-License-Identifier: Apache-2.0
 //
-// Composes the two operator-facing pieces of the asset layer — `AssetPanel` (the
+// Composes the three operator-facing pieces of the asset layer — `AssetPanel` (the
 // capability-driven detail panel that replaces `../ui/dronePanel.ts`) and
-// `AssetFilter` (the faceted fleet narrowing) — plus the mixed-fleet sentence the
-// a11y live region announces.
+// `AssetFilter` (the faceted fleet narrowing), and `AssetRoster` (the keyed text
+// inventory) — plus the mixed-fleet sentence the a11y live region announces.
 //
 // It exists as one module for one reason: **so that all three, and the stylesheet
 // they share, land in a chunk the entry bundle does not pull.** The panel, the
@@ -29,14 +29,27 @@ import type {
   TargetPicker,
 } from './panelCommands';
 import type { SceneAsset } from './sceneFrame';
+import { AssetRoster } from '../operator/AssetRoster';
+import type {
+  RosterCounts,
+  RosterInput,
+  RosterSelection,
+} from '../operator/AssetRoster';
+
+export type FleetUiInput = Pick<RosterInput, 'assets' | 'contacts' | 'query' | 'selected'>;
 
 /** Construction options. Every collaborator is injectable so the surface can be
  *  driven headlessly in a test. */
 export interface FleetUiOptions {
-  /** Element the panel attaches to. Defaults to `document.body`; both widgets
-   *  position themselves, so a host normally lets them. */
-  readonly panelMount?: HTMLElement;
-  readonly filterMount?: HTMLElement;
+  readonly panelMount: HTMLElement;
+  readonly filterMount: HTMLElement;
+  readonly rosterMount: HTMLElement;
+  readonly selectAsset: (id: string) => void;
+  readonly selectTrack: (id: string) => void;
+  readonly onQueryChange: (query: string) => void;
+  readonly onFocusFallback?: () => void;
+  readonly rosterScheduleFrame?: (callback: () => void) => number;
+  readonly rosterCancelFrame?: (handle: number) => void;
   /** Where the facet selection is remembered. Defaults to `localStorage`; pass
    *  `null` to keep it in memory only, which is what a test wants and what a
    *  kiosk that should not remember one operator's filter for the next wants
@@ -70,28 +83,63 @@ export interface FleetUiOptions {
 export class FleetUi {
   private readonly _panel: AssetPanel;
   private readonly _filter: AssetFilter;
+  private readonly _roster: AssetRoster;
+  private readonly _onFocusFallback: (() => void) | null;
 
   /** Filterable projections of the last frame's assets, in publication order. */
   private _filterables: FilterableAsset[] = [];
   /** Ids the current selection leaves visible. */
   private _visible = new Set<string>();
   private _hiddenCount = 0;
+  private _focusOrigin: RosterSelection | null = null;
 
-  constructor(options: FleetUiOptions = {}) {
+  constructor(options: FleetUiOptions) {
+    for (const name of ['panelMount', 'filterMount', 'rosterMount'] as const) {
+      if (!options?.[name]) throw new Error(`FleetUi requires an explicit ${name}`);
+    }
+    this._onFocusFallback = options.onFocusFallback ?? null;
     this._panel = new AssetPanel({
-      ...(options.panelMount === undefined ? {} : { mount: options.panelMount }),
+      mount: options.panelMount,
       ...(options.pickTarget === undefined ? {} : { pickTarget: options.pickTarget }),
       ...(options.loadCapabilities === undefined
         ? {} : { loadCapabilities: options.loadCapabilities }),
       ...(options.issueCommand === undefined ? {} : { issueCommand: options.issueCommand }),
     });
-    if (options.onPanelClose) this._panel.onClose(options.onPanelClose);
-
     this._filter = new AssetFilter({
-      ...(options.filterMount === undefined ? {} : { mount: options.filterMount }),
+      mount: options.filterMount,
       ...(options.filterStorage === undefined ? {} : { storage: options.filterStorage }),
     });
     if (options.onFilterChange) this._filter.onChange(options.onFilterChange);
+
+    this._roster = new AssetRoster({
+      mount: options.rosterMount,
+      selectAsset: id => {
+        this._focusOrigin = { kind: 'asset', id };
+        options.selectAsset(id);
+      },
+      selectTrack: id => {
+        this._focusOrigin = { kind: 'track', id };
+        options.selectTrack(id);
+      },
+      onQueryChange: options.onQueryChange,
+      onClearFilters: () => {
+        this._filter.clear();
+        options.onQueryChange('');
+      },
+      onFocusFallback: () => this._onFocusFallback?.(),
+      ...(options.rosterScheduleFrame === undefined
+        ? {} : { scheduleFrame: options.rosterScheduleFrame }),
+      ...(options.rosterCancelFrame === undefined
+        ? {} : { cancelFrame: options.rosterCancelFrame }),
+    });
+    this._panel.onClose(() => {
+      const origin = this._focusOrigin;
+      options.onPanelClose?.();
+      if (!origin || !this._roster.focusRow(origin.kind, origin.id)) {
+        this._onFocusFallback?.();
+      }
+      this._focusOrigin = null;
+    });
   }
 
   /** The detail panel, for a host that needs its element. */
@@ -104,6 +152,14 @@ export class FleetUi {
     return this._filter;
   }
 
+  get roster(): AssetRoster {
+    return this._roster;
+  }
+
+  get counts(): RosterCounts {
+    return this._roster.counts;
+  }
+
   /**
    * Reconcile the facets with a frame and return the assets that survive the
    * current selection, in publication order.
@@ -112,21 +168,39 @@ export class FleetUi {
    * outliner, so filtering is one decision applied in one place rather than six
    * surfaces each re-deriving it and disagreeing about the answer.
    */
-  update(assets: readonly SceneAsset[]): SceneAsset[] {
+  update(input: FleetUiInput): SceneAsset[] {
+    const { assets, contacts, query, selected } = input;
     this._filterables = assets.map((a) => filterableFromV2(a.descriptor, a.state));
-    this._filter.update(this._filterables);
 
-    const visible: SceneAsset[] = [];
-    this._visible = new Set<string>();
+    const matched = new Set<string>();
     for (let i = 0; i < assets.length; i++) {
       const asset = assets[i];
       const filterable = this._filterables[i];
-      if (asset === undefined || filterable === undefined) continue;
-      if (!this._filter.matches(filterable)) continue;
+      if (asset && filterable && this._filter.matches(filterable)) matched.add(asset.view.id);
+    }
+
+    const selectedAssetId = selected?.kind === 'asset' ? selected.id : null;
+    const visible: SceneAsset[] = [];
+    this._visible = new Set<string>();
+    for (const asset of assets) {
+      if (!matched.has(asset.view.id) && asset.view.id !== selectedAssetId) continue;
       visible.push(asset);
       this._visible.add(asset.view.id);
     }
     this._hiddenCount = assets.length - visible.length;
+    this._filter.update(this._filterables, visible.length);
+
+    if (this._focusOrigin
+      && (selected?.kind !== this._focusOrigin.kind || selected.id !== this._focusOrigin.id)) {
+      this._focusOrigin = null;
+    }
+    this._roster.update({
+      assets,
+      contacts,
+      assetFilter: this._filter.selection,
+      query,
+      selected,
+    });
     return visible;
   }
 
@@ -175,9 +249,10 @@ export class FleetUi {
     return this._panel.isVisible;
   }
 
-  /** Detaches both widgets. */
+  /** Detaches all three widgets. */
   dispose(): void {
     this._panel.dispose();
     this._filter.dispose();
+    this._roster.dispose();
   }
 }

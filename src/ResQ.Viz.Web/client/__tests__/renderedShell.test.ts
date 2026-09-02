@@ -3,7 +3,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FleetUi } from '../assets/fleetUi';
 
@@ -252,18 +252,26 @@ describe('rendered shell contracts', () => {
   });
 
   it('mounts the active asset panel in the context layer with compact target coverage', () => {
-    document.body.innerHTML = '<div id="context"></div><div id="filter"></div>';
+    document.body.innerHTML = '<div id="context"></div><div id="filter"></div><div id="roster"></div>';
     const context = document.getElementById('context')!;
     const ui = new FleetUi({
       panelMount: context,
       filterMount: document.getElementById('filter')!,
+      rosterMount: document.getElementById('roster')!,
+      selectAsset: vi.fn(),
+      selectTrack: vi.fn(),
+      onQueryChange: vi.fn(),
       filterStorage: null,
     });
     const app = read('../app.ts');
     const operator = read('../styles/operator.css');
 
     expect(ui.panel.element.parentElement).toBe(context);
+    expect(ui.filter.element.parentElement?.id).toBe('filter');
+    expect(ui.roster.element.parentElement?.id).toBe('roster');
     expect(app).toMatch(/new m\.FleetUi\(\{[\s\S]*?panelMount:\s*operatorShell\.mounts\.context/);
+    expect(app).toMatch(/filterMount:\s*operatorShell\.mounts\.filter/);
+    expect(app).toMatch(/rosterMount:\s*operatorShell\.mounts\.roster/);
     for (const selector of [
       '.operator-context-layer button',
       '.operator-context-layer select',

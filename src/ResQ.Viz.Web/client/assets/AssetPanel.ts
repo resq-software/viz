@@ -85,7 +85,7 @@ function isRenderedAndAccessible(element: HTMLElement): boolean {
 /** Construction options. Every collaborator is injectable, so the panel can be
  *  driven with no server and no scene in a test. */
 export interface AssetPanelOptions {
-  readonly mount?: HTMLElement;
+  readonly mount: HTMLElement;
   readonly issueCommand?: CommandIssuer;
   readonly loadCapabilities?: (assetId: string) => Promise<AssetCapabilitiesReport | null>;
   /** Supplied when the host can turn a gesture into a scene point. Absent means
@@ -142,6 +142,7 @@ export class AssetPanel {
   private readonly _commandHost: HTMLElement;
   private readonly _commandNote: HTMLParagraphElement;
   private readonly _status: HTMLParagraphElement;
+  private readonly _close: HTMLButtonElement;
   private readonly _cards = new Map<string, CardParts>();
   private readonly _commands = new Map<string, CommandParts>();
 
@@ -154,6 +155,9 @@ export class AssetPanel {
 
   private _closeFn: (() => void) | null = null;
   private _subjectId: string | null = null;
+  private _subjectKey: string | null = null;
+  private _generation = 0;
+  private _disposed = false;
   /** The view last rendered, kept because a command is issued from a click that
    *  arrives between frames and still has to be aimed at *this* asset. */
   private _view: AssetView | null = null;
@@ -164,8 +168,10 @@ export class AssetPanel {
   private _retryAttempt = 0;
   private _commandSignature = '';
   private _busy = false;
+  private _busyGeneration: number | null = null;
 
-  constructor(options: AssetPanelOptions = {}) {
+  constructor(options: AssetPanelOptions) {
+    if (!options?.mount) throw new Error('AssetPanel requires an explicit mount');
     this._issue = options.issueCommand ?? postAssetCommand;
     this._loadCapabilities = options.loadCapabilities ?? loadAssetCapabilities;
     this._pickTarget = options.pickTarget ?? null;
@@ -173,7 +179,7 @@ export class AssetPanel {
 
     this._root = document.createElement('aside');
     this._root.className = 'asset-panel';
-    this._root.setAttribute('aria-label', 'Selected asset');
+    this._root.setAttribute('aria-label', 'Selected entity');
     this._syncVisibility(false);
 
     const header = document.createElement('header');
@@ -195,14 +201,14 @@ export class AssetPanel {
 
     identity.append(this._domainTag, this._title, this._badge);
 
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'ap-close';
-    close.setAttribute('aria-label', 'Close asset panel');
-    close.textContent = '×';
-    close.addEventListener('click', () => this._dismiss());
+    this._close = document.createElement('button');
+    this._close.type = 'button';
+    this._close.className = 'ap-close';
+    this._close.setAttribute('aria-label', 'Close selected entity');
+    this._close.textContent = '×';
+    this._close.addEventListener('click', () => this._dismiss());
 
-    header.append(identity, close);
+    header.append(identity, this._close);
 
     this._body = document.createElement('div');
     this._body.className = 'ap-body';
@@ -235,7 +241,7 @@ export class AssetPanel {
     footer.append(this._commandNote, this._retry, this._commandHost, this._status);
 
     this._root.append(header, this._body, footer);
-    (options.mount ?? document.body).appendChild(this._root);
+    options.mount.appendChild(this._root);
   }
 
   /** The panel's root element, for a host that wants to place it itself. */
@@ -261,7 +267,9 @@ export class AssetPanel {
   /** Hides the panel and forgets its subject. */
   hide(): void {
     this._syncVisibility(false);
+    this._invalidateSubject();
     this._subjectId = null;
+    this._subjectKey = null;
     this._view = null;
     this._forgetReport();
     this._clearCommands();
@@ -299,7 +307,10 @@ export class AssetPanel {
 
   /** Detaches the panel and drops its listeners. */
   dispose(): void {
-    this._cancelRetry();
+    if (this._disposed) return;
+    this._disposed = true;
+    this._invalidateSubject();
+    this._forgetReport();
     this._clearCommands();
     this._cards.clear();
     this._closeFn = null;
@@ -327,12 +338,12 @@ export class AssetPanel {
     const descriptor = subject.descriptor ?? null;
     const state = subject.state ?? null;
 
-    if (this._subjectId !== view.id) {
-      this._subjectId = view.id;
-      this._status.textContent = '';
-      this._requestCapabilities(view.id);
-    }
+    const changed = this._beginSubject('asset', view.id);
+    if (changed) this._requestCapabilities(view.id);
     this._view = view;
+
+    this._root.setAttribute('aria-label', 'Selected asset');
+    this._close.setAttribute('aria-label', 'Close selected asset');
 
     this._title.textContent = view.displayName || view.id;
     this._domainTag.textContent = domainLabel(view.domain);
@@ -360,15 +371,15 @@ export class AssetPanel {
   // ── Track ─────────────────────────────────────────────────────────────────
 
   private _renderTrack(track: ExternalTrackState, simulationNowMs: number | null): void {
-    if (this._subjectId !== track.trackId) {
-      this._subjectId = track.trackId;
-      this._status.textContent = '';
-    }
+    this._beginSubject('track', track.trackId);
     // Any report cached from a previously selected asset is dropped — along with
     // any retry still pending for it — so one asset's buttons can never be left
     // standing beside another entity's data.
     this._view = null;
     this._forgetReport();
+
+    this._root.setAttribute('aria-label', 'Observed contact');
+    this._close.setAttribute('aria-label', 'Close observed contact');
 
     this._title.textContent = track.label ?? track.trackId;
     this._domainTag.textContent = 'Track';
@@ -470,7 +481,9 @@ export class AssetPanel {
    * commands" note for that asset until it was deselected.
    */
   private _requestCapabilities(assetId: string, isRetry = false): void {
+    if (this._disposed) return;
     if (!isRetry && this._reportAssetId === assetId && this._reportStatus !== 'failed') return;
+    const generation = this._generation;
     this._cancelRetry();
     this._report = null;
     this._reportAssetId = assetId;
@@ -480,11 +493,11 @@ export class AssetPanel {
       .then((report) => {
         // A late answer for an asset no longer selected is dropped rather than
         // painted over the current one.
-        if (this._reportAssetId !== assetId) return;
+        if (!this._isCurrentAsset(assetId, generation)) return;
         if (!report) {
           // `loadAssetCapabilities` resolves null only when the report could not
           // be read. That is a failure, not an asset with nothing to offer.
-          this._failReport(assetId, 'report unreadable');
+          this._failReport(assetId, generation, 'report unreadable');
           return;
         }
         this._reportStatus = 'ready';
@@ -493,13 +506,14 @@ export class AssetPanel {
         this._commandSignature = '';
       })
       .catch((err: unknown) => {
-        if (this._reportAssetId !== assetId) return;
-        this._failReport(assetId, String(err));
+        if (!this._isCurrentAsset(assetId, generation)) return;
+        this._failReport(assetId, generation, String(err));
       });
   }
 
   /** Records a failed fetch and queues the next attempt. */
-  private _failReport(assetId: string, reason: string): void {
+  private _failReport(assetId: string, generation: number, reason: string): void {
+    if (!this._isCurrentAsset(assetId, generation)) return;
     log.warn('capability report unavailable', { assetId, error: reason });
     this._report = null;
     this._reportStatus = 'failed';
@@ -515,7 +529,7 @@ export class AssetPanel {
     this._retryAttempt += 1;
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null;
-      if (this._reportAssetId === assetId && this._reportStatus === 'failed') {
+      if (this._isCurrentAsset(assetId, generation) && this._reportStatus === 'failed') {
         this._requestCapabilities(assetId, true);
       }
     }, delay);
@@ -801,6 +815,7 @@ export class AssetPanel {
     const assetId = this._subjectId;
     const view = this._view;
     if (!assetId || !view || !this._report) return;
+    const generation = this._generation;
 
     let target: unknown;
     if (capability.requiresTarget) {
@@ -808,6 +823,7 @@ export class AssetPanel {
       if (!picker) return;
       this._announce(`Pick a destination for ${humanise(capability.kind).toLowerCase()}.`);
       const picked = await picker(capability.kind, humanise(capability.kind));
+      if (!this._isCurrentAsset(assetId, generation)) return;
       if (!picked) {
         this._announce('Destination cancelled.');
         return;
@@ -839,16 +855,22 @@ export class AssetPanel {
     };
 
     this._busy = true;
+    this._busyGeneration = generation;
     parts.wrap.classList.add('is-busy');
     try {
       const outcome = await this._issue(assetId, request);
-      this._announce(outcome.message);
+      if (this._isCurrentAsset(assetId, generation)) this._announce(outcome.message);
     } catch (err: unknown) {
       log.error('command failed to send', err);
-      this._announce(`${humanise(capability.kind)} failed to send.`);
+      if (this._isCurrentAsset(assetId, generation)) {
+        this._announce(`${humanise(capability.kind)} failed to send.`);
+      }
     } finally {
-      this._busy = false;
-      parts.wrap.classList.remove('is-busy');
+      if (this._isCurrentAsset(assetId, generation) && this._busyGeneration === generation) {
+        this._busy = false;
+        this._busyGeneration = null;
+        parts.wrap.classList.remove('is-busy');
+      }
     }
   }
 
@@ -860,5 +882,31 @@ export class AssetPanel {
     this._commandHost.textContent = '';
     this._commands.clear();
     this._commandSignature = '';
+  }
+
+  private _beginSubject(kind: 'asset' | 'track', id: string): boolean {
+    const key = `${kind}:${id}`;
+    if (this._subjectKey === key) return false;
+    this._invalidateSubject();
+    this._subjectKey = key;
+    this._subjectId = id;
+    this._status.textContent = '';
+    this._view = null;
+    this._forgetReport();
+    this._clearCommands();
+    return true;
+  }
+
+  private _invalidateSubject(): void {
+    this._generation += 1;
+    this._busy = false;
+    this._busyGeneration = null;
+  }
+
+  private _isCurrentAsset(assetId: string, generation: number): boolean {
+    return !this._disposed
+      && this._generation === generation
+      && this._subjectKey === `asset:${assetId}`
+      && this._reportAssetId === assetId;
   }
 }

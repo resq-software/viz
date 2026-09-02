@@ -86,6 +86,10 @@ function installFixture(): void {
   `;
 }
 
+function setViewportWidth(width: number): void {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+}
+
 function expectBranch(id: string, active: boolean): void {
   const branch = document.getElementById(id) as HTMLElement;
   expect(branch.hidden).toBe(!active);
@@ -93,7 +97,10 @@ function expectBranch(id: string, active: boolean): void {
   expect(branch.getAttribute('aria-hidden')).toBe(String(!active));
 }
 
-beforeEach(installFixture);
+beforeEach(() => {
+  setViewportWidth(1200);
+  installFixture();
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('OperatorShell', () => {
@@ -224,6 +231,129 @@ describe('OperatorShell', () => {
     expect(document.activeElement?.id).toBe('fleet-heading');
   });
 
+  it('opens desktop context without retiring the rail', () => {
+    setViewportWidth(1200);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    const sidebar = document.getElementById('sidebar') as HTMLElement;
+    const context = shell.mounts.context;
+
+    expect(context.hidden).toBe(true);
+    expect(context.hasAttribute('inert')).toBe(true);
+    shell.setContextOpen(true);
+    expect(shell.contextOpen).toBe(true);
+    expect(context.hidden).toBe(false);
+    expect(context.hasAttribute('inert')).toBe(false);
+    expect(sidebar.hidden).toBe(false);
+    expect(sidebar.hasAttribute('inert')).toBe(false);
+
+    shell.setContextOpen(false);
+    expect(context.hidden).toBe(true);
+    expect(context.getAttribute('aria-hidden')).toBe('true');
+    expect(sidebar.hidden).toBe(false);
+  });
+
+  it('retires and restores the rail around context below 1100px', () => {
+    setViewportWidth(900);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    const sidebar = document.getElementById('sidebar') as HTMLElement;
+    const context = shell.mounts.context;
+    (document.getElementById('fleet-action') as HTMLButtonElement).focus();
+
+    shell.setContextOpen(true);
+    expect(context.hidden).toBe(false);
+    expect(sidebar.hidden).toBe(true);
+    expect(sidebar.hasAttribute('inert')).toBe(true);
+    expect(document.activeElement?.id).toBe('btn-sidebar-toggle');
+
+    shell.setContextOpen(false);
+    expect(context.hidden).toBe(true);
+    expect(sidebar.hidden).toBe(false);
+    expect(sidebar.hasAttribute('inert')).toBe(false);
+    shell.focusFleetHeading();
+    expect(document.activeElement?.id).toBe('fleet-heading');
+    expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
+  });
+
+  it('keeps a previously collapsed compact rail closed until safe focus explicitly reopens it', () => {
+    setViewportWidth(390);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    shell.setRailOpen(false);
+    shell.setContextOpen(true);
+    shell.setContextOpen(false);
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(true);
+
+    expect(shell.focusFleetHeading()).toBe(true);
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(false);
+    expect(document.activeElement?.id).toBe('fleet-heading');
+  });
+
+  it('closes context and restores the compact rail before leaving v2', () => {
+    setViewportWidth(900);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    shell.setContextOpen(true);
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(true);
+
+    shell.setMode('legacy');
+    expect(shell.contextOpen).toBe(false);
+    expect(shell.mounts.context.hidden).toBe(true);
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('evacuates context focus before closing it or leaving v2', () => {
+    setViewportWidth(900);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    const contextAction = document.createElement('button');
+    shell.mounts.context.appendChild(contextAction);
+    shell.setContextOpen(true);
+    contextAction.focus();
+
+    shell.setContextOpen(false);
+    expect(document.activeElement?.id).toBe('btn-sidebar-toggle');
+    expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
+
+    shell.setContextOpen(true);
+    contextAction.focus();
+    shell.setMode('legacy');
+    expect(document.activeElement?.id).toBe('btn-sidebar-toggle');
+    expect(document.activeElement?.closest('[hidden], [inert]')).toBeNull();
+  });
+
+  it('reconciles an open context when crossing the 1099px breakpoint', () => {
+    setViewportWidth(900);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    shell.setContextOpen(true);
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(true);
+
+    setViewportWidth(1200);
+    window.dispatchEvent(new Event('resize'));
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(false);
+    expect(shell.contextOpen).toBe(true);
+
+    setViewportWidth(900);
+    window.dispatchEvent(new Event('resize'));
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(true);
+    expect(shell.contextOpen).toBe(true);
+  });
+
+  it('closes compact context before focusing the fleet heading', () => {
+    setViewportWidth(390);
+    const shell = new OperatorShell(document);
+    shell.setMode('v2');
+    shell.setContextOpen(true);
+
+    expect(shell.focusFleetHeading()).toBe(true);
+    expect(shell.contextOpen).toBe(false);
+    expect(shell.mounts.context.hidden).toBe(true);
+    expect((document.getElementById('sidebar') as HTMLElement).hidden).toBe(false);
+    expect(document.activeElement?.id).toBe('fleet-heading');
+  });
+
   it('names a missing required mount in its setup error', () => {
     document.getElementById('operator-mission')?.remove();
 
@@ -342,7 +472,11 @@ describe('OperatorShell', () => {
     expect(shell.editorOpen).toBe(false);
     expect(layer.hidden).toBe(true);
     expect(layer.hasAttribute('inert')).toBe(true);
-    for (const surface of [context, dock, dvr]) {
+    expect(context.hidden).toBe(true);
+    expect(context.hasAttribute('inert')).toBe(true);
+    expect(context.getAttribute('aria-hidden')).toBe('true');
+    expect(context.hasAttribute('data-investor-suppressed')).toBe(true);
+    for (const surface of [dock, dvr]) {
       expect(surface.hidden).toBe(false);
       expect(surface.hasAttribute('inert')).toBe(true);
       expect(surface.getAttribute('aria-hidden')).toBeNull();
@@ -362,7 +496,11 @@ describe('OperatorShell', () => {
 
     expect(shell.editorOpen).toBe(true);
     expect(layer.hidden).toBe(false);
-    for (const surface of [context, dock, dvr, lateSceneConfig]) {
+    expect(context.hidden).toBe(true);
+    expect(context.hasAttribute('inert')).toBe(true);
+    expect(context.getAttribute('aria-hidden')).toBe('true');
+    expect(context.hasAttribute('data-investor-suppressed')).toBe(false);
+    for (const surface of [dock, dvr, lateSceneConfig]) {
       expect(surface.hidden).toBe(false);
       expect(surface.hasAttribute('inert')).toBe(false);
       expect(surface.hasAttribute('data-investor-suppressed')).toBe(false);

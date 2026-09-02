@@ -454,6 +454,11 @@ describe('evaluateCommand', () => {
 // ── The offered command set ─────────────────────────────────────────────────
 
 describe('AssetPanel commands', () => {
+  it('requires an explicit context mount', () => {
+    expect(() => new AssetPanel({} as never)).toThrow(/mount/i);
+    expect(document.body.querySelector('.asset-panel')).toBeNull();
+  });
+
   it('offers exactly the declared commands and nothing else', async () => {
     const { panel, mount } = mountPanel({
       loadCapabilities: async () => report([command({ kind: 'hold' }), command({ kind: 'land', statePolicy: 'Responsive' })]),
@@ -533,6 +538,104 @@ describe('AssetPanel commands', () => {
     await settle();
     panel.render(bravo, NOW_MS);
     expect(buttons(mount)).toEqual(['land']);
+    panel.dispose();
+  });
+
+  it('drops the first A response after an A to B to A reselection', async () => {
+    const firstA = deferred<AssetCapabilitiesReport | null>();
+    const bravo = deferred<AssetCapabilitiesReport | null>();
+    const secondA = deferred<AssetCapabilitiesReport | null>();
+    const pending = [firstA, bravo, secondA];
+    const load = vi.fn(() => pending.shift()!.promise);
+    const { panel, mount } = mountPanel({ loadCapabilities: load });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    const beta: PanelSubject = { kind: 'asset', view: view({ id: 'b1' }) };
+
+    panel.render(alpha, NOW_MS);
+    panel.render(beta, NOW_MS);
+    panel.render(alpha, NOW_MS);
+    firstA.resolve(report([command({ kind: 'hold' })], 'a1'));
+    await settle();
+    panel.render(alpha, NOW_MS);
+    expect(buttons(mount)).toEqual([]);
+
+    secondA.resolve(report([command({ kind: 'land' })], 'a1'));
+    await settle();
+    panel.render(alpha, NOW_MS);
+    expect(buttons(mount)).toEqual(['land']);
+    panel.dispose();
+  });
+
+  it('guards asset and track subjects separately when their literal ids match', async () => {
+    let loadCount = 0;
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: loadCount++ === 0 ? 'hold' : 'land' }),
+      ], id),
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    await show(panel, alpha);
+    expect(buttons(mount)).toEqual(['hold']);
+
+    panel.render({ kind: 'track', track: { ...track(), trackId: 'a1' } }, NOW_MS);
+    await show(panel, alpha);
+    expect(buttons(mount)).toEqual(['land']);
+    expect(loadCount).toBe(2);
+    panel.dispose();
+  });
+
+  it('does not retry a capability failure that lands after disposal', async () => {
+    vi.useFakeTimers();
+    try {
+      const late = deferred<AssetCapabilitiesReport | null>();
+      const load = vi.fn(() => late.promise);
+      const { panel } = mountPanel({ loadCapabilities: load, capabilityRetryMs: 1 });
+      panel.render({ kind: 'asset', view: view() }, NOW_MS);
+      panel.dispose();
+      late.resolve(null);
+      await settle();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(load).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not issue a target command after selection changes while picking', async () => {
+    const picked = deferred<{ position: [number, number, number] } | null>();
+    const issue = vi.fn(async () => ({ accepted: true, message: 'accepted' }));
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
+      ], id),
+      pickTarget: () => picked.promise,
+      issueCommand: issue,
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    await show(panel, alpha);
+    mount.querySelector<HTMLButtonElement>('[data-kind="goTo"] .ap-cmd-btn')!.click();
+    panel.render({ kind: 'asset', view: view({ id: 'b1' }) }, NOW_MS);
+    picked.resolve({ position: [1, 2, 3] });
+    await settle();
+    expect(issue).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it('does not announce an old command outcome in a newly selected subject', async () => {
+    const outcome = deferred<{ accepted: boolean; message: string }>();
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([command({ kind: 'hold' })], id),
+      issueCommand: () => outcome.promise,
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    await show(panel, alpha);
+    mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!.click();
+    const beta: PanelSubject = { kind: 'asset', view: view({ id: 'b1', displayName: 'Bravo' }) };
+    panel.render(beta, NOW_MS);
+    outcome.resolve({ accepted: true, message: 'Alpha accepted' });
+    await settle();
+    expect(mount.querySelector('.ap-status')?.textContent).not.toContain('Alpha');
+    expect(mount.querySelector('.ap-title')?.textContent).toBe('Bravo');
     panel.dispose();
   });
 
@@ -970,6 +1073,18 @@ describe('AssetPanel domain cards', () => {
 // ── External tracks ─────────────────────────────────────────────────────────
 
 describe('AssetPanel and external tracks', () => {
+  it('uses domain-neutral accessible names for assets and contacts', () => {
+    const { panel, mount } = mountPanel({ loadCapabilities: async () => report([]) });
+    panel.render({ kind: 'asset', view: view() }, NOW_MS);
+    expect(panel.element.getAttribute('aria-label')).toBe('Selected asset');
+    expect(mount.querySelector('.ap-close')?.getAttribute('aria-label')).toBe('Close selected asset');
+
+    panel.render({ kind: 'track', track: track() }, NOW_MS);
+    expect(panel.element.getAttribute('aria-label')).toBe('Observed contact');
+    expect(mount.querySelector('.ap-close')?.getAttribute('aria-label')).toBe('Close observed contact');
+    panel.dispose();
+  });
+
   it('renders no command surface for a track', async () => {
     const load = vi.fn(async () => report([command({ kind: 'hold' })]));
     const { panel, mount } = mountPanel({ loadCapabilities: load });

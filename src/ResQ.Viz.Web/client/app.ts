@@ -108,7 +108,7 @@ import type {
 // module is fetched by `_subscribeDeltas`, and only on a server that offers
 // the stream.
 import type { DeltaTracker } from './assets/deltaApply';
-import type { FleetUi } from './assets/fleetUi';
+import type { FleetUi, FleetUiInput } from './assets/fleetUi';
 import type { PickedTarget } from './assets/panelCommands';
 import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
 import type {
@@ -347,7 +347,7 @@ async function _initEditorSuite(): Promise<void> {
     // back and the same controls play back the buffer (snap-applied via _renderFrame).
     dvr = new m_dvr.Dvr({
         recorder,
-        onApply: (frame) => _renderFrame(frame, true),
+        onApply: (frame) => _renderV1ReplayFrame(frame),
         onServerPause: (paused) =>
             void apiPostOrWarn(paused ? '/api/sim/pause' : '/api/sim/resume', undefined, 'transport'),
         onServerStep: () => void apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'),
@@ -1176,6 +1176,8 @@ function _selectFromAnySurface(assetId: string): void {
     hud.setSelectedDrone(assetId);
     miniMap.setSelected(assetId);
     selection.set(_v2Active ? 'asset' : 'drone', assetId);
+    if (_v2Active) operatorShell.setContextOpen(true);
+    _syncFleetSelection();
     _pilotHeadingFor = null; // re-seed piloted heading from the new asset's facing
 }
 // Selecting an observed contact. Deliberately separate from the asset path: a
@@ -1189,13 +1191,15 @@ function _selectTrack(trackId: string): void {
     miniMap.setSelected(null);
     _stopDomainChase();
     selection.set('track', trackId);
+    operatorShell.setContextOpen(true);
+    _syncFleetSelection();
     _pilotHeadingFor = null;
 }
 // Symmetric deselect — clears every legacy selection surface plus the editor
 // SelectionStore, so the Inspector hides in lockstep with the selection ring.
 function _deselectAll(): void {
     // The pick has to die with the selection. `onPanelClose` routes here, and the
-    // panel is mounted on `document.body` — its close click never reaches the
+    // panel is mounted outside the canvas — its close click never reaches the
     // canvas listener that would otherwise settle the pick. Leaving `_pendingPick`
     // set would strand the app in aiming mode: the mousemove handler forces the
     // crosshair and suppresses hover, and the next click is consumed as a target,
@@ -1207,6 +1211,8 @@ function _deselectAll(): void {
     selection.clear();
     _stopDomainChase();
     fleetUi?.renderSubject(null);
+    operatorShell.setContextOpen(false);
+    _syncFleetSelection();
     _pilotHeadingFor = null;
 }
 // Select any entity kind from the editor layer (outliner rows). Drones and
@@ -1227,6 +1233,9 @@ function _selectEntity(kind: SelectionKind, id: string): void {
     hud.setSelectedDrone(null);
     miniMap.setSelected(null);
     selection.set(kind, id);
+    fleetUi?.renderSubject(null);
+    operatorShell.setContextOpen(false);
+    _syncFleetSelection();
 }
 miniMap.onSelect(_selectFromAnySurface);
 
@@ -1263,6 +1272,8 @@ const _descriptorCache = new DescriptorCache();
 const _simulationClock = new SimulationClock();
 /** The most recent projected snapshot, or null while on v1. */
 let _lastSnapshot: SceneSnapshot | null = null;
+/** The complete v2 projection currently painted, distinct from held Live state during replay. */
+let _displayedSnapshot: SceneSnapshot | null = null;
 
 // ─── v2 delta stream ───────────────────────────────────────────────────────
 //
@@ -1291,6 +1302,8 @@ const GAP_GIVE_UP_FRAMES = 100;
 /** Fleet panel + filter. Null until the first v2 snapshot pulls in its chunk. */
 let fleetUi: FleetUi | null = null;
 let _fleetUiLoading = false;
+/** Page-session roster search. It never participates in scene visibility. */
+let _fleetQuery = '';
 /** External-contact overlay. Null until a snapshot actually carries contacts. */
 let trackOverlay: TrackOverlay | null = null;
 let _trackOverlayLoading = false;
@@ -1316,33 +1329,6 @@ let _visibleAssetIds: string[] = [];
 function _selectableIds(): string[] {
     if (!_v2Active) return (_lastFrame?.drones ?? []).map(d => d.id);
     return _visibleAssetIds;
-}
-
-/**
- * The filter's subset, with the selected asset added back if it hid it.
- *
- * The selected asset is exempt from filtering. `AssetManager.update` evicts
- * anything absent from the list it is handed and clears its own `_selectedId`,
- * and nothing tells the editor `SelectionStore`, the HUD chip or the detail
- * panel that it did — so a filter change could leave three stores each believing
- * something different about what is selected. Exempting the selection keeps them
- * in agreement, and is also the less surprising of the two behaviours: an
- * operator narrowing the facets is asking to see less of the fleet, not to have
- * the thing they are inspecting yanked out from under them.
- *
- * Publication order is preserved by re-walking `all`, so the exempt asset lands
- * where it belongs in the cycling order rather than being appended.
- */
-function _withSelectedAsset(
-    all: readonly SceneAsset[],
-    filtered: readonly SceneAsset[],
-): SceneAsset[] {
-    const id = droneManager.selectedId;
-    if (id === null) return [...filtered];
-    if (filtered.some((a) => a.view.id === id)) return [...filtered];
-    if (!all.some((a) => a.view.id === id)) return [...filtered];
-    const kept = new Set(filtered.map((a) => a.view.id));
-    return all.filter((a) => kept.has(a.view.id) || a.view.id === id);
 }
 
 /** The selected asset's domain, or null when nothing (or a track) is selected. */
@@ -1425,24 +1411,81 @@ function _ensureFleetUi(): void {
     _fleetUiLoading = true;
     void import('./assets/fleetUi')
         .then((m) => {
+            _fleetUiLoading = false;
+            if (!_v2Active) return;
             fleetUi = new m.FleetUi({
                 panelMount: operatorShell.mounts.context,
+                filterMount: operatorShell.mounts.filter,
+                rosterMount: operatorShell.mounts.roster,
+                selectAsset: _selectFromAnySurface,
+                selectTrack: _selectTrack,
+                onQueryChange: query => {
+                    _fleetQuery = query;
+                    _refreshFleetRoster();
+                },
+                onFocusFallback: () => { operatorShell.focusFleetHeading(); },
                 pickTarget: _pickSceneTarget,
                 onPanelClose: () => _deselectAll(),
                 // A filter change is an operator decision, so the picture is
                 // refreshed immediately rather than at the next 10 Hz frame.
-                onFilterChange: () => { if (_lastSnapshot) _renderSnapshot(_lastSnapshot, true); },
+                onFilterChange: _refreshFleetAfterFilter,
             });
             setContextObscured(
                 fleetUi.panel.element,
                 settingsPanel?.classList.contains('open') === true,
                 settingsClose ?? settingsToggle,
             );
+            if (_displayedSnapshot) {
+                if (dvr && !dvr.isLive) _refreshFleetRoster();
+                else _renderSnapshot(_displayedSnapshot, true);
+            }
         })
         .catch((err: unknown) => {
             _fleetUiLoading = false;
             log.error('fleet panel/filter failed to load; assets still render and select', err);
         });
+}
+
+function _rosterSelection(): FleetUiInput['selected'] {
+    const current = selection.current;
+    return current?.kind === 'asset' || current?.kind === 'track'
+        ? { kind: current.kind, id: current.id }
+        : null;
+}
+
+function _fleetUiInput(projected: SceneSnapshot): FleetUiInput {
+    return {
+        assets: projected.assets,
+        contacts: projected.tracks,
+        selected: _rosterSelection(),
+        query: _fleetQuery,
+    };
+}
+
+/** Applies selection to roster and context immediately, without repainting scene consumers. */
+function _syncFleetSelection(): void {
+    if (!_v2Active || !fleetUi || !_displayedSnapshot) return;
+    const visible = fleetUi.update(_fleetUiInput(_displayedSnapshot));
+    _renderFleetSubject(
+        visible,
+        _displayedSnapshot.tracks,
+        _displayedSnapshot.simulationNowMs,
+    );
+}
+
+/** Search is roster-only: refresh chrome from the displayed frame without repainting the scene. */
+function _refreshFleetRoster(): void {
+    if (!fleetUi || !_displayedSnapshot) return;
+    fleetUi.update(_fleetUiInput(_displayedSnapshot));
+}
+
+function _refreshFleetAfterFilter(): void {
+    if (!_displayedSnapshot) return;
+    if (dvr && !dvr.isLive) {
+        _refreshFleetRoster();
+        return;
+    }
+    _renderSnapshot(_displayedSnapshot, true);
 }
 
 /** Load the external-contact overlay the first time a snapshot carries one. A
@@ -1996,6 +2039,16 @@ function _renderFrame(frame: VizFrame, snap = false): void {
     _updateA11yTelemetry(drones, frame.time ?? 0);
 }
 
+/** Retires v2 roster truth while the current DVR still applies a legacy frame. */
+function _renderV1ReplayFrame(frame: VizFrame): void {
+    _displayedSnapshot = null;
+    _visibleAssetIds = (frame.drones ?? []).map(drone => drone.id);
+    fleetUi?.update({ assets: [], contacts: [], selected: null, query: _fleetQuery });
+    fleetUi?.renderSubject(null);
+    operatorShell.setContextOpen(false);
+    _renderFrame(frame, true);
+}
+
 /**
  * Apply a v2 snapshot to every visual surface.
  *
@@ -2009,10 +2062,15 @@ function _renderFrame(frame: VizFrame, snap = false): void {
  * surfaces each re-deriving "is this one visible?" is six chances to disagree.
  */
 function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
-    _lastSnapshot = projected;
+    _displayedSnapshot = projected;
+    _reconcileV2Selection(projected);
 
-    const filtered = fleetUi ? fleetUi.update(projected.assets) : [...projected.assets];
-    const visible = _withSelectedAsset(projected.assets, filtered);
+    const visible = fleetUi ? fleetUi.update({
+        assets: projected.assets,
+        contacts: projected.tracks,
+        selected: _rosterSelection(),
+        query: _fleetQuery,
+    }) : [...projected.assets];
     const visibleIds = new Set(visible.map((a) => a.view.id));
     _visibleAssetIds = visible.map((a) => a.view.id);
     const fleetDrones = projected.frame.drones ?? [];
@@ -2033,10 +2091,34 @@ function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
     _applyFrameConsumers(frame, drones, fleetDrones);
     _renderFleetSubject(visible, projected.tracks, projected.simulationNowMs);
     _renderTracks(projected);
-    // The filter's own count, not the drawn one: this is the change signal for a
-    // sentence `FleetUi` composes from that same set, and an exempt selection
-    // would make the two disagree by one.
-    _announceFleet(filtered.length, frame.time ?? 0);
+    _announceFleet(visible.length, frame.time ?? 0);
+}
+
+/** Reconciles only against the complete projection currently being displayed. */
+function _reconcileV2Selection(projected: SceneSnapshot): void {
+    const current = selection.current;
+    if (!current) return;
+
+    if (current.kind === 'drone') {
+        const present = projected.assets.some(asset => asset.view.id === current.id);
+        if (present) {
+            selection.set('asset', current.id);
+            operatorShell.setContextOpen(true);
+            return;
+        }
+        _deselectAll();
+        operatorShell.focusFleetHeading();
+        return;
+    }
+
+    const vanished = current.kind === 'asset'
+        ? !projected.assets.some(asset => asset.view.id === current.id)
+        : current.kind === 'track'
+            ? !projected.tracks.some(track => track.trackId === current.id)
+            : false;
+    if (!vanished) return;
+    _deselectAll();
+    operatorShell.focusFleetHeading();
 }
 
 /**
@@ -2505,6 +2587,7 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
     const projected = projectSnapshot(
         snapshot, Date.now(), _descriptorCache, _simulationClock,
     );
+    _lastSnapshot = projected;
     const interactionMode = dvr && !dvr.isLive ? 'replay' : 'live';
     if (interactionMode === 'live') {
         _missionTransport = {
@@ -2514,7 +2597,7 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
         };
     }
     scenarioRuntime.apply(projected.scenario, snapshot.assets.length, interactionMode);
-    if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
+    if (dvr && !dvr.isLive) return;
 
     _applyLiveSnapshot(projected);
 }
@@ -2529,6 +2612,7 @@ function _resumeHeldSnapshot(): void {
         simulationTimeSeconds: latest.frame.time ?? 0,
     };
     scenarioRuntime.resumeLive();
+    if (_rosterSelection()) operatorShell.setContextOpen(true);
     _applyLiveSnapshot(latest, true);
 }
 
@@ -2664,6 +2748,7 @@ function _leaveV2(): void {
     _rawScenarioSession = { assetCount: 0, tick: 0 };
     _v2Active = false;
     _lastSnapshot = null;
+    _displayedSnapshot = null;
     _descriptorCache.clear();
     // Deltas are a layer on top of a schema this client has just decided it
     // cannot read, so the chain goes with it — and the unsubscribe puts the

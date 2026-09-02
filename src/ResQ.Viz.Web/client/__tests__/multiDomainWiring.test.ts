@@ -67,6 +67,7 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './assets/fleetUi', why: 'fleet panel, filter and their stylesheet' },
   { path: './assets/AssetPanel', why: 'detail panel' },
   { path: './assets/AssetFilter', why: 'facet control' },
+  { path: './operator/AssetRoster', why: 'keyed fleet roster' },
   { path: './assets/overlays/TrackOverlay', why: 'external-contact overlay' },
   { path: './assets/chaseCamera', why: 'domain chase cameras' },
   { path: './operator/MissionPanel', why: 'operator mission DOM' },
