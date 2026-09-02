@@ -1162,11 +1162,14 @@ let _pilotHeadingFor: string | null = null;
 // Unified selection: any surface (scene click, telemetry strip, minimap, bracket
 // cycle) routes here so the Inspector, selection ring, and HUD update identically.
 //
-// The selection *kind* follows the stream, not the asset. On v2 an aircraft is
-// an `asset` and resolves out of the snapshot's asset list; on v1 the same
-// aircraft is a `drone` and resolves out of `VizFrame.drones`. Publishing the
-// wrong kind would leave the Inspector resolving against a list the id is not
-// in, and it would silently render nothing.
+// The selection *kind* follows the schema currently displayed, not the live
+// stream owner. On v2 an aircraft is an `asset` and resolves out of the
+// snapshot's asset list; on v1 the same aircraft is a `drone` and resolves out
+// of `VizFrame.drones`. Publishing the wrong kind would leave the Inspector
+// resolving against a list the id is not in, and it would silently render
+// nothing. This distinction matters while a
+// v2 session is displaying a legacy DVR frame: `_v2Active` remains true while
+// `_displayedSnapshot` is deliberately null.
 function _selectFromAnySurface(assetId: string): void {
     // A destination the operator was aiming for the *previous* subject must not
     // be delivered to the new one. Cancelling also drops the crosshair, so the
@@ -1175,8 +1178,9 @@ function _selectFromAnySurface(assetId: string): void {
     droneManager.setSelected(assetId);
     hud.setSelectedDrone(assetId);
     miniMap.setSelected(assetId);
-    selection.set(_v2Active ? 'asset' : 'drone', assetId);
-    if (_v2Active) operatorShell.setContextOpen(true);
+    const displaysV2 = _displayedSnapshot !== null;
+    selection.set(displaysV2 ? 'asset' : 'drone', assetId);
+    if (displaysV2) operatorShell.setContextOpen(true);
     _syncFleetSelection();
     _pilotHeadingFor = null; // re-seed piloted heading from the new asset's facing
 }
@@ -2046,6 +2050,7 @@ function _renderV1ReplayFrame(frame: VizFrame): void {
     fleetUi?.update({ assets: [], contacts: [], selected: null, query: _fleetQuery });
     fleetUi?.renderSubject(null);
     operatorShell.setContextOpen(false);
+    trackOverlay?.update([], null, null);
     _renderFrame(frame, true);
 }
 

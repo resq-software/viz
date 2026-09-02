@@ -156,11 +156,16 @@ describe('the fleet render has one selected-asset exemption and complete contact
         expect(replay).toMatch(/fleetUi\?\.update\(\{[\s\S]*?assets:\s*\[\][\s\S]*?contacts:\s*\[\]/);
         expect(replay).toMatch(/fleetUi\?\.renderSubject\(null\)/);
         expect(replay).toMatch(/operatorShell\.setContextOpen\(false\)/);
+        expect(replay).toMatch(/trackOverlay\?\.update\(\[\], null, null\)/);
+        expect(replay.indexOf('trackOverlay?.update([], null, null)'))
+            .toBeLessThan(replay.indexOf('_renderFrame(frame, true)'));
         expect(replay).not.toContain('_lastSnapshot = null');
         const resume = bodyOf('_resumeHeldSnapshot');
         expect(resume).toMatch(/_rosterSelection\(\)[\s\S]*?operatorShell\.setContextOpen\(true\)/);
         expect(resume.indexOf('operatorShell.setContextOpen(true)'))
             .toBeLessThan(resume.indexOf('_applyLiveSnapshot(latest, true)'));
+        expect(resume).toContain('_applyLiveSnapshot(latest, true)');
+        expect(bodyOf('_renderSnapshot')).toContain('_renderTracks(projected)');
     });
 
     it('never narrows TrackOverlay to roster matches', () => {
@@ -170,6 +175,22 @@ describe('the fleet render has one selected-asset exemption and complete contact
 });
 
 describe('complete displayed snapshots reconcile shared selection', () => {
+    it('uses the displayed schema rather than stream ownership when selecting a replay drone', () => {
+        const body = bodyOf('_selectFromAnySurface');
+        expect(body).toMatch(/const displaysV2 = _displayedSnapshot !== null/);
+        expect(body).toMatch(/selection\.set\(displaysV2 \? 'asset' : 'drone', assetId\)/);
+        expect(body).toMatch(/if \(displaysV2\) operatorShell\.setContextOpen\(true\)/);
+        expect(body).not.toMatch(/selection\.set\(_v2Active|if \(_v2Active\) operatorShell\.setContextOpen/);
+
+        const replay = bodyOf('_renderV1ReplayFrame');
+        expect(replay).toMatch(/_displayedSnapshot = null[\s\S]*?operatorShell\.setContextOpen\(false\)/);
+        const resume = bodyOf('_resumeHeldSnapshot');
+        expect(resume).toContain('_applyLiveSnapshot(latest, true)');
+        expect(bodyOf('_reconcileV2Selection')).toMatch(
+            /current\.kind === 'drone'[\s\S]*?selection\.set\('asset', current\.id\)[\s\S]*?operatorShell\.setContextOpen\(true\)/,
+        );
+    });
+
     it('runs reconciliation before the asset manager can silently evict selection', () => {
         const body = bodyOf('_renderSnapshot');
         expect(body.indexOf('_reconcileV2Selection(projected)'))
