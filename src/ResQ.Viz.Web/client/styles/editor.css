@@ -30,7 +30,7 @@
 
 .resq-dock {
   position: fixed;
-  z-index: 430;
+  z-index: var(--layer-editor);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -61,7 +61,7 @@ body.editor-collapsed .resq-dock {
   position: fixed;
   top: calc(var(--hud-h) + 16px);
   left: calc(var(--sidebar-w) + 24px);
-  z-index: 431;
+  z-index: var(--layer-editor);
   width: 34px;
   height: 30px;
   display: grid;
@@ -260,7 +260,7 @@ body.editor-collapsed .resq-dock {
   position: fixed;
   top: calc(var(--hud-h) + 12px);
   right: 16px;
-  z-index: 416;
+  z-index: var(--layer-hud);
   padding: 5px 12px;
   border: 1px solid var(--line-accent);
   border-radius: var(--r-2);
@@ -283,7 +283,7 @@ body.editor-collapsed .resq-dock {
 .fpv-osd {
   position: fixed;
   inset: var(--hud-h) 0 var(--dvr-h) 0; /* the canvas viewport, clear of the bars */
-  z-index: 410;
+  z-index: var(--layer-hud);
   pointer-events: none;
   font-family: var(--mono);
   color: var(--foreground);
@@ -553,7 +553,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
      two sensor views group at the bottom-right and can never overlap — a centred
      top:50% dropped into the minimap on shorter viewports. */
   bottom: calc(var(--dvr-h) + 244px);
-  z-index: 415;
+  z-index: var(--layer-hud);
   width: 272px;
   border-radius: var(--r-2);
   overflow: hidden;
@@ -609,7 +609,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
   bottom: 0;
   left: var(--sidebar-w);
   right: 0;
-  z-index: 440;
+  z-index: var(--layer-hud);
   display: flex;
   align-items: center;
   gap: 16px;
@@ -821,7 +821,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
   position: fixed;
   top: calc(var(--hud-h) + 16px);
   left: calc(var(--sidebar-w) + 24px + 42px);
-  z-index: 431;
+  z-index: var(--layer-editor);
   display: flex;
   gap: 6px;
 }

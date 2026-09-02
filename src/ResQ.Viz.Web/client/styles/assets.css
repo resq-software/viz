@@ -57,8 +57,8 @@
   position: fixed;
   right: var(--gutter);
   /* Bottom-right is a contested corner: the DVR transport bar owns the full
-     width below `--dvr-h`, and the mini-map floats above it at z-index 420 —
-     higher than this panel, and 214px tall (a 200px plot plus 7px of padding
+     width below `--dvr-h`, and the mini-map sits on the HUD layer above this
+     context panel. It is 214px tall (a 200px plot plus 7px of padding
      each side) anchored at `--dvr-h + 14px`. Anchoring this panel at the bare
      gutter put it under both, and because the mini-map paints over it, the
      panel's whole right-hand VALUE column disappeared behind the plot: track
@@ -69,7 +69,7 @@
      same top edge `.telemetry-strip` takes — so a long card set grows upward
      into free space rather than under the HUD chrome. */
   bottom: calc(var(--dvr-h) + 244px);
-  z-index: 150;
+  z-index: var(--layer-context);
   display: flex;
   flex-direction: column;
   width: min(360px, calc(100vw - 2 * var(--gutter)));

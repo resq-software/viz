@@ -11,6 +11,24 @@ function read(relative: string): string {
   return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
 }
 
+function withoutCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+function cssRule(css: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const start = new RegExp(`^\\s*${escaped}\\s*\\{`, 'm').exec(css)?.index ?? -1;
+  if (start < 0) return '';
+  const open = css.indexOf('{', start);
+  const close = css.indexOf('}', open);
+  return open < 0 || close < 0 ? '' : css.slice(open + 1, close);
+}
+
+function layerValue(tokenCss: string, name: string): number {
+  const match = new RegExp(`--layer-${name}:\\s*(\\d+)`).exec(tokenCss);
+  return Number(match?.[1] ?? Number.NaN);
+}
+
 function installFixture(): void {
   document.body.innerHTML = `
     <header id="hud-top">
@@ -199,5 +217,66 @@ describe('the shipped operator shell contract', () => {
     expect(controlsAt).toBeGreaterThan(shellAt);
     expect(app).toMatch(/function _ingestSnapshot[\s\S]*?operatorShell\.setMode\('v2'\)/);
     expect(app).toMatch(/function _leaveV2[\s\S]*?operatorShell\.setMode\('legacy'\)/);
+  });
+
+  it('keeps every operative global z-index inside the shared scale', () => {
+    const sources = [
+      '../styles/main.css',
+      '../styles/operator.css',
+      '../styles/assets.css',
+      '../styles/editor.css',
+      '../ui/cockpit.css',
+    ];
+    const offenders: string[] = [];
+
+    for (const source of sources) {
+      const css = withoutCssComments(read(source));
+      for (const match of css.matchAll(/z-index:\s*(\d+)/g)) {
+        const value = Number(match[1]);
+        if (value > 400) offenders.push(`${source}:${value}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('maps named global surfaces to semantic layer variables', () => {
+    const main = read('../styles/main.css');
+    const operator = read('../styles/operator.css');
+    const assets = read('../styles/assets.css');
+    const editor = read('../styles/editor.css');
+    const cockpit = read('../ui/cockpit.css');
+    const mappings: ReadonlyArray<readonly [string, string, string]> = [
+      [main, '#scene-container', '--layer-scene'],
+      [main, '#sidebar', '--layer-rail'],
+      [main, '#drone-panel', '--layer-context'],
+      [main, '.settings-panel', '--layer-context'],
+      [assets, '.asset-panel', '--layer-context'],
+      [operator, '.operator-editor-layer', '--layer-editor'],
+      [editor, '.resq-dock', '--layer-editor'],
+      [main, '#hud-top', '--layer-hud'],
+      [main, '.mission-chrome', '--layer-hud'],
+      [main, '.partition-banner', '--layer-hud'],
+      [main, '.telemetry-strip', '--layer-hud'],
+      [editor, '.resq-dvr', '--layer-hud'],
+      [cockpit, '.cockpit', '--layer-hud'],
+      [main, '#key-hints', '--layer-popover'],
+      [main, '.scenario-intro', '--layer-modal'],
+      [operator, '.operator-modal-layer', '--layer-modal'],
+      [main, '.loading-overlay', '--layer-blocking'],
+    ];
+
+    for (const [css, selector, layer] of mappings) {
+      expect(cssRule(css, selector), selector).toContain(`z-index: var(${layer})`);
+    }
+  });
+
+  it('keeps the blocking layer above every other shared layer', () => {
+    const tokens = read('../styles/tokens.css');
+    const names = ['scene', 'rail', 'context', 'editor', 'hud', 'popover', 'modal'] as const;
+    const blocking = layerValue(tokens, 'blocking');
+
+    expect(Number.isFinite(blocking)).toBe(true);
+    for (const name of names) expect(blocking).toBeGreaterThan(layerValue(tokens, name));
   });
 });

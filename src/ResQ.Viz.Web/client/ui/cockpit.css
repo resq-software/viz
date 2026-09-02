@@ -18,7 +18,7 @@
   left: calc(var(--sidebar-w) + 316px);
   right: 336px;
   bottom: calc(var(--dvr-h) + 16px);
-  z-index: 430;
+  z-index: var(--layer-hud);
   display: flex;
   justify-content: center;
   pointer-events: none;

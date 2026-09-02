@@ -694,10 +694,9 @@ input[type='range'] {
   transform: scale(0.96) translateY(-6px);
 }
 
-/* When the keyboard-hints panel is open, hide every other HUD surface
-   that sits at the same z-index ceiling (.telemetry-strip, .event-log,
-   .minimap are all at z-index 420; #key-hints is 250). Without this,
-   those surfaces render on top of the help text. The mobile-width rule
+/* When the keyboard-hints popover is open, hide the HUD surfaces beneath it
+   so their dense moving data cannot show through the translucent help card.
+   The mobile-width rule
    below also widens #key-hints across the full viewport — which would
    otherwise collide with the event log on the left and the minimap at
    the bottom. All three are restored as soon as hints close. */
@@ -884,9 +883,9 @@ kbd {
   border-left: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
-  /* Above every floating widget (dock 431, minimap/telemetry 420, cockpit 430)
-     so — even before the hide rules apply — nothing pokes through the panel. */
-  z-index: 470;
+  /* Context sheets sit below persistent HUD surfaces; overlapping HUD widgets
+     are hidden by the open-state rules below. */
+  z-index: var(--layer-context);
   transform: translateX(100%);
   transition: transform var(--t-mid) var(--ease);
   padding-bottom: 1rem;
@@ -1046,7 +1045,7 @@ body.investor-mode canvas { cursor: none; }
   position: fixed;
   left: 24px;
   bottom: 22px;
-  z-index: 9999;
+  z-index: var(--layer-hud);
   pointer-events: none;
   font-family: var(--sans);
   font-weight: 800;
@@ -1075,7 +1074,7 @@ body.investor-mode canvas { cursor: none; }
   top: calc(var(--hud-h) + 12px);
   left: 50%;
   transform: translateX(-50%) translateY(-8px);
-  z-index: 500;
+  z-index: var(--layer-hud);
   padding: 8px 18px;
   font-family: var(--mono);
   font-size: 11px;
@@ -1107,7 +1106,7 @@ body.partitioned .partition-banner {
 .scenario-intro {
   position: fixed;
   inset: 0;
-  z-index: 800;
+  z-index: var(--layer-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1277,7 +1276,7 @@ body.partitioned .partition-banner {
   top: calc(var(--hud-h) + 12px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 450;
+  z-index: var(--layer-hud);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1313,7 +1312,7 @@ body.partitioned .mc-phase { color: var(--danger); }
      height-bounded editor dock above that. Capped so the three never collide. */
   bottom: calc(var(--dvr-h) + 14px);
   left: calc(var(--sidebar-w) + 16px);
-  z-index: 420;
+  z-index: var(--layer-hud);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1381,7 +1380,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
      centred FPV PiP or the bottom-right minimap. */
   top: calc(var(--hud-h) + 52px);
   right: 16px;
-  z-index: 420;
+  z-index: var(--layer-hud);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1480,7 +1479,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   position: fixed;
   bottom: calc(var(--dvr-h) + 14px);
   right: 16px;
-  z-index: 420;
+  z-index: var(--layer-hud);
   padding: 7px;
   background: var(--surface-1);
   border-radius: var(--r-2);
@@ -1502,7 +1501,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   /* Middle tier of the left stack — above the event log, below the dock. */
   bottom: calc(var(--dvr-h) + 116px);
   left: calc(var(--sidebar-w) + 16px);
-  z-index: 420;
+  z-index: var(--layer-hud);
   min-width: 220px;
   max-width: 300px;
   max-height: 108px;
@@ -1647,7 +1646,7 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   position: absolute;
   top: -40px;
   left: 8px;
-  z-index: 10000;
+  z-index: var(--layer-popover);
   padding: 8px 14px;
   background: var(--accent);
   color: var(--bg-deep);
