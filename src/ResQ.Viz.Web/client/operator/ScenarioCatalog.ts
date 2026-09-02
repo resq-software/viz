@@ -59,7 +59,6 @@ export class ScenarioCatalog {
     this._dialog.addEventListener('keydown', event => this._onKeyDown(event));
     this._dialog.addEventListener('cancel', event => {
       event.preventDefault();
-      this.close();
     });
     this._render();
   }
@@ -238,6 +237,7 @@ export class ScenarioCatalog {
 
   private _onKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       event.preventDefault();
       event.stopPropagation();
       this.close();
@@ -302,7 +302,19 @@ export class ScenarioCatalog {
 }
 
 function usableFocusTarget(target: HTMLElement): boolean {
-  return target.isConnected && target.closest('[hidden], [inert]') === null;
+  if (!target.isConnected || target.matches(':disabled')
+    || target.getAttribute('aria-disabled')?.toLocaleLowerCase() === 'true'
+    || target.closest('[hidden], [inert]') !== null) return false;
+
+  const view = target.ownerDocument.defaultView;
+  if (view === null) return true;
+  for (let current: HTMLElement | null = target; current !== null; current = current.parentElement) {
+    if (current.getAttribute('aria-hidden')?.toLocaleLowerCase() === 'true') return false;
+    const style = view.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden'
+      || style.visibility === 'collapse' || style.contentVisibility === 'hidden') return false;
+  }
+  return true;
 }
 
 function categoryRank(category: string): number {

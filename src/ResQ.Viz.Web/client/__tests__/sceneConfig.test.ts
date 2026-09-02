@@ -201,6 +201,31 @@ describe('mode-aware imported scenarios', () => {
         expect(onLegacyStarted).toHaveBeenCalledWith('swarm-5');
     });
 
+    it.each(['v2', 'booting'] as const)(
+        'does not publish a legacy start when %s takes ownership before POST returns',
+        async nextMode => {
+            let mode: 'legacy' | 'v2' | 'booting' = 'legacy';
+            let resolve!: (value: boolean) => void;
+            const response = new Promise<boolean>(done => { resolve = done; });
+            const onLegacyStarted = vi.fn();
+            const pending = applyScenarioForMode('swarm-5', modeDeps({
+                mode: () => mode,
+                startLegacy: vi.fn(() => response),
+                onLegacyStarted,
+            }));
+
+            mode = nextMode;
+            resolve(true);
+            const result = await pending;
+
+            expect(onLegacyStarted).not.toHaveBeenCalled();
+            expect(result).toMatchObject({
+                success: false,
+                code: 'scenario.consoleUnavailable',
+            });
+        },
+    );
+
     it('renders a returned scenario failure in an accessible panel status', async () => {
         const panel = new SceneConfigPanel({
             getTerrain: () => 'alpine',

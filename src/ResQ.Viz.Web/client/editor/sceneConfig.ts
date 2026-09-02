@@ -144,6 +144,12 @@ export async function applyScenarioForMode(
         } catch (error: unknown) {
             return failure('network', error instanceof Error ? error.message : String(error));
         }
+        if (dependencies.mode() !== 'legacy') {
+            return failure(
+                'scenario.consoleUnavailable',
+                'Legacy mode changed before the scenario response arrived.',
+            );
+        }
         (dependencies.onLegacyStarted ?? publishLegacyStart)(canonical);
         return { success: true };
     }

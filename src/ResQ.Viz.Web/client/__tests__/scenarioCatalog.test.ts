@@ -9,6 +9,7 @@ import { ScenarioCatalog } from '../operator/ScenarioCatalog';
 import type { ApiFailure, Result } from '../api';
 import type { ScenarioCatalogResponse } from '../operator/types';
 import type { ScenarioStartResponse } from '../operator/types';
+import { handleOwnedEscape } from '../ui/escapeOwnership';
 
 const scenarios: ScenarioCatalogResponse = {
   scenarios: [
@@ -302,6 +303,90 @@ describe('ScenarioCatalog', () => {
     expect(h.trigger.getAttribute('aria-expanded')).toBe('false');
     expect(escapedToWindow).not.toHaveBeenCalled();
     window.removeEventListener('keydown', escapedToWindow);
+  });
+
+  it.each([
+    ['disabled', (trigger: HTMLButtonElement) => { trigger.disabled = true; }],
+    ['aria-disabled', (trigger: HTMLButtonElement) => { trigger.setAttribute('aria-disabled', 'true'); }],
+    ['aria-hidden', (trigger: HTMLButtonElement) => { trigger.setAttribute('aria-hidden', 'true'); }],
+    ['hidden', (trigger: HTMLButtonElement) => { trigger.hidden = true; }],
+    ['display-none', (trigger: HTMLButtonElement) => { trigger.style.display = 'none'; }],
+    ['visibility-hidden', (trigger: HTMLButtonElement) => { trigger.style.visibility = 'hidden'; }],
+  ])('returns focus to the fleet heading when the trigger is %s', (_label, makeUnavailable) => {
+    const h = harness();
+    h.catalog.open();
+    makeUnavailable(h.trigger);
+
+    h.catalog.close();
+
+    expect(document.activeElement).toBe(h.fallbackFocus);
+  });
+
+  it('uses fallback focus when successful request state disables Change before close', async () => {
+    const h = harness();
+    h.startScenario.mockImplementationOnce(async () => {
+      h.trigger.disabled = true;
+      return {
+        success: true,
+        value: {
+          current: { name: 'flood-response', startedAtSimulationSeconds: 0, revision: 2 },
+        },
+      };
+    });
+    h.catalog.open();
+    h.mount.querySelector<HTMLButtonElement>('[data-scenario="flood-response"]')!.click();
+
+    await vi.waitFor(() => expect(h.catalog.isOpen).toBe(false));
+
+    expect(document.activeElement).toBe(h.fallbackFocus);
+  });
+
+  it.each([
+    ['prevented', {}, true],
+    ['Ctrl', { ctrlKey: true }, false],
+    ['Meta', { metaKey: true }, false],
+    ['Alt', { altKey: true }, false],
+  ])('leaves %s Escape to existing guards without closing or mutating them', (
+    _label,
+    init,
+    prevented,
+  ) => {
+    const h = harness();
+    const underlyingMutation = vi.fn();
+    const globalOwner = (event: KeyboardEvent): void => {
+      handleOwnedEscape(
+        event,
+        true,
+        false,
+        () => false,
+        underlyingMutation,
+        vi.fn(),
+        vi.fn(),
+      );
+    };
+    window.addEventListener('keydown', globalOwner);
+    h.catalog.open();
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape', bubbles: true, cancelable: true, ...init,
+    });
+    if (prevented) event.preventDefault();
+
+    h.mount.querySelector<HTMLInputElement>('input[type="search"]')!.dispatchEvent(event);
+
+    expect(h.catalog.isOpen).toBe(true);
+    expect(underlyingMutation).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', globalOwner);
+  });
+
+  it('prevents native cancel from bypassing guarded Escape ownership', () => {
+    const h = harness();
+    h.catalog.open();
+    const cancel = new Event('cancel', { cancelable: true });
+
+    h.mount.querySelector('dialog')!.dispatchEvent(cancel);
+
+    expect(cancel.defaultPrevented).toBe(true);
+    expect(h.catalog.isOpen).toBe(true);
   });
 
   it('falls back to the fleet heading when its trigger became inert', () => {
