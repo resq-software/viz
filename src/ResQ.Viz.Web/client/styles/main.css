@@ -85,8 +85,9 @@ button { font-family: inherit; }
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
-  padding: 0 16px;
-  padding-top: env(safe-area-inset-top);
+  padding-inline: 16px;
+  padding-block-start: env(safe-area-inset-top);
+  padding-block-end: 0;
   background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
@@ -534,99 +535,6 @@ input[type='range'] {
 .badge-emergency { background: var(--primary-soft);      color: var(--primary-text);   box-shadow: inset 0 0 0 1px var(--primary-glow); }
 .badge-armed     { background: var(--info-soft);         color: var(--info);           box-shadow: inset 0 0 0 1px var(--info-glow); }
 
-/* ── Drone detail panel ─────────────────────────────────────────────────── */
-
-#drone-panel {
-  position: fixed;
-  bottom: 18px;
-  left: calc(var(--sidebar-w) + 24px);
-  z-index: var(--layer-context);
-  width: min(440px, calc(100vw - var(--sidebar-w) - 260px));
-  background: var(--surface-2);
-  border-radius: var(--r-3);
-  box-shadow: var(--ring), var(--shadow-2);
-  backdrop-filter: var(--blur-strong);
-  -webkit-backdrop-filter: var(--blur-strong);
-  padding: 14px 16px 12px;
-  display: grid;
-  grid-template-columns: 1.05fr 1fr auto;
-  gap: 14px;
-  align-items: start;
-  transition: opacity var(--t-mid), transform var(--t-mid);
-}
-#drone-panel.hidden {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-}
-
-#dp-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-#dp-id {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text);
-}
-#dp-status-row { display: flex; align-items: center; gap: 8px; }
-
-.dp-bat-block { margin-top: 2px; display: flex; flex-direction: column; gap: 4px; }
-.dp-bat-block .dp-metric-label { margin: 0; }
-
-#dp-metrics { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.dp-metric { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.dp-metric-label {
-  font-family: var(--mono);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--text-faint);
-  font-weight: 600;
-}
-.dp-metric-value {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-
-#dp-bat-track {
-  width: 100%;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.06);
-  overflow: hidden;
-  box-shadow: var(--ring);
-}
-#dp-bat-fill {
-  height: 100%;
-  background: var(--success);
-  border-radius: 3px;
-  transition: width var(--t-slow), background var(--t-slow);
-}
-#dp-bat-fill.warn { background: var(--warning); }
-#dp-bat-fill.crit { background: var(--primary); }
-
-#dp-cmds { display: flex; flex-direction: column; gap: 6px; }
-#dp-cmds .btn { padding: 6px 12px; font-size: 11px; }
-
-#dp-close {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  background: transparent;
-  border: 0;
-  color: var(--text-faint);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--r-1);
-  transition: background var(--t-fast), color var(--t-fast);
-}
-#dp-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
-
 /* ── Wind compass ───────────────────────────────────────────────────────── */
 
 #wind-compass {
@@ -694,6 +602,7 @@ input[type='range'] {
   pointer-events: none;
   transform: scale(0.96) translateY(-6px);
 }
+#key-hints[hidden] { display: none; }
 
 /* When the keyboard-hints popover is open, hide the HUD surfaces beneath it
    so their dense moving data cannot show through the translucent help card.
@@ -1033,7 +942,6 @@ body.investor-mode .hud-action-group,
 body.investor-mode #sidebar,
 body.investor-mode .settings-panel,
 body.investor-mode #key-hints,
-body.investor-mode #drone-panel,
 body.investor-mode #wind-compass,
 body.investor-mode .telemetry-strip,
 body.investor-mode .event-log,
@@ -1583,10 +1491,21 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   #sidebar { transform: translateX(-100%); z-index: var(--layer-rail); }
   #sidebar:not(.collapsed) { transform: translateX(0); }
   #scene-container { left: 0 !important; width: 100% !important; }
+
+  /* The context sheet owns the responsive lower viewport while an asset is
+     selected. Retire intersecting HUD tiers until the sheet closes so its
+     command footer remains visible and reachable. */
+  body:has(.asset-panel:not([hidden])) .event-log,
+  body:has(.asset-panel:not([hidden])) .minimap,
+  body:has(.asset-panel:not([hidden])) #wind-compass,
+  body:has(.asset-panel:not([hidden])) .sensor-stats-overlay,
+  body:has(.asset-panel:not([hidden])) .telemetry-strip,
+  body:has(.asset-panel:not([hidden])) .cockpit,
+  body:has(.asset-panel:not([hidden])) .resq-pip,
+  body:has(.asset-panel:not([hidden])) .cam-mode-pill { display: none; }
 }
 
 @media (max-width: 960px) {
-  #drone-panel { left: 16px; right: 16px; width: auto; max-width: none; }
   .event-log { max-width: calc(100vw - var(--sidebar-w) - 32px); }
 }
 
@@ -1625,7 +1544,12 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .hud-stat:has(#fps) { display: none; }
   #hud-logo { font-size: 13px; letter-spacing: 0.08em; }
   .hud-action { width: 26px; }
-  #hud-top { gap: 6px; padding: 0 10px; }
+  #hud-top {
+    gap: 6px;
+    padding-inline: 10px;
+    padding-block-start: env(safe-area-inset-top);
+    padding-block-end: 0;
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1724,7 +1648,6 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
 /* WCAG 2.2 §2.5.8 Target Size (min 24×24). The dismiss/close icon buttons were
    sized only by font + small padding, landing under 24px tall. Give them a hard
    floor without changing their glyph or position. */
-#dp-close,
 .key-hints-close,
 .settings-close {
   min-width: 24px;
@@ -1739,7 +1662,7 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
    the OS there — so panels can lose definition and box-shadow focus rings vanish.
    Restore solid surfaces, system-coloured borders, and a real focus outline. */
 @media (forced-colors: active) {
-  .hud, #hud-top, #sidebar, .settings-panel, #drone-panel, #key-hints,
+  .hud, #hud-top, #sidebar, .settings-panel, #key-hints,
   .event-log, .el-row, .minimap, #wind-compass, .cockpit-row, .ro-row,
   .scenario-card, .terrain-card {
     background: Canvas;

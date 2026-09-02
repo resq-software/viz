@@ -91,7 +91,7 @@ describe('a pending target pick is cancelled with the selection', () => {
         // The original call sites must survive; cancelling on deselect is an
         // addition to them, not a replacement.
         expect(appSrc).toMatch(/_settlePick\(\{ position: \[/);
-        expect(appSrc).toMatch(/if \(_pendingPick\) _cancelPick\(\);/);
+        expect(appSrc).toMatch(/if \(_pendingPick\)\s*\{[\s\S]*?_cancelPick\(\);[\s\S]*?return;[\s\S]*?\}/);
     });
 });
 

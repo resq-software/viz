@@ -614,8 +614,9 @@ body.fpv-mode .cam-mode-pill { display: none; }
   align-items: center;
   gap: 16px;
   height: var(--effective-dvr-h);
-  padding: 0 18px;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-inline: 18px;
+  padding-block-start: 0;
+  padding-block-end: env(safe-area-inset-bottom);
   background: var(--surface-2);
   border-top: 1px solid var(--line);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
@@ -705,6 +706,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
 
 .dvr-scrub {
   flex: 1 1 auto;
+  min-width: 0;
   height: 18px; /* tall, grabbable hit area */
   margin: 0;
   cursor: pointer;
@@ -878,17 +880,32 @@ body.fpv-mode .cam-mode-pill { display: none; }
    (the sidebar is a drawer overlay here, not a layout participant). */
 @media (max-width: 1099px) {
   .resq-pip { display: none; }
-  .resq-dvr { left: 0; padding: 0 12px; gap: 10px; }
+  .resq-dvr {
+    left: 0;
+    gap: 10px;
+    padding-inline: 12px;
+    padding-block-start: 0;
+    padding-block-end: env(safe-area-inset-bottom);
+  }
 }
 
-/* Phone: fold the timeline down to the essentials so it never overflows —
-   drop the REC counter, speed and reset; keep transport + scrub + clock + live. */
+/* Compact: fold the timeline down to the core transport so it never overflows.
+   Jump-to-start remains available through the scrubber; speed and REC are
+   lower-priority than play, step, reset, time and the live-edge control. */
+@media (max-width: 759px) {
+  .dvr-rec,
+  .dvr-tostart,
+  .dvr-speed { display: none; }
+}
+
+/* Small phone: tighten the remaining arrangement without shedding core actions. */
 @media (max-width: 560px) {
-  .resq-dvr { gap: 8px; padding: 0 8px; }
-  .dvr-reclabel,
-  .dvr-count,
-  .dvr-speed,
-  .dvr-reset { display: none; }
+  .resq-dvr {
+    gap: 8px;
+    padding-inline: 8px;
+    padding-block-start: 0;
+    padding-block-end: env(safe-area-inset-bottom);
+  }
 }
 
 /* When the sidebar collapses, every surface anchored to its width slides left

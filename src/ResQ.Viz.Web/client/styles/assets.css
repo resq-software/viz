@@ -424,5 +424,9 @@ select.ap-field-input { width: auto; }
 }
 
 @media (max-width: 720px) {
-  .asset-panel { left: var(--gutter); width: auto; max-height: 55vh; }
+  .asset-panel {
+    left: var(--gutter);
+    width: auto;
+    max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
+  }
 }

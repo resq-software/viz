@@ -59,7 +59,10 @@ export class InvestorMode {
     private readonly _pos = new THREE.Vector3();
     private readonly _tgt = new THREE.Vector3();
 
-    constructor(private readonly _camera: UnityCamera) {}
+    constructor(
+        private readonly _camera: UnityCamera,
+        private readonly _closeOpenPanels: () => void = () => {},
+    ) {}
 
     get enabled(): boolean { return this._enabled; }
 
@@ -158,11 +161,6 @@ export class InvestorMode {
         this._wordmark = null;
     }
 
-    // Close any open modal panels so the recording starts clean.
-    private _closeOpenPanels(): void {
-        document.getElementById('settings-panel')?.setAttribute('aria-hidden', 'true');
-        document.getElementById('shortcuts-panel')?.setAttribute('aria-hidden', 'true');
-    }
 }
 
 function _lerp(a: number, b: number, t: number): number {

@@ -356,37 +356,6 @@
     <div id="operator-modal-layer" class="operator-layer operator-modal-layer"></div>
     <div id="operator-editor-layer" class="operator-layer operator-editor-layer" hidden inert aria-hidden="true"></div>
 
-    <!-- Drone detail panel (hidden until a drone is clicked) -->
-    <div id="drone-panel" class="hidden">
-        <button id="dp-close" aria-label="Close panel">×</button>
-        <div id="dp-info">
-            <div id="dp-id">—</div>
-            <div id="dp-status-row">
-                <span id="dp-badge" class="badge">—</span>
-            </div>
-            <div class="dp-bat-block">
-                <div class="dp-metric-label">Battery</div>
-                <div id="dp-bat-track"><div id="dp-bat-fill"></div></div>
-                <div class="dp-metric-value" id="dp-bat-pct">--%</div>
-            </div>
-        </div>
-        <div id="dp-metrics">
-            <div class="dp-metric">
-                <span class="dp-metric-label">Position · X Y Z</span>
-                <span class="dp-metric-value" id="dp-pos">— · — · —</span>
-            </div>
-            <div class="dp-metric">
-                <span class="dp-metric-label">Velocity · X Y Z · m/s</span>
-                <span class="dp-metric-value" id="dp-vel">— · — · —</span>
-            </div>
-        </div>
-        <div id="dp-cmds">
-            <button class="btn btn-primary dp-cmd-btn" data-cmd="hover">Hover</button>
-            <button class="btn dp-cmd-btn" data-cmd="rtl">RTL</button>
-            <button class="btn dp-cmd-btn" data-cmd="land">Land</button>
-        </div>
-    </div>
-
     <!-- Wind compass -->
     <div id="wind-compass">
         <canvas id="wind-canvas" width="80" height="80"></canvas>
@@ -394,7 +363,7 @@
     </div>
 
     <!-- Keyboard shortcuts panel — toggleable via ? button or ? key -->
-    <div id="key-hints" class="key-hints hidden">
+    <div id="key-hints" class="key-hints hidden" hidden inert aria-hidden="true">
       <div class="key-hints-header">
         <span class="key-hints-title">Keyboard Shortcuts</span>
         <button id="key-hints-close" class="key-hints-close" type="button" aria-label="Close keyboard shortcuts" title="Close (?)"><span aria-hidden="true">✕</span></button>
@@ -531,7 +500,7 @@
 
     <script type="module" src="./app.ts"></script>
 <noscript>
-  <style>#scene-container,#sidebar,header,#wind-compass,#drone-panel,#key-hints,#settings-panel { display: none; }</style>
+  <style>#scene-container,#sidebar,header,#wind-compass,#key-hints,#settings-panel { display: none; }</style>
   <div style="font-family:sans-serif;padding:2rem;color:#fff;background:#0d1117;text-align:center;max-width:640px;margin:0 auto">
     <h1>ResQ Viz — Real-Time Drone Simulation Visualizer</h1>
     <p>Monitor autonomous drone swarms in 3D. Run search-and-rescue scenarios, issue flight commands, inject faults, and observe real-time telemetry — all from your browser.</p>

@@ -34,6 +34,7 @@ import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
 import { setContextObscured } from './ui/contextObscuring';
 import { setSettingsVisibleState } from './ui/settingsVisibility';
+import { setHintsVisibleState } from './ui/hintsVisibility';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -353,7 +354,10 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
     });
 }));
 
-const investorMode = new InvestorMode(viz.cameraController);
+const investorMode = new InvestorMode(viz.cameraController, () => {
+    _setSettingsVisible(false);
+    _setHintsVisible(false);
+});
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
 const cameraPresets = new CameraPresets({
@@ -809,9 +813,7 @@ let hintsVisible = localStorage.getItem(HINTS_KEY) === 'true';  // default: hidd
 function _setHintsVisible(v: boolean): void {
     hintsVisible = v;
     localStorage.setItem(HINTS_KEY, String(v));
-    keyHints?.classList.toggle('hidden', !v);
-    hintsToggle?.classList.toggle('active', v);
-    hintsToggle?.setAttribute('aria-pressed', String(v));
+    setHintsVisibleState(keyHints, hintsToggle, v);
     // body.hints-open hides surfaces that share the top-right column with
     // the hints panel (telemetry strip) so they don't render on top of
     // the help text. The strip's z-index is higher than #key-hints, and
@@ -1224,6 +1226,7 @@ function _ensureFleetUi(): void {
     void import('./assets/fleetUi')
         .then((m) => {
             fleetUi = new m.FleetUi({
+                panelMount: operatorShell.mounts.context,
                 pickTarget: _pickSceneTarget,
                 onPanelClose: () => _deselectAll(),
                 // A filter change is an operator decision, so the picture is
@@ -1417,6 +1420,20 @@ followBtn?.addEventListener('click', () => {
 // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
 window.addEventListener('keydown', (e: KeyboardEvent) => {
+    // Escape owns dismissal even when focus is inside the popover's native
+    // controls. It must run before the global-shortcut typing guard, which
+    // correctly suppresses ordinary shortcuts on buttons and links.
+    if (e.key === 'Escape') {
+        if (_pendingPick) {
+            _cancelPick();
+            return;
+        }
+        if (hintsVisible) {
+            _setHintsVisible(false);
+            return;
+        }
+    }
+
     // Ctrl+Shift+R — investor-mode cinematic preset for screen recording.
     // Modifier combo is checked before the switch so the raw `KeyR`
     // slot stays free for future bindings.
@@ -1588,12 +1605,6 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
     }
     // '?' key (Shift+/) — toggle hints panel
     if (e.key === '?') _setHintsVisible(!hintsVisible);
-    // Esc — abandon a destination pick first (it is the modal state), then close
-    // the hints. Leaving a pick armed with no way out would strand every click.
-    if (e.key === 'Escape') {
-        if (_pendingPick) _cancelPick();
-        else if (hintsVisible) _setHintsVisible(false);
-    }
 });
 
 // ─── SignalR ───────────────────────────────────────────────────────────────

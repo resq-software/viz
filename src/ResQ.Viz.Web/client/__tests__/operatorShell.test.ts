@@ -390,7 +390,6 @@ describe('the shipped operator shell contract', () => {
     const mappings: ReadonlyArray<readonly [string, string, string]> = [
       [main, '#scene-container', '--layer-scene'],
       [main, '#sidebar', '--layer-rail'],
-      [main, '#drone-panel', '--layer-context'],
       [main, '.settings-panel', '--layer-context'],
       [assets, '.asset-panel', '--layer-context'],
       [operator, '.operator-editor-layer', '--layer-editor'],
@@ -465,11 +464,11 @@ describe('the shipped operator shell contract', () => {
 
     expect(tokens).toContain('--effective-hud-h: calc(var(--hud-h) + env(safe-area-inset-top))');
     expect(tokens).toContain('--effective-dvr-h: calc(var(--dvr-h) + env(safe-area-inset-bottom))');
-    expect(main).toMatch(/#hud-top[\s\S]*?height:\s*var\(--effective-hud-h\)[\s\S]*?padding-top:\s*env\(safe-area-inset-top\)/);
+    expect(main).toMatch(/#hud-top[\s\S]*?height:\s*var\(--effective-hud-h\)[\s\S]*?padding-block-start:\s*env\(safe-area-inset-top\)/);
     expect(operator).toMatch(/#sidebar[\s\S]*?top:\s*var\(--effective-hud-h\)[\s\S]*?bottom:\s*var\(--effective-dvr-h\)/);
     expect(operator).toContain('var(--effective-hud-h)');
     expect(operator).toContain('var(--effective-dvr-h)');
-    expect(editor).toMatch(/\.resq-dvr[\s\S]*?height:\s*var\(--effective-dvr-h\)[\s\S]*?padding-bottom:\s*env\(safe-area-inset-bottom\)/);
+    expect(editor).toMatch(/\.resq-dvr[\s\S]*?height:\s*var\(--effective-dvr-h\)[\s\S]*?padding-block-end:\s*env\(safe-area-inset-bottom\)/);
   });
 
   it('covers every compact sidebar, context, and DVR native target with 44px hit areas', () => {
