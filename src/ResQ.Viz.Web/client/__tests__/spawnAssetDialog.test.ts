@@ -377,4 +377,61 @@ describe('SpawnAssetDialog', () => {
 
     expect(document.activeElement).toBe(h.fallbackFocus);
   });
+
+  // Dismissing mid-spawn is the one exit that leaves the surface busy: `close`
+  // retires the generation, so the awaited `_setBusy(false)` after the POST
+  // never runs. `refresh` re-enables the class select and the submit button but
+  // never the text and number inputs, so without an explicit reset the reopened
+  // form offers a Spawn button above fields the operator cannot type into.
+  it('reopens interactive after being dismissed mid-spawn', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = () => resolve(); });
+    const bench = harness({
+      spawn: vi.fn(async () => { await gate; return accepted('usv-new'); }),
+    });
+
+    bench.dialog.open();
+    submit(bench.mount);
+    await vi.waitFor(() => expect(control(bench.mount, 'positionX').disabled).toBe(true));
+
+    bench.dialog.close();
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    bench.dialog.open();
+    const dialog = bench.mount.querySelector('dialog')!;
+    expect(dialog.getAttribute('aria-busy')).toBe('false');
+    for (const name of ['positionX', 'positionY', 'positionZ', 'heading', 'assetId', 'vendor']) {
+      expect(control(bench.mount, name).disabled).toBe(false);
+    }
+    expect(bench.mount.querySelector<HTMLButtonElement>('[data-action="spawn"]')!.disabled)
+      .toBe(false);
+  });
+
+  // "Spawning…" asserts a live request. Once the operator dismisses it there is
+  // no request, so carrying that line into the next open reports a lie.
+  it('drops the in-flight status when dismissed mid-spawn', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = () => resolve(); });
+    const spawn = vi.fn(async () => { await gate; return accepted('usv-new'); });
+    const bench = harness({ spawn });
+
+    bench.dialog.open();
+    submit(bench.mount);
+    const status = bench.mount.querySelector<HTMLElement>('.operator-dialog-status')!;
+    await vi.waitFor(() => expect(status.textContent).toContain('Spawning'));
+
+    bench.dialog.close();
+    release();
+    await Promise.resolve();
+
+    bench.dialog.open();
+    expect(status.textContent).toBe('');
+    expect(status.hidden).toBe(true);
+
+    // And a fresh spawn still reaches the host rather than being swallowed.
+    submit(bench.mount);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+  });
 });

@@ -136,6 +136,11 @@ export class EnvironmentDialog {
     const wasOpen = this._elements.dialog.open;
     this._generation++;
     this._requestInFlight = false;
+    // Retiring the generation makes the awaited `_setBusy(false)` after the POST
+    // unreachable, so the busy state has to be dropped here too. Without this a
+    // dialog dismissed mid-apply reopens with every control disabled and
+    // `aria-busy="true"` — dismissible exactly once, then permanently dead.
+    this._setBusy(false);
     if (wasOpen) this._elements.dialog.close();
     this._clearLayer();
     if (!wasOpen) return;

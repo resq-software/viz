@@ -349,4 +349,63 @@ describe('EnvironmentDialog', () => {
     expect(errorText(bench.element)).toBe('');
     expect(bench.dialog.isOpen).toBe(true);
   });
+
+  // Dismissing mid-flight is the one exit that leaves the surface in its busy
+  // state: `close` retires the generation, so the awaited `_setBusy(false)`
+  // after the POST never runs. Without an explicit reset the reopened dialog
+  // has every control disabled and `aria-busy="true"` forever — dismissible
+  // once, then permanently unable to apply an environment.
+  it('reopens interactive after being dismissed mid-apply', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = () => resolve(); });
+    const applyWeather = vi.fn(async () => { await gate; return ok(); });
+    const bench = harness({ applyWeather });
+
+    bench.dialog.open();
+    fill(bench.element, { mode: 'steady', windSpeed: '4', windDirection: '10' });
+    apply(bench.element);
+    await vi.waitFor(() => expect(applyWeather).toHaveBeenCalled());
+    expect(field<HTMLSelectElement>(bench.element, 'terrain').disabled).toBe(true);
+
+    bench.dialog.close();
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    bench.dialog.open();
+    expect(bench.element.getAttribute('aria-busy')).toBe('false');
+    for (const name of ['terrain', 'mode', 'windSpeed', 'windDirection']) {
+      expect(field<HTMLInputElement | HTMLSelectElement>(bench.element, name).disabled).toBe(false);
+    }
+    expect(bench.element.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled)
+      .toBe(false);
+  });
+
+  // A second apply after that dismissal has to actually reach the host: a
+  // `_requestInFlight` left true would swallow the submit silently.
+  it('accepts a fresh apply after a mid-apply dismissal', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = () => resolve(); });
+    const applyWeather = vi.fn(async () => { await gate; return ok(); });
+    const bench = harness({ applyWeather });
+
+    bench.dialog.open();
+    fill(bench.element, { mode: 'steady', windSpeed: '4', windDirection: '10' });
+    apply(bench.element);
+    await vi.waitFor(() => expect(applyWeather).toHaveBeenCalledTimes(1));
+    bench.dialog.close();
+    release();
+    await Promise.resolve();
+
+    bench.dialog.open();
+    fill(bench.element, { mode: 'turbulent', windSpeed: '9', windDirection: '200' });
+    apply(bench.element);
+
+    await vi.waitFor(() => expect(applyWeather).toHaveBeenCalledTimes(2));
+    expect(applyWeather).toHaveBeenLastCalledWith({
+      mode: 'turbulent',
+      windSpeed: 9,
+      windDirection: 200,
+    });
+  });
 });

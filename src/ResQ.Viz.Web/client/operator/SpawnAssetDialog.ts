@@ -168,6 +168,15 @@ export class SpawnAssetDialog {
   close(): void {
     const wasOpen = this._elements.dialog.open;
     this._generation++;
+    // Retiring the generation makes the awaited `_setBusy(false)` after the POST
+    // unreachable, and `refresh` only ever re-enables the class select and the
+    // submit button. Without dropping the busy state here a dialog dismissed
+    // mid-spawn reopens offering a live Spawn button above fields the operator
+    // cannot type into, and "Spawning…" still claims a request that was abandoned.
+    const wasInFlight = this._requestInFlight;
+    this._requestInFlight = false;
+    this._setBusy(false);
+    if (wasInFlight) this._setStatus('');
     if (wasOpen) this._elements.dialog.close();
     if (!wasOpen) return;
     this._options.trigger.setAttribute('aria-expanded', 'false');
