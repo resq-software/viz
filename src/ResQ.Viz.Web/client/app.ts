@@ -62,7 +62,8 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { MiniMap } from './miniMap';
 import { SensorStatsOverlay } from './sensorStatsOverlay';
-import { apiPost, apiPostOrWarn } from './api';
+import { apiPost, apiPostJson, apiPostOrWarn } from './api';
+import type { ApiFailure, Result } from './api';
 import { getLogger } from './log';
 // SelectionStore stays static: it is the selection source of truth that legacy
 // HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
@@ -120,6 +121,7 @@ import type {
     ScenarioCatalogLauncher,
 } from './operator/MissionPanel';
 import type { SpawnAssetDialog } from './operator/SpawnAssetDialog';
+import type { EnvironmentDialog } from './operator/EnvironmentDialog';
 
 const log = getLogger('app');
 
@@ -191,6 +193,9 @@ let scenarioBrowser: ScenarioCatalogLauncher | null = null;
 let spawnDialog: SpawnAssetDialog | null = null;
 let _spawnDialogLoading: Promise<void> | null = null;
 let _spawnDialogGeneration = 0;
+let environmentDialog: EnvironmentDialog | null = null;
+let _environmentDialogLoading: Promise<void> | null = null;
+let _environmentDialogGeneration = 0;
 let _missionUiLoading: Promise<void> | null = null;
 let _rawScenarioSession = { assetCount: 0, tick: 0 };
 let _resetRequestInFlight = false;
@@ -205,6 +210,9 @@ function _invalidateOperatorModals(): void {
     _spawnDialogGeneration++;
     _spawnDialogLoading = null;
     spawnDialog?.invalidate();
+    _environmentDialogGeneration++;
+    _environmentDialogLoading = null;
+    environmentDialog?.invalidate();
 }
 
 const startupCoordinator = new StartupCoordinator({
@@ -642,6 +650,53 @@ async function _resetMission(): Promise<void> {
     }
 }
 
+/**
+ * Opens the operator environment form, importing it on first use.
+ *
+ * The form and its stylesheet ride the same lazy chunk boundary the spawn
+ * dialog uses; a session that never touches the environment fetches neither.
+ * Legacy Weather stays inside `ControlPanel` on the v1 route and the legacy
+ * terrain cards keep their optimistic `_switchPreset` path — the operator
+ * callbacks below are the only ones that await the host before the scene
+ * moves, and the only ones that mark the manual override.
+ */
+async function _openEnvironmentDialog(): Promise<void> {
+    if (operatorShell.mode !== 'v2') return;
+    if (environmentDialog) {
+        environmentDialog.open();
+        return;
+    }
+    if (_environmentDialogLoading) return _environmentDialogLoading;
+
+    const generation = ++_environmentDialogGeneration;
+    const loading = import('./operator/EnvironmentDialog').then(dialogModule => {
+        // A chunk can land after negotiation fell back or the shell was retired.
+        if (generation !== _environmentDialogGeneration || operatorShell.mode !== 'v2') return;
+        const dialog = new dialogModule.EnvironmentDialog({
+            mount: operatorShell.mounts.modal,
+            trigger: document.getElementById('btn-environment') as HTMLButtonElement,
+            fallbackFocus: document.getElementById('fleet-heading')!,
+            applyTerrain: key => _switchPresetFromOperator(key),
+            applyWeather: command => _applyOperatorWeather(command),
+            currentTerrain: () => _currentPresetKey,
+            viewportWidth: () => window.innerWidth,
+        });
+        environmentDialog = dialog;
+        dialog.open();
+    }).catch((error: unknown) => {
+        log.error('environment dialog failed to load', error);
+    }).finally(() => {
+        if (_environmentDialogLoading === loading) _environmentDialogLoading = null;
+    });
+
+    _environmentDialogLoading = loading;
+    return loading;
+}
+
+document.getElementById('btn-environment')!.addEventListener('click', () => {
+    void _openEnvironmentDialog();
+});
+
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     _retryMissionResources('visibility');
@@ -929,7 +984,8 @@ let _operatorOverride = false;
 /** Marks operator intent. Called from the sidebar controls, never from scenario load. */
 function _markOperatorOverride(): void { _operatorOverride = true; }
 
-function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
+/** Rebuilds the scene for `key`. Local only — the backend is told separately. */
+function _applyPresetLocally(key: PresetKey, waterLevelOverride?: number): void {
     _currentPresetKey = key;
     // Drop any previous preset's eroded DEM so the new preset builds from its
     // own procedural shape; the eroded version swaps back in asynchronously.
@@ -944,9 +1000,60 @@ function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
         el.classList.toggle('active', active);
         el.setAttribute('aria-pressed', String(active));
     });
-    // Notify backend so drone physics clamp to the correct terrain
-    apiPostOrWarn(`/api/sim/preset/${key}`, undefined, `preset ${key}`);
     if (_erosionEnabled) void _applyErosion(key);
+}
+
+/** Tells the backend so drone physics clamp to the terrain the viz is drawing. */
+async function _postPreset(key: PresetKey): Promise<Result<unknown, ApiFailure>> {
+    const result = await apiPostJson<unknown>(`/api/sim/preset/${key}`);
+    if (!result.success) log.warn(`preset ${key} failed`, { error: _failureMessage(result.error) });
+    return result;
+}
+
+function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
+    _applyPresetLocally(key, waterLevelOverride);
+    // Scenario and legacy paths stay optimistic: the scene leads, the POST
+    // follows unwatched. Only the operator path inverts that.
+    void _postPreset(key);
+}
+
+/**
+ * Operator terrain change: the host decides first, then the scene follows.
+ *
+ * The optimistic order above is fine for a scenario load (the server is about
+ * to be told the same thing anyway) but wrong for a deliberate operator
+ * action — a refused preset would leave the browser rendering terrain the
+ * physics engine never adopted. Marking the override is this callback's job,
+ * not the dialog's, so the flag cannot be set for a change that never landed.
+ */
+async function _switchPresetFromOperator(key: PresetKey): Promise<Result<unknown, ApiFailure>> {
+    const result = await _postPreset(key);
+    if (!result.success) return result;
+    _applyPresetLocally(key);
+    _markOperatorOverride();
+    return result;
+}
+
+/**
+ * Operator weather change over the exact wire keys `SimController.SetWeather`
+ * binds. Manual weather outranks later automatic presentation for this page
+ * session, so acceptance marks the same single override flag terrain uses.
+ */
+async function _applyOperatorWeather(
+    command: { readonly mode: string; readonly windSpeed: number; readonly windDirection: number },
+): Promise<Result<unknown, ApiFailure>> {
+    const result = await apiPostJson<unknown>('/api/sim/weather', {
+        mode: command.mode,
+        windSpeed: command.windSpeed,
+        windDirection: command.windDirection,
+    });
+    if (result.success) _markOperatorOverride();
+    else log.warn('operator weather request failed', { error: _failureMessage(result.error) });
+    return result;
+}
+
+function _failureMessage(failure: ApiFailure): string {
+    return failure.kind === 'problem' ? failure.problem.detail : failure.message;
 }
 
 /** Rebuild the terrain mesh for the current preset against the active heightmap

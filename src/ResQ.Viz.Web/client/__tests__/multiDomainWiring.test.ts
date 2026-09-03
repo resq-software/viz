@@ -61,6 +61,32 @@ const spawnDialogSrc = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../operator/SpawnAssetDialog.ts'),
   'utf8',
 );
+const environmentDialogSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/EnvironmentDialog.ts'),
+  'utf8',
+);
+const controlsSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../controls.ts'),
+  'utf8',
+);
+
+/** Drops comment text so a prose mention of a route is not read as a call. */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter(line => !line.trimStart().startsWith('//'))
+    .join('\n');
+}
+
+/** Slices one top-level function declaration out of a module's source text. */
+function declaration(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  expect(start, `${signature} is missing`).toBeGreaterThan(-1);
+  const end = source.indexOf('\n}\n', start);
+  expect(end, `${signature} is not a top-level declaration`).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
 
 /** Modules that must never be reachable from the entry chunk by a static edge.
  *  An `import type { … }` line is erased at build time and is fine; a value
@@ -83,6 +109,7 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './operator/OperatorModalHost', why: 'shared lazy modal ownership' },
   { path: './operator/ScenarioCatalogLauncher', why: 'scenario import and retry ownership' },
   { path: './operator/SpawnAssetDialog', why: 'spawn form and the shared dialog stylesheet' },
+  { path: './operator/EnvironmentDialog', why: 'environment form and the shared dialog stylesheet' },
 ];
 
 describe('entry-chunk boundaries', () => {
@@ -134,6 +161,69 @@ describe('entry-chunk boundaries', () => {
 
     // Legacy Spawn Drone stays on the v1 route inside ControlPanel.
     expect(appSrc).not.toContain("apiPost('/api/sim/drone'");
+  });
+
+  it('loads the environment form only from the v2 trigger and lets it own its stylesheet', () => {
+    expect(appSrc).toMatch(/import\('\.\/operator\/EnvironmentDialog'\)/);
+    // The dialog CSS rides the lazy chunk, never the entry stylesheet.
+    expect(environmentDialogSrc).toContain("import '../styles/operator-dialogs.css'");
+
+    const open = declaration(appSrc, 'async function _openEnvironmentDialog');
+    expect(open).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
+    // The app callbacks own authority; the dialog is handed them, never a route.
+    expect(open).toMatch(/applyTerrain: key => _switchPresetFromOperator\(key\)/);
+    expect(open).toMatch(/applyWeather: command => _applyOperatorWeather\(command\)/);
+    expect(open).toMatch(/viewportWidth: \(\) => window\.innerWidth/);
+    // Wrapping the optimistic path would post the preset a second time.
+    expect(open).not.toMatch(/_switchPreset\(/);
+    expect(open).not.toContain('/api/sim/');
+
+    expect(appSrc).toMatch(
+      /getElementById\('btn-environment'\)!\.addEventListener\('click',[\s\S]*?_openEnvironmentDialog\(\)/,
+    );
+    // A retired shell must not leave a modal over the branch that replaced it.
+    expect(appSrc).toMatch(
+      /function _invalidateOperatorModals\(\)[\s\S]*?environmentDialog\?\.invalidate\(\)/,
+    );
+
+    // Legacy Apply Weather stays on the v1 form inside ControlPanel.
+    expect(controlsSrc).toContain("'/api/sim/weather'");
+  });
+
+  it('keeps the operator environment writes authoritative and the override single', () => {
+    // Scenario and legacy terrain stay optimistic: scene first, POST unwatched.
+    const optimistic = declaration(appSrc, 'function _switchPreset(');
+    expect(optimistic).toContain('_applyPresetLocally(key, waterLevelOverride);');
+    expect(optimistic).toContain('void _postPreset(key);');
+    expect(optimistic).not.toContain('_markOperatorOverride');
+
+    // The operator path inverts it: a refused preset never reaches the scene.
+    const authoritative = declaration(appSrc, 'async function _switchPresetFromOperator');
+    expect(authoritative).toContain('const result = await _postPreset(key);');
+    expect(authoritative.indexOf('await _postPreset(key)'))
+      .toBeLessThan(authoritative.indexOf('_applyPresetLocally(key)'));
+    expect(authoritative).toContain('if (!result.success) return result;');
+
+    // Exactly the wire keys `SimController.SetWeather` binds, awaited.
+    const weather = declaration(appSrc, 'async function _applyOperatorWeather');
+    expect(weather).toContain("await apiPostJson<unknown>('/api/sim/weather'");
+    for (const key of ['mode: command.mode', 'windSpeed: command.windSpeed',
+      'windDirection: command.windDirection']) {
+      expect(weather).toContain(key);
+    }
+    expect(weather).toMatch(/if \(result\.success\) _markOperatorOverride\(\);/);
+
+    // One override mark per operator callback, and none in the dialog itself:
+    // two mechanisms for the same intent would drift.
+    for (const body of [authoritative, weather]) {
+      expect(body.match(/_markOperatorOverride\(\)/g)).toHaveLength(1);
+    }
+    expect(environmentDialogSrc).not.toContain('_markOperatorOverride');
+    // The dialog owns form state only — no routes, no fetch, no scene. Its
+    // header quotes the host's bounds in prose, so comments are stripped first.
+    const dialogCode = codeOnly(environmentDialogSrc);
+    expect(dialogCode).not.toContain('/api/sim/');
+    expect(dialogCode).not.toMatch(/\bapiPost|\bfetch\(/);
   });
 
   it('subscribes to the v2 snapshot message and keeps handling the v1 frame', () => {
