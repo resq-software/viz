@@ -38,6 +38,7 @@ interface ShellElements {
   readonly editorToggle: HTMLButtonElement;
   readonly editorLayer: HTMLElement;
   readonly contextLayer: HTMLElement;
+  readonly advanced: HTMLDetailsElement;
 }
 
 const REQUIRED_IDS = [
@@ -82,6 +83,12 @@ export class OperatorShell {
   private _editorAvailable = true;
   private _investorSuppressed = false;
   private _investorObserver: MutationObserver | null = null;
+  /** Advanced/Safety disclosure state. The trigger is static markup because it
+   *  has to exist before the module it loads does; the shell owns whether it is
+   *  open and fires the first-expansion callback exactly once. */
+  private _advancedExpanded = false;
+  private _advancedRequested = false;
+  private _advancedLoad: (() => void) | null = null;
 
   constructor(doc: Document) {
     this._doc = doc;
@@ -110,6 +117,7 @@ export class OperatorShell {
       editorToggle: get<HTMLButtonElement>('btn-editor-toggle'),
       editorLayer,
       contextLayer,
+      advanced: get<HTMLDetailsElement>('advanced-safety'),
     };
     this.mounts = {
       mission: get('operator-mission'),
@@ -133,6 +141,11 @@ export class OperatorShell {
     this._elements.editorToggle.addEventListener(
       'click', () => this.setEditorOpen(!this._editorRequestedOpen),
     );
+    this._elements.advanced.addEventListener('toggle', () => {
+      this._advancedExpanded = this._elements.advanced.open;
+      if (this._advancedExpanded) this._loadAdvancedSafety();
+    });
+    this._advancedExpanded = this._elements.advanced.open;
     this.setBootStatus('connecting');
     this.setMode('booting');
     this.setRailOpen(true);
@@ -162,6 +175,37 @@ export class OperatorShell {
 
   get contextOpen(): boolean {
     return this._contextOpen;
+  }
+
+  /** Whether the operator has opened the Advanced/Safety disclosure. */
+  get advancedSafetyExpanded(): boolean {
+    return this._advancedExpanded;
+  }
+
+  /**
+   * Registers what loads the Advanced/Safety workspace on first expansion.
+   *
+   * Fires immediately when the disclosure is already open — markup can start it
+   * open, and a callback registered a beat later must not miss that. It fires
+   * at most once per successful load: `retryAdvancedSafety` is how a failed
+   * chunk is asked for again, so a failure does not silently consume the one
+   * chance to load it.
+   */
+  onAdvancedSafetyExpand(load: () => void): void {
+    this._advancedLoad = load;
+    if (this._advancedExpanded) this._loadAdvancedSafety();
+  }
+
+  /** Re-runs the registered loader after a failed chunk fetch. */
+  retryAdvancedSafety(): void {
+    this._advancedRequested = false;
+    if (this._advancedExpanded) this._loadAdvancedSafety();
+  }
+
+  private _loadAdvancedSafety(): void {
+    if (this._advancedRequested || this._advancedLoad === null) return;
+    this._advancedRequested = true;
+    this._advancedLoad();
   }
 
   setMode(mode: OperatorMode): void {

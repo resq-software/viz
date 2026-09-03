@@ -69,6 +69,10 @@ const controlsSrc = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../controls.ts'),
   'utf8',
 );
+const advancedSafetySrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/advancedSafety.ts'),
+  'utf8',
+);
 
 /** Drops comment text so a prose mention of a route is not read as a call. */
 function codeOnly(source: string): string {
@@ -110,6 +114,12 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './operator/ScenarioCatalogLauncher', why: 'scenario import and retry ownership' },
   { path: './operator/SpawnAssetDialog', why: 'spawn form and the shared dialog stylesheet' },
   { path: './operator/EnvironmentDialog', why: 'environment form and the shared dialog stylesheet' },
+  { path: './operator/advancedSafety', why: 'four safety panels and their stylesheet' },
+  { path: './operator/ControlLeasePanel', why: 'lease panel DOM' },
+  { path: './operator/LinkDrillPanel', why: 'link drill DOM' },
+  { path: './operator/TrackReportPanel', why: 'external-report form' },
+  { path: './operator/AuditPanel', why: 'authority trail view' },
+  { path: './operator/panelDom', why: 'Advanced/Safety DOM vocabulary' },
 ];
 
 describe('entry-chunk boundaries', () => {
@@ -164,6 +174,38 @@ describe('entry-chunk boundaries', () => {
 
     // Legacy Spawn Drone stays on the v1 route inside ControlPanel.
     expect(appSrc).not.toContain("apiPost('/api/sim/drone'");
+  });
+
+  it('loads Advanced/Safety only on first disclosure and lets it own its stylesheet', () => {
+    // The trigger is static markup because it has to exist before the module it
+    // loads; the shell owns the disclosure and hands app.ts the one-shot loader.
+    expect(appSrc).toMatch(/import\('\.\/operator\/advancedSafety'\)/);
+    expect(appSrc).toMatch(
+      /operatorShell\.onAdvancedSafetyExpand\(\(\) => \{ _ensureAdvancedSafety\(\); \}\)/,
+    );
+    // Four panels' worth of rules ride the lazy chunk, never the entry sheet.
+    expect(advancedSafetySrc).toContain("import '../styles/advancedSafety.css'");
+    expect(appSrc).not.toContain("import './styles/advancedSafety.css'");
+
+    const ensure = declaration(appSrc, 'function _ensureAdvancedSafety(');
+    // A view over the fleet surface's store, never a second one: two stores
+    // would answer "who holds this asset" separately.
+    expect(ensure).toMatch(/const authority = controlAuthority;/);
+    expect(ensure).toMatch(/if \(authority === null\)/);
+    expect(ensure).not.toMatch(/new ControlAuthorityStore|createConsoleIdentity/);
+    // A failed optional chunk leaves the rest of the console alone and retryable.
+    expect(ensure).toMatch(/_setAdvancedStatus\([\s\S]*?true,\s*\)/);
+    expect(appSrc).toMatch(/btn-advanced-retry'\)\?\.addEventListener[\s\S]*?retryAdvancedSafety\(\)/);
+
+    // Every v2 render feeds it, and so does the immediate selection sync — a
+    // previous asset's link state must not survive a frame interval.
+    expect(declaration(appSrc, 'function _renderSnapshot(')).toContain('_updateAdvancedSafety();');
+    expect(declaration(appSrc, 'function _syncFleetSelection(')).toContain('_updateAdvancedSafety();');
+    const update = declaration(appSrc, 'function _updateAdvancedSafety(');
+    expect(update).toMatch(/selectionGeneration: _selectionGeneration/);
+    // The frame's clock, never Date.now(): the store ages contacts on it.
+    expect(update).toMatch(/simulationTimeSeconds: _displayedSnapshot\?\.frame\.time \?\? 0/);
+    expect(update).not.toContain('Date.now()');
   });
 
   it('loads the environment form only from the v2 trigger and lets it own its stylesheet', () => {

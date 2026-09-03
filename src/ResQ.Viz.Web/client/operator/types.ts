@@ -6,7 +6,10 @@ import type {
   AssetDescriptor,
   AssetDomain,
   CoordinateFrame,
+  ExternalTrackState,
   GeoPosition,
+  TrackClassification,
+  TrackSourceKind,
   VehicleClass,
 } from '../assets/types';
 
@@ -246,4 +249,95 @@ export interface ControlPreemptRequest {
   readonly role: ControlRole;
   readonly justification: string;
   readonly durationSeconds?: number | null;
+}
+
+// ── Command link ────────────────────────────────────────────────────────────
+//
+// Transcribed from `Models/AssetLinkApi.cs`. The one route in this API that can
+// make an asset unreachable, and — deliberately, on the server's side too — the
+// one that can put it back. Both directions are the same request shape, so a
+// console cannot offer the cut without also offering the restore.
+
+/** Request body for holding an asset's command link down, or bringing it up. */
+export interface AssetLinkRequest {
+  readonly available: boolean;
+  /** Who is asking, for the session's decision trail. Falls back to the room
+   *  on the server rather than inventing a user name. */
+  readonly issuerId?: string | null;
+  /** The caller's stated reason, retained on the record. At most 200 chars. */
+  readonly reason?: string | null;
+}
+
+/** The link state after a read or a change. `changed` is false for a request
+ *  that asked for the state the link was already in, so a retry after a lost
+ *  response neither fails nor re-triggers a fallback. */
+export interface AssetLinkResponse {
+  readonly assetId: string;
+  readonly isAvailable: boolean;
+  readonly changed: boolean;
+}
+
+// ── External track reports ──────────────────────────────────────────────────
+//
+// Transcribed from `Models/SimCommandTracks.cs`. A track is **observed, never
+// driven**: there is no command route that resolves a track id, and nothing in
+// this shape could be mistaken for one. The ingest exists so a console can put
+// a contact into the picture the simulation does not generate; it is a
+// simulation exercise and must be labelled as one wherever it is offered.
+
+/** Frame-qualified pose carried by one track report. Narrower than
+ *  {@link import('../assets/types').FramedPose} on purpose: a report states
+ *  where the contact was seen, and covariance and geodetic duplication are the
+ *  store's business rather than an operator's. */
+export interface TrackReportPose {
+  readonly frame: CoordinateFrame;
+  readonly originId: string | null;
+  readonly position: WireVec3;
+  /** The all-zero quaternion means "no attitude was declared". An
+   *  operator-entered contact declares none. */
+  readonly orientation: WireQuat;
+}
+
+/** Exact request body accepted by POST /api/v2/sim/tracks. One report is one
+ *  observation, not the whole track — the store fuses repeated reports of the
+ *  same identifier and refuses one no newer than what it already holds. */
+export interface TrackReportRequest {
+  readonly trackId: string;
+  readonly pose: TrackReportPose;
+  readonly twist: null;
+  readonly classification: TrackClassification;
+  readonly sourceId: string;
+  readonly sourceKind: TrackSourceKind;
+  /** Confidence the source places in its own contribution, 0-1, or null. */
+  readonly sourceQuality: number | null;
+  /** Confidence the contact is real, 0-1, or null to inherit the source's. */
+  readonly confidence: number | null;
+  /** Simulation time the observation was made at. Simulation time rather than a
+   *  wall clock: it is what ageing is measured against, and a replay of the
+   *  same reports has to age them identically. */
+  readonly observedAtSimulationTimeSeconds: number | null;
+  readonly positionAccuracyM: number | null;
+  readonly velocityAccuracyMps: number | null;
+  /** Display only. Never parsed, and never used to resolve anything. */
+  readonly label: string | null;
+  readonly transponder: null;
+}
+
+/** One held track and how old the observation behind it is. */
+export interface AgedExternalTrack {
+  readonly track: ExternalTrackState;
+  readonly ageSeconds: number;
+  readonly observedAtSimulationTimeSeconds: number;
+  /** What the source last claimed, before ageing discounted it. */
+  readonly reportedConfidence: number;
+}
+
+/** Result of accepting one track report. */
+export interface TrackReportResponse {
+  readonly trackId: string;
+  readonly track: AgedExternalTrack;
+  readonly created: boolean;
+  /** Track discarded to make room for a new one, or null. Surfaced rather than
+   *  hidden, so an operator can see the session is at its retention limit. */
+  readonly evictedTrackId: string | null;
 }

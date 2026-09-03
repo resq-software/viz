@@ -12,9 +12,12 @@ import {
 } from '../api';
 import type { ScenarioRequestToken } from './ScenarioRuntime';
 import type {
+  AssetLinkRequest,
+  AssetLinkResponse,
   AssetProfileCatalogResponse,
   AssetSpawnRequest,
   AssetSpawnResponse,
+  CommandAuditResponse,
   ControlHolderResponse,
   ControlLeaseReleaseRequest,
   ControlLeaseRenewRequest,
@@ -24,6 +27,8 @@ import type {
   ControlPreemptRequest,
   ScenarioCatalogResponse,
   ScenarioStartResponse,
+  TrackReportRequest,
+  TrackReportResponse,
 } from './types';
 
 const ROOT = '/api/v2/sim';
@@ -202,4 +207,55 @@ export function preemptControl(
     request,
     options,
   );
+}
+
+// ── Command link ────────────────────────────────────────────────────────────
+//
+// The one pair of routes that can make an asset unreachable and put it back.
+// The read retries like any GET; the change does not, and does not need to —
+// the server treats it as idempotent, answering `changed: false` for a request
+// that asked for the state the link was already in, so a manual retry after a
+// lost response neither fails nor re-triggers a link-loss fallback.
+
+/** Reports whether an asset's command link is currently up. */
+export function getAssetLink(assetId: string, options: ApiGetOptions = {}) {
+  return apiGetJson<AssetLinkResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/link`,
+    options,
+  );
+}
+
+/** Holds an asset's command link down, or brings it back up.
+ *
+ *  Cutting issues no command: the world's safe-action sweep notices the silence
+ *  and applies that asset's own declared link-loss behaviour, so the outcome is
+ *  read off the asset's published state rather than off this response. A
+ *  deployment reporting a live control path refuses the cut and never the
+ *  restore — recovery paths do not get safety gates. */
+export function setAssetLink(
+  assetId: string,
+  request: AssetLinkRequest,
+  options: ApiOptions = {},
+) {
+  return apiPostJson<AssetLinkResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/link`,
+    request,
+    options,
+  );
+}
+
+// ── External tracks and the authority trail ─────────────────────────────────
+
+/** Injects one simulated observation of a contact this session does not
+ *  control. Never retried: the store fuses by observation time, and a second
+ *  copy of the same report is a second observation the session did not make. */
+export function reportTrack(request: TrackReportRequest, options: ApiOptions = {}) {
+  return apiPostJson<TrackReportResponse>(`${ROOT}/tracks`, request, options);
+}
+
+/** Reads the session's bounded command-decision and lease windows, each with
+ *  what it has dropped. Read-only, and the only route here that stays available
+ *  while the console is away from the live edge. */
+export function getCommandAudit(options: ApiGetOptions = {}) {
+  return apiGetJson<CommandAuditResponse>(`${ROOT}/control/audit`, options);
 }

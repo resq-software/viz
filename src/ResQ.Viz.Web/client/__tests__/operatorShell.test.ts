@@ -185,6 +185,44 @@ describe('OperatorShell', () => {
     expect(shell.mounts.context.closest('#sidebar')).toBeNull();
   });
 
+  it('owns the Advanced/Safety disclosure and loads it exactly once, retryably', () => {
+    const shell = new OperatorShell(document);
+    const details = document.getElementById('advanced-safety') as HTMLDetailsElement;
+    const load = vi.fn();
+
+    // Collapsed by default, and registering the loader does not load anything.
+    expect(shell.advancedSafetyExpanded).toBe(false);
+    shell.onAdvancedSafetyExpand(load);
+    expect(load).not.toHaveBeenCalled();
+
+    details.open = true;
+    details.dispatchEvent(new Event('toggle'));
+    expect(shell.advancedSafetyExpanded).toBe(true);
+    expect(load).toHaveBeenCalledTimes(1);
+
+    // Collapsing and reopening must not refetch a module already resolved.
+    details.open = false;
+    details.dispatchEvent(new Event('toggle'));
+    details.open = true;
+    details.dispatchEvent(new Event('toggle'));
+    expect(load).toHaveBeenCalledTimes(1);
+
+    // A failed chunk is asked for again through the shell rather than by a
+    // reload; a failure must not silently consume the one chance to load it.
+    shell.retryAdvancedSafety();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads Advanced/Safety immediately when the markup opens it before the loader exists', () => {
+    (document.getElementById('advanced-safety') as HTMLDetailsElement).open = true;
+    const shell = new OperatorShell(document);
+    const load = vi.fn();
+
+    expect(shell.advancedSafetyExpanded).toBe(true);
+    shell.onAdvancedSafetyExpand(load);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
   it('synchronizes rail visibility, inertness, class, and toggle state', () => {
     const shell = new OperatorShell(document);
     const sidebar = document.getElementById('sidebar') as HTMLElement;

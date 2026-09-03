@@ -121,6 +121,7 @@ import type {
     MissionTransportView,
     ScenarioCatalogLauncher,
 } from './operator/MissionPanel';
+import type { AdvancedSafetyWorkspace } from './operator/advancedSafety';
 import type { SpawnAssetDialog } from './operator/SpawnAssetDialog';
 import type { EnvironmentDialog } from './operator/EnvironmentDialog';
 import { InteractionMode } from './operator/interactionMode';
@@ -355,6 +356,14 @@ let recorder = null as FrameRecorder | null;
 let dvr = null as Dvr | null;
 
 const selection = new SelectionStore();
+/**
+ * Bumped on every selection change, and handed to surfaces that fetch per
+ * selection so a late response can be matched to the request that is still
+ * wanted. The identifier alone is not enough: A → B → A would let an answer
+ * about the first A repaint the second.
+ */
+let _selectionGeneration = 0;
+selection.subscribe(() => { _selectionGeneration += 1; });
 /** Last locally-started v1 scenario; never used as v2 mission truth. */
 let _legacyScenario: string | null = null;
 
@@ -739,6 +748,13 @@ async function _openSpawnAssetDialog(): Promise<void> {
 
 document.getElementById('btn-spawn-asset')!.addEventListener('click', () => {
     operatorActions.spawnAsset();
+});
+
+// The shell owns the disclosure's open state and fires this exactly once; the
+// retry re-arms it after a failed chunk fetch without a page reload.
+operatorShell.onAdvancedSafetyExpand(() => { _ensureAdvancedSafety(); });
+document.getElementById('btn-advanced-retry')?.addEventListener('click', () => {
+    operatorShell.retryAdvancedSafety();
 });
 
 /**
@@ -1791,6 +1807,9 @@ function _ensureFleetUi(): void {
                 settingsPanel?.classList.contains('open') === true,
                 settingsClose ?? settingsToggle,
             );
+            // An operator who opened the disclosure before the first v2 snapshot
+            // was told to wait for this store. It exists now.
+            if (operatorShell.advancedSafetyExpanded) _ensureAdvancedSafety();
             if (_displayedSnapshot) {
                 if (dvr && !dvr.isLive) _refreshFleetRoster();
                 else _renderSnapshot(_displayedSnapshot, true);
@@ -1800,6 +1819,125 @@ function _ensureFleetUi(): void {
             _fleetUiLoading = false;
             log.error('fleet panel/filter failed to load; assets still render and select', err);
         });
+}
+
+// ─── Advanced / Safety (deferred) ──────────────────────────────────────────
+//
+// Four safety-relevant panels behind one collapsed disclosure: control leases,
+// the link drill, simulation-only external reports, and the session's authority
+// trail. Most sessions never open it, so neither its code nor its stylesheet is
+// fetched until one does — the disclosure's trigger is static markup in
+// `index.html` precisely because it has to exist before the module it loads.
+//
+// It is a *view* over `ControlAuthorityStore` rather than an owner of authority
+// state, which is why it depends on the fleet surface having created that store:
+// collapsing this section must not remove facts the command issuer needs.
+
+/** The workspace, once its chunk has landed. */
+let advancedSafety: AdvancedSafetyWorkspace | null = null;
+let _advancedSafetyLoading = false;
+
+/** Writes the disclosure's own status line and offers a retry beside it. A
+ *  failed optional chunk leaves the rest of the console untouched, so this is
+ *  the only place it is reported. */
+function _setAdvancedStatus(message: string | null, retryable = false): void {
+    const note = operatorShell.mounts.advancedSafety
+        .querySelector<HTMLElement>('[data-advanced-status]');
+    if (note) {
+        note.hidden = message === null;
+        note.textContent = message ?? '';
+    }
+    const retry = document.getElementById('btn-advanced-retry');
+    if (retry) retry.hidden = !retryable;
+}
+
+/**
+ * Loads the Advanced/Safety workspace on first expansion.
+ *
+ * Guarded on the fleet surface's authority store rather than creating a second
+ * one: two stores would answer "who holds this asset" separately, and the one
+ * the command path did not consult would be the one on screen. Until it exists
+ * the disclosure says so and stays retryable, rather than mounting panels whose
+ * every control would be blocked for a reason the operator cannot act on.
+ */
+function _ensureAdvancedSafety(): void {
+    if (advancedSafety || _advancedSafetyLoading) return;
+    if (operatorShell.mode !== 'v2') {
+        _setAdvancedStatus(
+            'Advanced / Safety is part of the multi-domain console and is unavailable in '
+            + 'legacy mode.',
+        );
+        return;
+    }
+    const authority = controlAuthority;
+    if (authority === null) {
+        _setAdvancedStatus('Waiting for the fleet surface before reading control authority…');
+        return;
+    }
+    _advancedSafetyLoading = true;
+    _setAdvancedStatus('Loading Advanced / Safety…');
+    void Promise.all([
+        import('./operator/advancedSafety'),
+        import('./operator/consoleApi'),
+    ])
+        .then(([m, api]) => {
+            _advancedSafetyLoading = false;
+            // A store replaced while the chunk was in flight would leave these
+            // panels reading an authority nothing else consults.
+            if (advancedSafety !== null || controlAuthority !== authority) return;
+            advancedSafety = m.mountAdvancedSafety({
+                mount: operatorShell.mounts.advancedSafety,
+                authority,
+                interaction: interactionMode,
+                api: {
+                    acquire: (assetId, request) => api.acquireControl(assetId, request),
+                    renew: (assetId, request) => api.renewControl(assetId, request),
+                    release: (assetId, request) => api.releaseControl(assetId, request),
+                    preempt: (assetId, request) => api.preemptControl(assetId, request),
+                    getLink: assetId => api.getAssetLink(assetId),
+                    setLink: (assetId, request) => api.setAssetLink(assetId, request),
+                    reportTrack: request => api.reportTrack(request),
+                    getAudit: () => api.getCommandAudit(),
+                },
+            });
+            _setAdvancedStatus(null);
+            _updateAdvancedSafety();
+        })
+        .catch((err: unknown) => {
+            _advancedSafetyLoading = false;
+            log.error('Advanced / Safety failed to load; the rest of the console is unaffected', err);
+            _setAdvancedStatus(
+                'Advanced / Safety could not load. Nothing else on the console is affected.',
+                true,
+            );
+        });
+}
+
+/**
+ * Pushes the selected asset, its published state and the simulation clock into
+ * the workspace.
+ *
+ * Called from every v2 render and again the instant selection changes, so a
+ * previous asset's link state is never on screen for a frame interval. The
+ * selection generation travels with it: the workspace matches every asset-scoped
+ * response against it, and an answer for an asset the operator has left is
+ * dropped rather than painted over the new one.
+ */
+function _updateAdvancedSafety(): void {
+    if (!advancedSafety) return;
+    const current = selection.current;
+    const selectedId = current?.kind === 'asset' ? current.id : null;
+    const asset = selectedId === null
+        ? null
+        : assetById(_displayedSnapshot?.assets, selectedId);
+    advancedSafety.updateFrame({
+        selectedId,
+        selectionGeneration: _selectionGeneration,
+        selectedState: asset?.state ?? null,
+        // The frame's own clock. A track report stamped from a wall clock would
+        // be wrong by every pause and by the speed multiplier.
+        simulationTimeSeconds: _displayedSnapshot?.frame.time ?? 0,
+    });
 }
 
 function _rosterSelection(): FleetUiInput['selected'] {
@@ -1827,6 +1965,7 @@ function _syncFleetSelection(): void {
         _displayedSnapshot.tracks,
         _displayedSnapshot.simulationNowMs,
     );
+    _updateAdvancedSafety();
 }
 
 /** Search is roster-only: refresh chrome from the displayed frame without repainting the scene. */
@@ -2415,6 +2554,7 @@ function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
     miniMap.update([], frame.hazards ?? [], projected.markers.filter((m) => visibleIds.has(m.id)));
     _applyFrameConsumers(frame, drones);
     _renderFleetSubject(visible, projected.tracks, projected.simulationNowMs);
+    _updateAdvancedSafety();
     _renderTracks(projected);
     _announceFleet(hudSummary, frame.time ?? 0);
 }
@@ -3167,6 +3307,7 @@ window.addEventListener('beforeunload', () => {
     startupCoordinator.dispose();
     connectionRetry.dispose();
     _authoritySelection?.();
+    advancedSafety?.dispose();
     controlAuthority?.dispose();
 });
 

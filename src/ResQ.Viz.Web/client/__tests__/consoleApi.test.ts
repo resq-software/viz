@@ -7,19 +7,24 @@ import { CoordinateFrame, VehicleClass } from '../assets/types';
 import type { ScenarioSessionState } from '../assets/types';
 import {
   acquireControl,
+  getAssetLink,
   getAssetProfiles,
+  getCommandAudit,
   getControlHolder,
   getControlMode,
   getScenarioCatalog,
   preemptControl,
   releaseControl,
   renewControl,
+  reportTrack,
   requestScenarioStart,
+  setAssetLink,
   spawnAsset,
   startLegacyScenario,
   startScenario,
 } from '../operator/consoleApi';
 import { ScenarioRuntime } from '../operator/ScenarioRuntime';
+import { TrackClassification, TrackSourceKind } from '../assets/types';
 import { ControlRole } from '../operator/types';
 import type { ScenarioStartResponse } from '../operator/types';
 
@@ -172,6 +177,71 @@ describe('control authority routes', () => {
     // justification dropped on this side would look like a client bug there.
     expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)))
       .toMatchObject({ role: ControlRole.Emergency, justification: 'Casualty located.' });
+  });
+});
+
+describe('link, track and audit routes', () => {
+  // Same reason as the lease routes above: a wrong path is not a typo an
+  // operator can diagnose. It is an asset whose link cannot be restored.
+  it('reads and writes the command link on one asset-scoped route', async () => {
+    const body = '{"assetId":"uav 1","isAvailable":false,"changed":true}';
+    fetchMock
+      .mockResolvedValueOnce(new Response(body, { status: 200 }))
+      .mockResolvedValueOnce(new Response(body, { status: 200 }));
+
+    await getAssetLink('uav 1');
+    await setAssetLink('uav 1', {
+      available: false, issuerId: 'room-1:tab-7', reason: 'Loss-of-link drill',
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v2/sim/assets/uav%201/link');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBeUndefined();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v2/sim/assets/uav%201/link');
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      available: false, issuerId: 'room-1:tab-7', reason: 'Loss-of-link drill',
+    });
+  });
+
+  it('posts a track report and reads the audit trail on their own routes', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response('{"trackId":"t1"}', { status: 201 }))
+      .mockResolvedValueOnce(new Response(
+        '{"decisions":[],"leases":[],"droppedDecisionCount":0,"droppedLeaseCount":0}',
+        { status: 200 },
+      ));
+
+    await reportTrack({
+      trackId: 't1',
+      pose: {
+        frame: CoordinateFrame.LocalEus,
+        originId: null,
+        position: { x: 1, y: 2, z: 3 },
+        orientation: { x: 0, y: 0, z: 0, w: 0 },
+      },
+      twist: null,
+      classification: TrackClassification.Vessel,
+      sourceId: 'operator-console',
+      sourceKind: TrackSourceKind.OperatorEntered,
+      sourceQuality: 0.9,
+      confidence: 0.9,
+      observedAtSimulationTimeSeconds: 42.5,
+      positionAccuracyM: null,
+      velocityAccuracyMps: null,
+      label: null,
+      transponder: null,
+    });
+    await getCommandAudit();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v2/sim/tracks');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+    // Nulls are sent, not dropped: absent and zero are different claims about
+    // an accuracy, and the server distinguishes them.
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      twist: null, positionAccuracyM: null, velocityAccuracyMps: null, transponder: null,
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v2/sim/control/audit');
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBeUndefined();
   });
 });
 

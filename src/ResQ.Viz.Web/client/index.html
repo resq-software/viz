@@ -231,9 +231,15 @@
                 <div id="fleet-roster" class="operator-mount"></div>
             </section>
 
+            <!-- The disclosure is static markup on purpose: its trigger has to exist
+                 before the module it loads does. OperatorShell owns whether it is open
+                 and fires app.ts's first-expansion loader exactly once; the panels are
+                 appended here by that module. -->
             <details id="advanced-safety" class="operator-card operator-advanced">
                 <summary>Advanced / Safety</summary>
-                <p>Authority, link drills, external reports, and audit controls load on demand.</p>
+                <p data-advanced-status>Control authority, link drills, simulation-only external
+                    reports, and the session audit trail load when this section is opened.</p>
+                <button id="btn-advanced-retry" class="btn" type="button" hidden>Retry Advanced / Safety</button>
             </details>
         </section>
 
