@@ -32,7 +32,7 @@ import { OperatorShell }   from './operator/OperatorShell';
 import { RetryScheduler } from './operator/RetryScheduler';
 import { ScenarioRuntime } from './operator/ScenarioRuntime';
 import { StartupCoordinator } from './operator/StartupCoordinator';
-import { Hud }            from './ui/hud';
+import { assetTelemetryText, Hud, type AssetHudSummary } from './ui/hud';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
 import { setContextObscured } from './ui/contextObscuring';
@@ -182,6 +182,7 @@ const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
 const fireSmoke    = new FireSmoke(viz.scene);
 const operatorShell = new OperatorShell(document);
+const hud          = new Hud(document);
 const scenarioRuntime = new ScenarioRuntime({ onPresent: _presentAuthoritativeScenario });
 let consoleResources: ConsoleResources | null = null;
 let missionPanel: MissionPanel | null = null;
@@ -204,6 +205,7 @@ const startupCoordinator = new StartupCoordinator({
         if (mode !== 'v2') _invalidateOperatorModals();
         if (mode === 'legacy' && _v2Active) _leaveV2();
         operatorShell.setMode(mode);
+        hud.setMode(mode);
         missionChrome.setEnabled(mode === 'legacy');
         if (mode === 'v2') void _ensureMissionUi();
     },
@@ -220,7 +222,6 @@ const startupCoordinator = new StartupCoordinator({
     cancel: id => window.clearTimeout(id),
 });
 const controlPanel = new ControlPanel(document.getElementById('legacy-console')!);
-const hud          = new Hud();
 const windCompass  = new WindCompass();
 // Selected-drone glass cockpit — flight instruments driven by live telemetry.
 // Lazily constructed on first enable (opt-in overlay, default off) so its module
@@ -1176,9 +1177,9 @@ function _selectFromAnySurface(assetId: string): void {
     // canvas stops swallowing clicks as target placements.
     _cancelPick();
     droneManager.setSelected(assetId);
-    hud.setSelectedDrone(assetId);
     miniMap.setSelected(assetId);
     const displaysV2 = _displayedSnapshot !== null;
+    displaysV2 ? hud.selectAsset(assetId) : hud.setSelectedDrone(assetId);
     selection.set(displaysV2 ? 'asset' : 'drone', assetId);
     if (displaysV2) operatorShell.setContextOpen(true);
     _syncFleetSelection();
@@ -1558,23 +1559,23 @@ function _cancelPick(): void {
 const _a11yTelemetryEl = document.getElementById('a11y-telemetry');
 const TELEMETRY_ANNOUNCE_MS = 8000;
 let _lastTelemetryAnnounceAt = 0;
-let _lastTelemetryCount = -1;
+let _lastTelemetrySignature: string | number | null = null;
 
 /**
  * Shared throttle for the live region.
  *
- * `count` is the change signal: a fleet gaining or losing a member is worth
- * interrupting for, a battery ticking down a percent is not. Returns whether the
- * announcement was made, which is only of interest to callers that want to skip
- * the work of composing one.
+ * `signature` is the change signal: a fleet gaining, losing, or changing the
+ * domain distribution of its members is worth interrupting for; a battery
+ * ticking down a percent is not. The text callback stays lazy so an ordinary
+ * 10 Hz frame does not compose a sentence the throttle will discard.
  */
-function _announceTelemetry(count: number, text: () => string): void {
+function _announceTelemetry(signature: string | number, text: () => string): void {
     if (!_a11yTelemetryEl) return;
     const now = performance.now();
-    const countChanged = count !== _lastTelemetryCount;
-    if (!countChanged && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
+    const changed = signature !== _lastTelemetrySignature;
+    if (!changed && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
     _lastTelemetryAnnounceAt = now;
-    _lastTelemetryCount = count;
+    _lastTelemetrySignature = signature;
     _a11yTelemetryEl.textContent = text();
 }
 
@@ -1592,25 +1593,10 @@ function _updateA11yTelemetry(drones: { battery?: number; status?: string }[], s
     });
 }
 
-/**
- * Mixed-fleet wording, from the same counts the filter is showing.
- *
- * Domains are named because that is precisely the fact a screen-reader user
- * cannot get from the scene — silhouette carries it for everyone else. The
- * sentence itself is composed by `fleetSummaryText`, which lives with the filter
- * so the spoken counts and the visible tally can never disagree.
- *
- * Until the fleet chunk lands there is no filter and no summary, so this falls
- * back to a plain count rather than announcing nothing: a fleet the operator
- * cannot see and is not told about is the worst of the three states.
- */
-function _announceFleet(assetCount: number, simTime: number): void {
-    _announceTelemetry(assetCount, () => {
-        if (fleetUi) return fleetUi.summaryText();
-        if (assetCount === 0) return 'No assets in view.';
-        return `${assetCount} asset${assetCount === 1 ? '' : 's'} in view, `
-            + `sim time ${simTime.toFixed(0)} seconds.`;
-    });
+/** Announces the complete displayed v2 inventory, independent of view filters. */
+function _announceFleet(summary: AssetHudSummary, simTime: number): void {
+    const signature = `v2:${summary.total}:${summary.air}:${summary.ground}:${summary.surface}`;
+    _announceTelemetry(signature, () => assetTelemetryText(summary, simTime));
 }
 // Client-side mirror of the server backhaul state. Optimistically updated on
 // K-press, then reconciled by each incoming frame. The in-flight flag prevents
@@ -1986,13 +1972,10 @@ function _reindexMeshLinks(
  * decides what "the drones in this frame" means — on v2 that is the projection
  * filtered to what the fleet filter is showing.
  *
- * `fleetDrones` is that same projection *before* filtering, and exists for the
- * HUD alone: see the note at its call site.
  */
 function _applyFrameConsumers(
     frame: SceneFrame,
     drones: DroneState[],
-    fleetDrones: readonly DroneState[] = drones,
 ): void {
     missionChrome.update(frame.time ?? 0);
     // FPV OSD + cockpit read the selected asset's telemetry through the v1
@@ -2010,21 +1993,6 @@ function _applyFrameConsumers(
     fireSmoke.setSources(fires);
     overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
-    // The HUD readout is labelled DRN / "Active drones", so it is fed the *drone*
-    // count and not the asset manager's, which on the v2 stream counts rovers and
-    // vessels too. A number that quietly changes meaning under a label that did
-    // not is worse than a narrower number.
-    //
-    // For the same reason it is fed the *unfiltered* drones. The fleet filter is
-    // a view control, not a change to the fleet: a drone the operator has hidden
-    // is still an active drone, and reporting the narrowed number under this
-    // label — with nothing on the HUD to say anything is hidden — would make DRN
-    // silently mean "drones you happen to be looking at". The battery average
-    // comes off the same list so the two readouts describe one fleet. What *is*
-    // hidden is reported where it can be labelled as such: the fleet filter's own
-    // tally and the spoken summary, both of which name the hidden count.
-    // (Identical on v1, and on v2 with no filtering: same list either way.)
-    hud.updateDrones(fleetDrones.length, frame.time ?? 0, [...fleetDrones]);
     inspector?.update(frame);
     outliner?.update(frame);
     windCompass.updateFromWeatherSliders();
@@ -2039,6 +2007,7 @@ function _renderFrame(frame: VizFrame, snap = false): void {
     const drones = frame.drones ?? [];
     droneManager.update(drones, frame.detections, snap);
     miniMap.update(drones, frame.hazards);
+    hud.updateDrones(drones.length, frame.time ?? 0, drones);
     _applyFrameConsumers(frame, drones);
     _updateA11yTelemetry(drones, frame.time ?? 0);
 }
@@ -2068,6 +2037,8 @@ function _renderV1ReplayFrame(frame: VizFrame): void {
  */
 function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
     _displayedSnapshot = projected;
+    const hudSummary = hud.updateAssets(projected.assets);
+    hud.updateTime(projected.frame.time ?? 0);
     _reconcileV2Selection(projected);
 
     const visible = fleetUi ? fleetUi.update({
@@ -2093,10 +2064,10 @@ function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
 
     droneManager.assets.update(visible.map((a) => a.view), projected.detections, snap);
     miniMap.update([], frame.hazards ?? [], projected.markers.filter((m) => visibleIds.has(m.id)));
-    _applyFrameConsumers(frame, drones, fleetDrones);
+    _applyFrameConsumers(frame, drones);
     _renderFleetSubject(visible, projected.tracks, projected.simulationNowMs);
     _renderTracks(projected);
-    _announceFleet(visible.length, frame.time ?? 0);
+    _announceFleet(hudSummary, frame.time ?? 0);
 }
 
 /** Reconciles only against the complete projection currently being displayed. */
@@ -2108,6 +2079,7 @@ function _reconcileV2Selection(projected: SceneSnapshot): void {
         const present = projected.assets.some(asset => asset.view.id === current.id);
         if (present) {
             selection.set('asset', current.id);
+            hud.selectAsset(current.id);
             operatorShell.setContextOpen(true);
             return;
         }
@@ -2784,9 +2756,9 @@ function _leaveV2(): void {
     } else {
         fleetUi?.renderSubject(null);
     }
-    // The live region throttles on a changed count; the wording changes here
-    // even when the number does not, so let the next frame speak.
-    _lastTelemetryCount = -1;
+    // The live region throttles on a signature; the wording changes here even
+    // when the number does not, so let the next frame speak.
+    _lastTelemetrySignature = null;
 }
 
 /**

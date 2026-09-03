@@ -143,7 +143,7 @@ button { font-family: inherit; }
   50%      { box-shadow: 0 0 0 6px transparent; }
 }
 
-/* ── Live stats (drones · fps · t · battery) ───────────────────────────── */
+/* ── Live stats (fleet · fps · t · battery) ────────────────────────────── */
 
 #hud-stats {
   display: flex;
@@ -163,6 +163,9 @@ button { font-family: inherit; }
   white-space: nowrap;
   transition: background var(--t-fast);
 }
+.hud-count-branch[hidden] { display: none !important; }
+.hud-stat-assets { gap: 4px; }
+.hud-stat-assets .hud-stat-value:not(:last-child) { margin-inline-end: 2px; }
 .hud-stat:hover { background: rgba(255, 255, 255, 0.035); }
 .hud-stat-label {
   font-family: var(--mono);
@@ -211,7 +214,7 @@ button { font-family: inherit; }
   color: var(--text);
 }
 
-/* ── Selected drone chip ───────────────────────────────────────────────── */
+/* ── Selected asset/drone chip ─────────────────────────────────────────── */
 
 #hud-selected-drone {
   display: inline-flex;
@@ -1539,7 +1542,7 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .key-hints-grid { grid-template-columns: 1fr; }
 
   /* HUD sheds low-priority items so its three zones never collide: no connection
-     label, selected-drone chip, sim clock, battery meter, or layer toggles. */
+     label, selected-asset chip, sim clock, battery meter, or layer toggles. */
   #hud-stats { gap: 0; }
   .hud-stat { padding: 4px 8px; }
   #conn-label,
@@ -1549,7 +1552,7 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .hud-zone-right .hud-toggle-group { display: none; }
 }
 
-/* Small phone: the HUD keeps only the wordmark, drone count, and action buttons
+/* Small phone: the HUD keeps only the wordmark, fleet count, and action buttons
    — drop the connection pill and FPS, and tighten the wordmark + buttons. */
 @media (max-width: 560px) {
   #hud-conn,

@@ -24,10 +24,9 @@
 //     disposing it leaks GPU resources and strands contacts that have stopped
 //     being true.
 //
-//  4. **The HUD's "Active drones" means active drones.** Feeding it the filtered
-//     count made DRN silently mean "drones you happen to be looking at", under a
-//     label and a title attribute that say otherwise, with nothing on the HUD to
-//     indicate anything was hidden.
+//  4. **The HUD reports the displayed schema's complete inventory.** V2 counts
+//     every projected asset before filtering and names each supported domain;
+//     v1 retains the existing drone-only fallback.
 //
 // `app.ts` cannot be imported here — it boots the renderer, opens a SignalR
 // connection and touches WebGL at module scope — so these assert at the source
@@ -262,42 +261,69 @@ describe('_leaveV2 releases everything the v2 path owns', () => {
     });
 
     it('lets the live region speak again after the wording changes', () => {
-        // The announcement throttles on a changed count; v1 and v2 can report the
-        // same number with different wording, which would be swallowed.
-        expect(bodyOf('_leaveV2')).toMatch(/_lastTelemetryCount = -1/);
+        // The announcement throttles on a signature; mode and domain distribution
+        // can change while total inventory stays equal.
+        expect(bodyOf('_leaveV2')).toMatch(/_lastTelemetrySignature = null/);
     });
 });
 
 // ─── 4. The HUD reports the fleet, not the view ────────────────────────────
 
-describe('the HUD drone count means what its label says', () => {
-    it('is fed the unfiltered fleet', () => {
-        const body = bodyOf('_applyFrameConsumers');
-        expect(
-            /hud\.updateDrones\(fleetDrones\.length,/.test(body),
-            'the HUD is fed the filtered count under an "Active drones" label, with '
-                + 'nothing on the HUD to say anything is hidden',
-        ).toBe(true);
-        expect(body).not.toMatch(/hud\.updateDrones\(drones\.length,/);
+describe('the HUD reports the displayed schema without inheriting fleet filters', () => {
+    it('starts in boot mode and follows the negotiated shell mode', () => {
+        expect(appSrc).toContain('const hud          = new Hud(document)');
+        expect(appSrc.indexOf('const hud          = new Hud(document)'))
+            .toBeLessThan(appSrc.indexOf('const startupCoordinator = new StartupCoordinator'));
+        expect(appSrc).toMatch(/setMode:\s*mode\s*=>\s*\{[\s\S]*?hud\.setMode\(mode\)/);
     });
 
-    it('averages the battery over that same fleet', () => {
-        // Two readouts side by side must describe one set of drones.
-        expect(bodyOf('_applyFrameConsumers'))
-            .toMatch(/hud\.updateDrones\(fleetDrones\.length, frame\.time \?\? 0, \[\.\.\.fleetDrones\]\)/);
-    });
-
-    it('hands the v2 path the projection before filtering', () => {
+    it('feeds complete projected assets before roster or filter narrowing', () => {
         const body = bodyOf('_renderSnapshot');
-        expect(body).toMatch(/const fleetDrones = projected\.frame\.drones \?\? \[\]/);
-        expect(body).toMatch(/const drones = fleetDrones\.filter\(/);
-        expect(body).toMatch(/_applyFrameConsumers\(frame, drones, fleetDrones\)/);
+        const hudAt = body.indexOf('hud.updateAssets(projected.assets)');
+        const fleetAt = body.indexOf('fleetUi ? fleetUi.update');
+        expect(hudAt).toBeGreaterThanOrEqual(0);
+        expect(hudAt).toBeLessThan(fleetAt);
+        expect(body).not.toMatch(/hud\.updateAssets\((?:visible|filtered)/);
+        expect(body).toMatch(/const hudSummary = hud\.updateAssets\(projected\.assets\)/);
+        expect(body).toMatch(/_announceFleet\(hudSummary, frame\.time \?\? 0\)/);
+    });
+
+    it('updates v2 HUD state only when a projected snapshot is displayed', () => {
+        expect(bodyOf('_ingestSnapshot')).not.toContain('hud.updateAssets');
+        expect(bodyOf('_renderSnapshot')).toContain('hud.updateAssets(projected.assets)');
+        expect(bodyOf('_renderV1ReplayFrame')).toMatch(/_renderFrame\(frame, true\)/);
+        expect(bodyOf('_resumeHeldSnapshot')).toMatch(/_applyLiveSnapshot\(latest, true\)/);
     });
 
     it('keeps the v1 path reporting the frame it was given', () => {
-        // One argument, so the default makes the filtered and unfiltered lists the
-        // same list — v1 has no filter to disagree with.
-        expect(bodyOf('_renderFrame')).toMatch(/_applyFrameConsumers\(frame, drones\)/);
+        expect(bodyOf('_renderFrame')).toMatch(
+            /hud\.updateDrones\(drones\.length, frame\.time \?\? 0, drones\)/,
+        );
+        expect(bodyOf('_applyFrameConsumers')).not.toContain('hud.updateDrones');
+    });
+
+    it('routes selected copy by the schema being displayed', () => {
+        const select = bodyOf('_selectFromAnySurface');
+        expect(select).toMatch(/const displaysV2 = _displayedSnapshot !== null/);
+        expect(select).toMatch(/displaysV2\s*\?\s*hud\.selectAsset\(assetId\)\s*:\s*hud\.setSelectedDrone\(assetId\)/);
+        expect(bodyOf('_reconcileV2Selection')).toMatch(
+            /selection\.set\('asset', current\.id\)[\s\S]*?hud\.selectAsset\(current\.id\)/,
+        );
+    });
+
+    it('announces complete domain counts without reaching into the lazy fleet chunk', () => {
+        const body = bodyOf('_announceFleet');
+        expect(body).toContain('summary.total');
+        expect(body).toContain('summary.air');
+        expect(body).toContain('summary.ground');
+        expect(body).toContain('summary.surface');
+        expect(body).toContain('assetTelemetryText(summary, simTime)');
+        expect(body).not.toMatch(/fleetUi|visible|filter/i);
+    });
+
+    it('uses a composite signature so equal-total domain changes announce immediately', () => {
+        const body = bodyOf('_announceFleet');
+        expect(body).toContain('`v2:${summary.total}:${summary.air}:${summary.ground}:${summary.surface}`');
     });
 });
 

@@ -143,9 +143,23 @@
 
         <div class="hud-zone hud-zone-center">
             <div id="hud-stats">
-                <div class="hud-stat" title="Active drones">
+                <div id="hud-count-v1" class="hud-stat hud-count-branch" data-hud-mode="legacy" title="Active drones" hidden aria-hidden="true">
                     <span class="hud-stat-label">DRN</span>
                     <span class="hud-stat-value" id="drone-count">0</span>
+                </div>
+                <div id="hud-count-v2" class="hud-stat hud-count-branch hud-stat-assets" data-hud-mode="v2" role="group" aria-label="Asset counts" hidden aria-hidden="true">
+                    <span class="sr-only">Total assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">ALL</span>
+                    <span class="hud-stat-value" id="asset-count">0</span>
+                    <span class="sr-only">Air assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">AIR</span>
+                    <span class="hud-stat-value" id="air-count">0</span>
+                    <span class="sr-only">Ground assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">GND</span>
+                    <span class="hud-stat-value" id="ground-count">0</span>
+                    <span class="sr-only">Surface assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">SFC</span>
+                    <span class="hud-stat-value" id="surface-count">0</span>
                 </div>
                 <div class="hud-stat" title="Render rate">
                     <span class="hud-stat-label">FPS</span>
@@ -155,7 +169,7 @@
                     <span class="hud-stat-label">T+</span>
                     <span class="hud-stat-value" id="sim-time">0.0s</span>
                 </div>
-                <div class="hud-stat hud-stat-bat" title="Fleet battery average">
+                <div id="hud-battery-stat" class="hud-stat hud-stat-bat" title="Fleet battery average">
                     <span class="hud-stat-label">BAT</span>
                     <div id="battery-track"><div id="battery-fill"></div></div>
                     <span class="hud-stat-value" id="battery-pct">--%</span>
@@ -171,7 +185,7 @@
         </div>
 
         <div class="hud-zone hud-zone-right">
-            <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
+            <div id="hud-selected-drone" class="hud-selected hidden" title=""><span id="hud-selected-asset"></span></div>
             <div class="hud-toggle-group" role="group" aria-label="Layer visibility">
                 <button id="hud-vel-toggle"    class="hud-toggle"        type="button" aria-label="Velocity vectors" aria-pressed="false" title="Velocity vectors (V)"><span aria-hidden="true">&#x21D2;</span></button>
                 <button id="hud-halo-toggle"   class="hud-toggle active" type="button" aria-label="Altitude halos"   aria-pressed="true"  title="Altitude halos (H)"><span aria-hidden="true">&#x25CB;</span></button>
