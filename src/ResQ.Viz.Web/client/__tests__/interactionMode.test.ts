@@ -23,7 +23,22 @@ import {
     type MutationGate,
 } from '../operator/interactionMode';
 import { OperatorActions, type OperatorEffects } from '../operator/operatorActions';
-import { gatedCommandIssuer, type CommandIssuer } from '../assets/panelCommands';
+import { gatedCommandIssuer, type CommandIssuer, type CommandOutcome } from '../assets/panelCommands';
+import { CommandState } from '../operator/types';
+
+/** An acceptance carrying the command state the server would have reported. */
+const ACCEPTED: CommandOutcome = {
+    accepted: true,
+    message: 'ok',
+    result: {
+        commandId: '0d5a2f3e-0000-4000-8000-000000000001',
+        state: CommandState.Accepted,
+        acceptedAt: null,
+        progressPercent: 0,
+        message: null,
+        reasonCode: null,
+    },
+};
 
 /** A gate that always reports replay, for driving a boundary's refusal path. */
 const replayGate: MutationGate = (action) => ({
@@ -199,7 +214,7 @@ describe('asset panel command boundary', () => {
     const request = { kind: 'goTo', idempotencyKey: 'key-1' };
 
     it('issues the command through the inner issuer at the live edge', async () => {
-        const inner = vi.fn<CommandIssuer>().mockResolvedValue({ accepted: true, message: 'ok' });
+        const inner = vi.fn<CommandIssuer>().mockResolvedValue(ACCEPTED);
         const outcome = await gatedCommandIssuer(liveGate, inner)('uav-1', request);
 
         expect(inner).toHaveBeenCalledWith('uav-1', request);
@@ -207,7 +222,7 @@ describe('asset panel command boundary', () => {
     });
 
     it('does not reach the issuer while replaying and says why', async () => {
-        const inner = vi.fn<CommandIssuer>().mockResolvedValue({ accepted: true, message: 'ok' });
+        const inner = vi.fn<CommandIssuer>().mockResolvedValue(ACCEPTED);
         const outcome = await gatedCommandIssuer(replayGate, inner)('uav-1', request);
 
         expect(inner).not.toHaveBeenCalled();

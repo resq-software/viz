@@ -15,6 +15,13 @@ import type {
   AssetProfileCatalogResponse,
   AssetSpawnRequest,
   AssetSpawnResponse,
+  ControlHolderResponse,
+  ControlLeaseReleaseRequest,
+  ControlLeaseRenewRequest,
+  ControlLeaseRequest,
+  ControlLeaseResponse,
+  ControlModeStatus,
+  ControlPreemptRequest,
   ScenarioCatalogResponse,
   ScenarioStartResponse,
 } from './types';
@@ -121,4 +128,78 @@ function scenarioFailure(
       },
     },
   };
+}
+
+// ── Control authority ───────────────────────────────────────────────────────
+//
+// The wire half of `ControlAuthorityStore`. Reads use the shared GET retry
+// policy; every lease mutation is a POST and is never retried, because a timed
+// out acquire may well have been granted and asking twice would either take an
+// asset the operator no longer wanted or renew a lease they had released.
+
+/** Which control path this deployment runs. Constant for the process. */
+export function getControlMode(options: ApiGetOptions = {}) {
+  return apiGetJson<ControlModeStatus>(`${ROOT}/control/mode`, options);
+}
+
+/** Who currently commands one asset. Uncontrolled answers 200, not 404. */
+export function getControlHolder(assetId: string, options: ApiGetOptions = {}) {
+  return apiGetJson<ControlHolderResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/control`,
+    options,
+  );
+}
+
+/** Takes control of an asset nobody else holds. The grant may be shorter than
+ *  the request: renew against `grantedDurationSeconds`. */
+export function acquireControl(
+  assetId: string,
+  request: ControlLeaseRequest,
+  options: ApiOptions = {},
+) {
+  return apiPostJson<ControlLeaseResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/control`,
+    request,
+    options,
+  );
+}
+
+/** Pushes a live lease's expiry out. The holder only. */
+export function renewControl(
+  assetId: string,
+  request: ControlLeaseRenewRequest,
+  options: ApiOptions = {},
+) {
+  return apiPostJson<ControlLeaseResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/control/renew`,
+    request,
+    options,
+  );
+}
+
+/** Hands a lease back. Answers with the asset uncontrolled and the ended lease. */
+export function releaseControl(
+  assetId: string,
+  request: ControlLeaseReleaseRequest,
+  options: ApiOptions = {},
+) {
+  return apiPostJson<ControlHolderResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/control/release`,
+    request,
+    options,
+  );
+}
+
+/** Takes an asset from its current holder, on emergency authority, on the
+ *  record. Refused without a justification. */
+export function preemptControl(
+  assetId: string,
+  request: ControlPreemptRequest,
+  options: ApiOptions = {},
+) {
+  return apiPostJson<ControlLeaseResponse>(
+    `${ROOT}/assets/${encodeURIComponent(assetId)}/control/preempt`,
+    request,
+    options,
+  );
 }

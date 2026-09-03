@@ -110,6 +110,7 @@ import type {
 // the stream.
 import type { DeltaTracker } from './assets/deltaApply';
 import type { FleetUi, FleetUiInput } from './assets/fleetUi';
+import type { ControlAuthorityStore } from './operator/controlAuthorityStore';
 import type { PickedTarget } from './assets/panelCommands';
 import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
 import type {
@@ -140,11 +141,31 @@ const log = getLogger('app');
 async function _bootstrapSession(): Promise<boolean> {
     const res = await apiPost('/api/sim/session');
     if (res.success) {
+        _roomId = await _readRoomId(res.value);
         log.info('session bootstrapped — viz_session cookie set');
         return true;
     }
     log.warn('session bootstrap failed', { error: res.error.message });
     return false;
+}
+
+/** Room named by the last successful session bootstrap, or null when the body
+ *  did not say. Read for one purpose — prefixing this console's own holder
+ *  identity, so two consoles in different rooms are never confusable in an
+ *  audit record — and it is not authority: the cookie the server actually
+ *  trusts is HttpOnly and never reaches this code. */
+let _roomId: string | null = null;
+
+async function _readRoomId(response: Response): Promise<string | null> {
+    try {
+        const body = await response.json() as { roomId?: unknown };
+        return typeof body.roomId === 'string' ? body.roomId : null;
+    } catch (err: unknown) {
+        // A body this client could not read is not a failed session: the cookie
+        // is set by the response headers either way.
+        log.warn('session response carried no readable room id', { error: String(err) });
+        return null;
+    }
 }
 
 // Latched promise — held while a bootstrap is in flight or has succeeded.
@@ -455,6 +476,10 @@ async function _initEditorSuite(): Promise<void> {
             if (!live) { interactionMode.enterReplay(); return; }
             interactionMode.goLive();
             _resumeHeldSnapshot();
+            // A scrub can last minutes, and a lease outlives nothing. The
+            // authority picture is re-read before the operator can act on the
+            // live picture that has just come back.
+            controlAuthority?.refresh();
         },
     });
     // Declarative scene config — export/import the terrain + scenario setup as a
@@ -638,6 +663,10 @@ function _renderMissionLoadFailure(): void {
 
 function _retryMissionResources(source: 'reconnect' | 'visibility' = 'reconnect'): void {
     if (operatorShell.mode !== 'v2') return;
+    // Who holds the selected asset is exactly the kind of fact that changes
+    // while this console is not watching, and both of these are the moments it
+    // stopped watching.
+    controlAuthority?.refresh();
     if (!consoleResources) {
         void _ensureMissionUi();
         return;
@@ -1588,6 +1617,11 @@ const GAP_GIVE_UP_FRAMES = 100;
 /** Fleet panel + filter. Null until the first v2 snapshot pulls in its chunk. */
 let fleetUi: FleetUi | null = null;
 let _fleetUiLoading = false;
+/** Who may command the selected asset. Created with the fleet surface, in the
+ *  same chunk: a session that never sees a v2 snapshot never asks about leases.
+ *  Numeric timer handles because the host schedules through `window`. */
+let controlAuthority: ControlAuthorityStore<number> | null = null;
+let _authoritySelection: (() => void) | null = null;
 /** Page-session roster search. It never participates in scene visibility. */
 let _fleetQuery = '';
 /** External-contact overlay. Null until a snapshot actually carries contacts. */
@@ -1698,10 +1732,36 @@ function _ensureFleetUi(): void {
     // `gatedCommandIssuer` rides the same chunk the fleet surface does, so the
     // gate reaches the asset panel without pulling `panelCommands` — and the
     // whole capability layer with it — into the entry bundle.
-    void Promise.all([import('./assets/fleetUi'), import('./assets/panelCommands')])
-        .then(([m, commands]) => {
+    void Promise.all([
+        import('./assets/fleetUi'),
+        import('./assets/panelCommands'),
+        import('./operator/controlAuthorityStore'),
+        import('./operator/consoleApi'),
+    ])
+        .then(([m, commands, authority, api]) => {
             _fleetUiLoading = false;
             if (!_v2Active) return;
+            // Command authority belongs to the fleet surface, not to whichever
+            // panel happens to display it. The command issuer needs the holder
+            // and the lease to fill in every envelope, so the store's lifetime
+            // is tied to the surface that issues commands rather than to a
+            // disclosure that could be collapsed out from under it.
+            controlAuthority = new authority.ControlAuthorityStore<number>({
+                holderId: authority.createConsoleIdentity(_roomId ?? 'console'),
+                loadMode: () => api.getControlMode(),
+                loadHolder: (assetId) => api.getControlHolder(assetId),
+                schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+                cancel: (timer) => { window.clearTimeout(timer); },
+            });
+            controlAuthority.loadControlMode();
+            // One writer for the store's selected asset: the shared selection,
+            // which fires immediately, so a fleet surface that loaded after the
+            // operator had already picked something is not left blind to it. A
+            // drone, hazard or contact selects nothing here — leases are v2
+            // asset-scoped, and a track has no command surface to authorise.
+            _authoritySelection = selection.subscribe(current => {
+                controlAuthority?.select(current?.kind === 'asset' ? current.id : null);
+            });
             fleetUi = new m.FleetUi({
                 panelMount: operatorShell.mounts.context,
                 filterMount: operatorShell.mounts.filter,
@@ -1715,6 +1775,12 @@ function _ensureFleetUi(): void {
                 onFocusFallback: () => { operatorShell.focusFleetHeading(); },
                 pickTarget: _pickSceneTarget,
                 issueCommand: commands.gatedCommandIssuer(interactionMode.guard),
+                // Two gates, one panel: replay closes every command, and the
+                // lease decides this asset's. Both are shown as reasons on the
+                // control rather than by withdrawing it — an operator has to be
+                // able to tell "this asset cannot" from "you may not".
+                authority: controlAuthority,
+                mutationGate: interactionMode.guard,
                 onPanelClose: () => _deselectAll(),
                 // A filter change is an operator decision, so the picture is
                 // refreshed immediately rather than at the next 10 Hz frame.
@@ -3100,6 +3166,8 @@ window.addEventListener('beforeunload', () => {
     scenarioBrowser?.dispose();
     startupCoordinator.dispose();
     connectionRetry.dispose();
+    _authoritySelection?.();
+    controlAuthority?.dispose();
 });
 
 let _starting = false;

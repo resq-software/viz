@@ -28,6 +28,8 @@ import type {
   CommandIssuer,
   TargetPicker,
 } from './panelCommands';
+import type { MutationGate } from '../operator/interactionMode';
+import type { CommandAuthority } from '../operator/controlAuthorityStore';
 import type { SceneAsset } from './sceneFrame';
 import { AssetRoster } from '../operator/AssetRoster';
 import type {
@@ -65,6 +67,13 @@ export interface FleetUiOptions {
   readonly loadCapabilities?: (assetId: string) => Promise<AssetCapabilitiesReport | null>;
   /** Where a command goes. Defaults to `POST .../commands`. */
   readonly issueCommand?: CommandIssuer;
+  /** Who may command the selected asset, and under which lease. Absent leaves
+   *  the envelope without an issuer, exactly as it was before leases existed —
+   *  and never hides a command: an asset held elsewhere keeps its full button
+   *  set, each blocked with the holder as the reason. */
+  readonly authority?: CommandAuthority | null;
+  /** Whether the console is commanding the live world at all. */
+  readonly mutationGate?: MutationGate;
   /** Called when the operator dismisses the panel. */
   readonly onPanelClose?: () => void;
   /** Called when the operator changes the filter. Fires on input only, never on
@@ -104,6 +113,8 @@ export class FleetUi {
       ...(options.loadCapabilities === undefined
         ? {} : { loadCapabilities: options.loadCapabilities }),
       ...(options.issueCommand === undefined ? {} : { issueCommand: options.issueCommand }),
+      ...(options.authority === undefined ? {} : { authority: options.authority }),
+      ...(options.mutationGate === undefined ? {} : { mutationGate: options.mutationGate }),
     });
     this._filter = new AssetFilter({
       mount: options.filterMount,

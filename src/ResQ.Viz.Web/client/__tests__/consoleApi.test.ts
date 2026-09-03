@@ -6,14 +6,21 @@ import type { ApiFailure, Result } from '../api';
 import { CoordinateFrame, VehicleClass } from '../assets/types';
 import type { ScenarioSessionState } from '../assets/types';
 import {
+  acquireControl,
   getAssetProfiles,
+  getControlHolder,
+  getControlMode,
   getScenarioCatalog,
+  preemptControl,
+  releaseControl,
+  renewControl,
   requestScenarioStart,
   spawnAsset,
   startLegacyScenario,
   startScenario,
 } from '../operator/consoleApi';
 import { ScenarioRuntime } from '../operator/ScenarioRuntime';
+import { ControlRole } from '../operator/types';
 import type { ScenarioStartResponse } from '../operator/types';
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -102,6 +109,69 @@ describe('consoleApi routes', () => {
       method: 'POST',
       body: JSON.stringify(request),
     }));
+  });
+});
+
+describe('control authority routes', () => {
+  // Each of these is a route the controller actually publishes. A path this
+  // client got wrong would not fail here as a typo — it would fail in front of
+  // an operator, as an asset that cannot be taken control of.
+  it('reads mode and holder, and encodes the asset as one path segment', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(
+        '{"mode":"simulationOnly","liveControlAvailable":false,"detail":"x"}',
+        { status: 200 },
+      ))
+      .mockResolvedValueOnce(new Response(
+        '{"assetId":"uav/1","isControlled":false,"lease":null}',
+        { status: 200 },
+      ));
+
+    await getControlMode();
+    await getControlHolder('uav/1');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v2/sim/control/mode');
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBeUndefined();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v2/sim/assets/uav%2F1/control');
+  });
+
+  it('posts every lease mutation to its own route with the holder in the body', async () => {
+    const body = '{"lease":null}';
+    for (let i = 0; i < 4; i++) {
+      fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    }
+
+    await acquireControl('uav-1', {
+      holderId: 'room-1:tab-7',
+      role: ControlRole.Operator,
+      durationSeconds: 300,
+    });
+    await renewControl('uav-1', {
+      holderId: 'room-1:tab-7',
+      leaseId: 'lease-7',
+      durationSeconds: 300,
+    });
+    await releaseControl('uav-1', { holderId: 'room-1:tab-7', leaseId: 'lease-7' });
+    await preemptControl('uav-1', {
+      holderId: 'room-1:tab-7',
+      role: ControlRole.Emergency,
+      justification: 'Casualty located.',
+    });
+
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+      '/api/v2/sim/assets/uav-1/control',
+      '/api/v2/sim/assets/uav-1/control/renew',
+      '/api/v2/sim/assets/uav-1/control/release',
+      '/api/v2/sim/assets/uav-1/control/preempt',
+    ]);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]?.method).toBe('POST');
+      expect(JSON.parse(String(call[1]?.body))).toMatchObject({ holderId: 'room-1:tab-7' });
+    }
+    // A preemption that could not say why is refused by the server, and a
+    // justification dropped on this side would look like a client bug there.
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)))
+      .toMatchObject({ role: ControlRole.Emergency, justification: 'Casualty located.' });
   });
 });
 

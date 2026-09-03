@@ -35,6 +35,7 @@ import type { PanelCard } from './panelCards';
 import {
   DESTRUCTIVE_COMMANDS,
   VERTICAL_REFERENCES,
+  commandFailureCode,
   evaluateCommand,
   loadAssetCapabilities,
   newIdempotencyKey,
@@ -56,6 +57,9 @@ import type {
 } from './panelCommands';
 import type { AssetDescriptor, AssetState, ExternalTrackState, MotionConstraints } from './types';
 import { DataFreshness, TrackClassification } from './types';
+import { liveGate } from '../operator/interactionMode';
+import type { MutationGate } from '../operator/interactionMode';
+import type { CommandAuthority } from '../operator/controlAuthorityStore';
 
 const log = getLogger('assetPanel');
 
@@ -96,6 +100,13 @@ export interface AssetPanelOptions {
    *  Doubles per consecutive failure up to {@link CAPABILITY_RETRY_CEILING}.
    *  Injectable so a test can drive the recovery without a real wait. */
   readonly capabilityRetryMs?: number;
+  /** Who may command the asset, and with what lease. Absent means the host has
+   *  wired no authority — a v1 session, or a headless panel — and the envelope
+   *  then carries no issuer, exactly as it did before leases existed. */
+  readonly authority?: CommandAuthority | null;
+  /** Whether the console is commanding the live world at all. Defaults to
+   *  permitting everything, so an ungated panel behaves as it always has. */
+  readonly mutationGate?: MutationGate;
 }
 
 /** Default first retry delay for a failed capability fetch. */
@@ -152,6 +163,9 @@ export class AssetPanel {
   private readonly _loadCapabilities: (assetId: string) => Promise<AssetCapabilitiesReport | null>;
   private readonly _pickTarget: TargetPicker | null;
   private readonly _retryBaseMs: number;
+  private readonly _authority: CommandAuthority | null;
+  private readonly _gate: MutationGate;
+  private _unsubscribeAuthority: (() => void) | null = null;
 
   private _closeFn: (() => void) | null = null;
   private _subjectId: string | null = null;
@@ -175,6 +189,8 @@ export class AssetPanel {
     this._loadCapabilities = options.loadCapabilities ?? loadAssetCapabilities;
     this._pickTarget = options.pickTarget ?? null;
     this._retryBaseMs = options.capabilityRetryMs ?? CAPABILITY_RETRY_MS;
+    this._authority = options.authority ?? null;
+    this._gate = options.mutationGate ?? liveGate;
 
     this._root = document.createElement('aside');
     this._root.className = 'asset-panel';
@@ -241,6 +257,14 @@ export class AssetPanel {
 
     this._root.append(header, this._body, footer);
     options.mount.appendChild(this._root);
+
+    // Authority changes arrive from the network, not from the frame stream: a
+    // preemption while the world is paused would otherwise go unpainted until
+    // something else happened to re-render, and the operator would go on
+    // pressing a control that has already stopped working.
+    this._unsubscribeAuthority = this._authority?.subscribe(() => {
+      if (!this._disposed && this._view) this._renderCommands(this._view);
+    }) ?? null;
   }
 
   /** The panel's root element, for a host that wants to place it itself. */
@@ -308,6 +332,8 @@ export class AssetPanel {
   dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    this._unsubscribeAuthority?.();
+    this._unsubscribeAuthority = null;
     this._invalidateSubject();
     this._forgetReport();
     this._clearCommands();
@@ -657,8 +683,18 @@ export class AssetPanel {
   ): void {
     // A refusal always carries a reason, including the transient one: a control
     // that goes grey with nothing to say reads as broken rather than as busy.
+    //
+    // The order is the order the operator can act in. What the asset can do and
+    // what this client can supply come first, because they are facts about the
+    // vehicle and the form; then whether the console is commanding the live
+    // world at all; then whether it may command *this* asset. Collapsing the
+    // last two into one message would leave an operator unable to tell a replay
+    // from a lease they do not hold — one is undone by returning to Live, the
+    // other by a phone call or a preemption.
     const reason = availability.reason
       ?? this._parameterProblem(parts, motion, view)
+      ?? this._interactionProblem()
+      ?? this._authorityProblem(view.id)
       ?? (this._busyOperation !== null ? 'a command is already in flight' : null);
     const enabled = reason === null;
 
@@ -674,6 +710,30 @@ export class AssetPanel {
     if (parts.reason.textContent !== shown) parts.reason.textContent = shown;
     parts.reason.hidden = shown === '';
     parts.button.title = shown;
+  }
+
+  /** Why nothing may be commanded at all right now, or null. Read from the
+   *  shared gate rather than re-derived, so this can only ever mirror the
+   *  boundary that will actually refuse the send. */
+  private _interactionProblem(): string | null {
+    const allowed = this._gate('asset.command');
+    return allowed.success
+      ? null
+      : 'unavailable during replay — return to Live to command';
+  }
+
+  /**
+   * Why this console may not command *this asset* right now, or null.
+   *
+   * Authority is an issuer-level fact and is deliberately not folded into the
+   * capability report: the asset's command set describes the asset, and a set
+   * that shrank for a non-holder would differ from the one the server accepts.
+   * So the control stays, and carries the holder as its reason.
+   */
+  private _authorityProblem(assetId: string): string | null {
+    if (!this._authority) return null;
+    const decision = this._authority.authorize(assetId);
+    return decision.allowed ? null : decision.reason;
   }
 
   /**
@@ -852,14 +912,31 @@ export class AssetPanel {
         }
       }
 
+      // Asked immediately before the send, never cached from the render: a
+      // lease can lapse or be taken between the press and the destination pick.
+      const authorized = this._authority?.authorize(assetId) ?? null;
+      if (authorized && !authorized.allowed) {
+        this._announce(`${humanise(capability.kind)} unavailable: ${authorized.reason}.`);
+        return;
+      }
+
       const request: AssetCommandRequestBody = {
         kind: capability.kind,
         idempotencyKey: newIdempotencyKey(),
+        ...(authorized === null
+          ? {}
+          : { issuerId: authorized.issuerId, controlLeaseId: authorized.controlLeaseId }),
         ...(target === undefined ? {} : { target }),
         ...(Object.keys(parameters).length === 0 ? {} : { parameters }),
       };
 
       const outcome = await this._issue(assetId, request);
+      // Before the control comes back, and regardless of what is selected now:
+      // a refusal coded `authority.*` or `control.*` means this console's
+      // picture of who holds the asset is already wrong, and the next press
+      // must not be issued on the belief that just failed.
+      const code = commandFailureCode(outcome);
+      if (code !== null) this._authority?.invalidateFromFailure(code);
       if (this._isCurrentAsset(assetId, generation)) this._announce(outcome.message);
     } catch (err: unknown) {
       log.error('command failed to send', err);

@@ -20,7 +20,7 @@
 // Deterministic: every clock and every fetch is injected, and the one test that
 // needs elapsed time uses fake timers rather than sleeping.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const motion = vi.hoisted(() => ({ reduced: false }));
 vi.mock('../reducedMotion', () => ({ prefersReducedMotion: () => motion.reduced }));
@@ -31,6 +31,7 @@ import {
   MIN_AIR_TARGET_CLEARANCE_M,
   TargetAltitudePolicy,
   altitudeBoundsM,
+  postAssetCommand,
   surfaceElevationUnderAssetM,
   targetAltitudeM,
   targetAltitudePolicy,
@@ -39,7 +40,16 @@ import {
 import type {
   AssetCapabilitiesReport,
   AssetCommandCapability,
+  AssetCommandRequestBody,
+  CommandOutcome,
 } from '../assets/panelCommands';
+import type { ApiFailure } from '../api';
+import type {
+  CommandAuthority,
+  CommandAuthorization,
+} from '../operator/controlAuthorityStore';
+import { CommandState } from '../operator/types';
+import type { CommandResult } from '../operator/types';
 import type { AssetView } from '../assets/assetView';
 import type {
   AirDomainState,
@@ -194,6 +204,23 @@ function report(commands: AssetCommandCapability[], assetId = 'a1'): AssetCapabi
   };
 }
 
+/** What an accepted command comes back as: the server's own command state,
+ *  never a bare boolean the caller would have to interpret. */
+function accepted(message: string): CommandOutcome {
+  return {
+    accepted: true,
+    message,
+    result: {
+      commandId: '0d5a2f3e-0000-4000-8000-000000000001',
+      state: CommandState.Accepted,
+      acceptedAt: null,
+      progressPercent: 0,
+      message: null,
+      reasonCode: null,
+    },
+  };
+}
+
 // ── Harness ─────────────────────────────────────────────────────────────────
 
 async function settle(): Promise<void> {
@@ -308,7 +335,7 @@ describe('AssetPanel destination height', () => {
   });
 
   it('commands an aircraft to its own altitude over the picked ground', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       // A ray cast at terrain 12 m above the scene datum.
@@ -326,7 +353,7 @@ describe('AssetPanel destination height', () => {
   });
 
   it('commands a rover to the surface it was pointed at', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => ({ position: [40, 12, -30] }),
@@ -583,5 +610,388 @@ describe('AssetPanel capability recovery', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── D4: the command envelope, and who is allowed to fill it ─────────────────
+//
+// Capability and authority answer different questions and must not be folded
+// together. The report says what the asset can do; the lease says whether *this*
+// console may ask for it. An asset held by another operator therefore keeps its
+// full button set, each one blocked with the holder as the reason — because
+// "this asset cannot do that" and "you do not hold the lease" are situations an
+// operator acts on differently, and a command that simply vanished would tell
+// them neither.
+
+describe('command envelope', () => {
+  const hold = command({ kind: 'hold' });
+
+  /** A fixed authority answer, plus a record of what the panel told it. */
+  function authorityStub(decision: CommandAuthorization) {
+    const invalidated: string[] = [];
+    const authority: CommandAuthority = {
+      authorize: () => decision,
+      invalidateFromFailure: (code) => {
+        invalidated.push(code);
+        return code.startsWith('authority.') || code.startsWith('control.');
+      },
+      subscribe: () => () => {},
+    };
+    return { authority, invalidated };
+  }
+
+  function issuedRequest(calls: readonly unknown[]): Record<string, unknown> {
+    const [, request] = calls[0] as [string, Record<string, unknown>];
+    return request;
+  }
+
+  it('sends the issuer with a null lease for an uncontrolled asset', async () => {
+    const issue = vi.fn(async () => accepted('Hold accepted.'));
+    const { authority } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority,
+      loadCapabilities: async () => report([hold]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    press(mount, 'hold');
+    await settle();
+
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect(issuedRequest(issue.mock.calls)).toMatchObject({
+      kind: 'hold',
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    panel.dispose();
+  });
+
+  it('sends this console own lease id when it holds the asset', async () => {
+    const issue = vi.fn(async () => accepted('Go to accepted.'));
+    const { authority } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: 'lease-7',
+    });
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority,
+      pickTarget: async () => ({ position: [40, 12, -30] }),
+      loadCapabilities: async () => report([command({
+        kind: 'goTo',
+        statePolicy: 'Operable',
+        requiresTarget: true,
+        allowedTargetKinds: ['Point'],
+      })]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    press(mount, 'goTo');
+    await settle();
+
+    expect(issuedRequest(issue.mock.calls)).toMatchObject({
+      kind: 'goTo',
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: 'lease-7',
+    });
+    panel.dispose();
+  });
+
+  it('offers the held asset its commands, blocked with the holder as the reason', async () => {
+    const issue = vi.fn(async () => accepted('should not send'));
+    const { authority } = authorityStub({
+      allowed: false,
+      reason: 'held by room-1:tab-9 until 12:05:30',
+    });
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority,
+      loadCapabilities: async () => report([hold]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    // Present, not absent: the asset can still hold, and the operator can see
+    // exactly what stands between them and asking it to.
+    expect(buttons(mount)).toEqual(['hold']);
+    const button = mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(mount.querySelector('[data-kind="hold"] .ap-cmd-reason')?.textContent)
+      .toBe('held by room-1:tab-9 until 12:05:30');
+
+    press(mount, 'hold');
+    await settle();
+    expect(issue).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it('blocks every command away from the live edge, and says so', async () => {
+    const issue = vi.fn(async () => accepted('should not send'));
+    const { authority } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority,
+      mutationGate: () => ({
+        success: false,
+        error: { kind: 'replay', code: 'interaction.replay', action: 'asset.command' },
+      }),
+      loadCapabilities: async () => report([hold]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    const reason = mount.querySelector('[data-kind="hold"] .ap-cmd-reason')?.textContent ?? '';
+    expect(reason).toMatch(/replay|live/i);
+    press(mount, 'hold');
+    await settle();
+    expect(issue).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it('keeps the state gate independent of authority', async () => {
+    const { authority } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    const { panel, mount } = mountPanel({
+      authority,
+      loadCapabilities: async () => report([command({
+        kind: 'takeoff',
+        statePolicy: 'Stationary',
+      })]),
+    });
+    await show(panel, {
+      kind: 'asset',
+      view: view({ operationalState: OperationalState.Active }),
+    });
+
+    // Holding the lease does not make an active asset take off again: the
+    // capability/state gate is a fact about the asset and answers first.
+    expect(mount.querySelector('[data-kind="takeoff"] .ap-cmd-reason')?.textContent)
+      .toBe('not available while active');
+    panel.dispose();
+  });
+
+  it('retains the authority problem, renders its code, and invalidates before re-enabling', async () => {
+    const failure: ApiFailure = {
+      kind: 'problem',
+      problem: {
+        status: 409,
+        code: 'authority.notHolder',
+        reasonCode: null,
+        title: 'Command refused',
+        detail: 'Asset uav-1 is held by another console.',
+        traceId: null,
+        errors: [],
+      },
+    };
+    const { authority, invalidated } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    let busyAtInvalidation: boolean | null = null;
+    const observed: CommandAuthority = {
+      ...authority,
+      invalidateFromFailure: (code) => {
+        busyAtInvalidation = wrap!.classList.contains('is-busy');
+        invalidated.push(code);
+        return true;
+      },
+    };
+    const outcome: CommandOutcome = {
+      accepted: false,
+      message: 'Hold refused (authority.notHolder): Asset uav-1 is held by another console.',
+      failure,
+    };
+    const issue = vi.fn(async () => outcome);
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority: observed,
+      loadCapabilities: async () => report([hold]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+    const wrap = mount.querySelector<HTMLElement>('[data-kind="hold"]');
+
+    press(mount, 'hold');
+    await settle();
+
+    // The console learns its authority is stale before the control comes back,
+    // so the next press cannot be issued on the belief that just failed.
+    expect(invalidated).toEqual(['authority.notHolder']);
+    expect(busyAtInvalidation).toBe(true);
+    expect(wrap!.classList.contains('is-busy')).toBe(false);
+    expect(mount.querySelector('.ap-status')?.textContent)
+      .toContain('authority.notHolder');
+    panel.dispose();
+  });
+
+  it('prefers the reason code over the class code, and never matches on prose', async () => {
+    const { authority, invalidated } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    const issue = vi.fn(async (): Promise<CommandOutcome> => ({
+      accepted: false,
+      message: 'Hold refused (link.unreachable): The command link is held down.',
+      failure: {
+        kind: 'problem',
+        problem: {
+          status: 409,
+          code: 'command.rejected',
+          reasonCode: 'link.unreachable',
+          title: 'Command refused',
+          detail: 'The command link is held down.',
+          traceId: null,
+          errors: [],
+        },
+      },
+    }));
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority,
+      loadCapabilities: async () => report([hold]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    press(mount, 'hold');
+    await settle();
+
+    // The specific token wins over the class, and it is the token the store is
+    // asked about — nothing here reads the sentence.
+    expect(invalidated).toEqual(['link.unreachable']);
+    expect(mount.querySelector('.ap-status')?.textContent).toContain('link.unreachable');
+    panel.dispose();
+  });
+
+  it('never puts a transport failure through prefix matching', async () => {
+    const { authority, invalidated } = authorityStub({
+      allowed: true,
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: null,
+    });
+    const issue = vi.fn(async (): Promise<CommandOutcome> => ({
+      accepted: false,
+      message: 'Hold failed to send: offline',
+      failure: { kind: 'network', message: 'offline' },
+    }));
+    const { panel, mount } = mountPanel({
+      issueCommand: issue,
+      authority,
+      loadCapabilities: async () => report([hold]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    press(mount, 'hold');
+    await settle();
+
+    // No server saw the request, so nothing was decided about the lease. A
+    // refresh here would be inventing a fact out of a dropped connection.
+    expect(invalidated).toEqual([]);
+    panel.dispose();
+  });
+});
+
+// ── D5: what the default issuer actually puts on, and takes off, the wire ───
+
+describe('postAssetCommand', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const request: AssetCommandRequestBody = {
+    kind: 'hold',
+    idempotencyKey: 'key-1',
+    issuerId: 'room-1:tab-7',
+    controlLeaseId: 'lease-7',
+  };
+
+  it('carries the typed result of an accepted command', async () => {
+    const result: CommandResult = {
+      commandId: '0d5a2f3e-0000-4000-8000-000000000001',
+      state: CommandState.Accepted,
+      acceptedAt: '2026-09-01T12:00:00Z',
+      progressPercent: 0,
+      message: null,
+      reasonCode: null,
+    };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(result), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    const outcome = await postAssetCommand('uav-1', request);
+
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe('/api/v2/sim/assets/uav-1/commands');
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      kind: 'hold',
+      issuerId: 'room-1:tab-7',
+      controlLeaseId: 'lease-7',
+    });
+    expect(outcome.accepted).toBe(true);
+    if (!outcome.accepted) throw new Error('expected acceptance');
+    // Acknowledgement is not arrival: the panel is handed the state the server
+    // reported rather than a boolean it would have to guess the meaning of.
+    expect(outcome.result).toEqual(result);
+    expect(outcome.message).toMatch(/accepted/i);
+  });
+
+  it('retains the problem body and renders its stable code', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      code: 'authority.notHolder',
+      reasonCode: null,
+      title: 'Command refused',
+      detail: 'Asset uav-1 is held by another console.',
+      traceId: 'trace-1',
+      errors: [],
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+
+    const outcome = await postAssetCommand('uav-1', request);
+
+    expect(outcome.accepted).toBe(false);
+    if (outcome.accepted) throw new Error('expected a refusal');
+    if (!('failure' in outcome)) throw new Error('expected a server failure');
+    expect(outcome.failure).toEqual({
+      kind: 'problem',
+      problem: {
+        status: 409,
+        code: 'authority.notHolder',
+        reasonCode: null,
+        title: 'Command refused',
+        detail: 'Asset uav-1 is held by another console.',
+        traceId: 'trace-1',
+        errors: [],
+      },
+    });
+    expect(outcome.message).toContain('authority.notHolder');
+    expect(outcome.message).toContain('held by another console');
+  });
+
+  it('keeps a transport failure distinguishable from a refusal', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const outcome = await postAssetCommand('uav-1', request);
+
+    expect(outcome.accepted).toBe(false);
+    if (outcome.accepted) throw new Error('expected a failure');
+    if (!('failure' in outcome)) throw new Error('expected a transport failure');
+    expect(outcome.failure.kind).toBe('network');
   });
 });

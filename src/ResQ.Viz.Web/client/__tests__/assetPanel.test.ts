@@ -33,7 +33,9 @@ import type {
   AssetCapabilitiesReport,
   AssetCommandCapability,
   CommandContext,
+  CommandOutcome,
 } from '../assets/panelCommands';
+import { CommandState } from '../operator/types';
 import {
   AssetFilter,
   applyFilter,
@@ -311,6 +313,23 @@ async function settle(): Promise<void> {
 
 /** A promise a test resolves itself, so a capability fetch can be left in flight
  *  without a timer. */
+/** What an accepted command comes back as. The command state is the server's,
+ *  so the panel is never handed a bare boolean to interpret. */
+function accepted(message: string): CommandOutcome {
+  return {
+    accepted: true,
+    message,
+    result: {
+      commandId: '0d5a2f3e-0000-4000-8000-000000000001',
+      state: CommandState.Accepted,
+      acceptedAt: null,
+      progressPercent: 0,
+      message: null,
+      reasonCode: null,
+    },
+  };
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((res) => { resolve = res; });
@@ -458,7 +477,7 @@ describe('AssetPanel commands', () => {
   it.each(PROTOTYPE_PARAMETER_NAMES)(
     'fails closed without throwing for hostile required parameter %s',
     async (parameter) => {
-      const issue = vi.fn(async () => ({ accepted: true, message: 'should not send' }));
+      const issue = vi.fn(async () => accepted('should not send'));
       const { panel, mount } = mountPanel({
         issueCommand: issue,
         loadCapabilities: async () => report([
@@ -631,7 +650,7 @@ describe('AssetPanel commands', () => {
 
   it('does not issue a target command after selection changes while picking', async () => {
     const picked = deferred<{ position: [number, number, number] } | null>();
-    const issue = vi.fn(async () => ({ accepted: true, message: 'accepted' }));
+    const issue = vi.fn(async () => accepted('accepted'));
     const { panel, mount } = mountPanel({
       loadCapabilities: async id => report([
         command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
@@ -651,7 +670,7 @@ describe('AssetPanel commands', () => {
 
   it('serializes commands while a target pick is pending', async () => {
     const picked = deferred<{ position: [number, number, number] } | null>();
-    const issue = vi.fn(async () => ({ accepted: true, message: 'accepted' }));
+    const issue = vi.fn(async () => accepted('accepted'));
     const { panel, mount } = mountPanel({
       loadCapabilities: async id => report([
         command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
@@ -677,7 +696,7 @@ describe('AssetPanel commands', () => {
 
   it('releases a target operation after cancellation so the next command can run', async () => {
     const picked = deferred<{ position: [number, number, number] } | null>();
-    const issue = vi.fn(async () => ({ accepted: true, message: 'accepted' }));
+    const issue = vi.fn(async () => accepted('accepted'));
     const { panel, mount } = mountPanel({
       loadCapabilities: async id => report([
         command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
@@ -703,7 +722,7 @@ describe('AssetPanel commands', () => {
   });
 
   it('releases a target operation after picker failure so the next command can run', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'accepted' }));
+    const issue = vi.fn(async () => accepted('accepted'));
     const { panel, mount } = mountPanel({
       loadCapabilities: async id => report([
         command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
@@ -727,7 +746,7 @@ describe('AssetPanel commands', () => {
 
   it('does not let an old selection operation release a newer busy owner', async () => {
     const oldPick = deferred<{ position: [number, number, number] } | null>();
-    const newerIssue = deferred<{ accepted: boolean; message: string }>();
+    const newerIssue = deferred<CommandOutcome>();
     const issue = vi.fn(() => newerIssue.promise);
     const { panel, mount } = mountPanel({
       loadCapabilities: async id => report(id === 'a1'
@@ -752,14 +771,14 @@ describe('AssetPanel commands', () => {
     land.click();
     expect(issue).toHaveBeenCalledTimes(1);
 
-    newerIssue.resolve({ accepted: true, message: 'Bravo accepted' });
+    newerIssue.resolve(accepted('Bravo accepted'));
     await settle();
     expect(land.getAttribute('aria-disabled')).toBe('false');
     panel.dispose();
   });
 
   it('does not announce an old command outcome in a newly selected subject', async () => {
-    const outcome = deferred<{ accepted: boolean; message: string }>();
+    const outcome = deferred<CommandOutcome>();
     const { panel, mount } = mountPanel({
       loadCapabilities: async id => report([command({ kind: 'hold' })], id),
       issueCommand: () => outcome.promise,
@@ -769,7 +788,7 @@ describe('AssetPanel commands', () => {
     mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!.click();
     const beta: PanelSubject = { kind: 'asset', view: view({ id: 'b1', displayName: 'Bravo' }) };
     panel.render(beta, NOW_MS);
-    outcome.resolve({ accepted: true, message: 'Alpha accepted' });
+    outcome.resolve(accepted('Alpha accepted'));
     await settle();
     expect(mount.querySelector('.ap-status')?.textContent).not.toContain('Alpha');
     expect(mount.querySelector('.ap-title')?.textContent).toBe('Bravo');
@@ -777,7 +796,7 @@ describe('AssetPanel commands', () => {
   });
 
   it('blocks a command the state forbids and refuses to issue it when pressed', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       loadCapabilities: async () => report([command({ kind: 'takeoff', statePolicy: 'Stationary' })]),
@@ -812,7 +831,7 @@ describe('AssetPanel commands', () => {
   });
 
   it('issues an enabled command with a fresh idempotency key', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'Hold accepted.' }));
+    const issue = vi.fn(async () => accepted('Hold accepted.'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       loadCapabilities: async () => report([command({ kind: 'hold' })]),
@@ -831,7 +850,7 @@ describe('AssetPanel commands', () => {
   });
 
   it('sends a picked destination as a named frame, never a bare triple', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'Go to accepted.' }));
+    const issue = vi.fn(async () => accepted('Go to accepted.'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => ({ position: [12, 0, -8] }),
@@ -856,7 +875,7 @@ describe('AssetPanel commands', () => {
 
   // A cancelled pick is not a failure and is certainly not a command.
   it('sends nothing when the operator cancels the destination pick', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => null,
@@ -979,7 +998,7 @@ describe('AssetPanel command-surface integrity', () => {
   });
 
   it('sends nothing when every blocked control in the set is pressed', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       loadCapabilities: async () => report([...CATALOG]),
@@ -1003,7 +1022,7 @@ describe('AssetPanel command-surface integrity', () => {
   });
 
   it('withdraws a command when the asset goes stale, and refuses it from then on', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'Go to accepted.' }));
+    const issue = vi.fn(async () => accepted('Go to accepted.'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => ({ position: [4, 0, 4] }),
