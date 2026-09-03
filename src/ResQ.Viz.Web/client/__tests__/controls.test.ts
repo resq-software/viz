@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ControlPanel } from '../controls';
+import type { MutationGate } from '../operator/interactionMode';
 import { OperatorShell } from '../operator/OperatorShell';
 import type { DroneState } from '../types';
 
@@ -265,5 +266,116 @@ describe('ControlPanel keyboard isolation', () => {
         expect(event.defaultPrevented).toBe(false);
         expect(fetchMock).toHaveBeenCalledOnce();
         expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sim/reset');
+    });
+});
+
+// ── Replay gate ─────────────────────────────────────────────────────────────
+//
+// Every legacy mutation leaves through `_post`, so that is where the shared
+// live/replay gate is consulted. These drive each control the way an operator
+// does and assert the fetch never happens — the gate is the boundary, not the
+// disabled attribute the mirror below sets.
+
+const REPLAY_GATE: MutationGate = (action) => ({
+    success: false,
+    error: { kind: 'replay', code: 'interaction.replay', action },
+});
+
+function legacyMutationFixture(): HTMLElement {
+    document.body.innerHTML = `
+        <section id="legacy-console">
+            <button id="btn-start"></button>
+            <button id="btn-stop"></button>
+            <button id="btn-reset"></button>
+            <div class="scenario-card" data-scenario="swarm-5"></div>
+            <input id="spawn-x" value="1"><input id="spawn-y" value="2"><input id="spawn-z" value="3">
+            <button id="btn-spawn"></button>
+            <select id="drone-select"><option value="uav-1" selected>uav-1</option></select>
+            <button class="cmd-btn" data-cmd="rtl"></button>
+            <select id="fault-drone-select"><option value="uav-1" selected>uav-1</option></select>
+            <button class="fault-btn" data-fault="gps"></button>
+            <select id="weather-mode"><option value="storm" selected>storm</option></select>
+            <input id="wind-speed" value="5"><input id="wind-dir" value="0">
+            <button id="btn-weather"></button>
+        </section>
+    `;
+    return legacyRoot();
+}
+
+/** Clicks or presses everything on the legacy console that mutates the world. */
+function driveEveryLegacyMutation(): void {
+    for (const id of ['btn-start', 'btn-stop', 'btn-reset', 'btn-spawn', 'btn-weather']) {
+        document.getElementById(id)?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    for (const selector of ['.scenario-card', '.cmd-btn', '.fault-btn']) {
+        document.querySelector<HTMLElement>(selector)
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    for (const code of ['KeyR', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5']) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+    }
+}
+
+describe('ControlPanel replay gate', () => {
+    it('posts every legacy mutation at the live edge', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyMutationFixture());
+
+        driveEveryLegacyMutation();
+
+        expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('posts nothing at all while replaying', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyMutationFixture(), REPLAY_GATE);
+
+        driveEveryLegacyMutation();
+
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { edge: 'live', gate: undefined, times: 1 },
+        { edge: 'replay', gate: REPLAY_GATE, times: 0 },
+    ])('announces a scenario start $times time(s) at the $edge edge', async ({ gate, times }) => {
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 })));
+        const started = vi.fn();
+        document.addEventListener('resq:scenario-start', started);
+        const root = legacyMutationFixture();
+        if (gate === undefined) new ControlPanel(root);
+        else new ControlPanel(root, gate);
+
+        document.querySelector<HTMLElement>('.scenario-card')
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        // The announcement rides the POST's resolution, so let the microtask
+        // queue drain before concluding it did not happen.
+        await new Promise(done => setTimeout(done, 0));
+
+        expect(started).toHaveBeenCalledTimes(times);
+        document.removeEventListener('resq:scenario-start', started);
+    });
+
+    it('mirrors the gate onto its controls without becoming the boundary', () => {
+        const panel = new ControlPanel(legacyMutationFixture());
+        const start = document.getElementById('btn-start') as HTMLButtonElement;
+        const card = document.querySelector<HTMLElement>('.scenario-card')!;
+
+        panel.setMutationsEnabled(false);
+        expect(start.disabled).toBe(true);
+        expect(card.getAttribute('aria-disabled')).toBe('true');
+
+        panel.setMutationsEnabled(true);
+        expect(start.disabled).toBe(false);
+        expect(card.getAttribute('aria-disabled')).toBe('false');
+    });
+
+    it('still syncs the drone roster while replaying', () => {
+        const panel = new ControlPanel(legacyMutationFixture(), REPLAY_GATE);
+        panel.updateDroneList([drone('uav-9')]);
+
+        expect(optionValues('drone-select')).toEqual(['uav-9']);
     });
 });

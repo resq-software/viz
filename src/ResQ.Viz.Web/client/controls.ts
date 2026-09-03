@@ -3,15 +3,25 @@
 
 import type { DroneState } from './types';
 import { getLogger } from './log';
+import { liveGate, type MutationGate } from './operator/interactionMode';
 import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 
 const log = getLogger('controls');
 
+/** Everything on the legacy console that changes the world, as the selectors
+ *  {@link ControlPanel.setMutationsEnabled} mirrors the gate onto. Reads — the
+ *  drone/fault pickers, the wind sliders — are deliberately absent: an operator
+ *  watching a replay can still line a command up. */
+const MUTATION_CONTROLS =
+    '#btn-start, #btn-stop, #btn-reset, #btn-spawn, #btn-weather, .cmd-btn, .fault-btn';
+
 export class ControlPanel {
     private readonly _root: HTMLElement;
+    private readonly _gate: MutationGate;
 
-    constructor(legacyRoot: HTMLElement) {
+    constructor(legacyRoot: HTMLElement, gate: MutationGate = liveGate) {
         this._root = legacyRoot;
+        this._gate = gate;
         this._bindSimButtons();
         this._bindScenarioCards();
         this._bindSpawn();
@@ -20,6 +30,20 @@ export class ControlPanel {
         this._bindWeatherSliders();
         this._bindWeatherApply();
         this._bindKeyboard();
+    }
+
+    /**
+     * Mirror the gate onto the controls so a refused button also *looks*
+     * refused. This is presentation, not enforcement: `_post` is the boundary,
+     * and it is consulted whether or not this was ever called.
+     */
+    setMutationsEnabled(enabled: boolean): void {
+        this._root.querySelectorAll<HTMLButtonElement>(MUTATION_CONTROLS)
+            .forEach(el => { el.disabled = !enabled; });
+        // Scenario cards are not buttons, so `disabled` means nothing to them;
+        // aria-disabled is what a screen reader reads out.
+        this._root.querySelectorAll<HTMLElement>('.scenario-card')
+            .forEach(el => el.setAttribute('aria-disabled', String(!enabled)));
     }
 
     updateDroneList(drones: DroneState[]): void {
@@ -191,6 +215,15 @@ export class ControlPanel {
      * should only fire on success (e.g. scenario intro overlay).
      */
     private async _post(url: string, body?: unknown): Promise<boolean> {
+        // Every legacy mutation leaves through here, which is exactly why the
+        // gate is asked here: one check covers the buttons, the cards, the
+        // command/fault rows, the weather form and the keyboard shortcuts, and
+        // a control added later cannot forget it.
+        const allowed = this._gate(url);
+        if (!allowed.success) {
+            log.info('legacy mutation refused away from the live edge', { url });
+            return false;
+        }
         try {
             const opts: RequestInit = body
                 ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }

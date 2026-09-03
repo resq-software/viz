@@ -17,6 +17,7 @@ import {
     type SceneScenarioModeDependencies,
 } from '../editor/sceneConfig';
 import type { ApiFailure } from '../api';
+import type { MutationGate } from '../operator/interactionMode';
 import { ScenarioRuntime } from '../operator/ScenarioRuntime';
 
 beforeEach(() => document.body.replaceChildren());
@@ -386,5 +387,85 @@ describe('SceneConfigPanel import transaction', () => {
         selectSceneFile(h.input, sceneJson('coastal'));
         await vi.waitFor(() => expect(applyScenario).toHaveBeenCalledTimes(2));
         await vi.waitFor(() => expect(h.applyTerrain).toHaveBeenCalledWith('coastal'));
+    });
+});
+
+// ── Replay gate ─────────────────────────────────────────────────────────────
+//
+// Import writes the world; export reads it. The gate separates exactly those
+// two, so an operator scrubbed back over a recording can still take the scene
+// they are looking at away with them, and cannot push it into the live sim.
+
+describe('SceneConfigPanel replay gate', () => {
+    const REPLAY_GATE: MutationGate = (action) => ({
+        success: false,
+        error: { kind: 'replay', code: 'interaction.replay', action },
+    });
+
+    function gatedHarness(gate: MutationGate) {
+        const applyTerrain = vi.fn();
+        const applyScenario = vi.fn().mockResolvedValue({ success: true });
+        new SceneConfigPanel({
+            getTerrain: () => 'alpine',
+            getScenario: () => 'single',
+            canApplyTerrain: () => true,
+            applyTerrain,
+            applyScenario,
+            gate,
+        });
+        const root = document.querySelector<HTMLElement>('.resq-scenecfg')!;
+        return {
+            root,
+            applyTerrain,
+            applyScenario,
+            input: root.querySelector<HTMLInputElement>('input[type="file"]')!,
+            importButton: root.querySelector<HTMLButtonElement>('[aria-label="Import scene"]')!,
+            exportButton: root.querySelector<HTMLButtonElement>('[aria-label="Export scene"]')!,
+        };
+    }
+
+    it('applies neither scenario nor terrain for an import made while replaying', async () => {
+        const h = gatedHarness(REPLAY_GATE);
+
+        selectSceneFile(h.input, sceneJson('coastal'));
+
+        await vi.waitFor(() => expect(h.root.textContent).toContain('interaction.replay'));
+        expect(h.applyScenario).not.toHaveBeenCalled();
+        expect(h.applyTerrain).not.toHaveBeenCalled();
+    });
+
+    it('leaves the import control usable so the refusal is recoverable', async () => {
+        const h = gatedHarness(REPLAY_GATE);
+
+        selectSceneFile(h.input, sceneJson('coastal'));
+
+        await vi.waitFor(() => expect(h.root.textContent).toContain('interaction.replay'));
+        expect(h.importButton.disabled).toBe(false);
+        // Never marked busy in the first place — the refusal happens before any
+        // state is claimed, so there is nothing left to unwind.
+        expect(h.root.getAttribute('aria-busy')).not.toBe('true');
+    });
+
+    it('still exports the scene while replaying', () => {
+        // Only the two object-URL statics are replaced: swapping the whole `URL`
+        // global breaks the `new URL(...)` the DOM itself does on anchor click.
+        const createObjectURL = vi.fn().mockReturnValue('blob:scene');
+        const originals = {
+            createObjectURL: Reflect.get(URL, 'createObjectURL'),
+            revokeObjectURL: Reflect.get(URL, 'revokeObjectURL'),
+        };
+        Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+        Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+        try {
+            const h = gatedHarness(REPLAY_GATE);
+
+            h.exportButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+            expect(createObjectURL).toHaveBeenCalledOnce();
+        } finally {
+            for (const [name, value] of Object.entries(originals)) {
+                Object.defineProperty(URL, name, { configurable: true, value });
+            }
+        }
     });
 });

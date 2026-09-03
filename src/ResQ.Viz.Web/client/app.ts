@@ -122,6 +122,8 @@ import type {
 } from './operator/MissionPanel';
 import type { SpawnAssetDialog } from './operator/SpawnAssetDialog';
 import type { EnvironmentDialog } from './operator/EnvironmentDialog';
+import { InteractionMode } from './operator/interactionMode';
+import { OperatorActions, type HeightmapUpload } from './operator/operatorActions';
 
 const log = getLogger('app');
 
@@ -236,7 +238,79 @@ const startupCoordinator = new StartupCoordinator({
     schedule: (callback, ms) => window.setTimeout(callback, ms),
     cancel: id => window.clearTimeout(id),
 });
-const controlPanel = new ControlPanel(document.getElementById('legacy-console')!);
+/**
+ * The one live/replay gate, and the one set of actions that consult it.
+ *
+ * Everything that changes the world — the legacy console, the DVR's server
+ * controls, the mission transport, the terrain cards, the heightmap upload, the
+ * backhaul switch, every drone command, the asset panel, the gizmo and the
+ * scene importer — asks this and nothing else. `dvr.onModeChange` is its only
+ * writer, so "am I at the live edge" has exactly one answer at any instant.
+ */
+const interactionMode = new InteractionMode();
+
+/**
+ * The gated actions the handlers below call instead of posting for themselves.
+ *
+ * The effects are the real work; `OperatorActions` is what makes each of them
+ * unreachable away from the live edge. Handlers stay one-liners so a
+ * source-level test (`__tests__/operatorActionWiring.test.ts`) can check that
+ * none of them grew its own POST — `app.ts` cannot be imported under the test
+ * runner, so the source is where that property has to be pinned.
+ */
+const operatorActions = new OperatorActions(interactionMode.guard, {
+    setPaused: paused => { void _postTransportPaused(paused); },
+    step: () => { apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'); },
+    setSpeed: factor => { apiPostOrWarn('/api/sim/speed', { factor }, 'speed'); },
+    reset: () => {
+        // v1 resets the world directly; v2 goes through the scenario runtime so
+        // the mission surface follows the same request lifecycle a start does.
+        if (operatorShell.mode === 'legacy') apiPostOrWarn('/api/sim/reset', undefined, 'reset');
+        else if (operatorShell.mode === 'v2') void _resetMission();
+    },
+    startScenario: () => { scenarioBrowser?.open(); },
+    spawnAsset: () => { void _openSpawnAssetDialog(); },
+    applyTerrain: key => { _markOperatorOverride(); _switchPreset(key as PresetKey); },
+    applyWeather: () => { void _openEnvironmentDialog(); },
+    uploadHeightmap: upload => { void _uploadHeightmap(upload); },
+    setBackhaulKilled: killed => {
+        // The in-flight guard lives with the request, not with the key that
+        // triggers it, so every future caller inherits it.
+        if (_backhaulToggleInFlight) return;
+        _backhaulToggleInFlight = true;
+        void apiPost('/api/sim/mesh/backhaul', { killed })
+            .then(res => {
+                if (!res.success) log.warn('backhaul toggle failed', { error: res.error.message });
+            })
+            .finally(() => { _backhaulToggleInFlight = false; });
+    },
+    commandDrone: (droneId, command) => {
+        apiPostOrWarn(`/api/sim/drone/${droneId}/cmd`, command, command.type);
+    },
+});
+
+const controlPanel = new ControlPanel(
+    document.getElementById('legacy-console')!, interactionMode.guard,
+);
+
+// Mirror the gate onto the surfaces whose enablement nothing else owns, and
+// withdraw the operator modals outright: a form left open over a recording is a
+// form whose Apply button would be refused, and withdrawing it is a clearer
+// answer than refusing it one press later.
+interactionMode.subscribe(value => {
+    const live = value === 'live';
+    controlPanel.setMutationsEnabled(live);
+    if (live) return;
+    _invalidateOperatorModals();
+    // Handles that cannot command anything are worse than no handles; the gizmo
+    // refuses to re-enter move mode on its own, this clears the mode it is in.
+    gizmo?.setMoveMode(false);
+    inspector?.setMoveActive(false);
+    // A/D accumulate a client-side heading before the command is issued, so a
+    // refused press would leave it pointing somewhere the drone never turned.
+    // Dropping the owner makes the next live press reseed from the real facing.
+    _pilotHeadingFor = null;
+});
 const windCompass  = new WindCompass();
 // Selected-drone glass cockpit — flight instruments driven by live telemetry.
 // Lazily constructed on first enable (opt-in overlay, default off) so its module
@@ -301,10 +375,15 @@ async function _initEditorSuite(): Promise<void> {
         sendGoto: (target) => {
             const id = droneManager.selectedId;
             if (!id) return;
-            apiPostOrWarn(`/api/sim/drone/${id}/cmd`, { type: 'goto', target }, 'Gizmo');
-            viz.showTargetMarker(new THREE.Vector3(target[0], target[1], target[2]), target[1]);
+            // The marker is only drawn for a command that was actually issued —
+            // a target pin over a world nothing was told about is a lie the
+            // operator would act on.
+            if (operatorActions.commandDrone(id, { type: 'goto', target }).success) {
+                viz.showTargetMarker(new THREE.Vector3(target[0], target[1], target[2]), target[1]);
+            }
         },
         addTick: (fn) => viz.addTickCallback(fn),
+        gate: interactionMode.guard,
     });
     // The main camera renders the gizmo's dedicated layer; the FPV PiP camera
     // (layer 0 only) does not, so the move handles never clutter the onboard window.
@@ -364,18 +443,19 @@ async function _initEditorSuite(): Promise<void> {
     dvr = new m_dvr.Dvr({
         recorder,
         onApply: (frame) => _renderV1ReplayFrame(frame),
-        onServerPause: (paused) =>
-            void apiPostOrWarn(paused ? '/api/sim/pause' : '/api/sim/resume', undefined, 'transport'),
-        onServerStep: () => void apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'),
-        onServerSpeed: (factor) => void apiPostOrWarn('/api/sim/speed', { factor }, 'speed'),
-        onServerReset: () => {
-            if (operatorShell.mode === 'legacy') {
-                apiPostOrWarn('/api/sim/reset', undefined, 'reset');
-            } else if (operatorShell.mode === 'v2') {
-                void _resetMission();
-            }
+        onServerPause: (paused) => { operatorActions.setPaused(paused); },
+        onServerStep: () => { operatorActions.step(); },
+        onServerSpeed: (factor) => { operatorActions.setSpeed(factor); },
+        onServerReset: () => { operatorActions.reset(); },
+        // The DVR is the only writer of the interaction mode: leaving the live
+        // edge is what closes every mutation, and returning is what reopens
+        // them — after the newest held snapshot is back on screen, so nothing
+        // is commanded against a picture that is still a recording.
+        onModeChange: live => {
+            if (!live) { interactionMode.enterReplay(); return; }
+            interactionMode.goLive();
+            _resumeHeldSnapshot();
         },
-        onModeChange: live => { if (live) _resumeHeldSnapshot(); },
     });
     // Declarative scene config — export/import the terrain + scenario setup as a
     // shareable JSON descriptor (AirSim settings.json analog). V2 reads only the
@@ -403,14 +483,14 @@ async function _initEditorSuite(): Promise<void> {
                 ),
                 runtime: scenarioRuntime,
             }),
+        gate: interactionMode.guard,
     });
 
     // Inspector wiring lives here so the callbacks register with the instance
     // that was just created — attaching them at module scope would run before
     // the suite exists and silently never fire.
-    inspector.onCommand(async (droneId: string, cmd: string) => {
-        const res = await apiPost(`/api/sim/drone/${droneId}/cmd`, { type: cmd });
-        if (!res.success) log.warn(`command ${cmd} on ${droneId} failed`, { error: res.error.message });
+    inspector.onCommand((droneId: string, cmd: string) => {
+        operatorActions.commandDrone(droneId, { type: cmd });
     });
     // "Move" button → toggle the reposition gizmo for the selected drone. The
     // gizmo owns the on/off truth, so the M key and this button stay in sync.
@@ -488,15 +568,14 @@ async function _ensureMissionUi(): Promise<void> {
             loadProfiles: async () =>
                 (await import('./operator/consoleApi')).getAssetProfiles(),
         });
-        let browser: ScenarioCatalogLauncher;
         const panel = new panelModule.MissionPanel({
             mount: operatorShell.mounts.mission,
-            onTogglePause: _setMissionPaused,
-            onReset: _resetMission,
-            onChange: () => browser.open(),
+            onTogglePause: paused => { operatorActions.setPaused(paused); },
+            onReset: () => { operatorActions.reset(); },
+            onChange: () => { operatorActions.startScenario(); },
             onRetryCatalog: () => resources.retry('catalog'),
         });
-        browser = new panelModule.ScenarioCatalogLauncher({
+        const browser = new panelModule.ScenarioCatalogLauncher({
             mode: () => operatorShell.mode,
             catalog: () => resources.catalog.status === 'ready' ? resources.catalog.value : null,
             mount: operatorShell.mounts.modal,
@@ -578,6 +657,15 @@ function _retryMissionResources(source: 'reconnect' | 'visibility' = 'reconnect'
  *
  * Acceptance is not arrival. The dialog reports the created id and nothing
  * writes it into the roster; the next v2 snapshot does that.
+ *
+ * Replay is handled by *withdrawal*, not by refusing the submit: this opener is
+ * only reached through `operatorActions.spawnAsset`, and leaving the live edge
+ * runs `_invalidateOperatorModals`, which closes the form and restores its busy
+ * state. A dialog that cannot be opened and is torn down on transition never
+ * offers a Spawn button whose request would be refused — which is a stricter
+ * reading of "advertised equals accepted" than showing the refusal would be,
+ * and it keeps the dialog's typed `ApiFailure` contract honest, since a replay
+ * refusal is not a server response and must not be dressed up as one.
  */
 async function _openSpawnAssetDialog(): Promise<void> {
     if (operatorShell.mode !== 'v2') return;
@@ -621,10 +709,17 @@ async function _openSpawnAssetDialog(): Promise<void> {
 }
 
 document.getElementById('btn-spawn-asset')!.addEventListener('click', () => {
-    void _openSpawnAssetDialog();
+    operatorActions.spawnAsset();
 });
 
-async function _setMissionPaused(paused: boolean): Promise<void> {
+/**
+ * The world's pause/resume, for every surface that offers one.
+ *
+ * The mission panel and the DVR's live transport used to post this separately;
+ * they now share it through `operatorActions.setPaused`, so the two cannot
+ * disagree about which endpoint, which body, or which gate applies.
+ */
+async function _postTransportPaused(paused: boolean): Promise<void> {
     const result = await apiPost(paused ? '/api/sim/pause' : '/api/sim/resume');
     if (!result.success) log.warn('mission transport request failed', { error: result.error.message });
 }
@@ -659,6 +754,11 @@ async function _resetMission(): Promise<void> {
  * terrain cards keep their optimistic `_switchPreset` path — the operator
  * callbacks below are the only ones that await the host before the scene
  * moves, and the only ones that mark the manual override.
+ *
+ * Gated the same way the spawn form is: reached only through
+ * `operatorActions.applyWeather`, and withdrawn by `_invalidateOperatorModals`
+ * when the DVR leaves the live edge. See `_openSpawnAssetDialog` for why
+ * withdrawal rather than a refused Apply.
  */
 async function _openEnvironmentDialog(): Promise<void> {
     if (operatorShell.mode !== 'v2') return;
@@ -694,7 +794,7 @@ async function _openEnvironmentDialog(): Promise<void> {
 }
 
 document.getElementById('btn-environment')!.addEventListener('click', () => {
-    void _openEnvironmentDialog();
+    operatorActions.applyWeather();
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -1112,31 +1212,42 @@ void (async () => {
     // would be off, which is corrected once the user reconnects.
     if (!await _ensureSessionReady()) return;
 
-    // Ship the decoded grid to the backend so drone physics clamp to the
-    // same DEM the viz renders. Payload is large (1024² ≈ 4 MB JSON) but
-    // fires exactly once per page load; timeout bumped so the send has
-    // room on slow connections. Silent warn on failure — the viz is
-    // already rendering correctly; only drone-ground contact is affected.
-    const uploadRes = await apiPost('/api/sim/heightmap', {
+    // Ship the decoded grid to the backend so drone physics clamp to the same
+    // DEM the viz renders. Routed through the gate like every other write: a
+    // page opened with `?heightmap=` whose decode lands after the operator has
+    // already scrubbed back must not reshape the running world underneath them.
+    operatorActions.uploadHeightmap({
         rows:   sampler.height,
         cols:   sampler.width,
         width:  sampler.worldSize,
         depth:  sampler.worldSize,
         cells:  Array.from(sampler.cells),
-    }, { timeoutMs: 30_000 });
+    });
+})();
+
+/**
+ * POSTs a decoded DEM to the backend.
+ *
+ * Payload is large (1024² ≈ 4 MB JSON) but fires at most once per page load;
+ * the timeout is bumped so the send has room on slow connections. A failure is
+ * warned and left — the viz is already rendering the DEM correctly, and only
+ * drone-ground contact is affected.
+ */
+async function _uploadHeightmap(upload: HeightmapUpload): Promise<void> {
+    const uploadRes = await apiPost('/api/sim/heightmap', upload, { timeoutMs: 30_000 });
     if (uploadRes.success) {
-        log.info(`heightmap uploaded to backend — drone physics now track DEM`);
+        log.info('heightmap uploaded to backend — drone physics now track DEM');
     } else {
         log.warn('heightmap backend upload failed — drones will follow procedural terrain', {
             error: uploadRes.error.message,
         });
     }
-})();
+}
 
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
     el.addEventListener('click', () => {
         const key = el.dataset['preset'] as PresetKey | undefined;
-        if (key && key in PRESETS) { _markOperatorOverride(); _switchPreset(key); }
+        if (key && key in PRESETS) operatorActions.applyTerrain(key);
     });
 });
 
@@ -1295,12 +1406,10 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                     : null;
                 if (terrainHit && selectedId) {
                     const alt = droneManager.getSelectedAltitude() ?? 15;
-                    apiPostOrWarn(
-                        `/api/sim/drone/${selectedId}/cmd`,
-                        { type: 'goto', target: [terrainHit.x, alt, terrainHit.z] },
-                        'GoTo',
-                    );
-                    viz.showTargetMarker(terrainHit, alt);
+                    const issued = operatorActions.commandDrone(selectedId, {
+                        type: 'goto', target: [terrainHit.x, alt, terrainHit.z],
+                    });
+                    if (issued.success) viz.showTargetMarker(terrainHit, alt);
                 }
             } else {
                 _selectFromAnySurface(droneId);
@@ -1311,12 +1420,10 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
             if (terrainHit) {
                 const alt = droneManager.getSelectedAltitude() ?? 15;
-                apiPostOrWarn(
-                    `/api/sim/drone/${selectedId}/cmd`,
-                    { type: 'goto', target: [terrainHit.x, alt, terrainHit.z] },
-                    'GoTo',
-                );
-                viz.showTargetMarker(terrainHit, alt);
+                const issued = operatorActions.commandDrone(selectedId, {
+                    type: 'goto', target: [terrainHit.x, alt, terrainHit.z],
+                });
+                if (issued.success) viz.showTargetMarker(terrainHit, alt);
             }
         } else {
             _deselectAll();
@@ -1588,8 +1695,11 @@ function _startDomainChase(profile: ChaseProfileName): void {
 function _ensureFleetUi(): void {
     if (fleetUi || _fleetUiLoading) return;
     _fleetUiLoading = true;
-    void import('./assets/fleetUi')
-        .then((m) => {
+    // `gatedCommandIssuer` rides the same chunk the fleet surface does, so the
+    // gate reaches the asset panel without pulling `panelCommands` — and the
+    // whole capability layer with it — into the entry bundle.
+    void Promise.all([import('./assets/fleetUi'), import('./assets/panelCommands')])
+        .then(([m, commands]) => {
             _fleetUiLoading = false;
             if (!_v2Active) return;
             fleetUi = new m.FleetUi({
@@ -1604,6 +1714,7 @@ function _ensureFleetUi(): void {
                 },
                 onFocusFallback: () => { operatorShell.focusFleetHeading(); },
                 pickTarget: _pickSceneTarget,
+                issueCommand: commands.gatedCommandIssuer(interactionMode.guard),
                 onPanelClose: () => _deselectAll(),
                 // A filter change is an operator decision, so the picture is
                 // refreshed immediately rather than at the next 10 Hz frame.
@@ -1880,19 +1991,13 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         }
     }
 
-    // K — toggle the simulated backhaul link. POSTs to the sim controller,
-    // which flips the server-side state; the banner follows the next frame.
-    // Uses the in-flight guard + local state so rapid presses don't POST the
-    // same value twice before the first request's frame arrives.
+    // K — toggle the simulated backhaul link. The action owns the request and
+    // its in-flight guard (so rapid presses don't POST the same value twice
+    // before the first request's frame arrives); the banner follows the next
+    // frame, and `_backhaulKilled` is the local mirror this reads to decide
+    // which way to flip.
     if (e.code === 'KeyK' && !e.ctrlKey && !e.metaKey) {
-        if (_backhaulToggleInFlight) return;
-        _backhaulToggleInFlight = true;
-        const nextKilled = !_backhaulKilled;
-        void apiPost('/api/sim/mesh/backhaul', { killed: nextKilled })
-            .then(res => {
-                if (!res.success) log.warn('backhaul toggle failed', { error: res.error.message });
-            })
-            .finally(() => { _backhaulToggleInFlight = false; });
+        operatorActions.setBackhaulKilled(!_backhaulKilled);
         return;
     }
 
@@ -1962,11 +2067,11 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         // camera is NOT in free-fly mode. A/D yaw (rotate in place), W/S fly
         // forward/back along the drone's heading, Q/E climb/descend.
         //
-        // Air only, and checked rather than assumed. These keys post to the v1
-        // `/api/sim/drone/{id}/cmd` endpoint, which is an air-domain adapter: a
-        // rover selected on the v2 stream has an id that endpoint will refuse, so
-        // pressing W would fire a request that fails somewhere the operator never
-        // sees. A key that does nothing is better than one that appears to work.
+        // Air only, and checked rather than assumed. These keys go through the v1
+        // drone command action, which is an air-domain adapter: a rover selected
+        // on the v2 stream has an id that endpoint will refuse, so pressing W
+        // would fire a request that fails somewhere the operator never sees. A
+        // key that does nothing is better than one that appears to work.
         // Ground and surface assets are commanded from the asset panel, whose
         // buttons come from the asset's own declared capabilities.
         case 'KeyW': case 'KeyS': case 'KeyA': case 'KeyD':
@@ -1997,12 +2102,16 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
 
                     if (e.code === 'KeyA' || e.code === 'KeyD') {
                         // Rotate in place: hold position, face the new heading.
-                        apiPostOrWarn(`/api/sim/drone/${nudgeId}/cmd`,
-                            { type: 'hover', yaw: _pilotHeading }, 'Rotate');
+                        operatorActions.commandDrone(nudgeId, {
+                            type: 'hover', yaw: _pilotHeading,
+                        });
                     } else {
-                        apiPostOrWarn(`/api/sim/drone/${nudgeId}/cmd`,
-                            { type: 'goto', target: [pos.x, pos.y, pos.z], yaw: _pilotHeading }, 'Nudge');
-                        viz.showTargetMarker(pos, pos.y);
+                        const issued = operatorActions.commandDrone(nudgeId, {
+                            type: 'goto',
+                            target: [pos.x, pos.y, pos.z],
+                            yaw: _pilotHeading,
+                        });
+                        if (issued.success) viz.showTargetMarker(pos, pos.y);
                     }
                 }
             }
@@ -2739,15 +2848,17 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
         snapshot, Date.now(), _descriptorCache, _simulationClock,
     );
     _lastSnapshot = projected;
-    const interactionMode = dvr && !dvr.isLive ? 'replay' : 'live';
-    if (interactionMode === 'live') {
+    // Read from the shared store rather than re-deriving it from the DVR: one
+    // fact, one owner. `dvr.onModeChange` is what keeps the store current.
+    const streamMode = interactionMode.value;
+    if (streamMode === 'live') {
         _missionTransport = {
             paused: projected.frame.paused ?? false,
             speed: projected.frame.speed ?? 1,
             simulationTimeSeconds: projected.frame.time ?? 0,
         };
     }
-    scenarioRuntime.apply(projected.scenario, snapshot.assets.length, interactionMode);
+    scenarioRuntime.apply(projected.scenario, snapshot.assets.length, streamMode);
     if (dvr && !dvr.isLive) return;
 
     _applyLiveSnapshot(projected);

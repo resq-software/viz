@@ -3,6 +3,7 @@
 
 import { getLogger } from '../log';
 import type { ApiFailure, Result } from '../api';
+import { liveGate, type MutationGate } from '../operator/interactionMode';
 import type {
     OperatorMode,
     ScenarioReplacementContext,
@@ -68,6 +69,9 @@ export interface SceneConfigDeps {
     applyScenario: (
         name: string | null,
     ) => void | SceneScenarioApplyResult | Promise<void | SceneScenarioApplyResult>;
+    /** Shared live/replay gate. Import writes the world and is gated; export
+     *  only reads what is already on screen and never is. */
+    readonly gate?: MutationGate;
 }
 
 export type SceneScenarioApplyResult =
@@ -167,6 +171,7 @@ export async function applyScenarioForMode(
  */
 export class SceneConfigPanel {
     private readonly _d: SceneConfigDeps;
+    private readonly _gate: MutationGate;
     private readonly _fileInput: HTMLInputElement;
     private readonly _status: HTMLElement;
     private readonly _root: HTMLElement;
@@ -176,6 +181,7 @@ export class SceneConfigPanel {
 
     constructor(deps: SceneConfigDeps) {
         this._d = deps;
+        this._gate = deps.gate ?? liveGate;
         const built = this._build();
         this._fileInput = built.fileInput;
         this._status = built.status;
@@ -208,6 +214,16 @@ export class SceneConfigPanel {
     }
 
     private async _import(file: File): Promise<void> {
+        // Before anything is read or any busy state is claimed, so a refusal
+        // leaves the control exactly as it found it and the operator can retry
+        // the moment they return to Live.
+        if (!this._gate('scene.import').success) {
+            this._showFailure(
+                'interaction.replay',
+                'Return to Live to import a scene into the running simulation.',
+            );
+            return;
+        }
         const generation = ++this._importGeneration;
         this._importInFlight = true;
         this._setImportBusy(true);

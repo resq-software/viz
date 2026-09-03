@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { liveGate, type MutationGate } from '../operator/interactionMode';
 import type { SelectionStore } from './selection';
 
 /** Minimum go-to altitude (metres) — keeps a dragged target above ground. */
@@ -36,6 +37,9 @@ export interface GizmoOptions {
     sendGoto: (target: [number, number, number]) => void;
     /** Register a per-frame callback (the proxy tracks the drone between drags). */
     addTick: (fn: (dt: number) => void) => void;
+    /** Shared live/replay gate. Defaults to permitting everything so an
+     *  ungated construction behaves as it always did. */
+    gate?: MutationGate;
 }
 
 /**
@@ -52,6 +56,7 @@ export class TransformGizmo {
     private readonly _control: TransformControls;
     private readonly _proxy = new THREE.Object3D();
     private readonly _opts: GizmoOptions;
+    private readonly _gate: MutationGate;
     private _interacting = false;
     private _moved = false;
     private _swallowNextClick = false;
@@ -59,6 +64,7 @@ export class TransformGizmo {
 
     constructor(opts: GizmoOptions) {
         this._opts = opts;
+        this._gate = opts.gate ?? liveGate;
         this._proxy.name = 'gizmo-proxy';
         opts.scene.add(this._proxy);
 
@@ -89,8 +95,13 @@ export class TransformGizmo {
         });
         control.addEventListener('mouseUp', () => {
             this._interacting = false;
+            // Restored before the gate is consulted, never after: a refusal that
+            // returned early here would leave the orbit camera disabled and the
+            // operator unable to look around the recording they are watching.
             opts.setCameraEnabled(true);
-            if (this._moved) opts.sendGoto(clampGotoAltitude(this._proxy.position));
+            if (this._moved && this._gate('drone.command').success) {
+                opts.sendGoto(clampGotoAltitude(this._proxy.position));
+            }
             this._moved = false;
             // Swallow the click the browser fires right after this pointerup, so
             // the app's click handler doesn't also issue a goto. Cleared next
@@ -131,15 +142,24 @@ export class TransformGizmo {
 
     /** Toggle move mode; only takes visible effect with a drone selected. Returns the new state. */
     toggleMoveMode(): boolean {
-        this._moveMode = !this._moveMode;
-        this._refresh();
-        return this._moveMode;
+        return this._applyMoveMode(!this._moveMode);
     }
 
     /** Explicitly set move mode on/off. */
     setMoveMode(on: boolean): void {
-        this._moveMode = on;
+        this._applyMoveMode(on);
+    }
+
+    /**
+     * Set move mode, refusing to turn it *on* when the gate would refuse the
+     * command a drag ends in. Handles that cannot command anything are the
+     * button-that-returns-an-error problem in three dimensions; turning it off
+     * is always allowed, because withdrawing a control is never a mutation.
+     */
+    private _applyMoveMode(on: boolean): boolean {
+        this._moveMode = on && this._gate('drone.command').success;
         this._refresh();
+        return this._moveMode;
     }
 
     /** Show the gizmo only when move mode is on AND a drone is selected. */

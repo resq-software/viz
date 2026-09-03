@@ -24,6 +24,7 @@
 
 import { apiGet, apiPost } from '../api';
 import { getLogger } from '../log';
+import type { MutationGate } from '../operator/interactionMode';
 import { formatAge } from './assetView';
 import type { AssetView } from './assetView';
 import { humanise, operationalStateLabel } from './AssetFilter';
@@ -497,6 +498,31 @@ export const postAssetCommand: CommandIssuer = async (assetId, request) => {
   log.warn('command refused', { assetId, kind: request.kind, error: res.error.message });
   return { accepted: false, message: `${humanise(request.kind)} refused: ${res.error.message}` };
 };
+
+/**
+ * Wraps an issuer so no command leaves the client away from the live edge.
+ *
+ * The panel's own gates answer "would this asset accept the command"; this one
+ * answers "is the console commanding anything at all right now", which is a
+ * different question with a different owner — the shared
+ * {@link MutationGate} — and so is asked here rather than re-derived inside
+ * `evaluateCommand`. The refusal is reported as a declined outcome, because a
+ * press that produced silence would read as a command in flight.
+ */
+export function gatedCommandIssuer(
+  gate: MutationGate,
+  issuer: CommandIssuer = postAssetCommand,
+): CommandIssuer {
+  return async (assetId, request) => {
+    const allowed = gate('asset.command');
+    if (allowed.success) return issuer(assetId, request);
+    log.info('asset command refused away from the live edge', { assetId, kind: request.kind });
+    return {
+      accepted: false,
+      message: `${humanise(request.kind)} unavailable during replay — return to Live to command.`,
+    };
+  };
+}
 
 /** Default report source: `GET /api/v2/sim/assets/{id}/capabilities`. Resolves to
  *  null when the report cannot be read, which the panel treats as a *failure* —

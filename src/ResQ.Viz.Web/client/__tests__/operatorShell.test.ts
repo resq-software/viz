@@ -636,7 +636,7 @@ describe('the shipped operator shell contract', () => {
     const app = read('../app.ts');
     const shellAt = app.indexOf('new OperatorShell(document)');
     const startupAt = app.indexOf('new StartupCoordinator({');
-    const controlsAt = app.indexOf("new ControlPanel(document.getElementById('legacy-console')!)");
+    const controlsAt = app.indexOf('new ControlPanel(');
 
     expect(shellAt).toBeGreaterThanOrEqual(0);
     expect(startupAt).toBeGreaterThan(shellAt);

@@ -143,7 +143,7 @@ describe('entry-chunk boundaries', () => {
 
     const open = appSrc.slice(
       appSrc.indexOf('async function _openSpawnAssetDialog'),
-      appSrc.indexOf('async function _setMissionPaused'),
+      appSrc.indexOf('async function _postTransportPaused'),
     );
     expect(open).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
     expect(open).toMatch(/consoleResources\?\.profiles \?\? \{ status: 'idle' \}/);
@@ -151,9 +151,12 @@ describe('entry-chunk boundaries', () => {
     // Acceptance names an asset; only the stream puts one on the roster.
     expect(open).not.toMatch(/fleetUi|_refreshFleetRoster|assets\.upsert/);
 
+    // The trigger goes through the gated action, which is what refuses the
+    // form away from the live edge; the action's effect is the opener.
     expect(appSrc).toMatch(
-      /getElementById\('btn-spawn-asset'\)!\.addEventListener\('click',[\s\S]*?_openSpawnAssetDialog\(\)/,
+      /getElementById\('btn-spawn-asset'\)!\.addEventListener\('click',[\s\S]*?operatorActions\.spawnAsset\(\)/,
     );
+    expect(appSrc).toMatch(/spawnAsset: \(\) => \{ void _openSpawnAssetDialog\(\); \}/);
     // A retired shell must not leave a modal over the branch that replaced it.
     expect(appSrc).toMatch(
       /function _invalidateOperatorModals\(\)[\s\S]*?spawnDialog\?\.invalidate\(\)/,
@@ -179,8 +182,9 @@ describe('entry-chunk boundaries', () => {
     expect(open).not.toContain('/api/sim/');
 
     expect(appSrc).toMatch(
-      /getElementById\('btn-environment'\)!\.addEventListener\('click',[\s\S]*?_openEnvironmentDialog\(\)/,
+      /getElementById\('btn-environment'\)!\.addEventListener\('click',[\s\S]*?operatorActions\.applyWeather\(\)/,
     );
+    expect(appSrc).toMatch(/applyWeather: \(\) => \{ void _openEnvironmentDialog\(\); \}/);
     // A retired shell must not leave a modal over the branch that replaced it.
     expect(appSrc).toMatch(
       /function _invalidateOperatorModals\(\)[\s\S]*?environmentDialog\?\.invalidate\(\)/,
@@ -379,14 +383,23 @@ describe('entry-chunk boundaries', () => {
     const initAt = appSrc.indexOf('async function _initEditorSuite');
     const investorAt = appSrc.indexOf('const investorMode', initAt);
     const init = appSrc.slice(initAt, investorAt);
-    expect(init).toMatch(/onServerReset:\s*\(\)\s*=>\s*\{[\s\S]*?operatorShell\.mode === 'legacy'[\s\S]*?apiPostOrWarn\('\/api\/sim\/reset'[\s\S]*?operatorShell\.mode === 'v2'[\s\S]*?_resetMission\(\)/);
+    // The DVR callback is now one gated call; the per-mode branching moved into
+    // the injected effect so the mission panel's Reset takes the same path.
+    expect(init).toMatch(/onServerReset:\s*\(\)\s*=>\s*\{\s*operatorActions\.reset\(\);\s*\}/);
+    expect(appSrc).toMatch(/reset:\s*\(\)\s*=>\s*\{[\s\S]*?operatorShell\.mode === 'legacy'[\s\S]*?apiPostOrWarn\('\/api\/sim\/reset'[\s\S]*?operatorShell\.mode === 'v2'[\s\S]*?_resetMission\(\)/);
   });
 
   it('applies the held v2 snapshot immediately when DVR returns Live', () => {
     const initAt = appSrc.indexOf('async function _initEditorSuite');
     const investorAt = appSrc.indexOf('const investorMode', initAt);
     const init = appSrc.slice(initAt, investorAt);
-    expect(init).toMatch(/onModeChange:\s*live\s*=>\s*\{[\s\S]*?if \(live\) _resumeHeldSnapshot\(\)/);
+    expect(init).toMatch(
+      /onModeChange:\s*live\s*=>\s*\{[\s\S]*?interactionMode\.goLive\(\);\s*_resumeHeldSnapshot\(\);/,
+    );
+    // Leaving the live edge closes the mutations before anything else happens.
+    expect(init).toMatch(
+      /onModeChange:\s*live\s*=>\s*\{\s*if \(!live\) \{ interactionMode\.enterReplay\(\); return; \}/,
+    );
 
     const resumeAt = appSrc.indexOf('function _resumeHeldSnapshot');
     const nextAt = appSrc.indexOf('\nfunction ', resumeAt + 1);
