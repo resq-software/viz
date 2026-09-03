@@ -73,6 +73,78 @@
 .operator-dialog-form {
   display: grid;
   gap: 7px;
+  min-height: 0;
+}
+
+/* Compact form surfaces: two columns of labelled controls that scroll as one
+   block, so the title, the alert and the actions stay put while the fields
+   move. */
+.operator-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+  min-height: 0;
+  padding: 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.operator-dialog-span,
+.operator-dialog-grid > fieldset {
+  grid-column: 1 / -1;
+}
+
+.operator-dialog-field {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font: 600 10px/1.4 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.operator-dialog-field[hidden] {
+  display: none;
+}
+
+.operator-dialog-grid > fieldset.operator-dialog-field {
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.operator-dialog-grid legend {
+  padding-inline: 5px;
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.operator-dialog-triple {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operator-dialog-readout {
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font: 12px var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.operator-dialog-status {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-line;
 }
 
 .operator-dialog input,
@@ -101,6 +173,7 @@
   border: 1px solid var(--primary);
   border-radius: var(--radius-control);
   font: 11px/1.5 var(--font-mono);
+  white-space: pre-line;
 }
 
 .operator-dialog-actions {
@@ -193,7 +266,8 @@
     border-radius: var(--radius-panel-lg);
   }
 
-  .scenario-catalog-groups {
+  .scenario-catalog-groups,
+  .operator-dialog-grid {
     grid-template-columns: 1fr;
   }
 
@@ -220,6 +294,7 @@
 @media (forced-colors: active) {
   .operator-dialog,
   .scenario-catalog-card,
+  .operator-dialog-readout,
   .operator-dialog input,
   .operator-dialog select,
   .operator-dialog textarea {

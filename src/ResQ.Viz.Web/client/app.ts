@@ -119,6 +119,7 @@ import type {
     MissionTransportView,
     ScenarioCatalogLauncher,
 } from './operator/MissionPanel';
+import type { SpawnAssetDialog } from './operator/SpawnAssetDialog';
 
 const log = getLogger('app');
 
@@ -187,6 +188,9 @@ const scenarioRuntime = new ScenarioRuntime({ onPresent: _presentAuthoritativeSc
 let consoleResources: ConsoleResources | null = null;
 let missionPanel: MissionPanel | null = null;
 let scenarioBrowser: ScenarioCatalogLauncher | null = null;
+let spawnDialog: SpawnAssetDialog | null = null;
+let _spawnDialogLoading: Promise<void> | null = null;
+let _spawnDialogGeneration = 0;
 let _missionUiLoading: Promise<void> | null = null;
 let _rawScenarioSession = { assetCount: 0, tick: 0 };
 let _resetRequestInFlight = false;
@@ -198,6 +202,9 @@ let _missionTransport: MissionTransportView = {
 
 function _invalidateOperatorModals(): void {
     scenarioBrowser?.invalidate();
+    _spawnDialogGeneration++;
+    _spawnDialogLoading = null;
+    spawnDialog?.invalidate();
 }
 
 const startupCoordinator = new StartupCoordinator({
@@ -496,7 +503,11 @@ async function _ensureMissionUi(): Promise<void> {
         missionPanel = panel;
         scenarioBrowser = browser;
         scenarioRuntime.subscribe(() => _renderMissionPanel());
-        resources.subscribe(() => _renderMissionPanel());
+        resources.subscribe(() => {
+            _renderMissionPanel();
+            // Profile availability owns whether Spawn is offered at all.
+            spawnDialog?.refresh();
+        });
         void resources.loadMissing();
     }).catch((error: unknown) => {
         if (operatorShell.mode !== 'v2') return;
@@ -548,6 +559,62 @@ function _retryMissionResources(source: 'reconnect' | 'visibility' = 'reconnect'
         ? consoleResources.onVisibilityReturn()
         : consoleResources.onReconnect());
 }
+
+/**
+ * Opens the multi-domain spawn form, importing it on first use.
+ *
+ * The form, its stylesheet and the typed spawn route are all behind this
+ * `import()`: a session that only watches a scenario run never fetches any of
+ * it. The legacy `Spawn Drone` control stays inside `ControlPanel` and is not
+ * reached from here — it posts to the v1 route and knows only about drones.
+ *
+ * Acceptance is not arrival. The dialog reports the created id and nothing
+ * writes it into the roster; the next v2 snapshot does that.
+ */
+async function _openSpawnAssetDialog(): Promise<void> {
+    if (operatorShell.mode !== 'v2') return;
+    if (spawnDialog) {
+        spawnDialog.open();
+        return;
+    }
+    if (_spawnDialogLoading) return _spawnDialogLoading;
+
+    const generation = ++_spawnDialogGeneration;
+    const loading = Promise.all([
+        import('./operator/SpawnAssetDialog'),
+        import('./operator/consoleApi'),
+    ]).then(([dialogModule, api]) => {
+        // A chunk can land after negotiation fell back or the shell was retired.
+        if (generation !== _spawnDialogGeneration || operatorShell.mode !== 'v2') return;
+        const dialog = new dialogModule.SpawnAssetDialog({
+            mount: operatorShell.mounts.modal,
+            trigger: document.getElementById('btn-spawn-asset') as HTMLButtonElement,
+            fallbackFocus: document.getElementById('fleet-heading')!,
+            // Discovery is the only source of spawnable classes; an absent
+            // resource leaves the trigger disabled rather than guessing a list.
+            profiles: () => consoleResources?.profiles ?? { status: 'idle' },
+            spawn: request => api.spawnAsset(request),
+            onRetryProfiles: () => {
+                if (consoleResources) void consoleResources.retry('profiles');
+                else void _ensureMissionUi();
+            },
+            onAccepted: assetId => log.info('asset spawn accepted', { assetId }),
+        });
+        spawnDialog = dialog;
+        dialog.open();
+    }).catch((error: unknown) => {
+        log.error('spawn asset dialog failed to load', error);
+    }).finally(() => {
+        if (_spawnDialogLoading === loading) _spawnDialogLoading = null;
+    });
+
+    _spawnDialogLoading = loading;
+    return loading;
+}
+
+document.getElementById('btn-spawn-asset')!.addEventListener('click', () => {
+    void _openSpawnAssetDialog();
+});
 
 async function _setMissionPaused(paused: boolean): Promise<void> {
     const result = await apiPost(paused ? '/api/sim/pause' : '/api/sim/resume');

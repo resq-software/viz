@@ -57,6 +57,10 @@ const catalogLauncherSrc = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../operator/ScenarioCatalogLauncher.ts'),
   'utf8',
 );
+const spawnDialogSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/SpawnAssetDialog.ts'),
+  'utf8',
+);
 
 /** Modules that must never be reachable from the entry chunk by a static edge.
  *  An `import type { … }` line is erased at build time and is fine; a value
@@ -78,6 +82,7 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './operator/ScenarioCatalogLoader', why: 'scenario modal orchestration' },
   { path: './operator/OperatorModalHost', why: 'shared lazy modal ownership' },
   { path: './operator/ScenarioCatalogLauncher', why: 'scenario import and retry ownership' },
+  { path: './operator/SpawnAssetDialog', why: 'spawn form and the shared dialog stylesheet' },
 ];
 
 describe('entry-chunk boundaries', () => {
@@ -102,6 +107,33 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/import\('\.\/operator\/consoleApi'\)/);
     expect(catalogLoaderSrc).toContain("from './ScenarioCatalog'");
     expect(catalogLoaderSrc).toContain("from './consoleApi'");
+  });
+
+  it('loads the spawn form only from the v2 trigger and lets it own its stylesheet', () => {
+    expect(appSrc).toMatch(/import\('\.\/operator\/SpawnAssetDialog'\)/);
+    // The dialog CSS rides the lazy chunk, never the entry stylesheet.
+    expect(spawnDialogSrc).toContain("import '../styles/operator-dialogs.css'");
+
+    const open = appSrc.slice(
+      appSrc.indexOf('async function _openSpawnAssetDialog'),
+      appSrc.indexOf('async function _setMissionPaused'),
+    );
+    expect(open).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
+    expect(open).toMatch(/consoleResources\?\.profiles \?\? \{ status: 'idle' \}/);
+    expect(open).toMatch(/spawn: request => api\.spawnAsset\(request\)/);
+    // Acceptance names an asset; only the stream puts one on the roster.
+    expect(open).not.toMatch(/fleetUi|_refreshFleetRoster|assets\.upsert/);
+
+    expect(appSrc).toMatch(
+      /getElementById\('btn-spawn-asset'\)!\.addEventListener\('click',[\s\S]*?_openSpawnAssetDialog\(\)/,
+    );
+    // A retired shell must not leave a modal over the branch that replaced it.
+    expect(appSrc).toMatch(
+      /function _invalidateOperatorModals\(\)[\s\S]*?spawnDialog\?\.invalidate\(\)/,
+    );
+
+    // Legacy Spawn Drone stays on the v1 route inside ControlPanel.
+    expect(appSrc).not.toContain("apiPost('/api/sim/drone'");
   });
 
   it('subscribes to the v2 snapshot message and keeps handling the v1 frame', () => {
