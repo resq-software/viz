@@ -454,12 +454,19 @@ describe('EditorWorkspace during replay', () => {
 describe('Editor workspace module boundaries', () => {
   const workspaceSrc = read('../editor/workspace.ts');
 
+  // Escapes every RegExp metacharacter, including the backslash itself. The
+  // narrower `/[./]/g` this replaced left `\` unescaped, so a specifier
+  // containing one would inject an escape sequence into the pattern instead of
+  // matching a literal character.
+  const escapeRegExp = (literal: string): string =>
+    literal.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
+
   it('keeps every authoring module and the authoring stylesheet out of its own chunk', () => {
     for (const specifier of [
       '../styles/editor.css', './dock', './outliner', './inspector', './gizmo', './sceneConfig',
     ]) {
       const staticImport = new RegExp(
-        `^import\\s+(?!type\\b)[^;]*'${specifier.replace(/[./]/g, '\\$&')}'`, 'm',
+        `^import\\s+(?!type\\b)[^;]*'${escapeRegExp(specifier)}'`, 'm',
       );
       expect(staticImport.test(workspaceSrc), specifier).toBe(false);
     }
