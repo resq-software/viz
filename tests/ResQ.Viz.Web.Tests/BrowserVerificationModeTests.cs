@@ -63,6 +63,59 @@ public class BrowserVerificationModeTests
     public void Disabled_Is_The_Default_Instance()
     {
         BrowserVerificationMode.Disabled.RejectV2Subscriptions.Should().BeFalse();
+        BrowserVerificationMode.Disabled.SuspendSceneRendering.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("Production", true, false)]
+    [InlineData("Development", true, false)]
+    [InlineData("Staging", true, false)]
+    [InlineData("browserverification-staging", true, false)]
+    [InlineData("BrowserVerification", false, false)]
+    [InlineData("BrowserVerification", true, true)]
+    public void SuspendSceneRendering_Requires_Both_Environment_And_Flag(
+        string environment, bool configured, bool expected)
+    {
+        // A server with this on serves a page that does not draw. That is a real reduction in what
+        // a browser suite covers, so it is gated exactly as the v2 refusal is: the dedicated
+        // environment AND its own setting, with neither sufficient alone.
+        BrowserVerificationMode
+            .Resolve(environment, configuredRejectV2: false, configuredSuspendSceneRendering: configured)
+            .SuspendSceneRendering.Should().Be(expected);
+    }
+
+    [Fact]
+    public void The_Two_Affordances_Are_Independent()
+    {
+        // The suite runs two servers that disagree about v2 and agree about rendering, so neither
+        // setting may imply the other. A single combined flag would have made the forced-legacy
+        // server the only one that stopped drawing — one slow spec among three fast ones, and the
+        // hardest kind of difference to notice.
+        var refusalOnly = BrowserVerificationMode.Resolve(
+            BrowserVerificationMode.EnvironmentName,
+            configuredRejectV2: true,
+            configuredSuspendSceneRendering: false);
+
+        refusalOnly.RejectV2Subscriptions.Should().BeTrue();
+        refusalOnly.SuspendSceneRendering.Should().BeFalse();
+
+        var suspensionOnly = BrowserVerificationMode.Resolve(
+            BrowserVerificationMode.EnvironmentName,
+            configuredRejectV2: false,
+            configuredSuspendSceneRendering: true);
+
+        suspensionOnly.RejectV2Subscriptions.Should().BeFalse();
+        suspensionOnly.SuspendSceneRendering.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Resolve_Defaults_Suspension_Off_For_Callers_That_Do_Not_Mention_It()
+    {
+        // Every pre-existing caller passes two arguments. None of them may acquire a page that
+        // stops drawing by having a parameter appear behind them.
+        BrowserVerificationMode
+            .Resolve(BrowserVerificationMode.EnvironmentName, configuredRejectV2: true)
+            .SuspendSceneRendering.Should().BeFalse();
     }
 
     [Fact]
@@ -82,6 +135,21 @@ public class BrowserVerificationModeTests
             new ConfigurationBuilder().Build());
 
         mode.RejectV2Subscriptions.Should().BeFalse();
+        mode.SuspendSceneRendering.Should().BeFalse();
+    }
+
+    [Fact]
+    public void FromHost_Reads_The_Suspension_Key_And_Only_In_The_Verification_Environment()
+    {
+        BrowserVerificationMode.FromHost(
+                HostEnvironment(Environments.Production),
+                Configuration((BrowserVerificationMode.SuspendSceneRenderingConfigurationKey, "true")))
+            .SuspendSceneRendering.Should().BeFalse();
+
+        BrowserVerificationMode.FromHost(
+                HostEnvironment(BrowserVerificationMode.EnvironmentName),
+                Configuration((BrowserVerificationMode.SuspendSceneRenderingConfigurationKey, "true")))
+            .SuspendSceneRendering.Should().BeTrue();
     }
 
     [Fact]

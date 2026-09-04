@@ -319,7 +319,42 @@ app.MapControllers();
 app.MapHub<ResQ.Viz.Web.Hubs.VizHub>("/viz");
 
 if (!app.Environment.IsDevelopment())
-    app.MapFallbackToFile("index.html");  // serves Vite-built wwwroot/index.html in production
+{
+    // The SPA fallback serves the Vite-built wwwroot/index.html. It is served byte for byte in
+    // every environment but one: a server running under BrowserVerification with
+    // BrowserVerification:SuspendSceneRendering set adds a single meta tag, which the client reads
+    // once at startup and answers by skipping the WebGL draw at the end of each animation frame.
+    //
+    // The branch is here, at the fallback, rather than inside a middleware that inspects every
+    // response, because that keeps the reach of the seam legible: exactly one route can serve
+    // marked HTML, and only when this process was started in an environment no deployment sets.
+    // SceneRenderingSuspension carries the measurement that motivated it and — the part worth
+    // reading — the list of what a suite running against such a server no longer covers.
+    var browserVerification =
+        app.Services.GetRequiredService<ResQ.Viz.Web.Services.BrowserVerificationMode>();
+
+    if (browserVerification.SuspendSceneRendering)
+    {
+        var webRoot = app.Environment.WebRootPath
+            ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+        var indexPath = Path.Combine(webRoot, "index.html");
+
+        // Read and marked once. Lazy caches the exception too, so a document this cannot mark
+        // answers 500 on every navigation with the same explanation rather than intermittently.
+        var markedIndex = new Lazy<string>(() =>
+            ResQ.Viz.Web.Services.SceneRenderingSuspension.Mark(File.ReadAllText(indexPath)));
+
+        app.MapFallback(async context =>
+        {
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.WriteAsync(markedIndex.Value);
+        });
+    }
+    else
+    {
+        app.MapFallbackToFile("index.html");
+    }
+}
 
 app.Run();
 

@@ -123,11 +123,13 @@ const MIB = 1024 * 1024;
 /**
  * Extra budget this spec needs beyond the suite's per-test default.
  *
- * Filling the ring is eighteen wall-clock seconds of 10 Hz broadcasts, and the
- * two forced collections either side of it walk a 150-asset scene — on the
- * GPU-less CI runner a single `page.evaluate` over this page measured 8.2 s.
- * Sixty seconds covers both with room, and is an addition rather than an
- * absolute so it stays correct on either hardware.
+ * Filling the ring is eighteen wall-clock seconds of 10 Hz broadcasts that no
+ * hardware compresses, and the two forced collections either side of it walk a
+ * 150-asset scene. Measured end to end on a Chromium forced onto SwiftShader —
+ * the CI runner's rasteriser — this spec costs 20 s in total, so sixty seconds
+ * of addition is ample. An addition rather than an absolute, so it stays correct
+ * on either hardware and cannot end up smaller than the budget it raises, which
+ * is the inversion described below.
  */
 const RING_FILL_ALLOWANCE_MS = 60_000;
 

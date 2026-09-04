@@ -188,23 +188,36 @@ jobs:
   # `client-budget` measured, so the bytes under test are the bytes the budget
   # passed rather than a second, separately-built copy of them.
   #
-  # THIS JOB WANTS A RUNNER WITH A WORKING GL DRIVER, AND DOES NOT HAVE ONE.
-  # Every Playwright wait polls inside the page on requestAnimationFrame, so the
-  # suite can never run faster than the console renders. Measured at 1440x900:
-  # ANGLE over a real GL driver renders 60 fps and waits return in tens of
-  # milliseconds; ANGLE/SwiftShader renders ~0.3 fps; Mesa llvmpipe produced no
-  # WebGL2 at all and the application never booted. `playwright.config.ts`
-  # therefore launches with `--use-gl=angle --use-angle=gl`.
+  # THIS JOB RUNS THE CONSOLE WITH ITS 3D SCENE NOT DRAWING, AND THAT IS A REAL
+  # REDUCTION IN WHAT IT COVERS. Both servers started by `playwright.config.ts`
+  # set `BrowserVerification:SuspendSceneRendering`, so the page builds the
+  # scene, the renderer and the canvas and then skips the draw at the end of each
+  # animation frame. Nothing here verifies a shader, a draw call, the
+  # post-processing chain, the onboard picture-in-picture, or any regression
+  # whose only symptom is a wrong pixel. What it does verify is what these four
+  # specs claim: reachability, layout and stacking, hit targets, focus
+  # containment, the legacy transport fallback, and DVR retention.
   #
-  # `ubuntu-latest` below has no GPU, so that flag degrades to SwiftShader and
-  # the ~0.3 fps number is the one in force. What that costs was measured for
-  # real in run 33851821089 and it is slowness, not breakage: every spec booted,
-  # connected, ran its scenario and rendered a correct populated console — the
-  # narrow spec's own snapshot shows the mission Running with eight roster rows.
-  # What failed was the clock, so the budgets in `playwright.config.ts` are
-  # sized from that run and widen on CI. Moving this job to a GPU-backed runner
-  # is the fix that addresses the cause and would make those budgets moot; a
-  # runner change is a gate change either way.
+  # Why. `ubuntu-latest` has no GPU, so Chromium rasterises in software, and a
+  # full-screen terrain-and-water scene drawn that way saturates the main thread.
+  # The application survived that — every spec in runs 33851821089 and
+  # 33862263781 booted, connected and rendered a correct populated console — but
+  # Playwright did not, because its DOM snapshotter runs inside the page and
+  # queues behind the draw. In run 33862263781 every before/after snapshot cost
+  # 11.2-12.2 s at 1440x900, flat against its own size (407 bytes: 12.18 s;
+  # 82,689 bytes: 12.10 s) and proportional to viewport pixels (3.6 s at
+  # 390x844). That put 34-51% of each spec's wall clock inside instrumentation,
+  # and it scaled with the number of calls a test reached — so each budget
+  # increase bought more calls at ~23 s apiece and failed later, twice.
+  #
+  # Suspending the draw was measured against a Chromium deliberately forced onto
+  # SwiftShader, which is this runner's rasteriser: with it, the four specs pass
+  # in 29.3 s; without it, the desktop spec fails on the clock exactly as it does
+  # here. The budgets in `playwright.config.ts` came down accordingly.
+  #
+  # Moving this job to a GPU-backed runner would let the setting be dropped and
+  # would restore the rendering coverage lost above; a runner change is a gate
+  # change either way.
   browser:
     needs: [gates, client-budget]
     runs-on: ubuntu-latest
@@ -284,11 +297,11 @@ jobs:
         # traces from run 33851821089 refute that: every request on that limiter
         # answered 200, and the busiest 60-second window held four of them.
         #
-        # The real reason is this runner's speed. A spec here costs minutes, not
-        # seconds, and the job's 30-minute ceiling has no room for a second
-        # attempt at all four — a retry would convert a clear failure into a
-        # cancelled job. Retries would also hide exactly the kind of slow, real
-        # regression this suite exists to catch.
+        # The real reason is that a retry hides exactly the kind of slow, real
+        # regression this suite exists to catch. That reason held when a spec
+        # here cost minutes and still holds now that it costs seconds: this suite
+        # waits on state rather than on time, so a spec that needs a second
+        # attempt is telling us something, and re-running it discards the report.
         run: npm run test:browser
 
       - name: Upload Playwright report
