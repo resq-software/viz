@@ -289,6 +289,28 @@ export async function waitForDvrFrames(page: Page, exactly: number): Promise<voi
 }
 
 /**
+ * Waits until the DVR ring holds at least this many frames.
+ *
+ * The "at least" form exists because the ring is only stable at its cap. Below
+ * it the count changes every 100 ms, and a wait for one exact value polling at
+ * the same rate can step straight over it; only 180 — where the ring stops
+ * growing — can be waited on exactly.
+ */
+export async function waitForDvrFramesAtLeast(page: Page, atLeast: number): Promise<void> {
+  await page.waitForFunction(
+    (want: number) => {
+      const count = Number.parseInt(
+        document.querySelector('.dvr-count')?.textContent ?? '',
+        10,
+      );
+      return Number.isFinite(count) && count >= want;
+    },
+    atLeast,
+    { polling: 100 },
+  );
+}
+
+/**
  * Leaves the live edge by scrubbing back `framesBack` frames.
  *
  * The DVR is the only writer of the console's interaction mode, so this is also
@@ -473,4 +495,95 @@ export async function tabThrough(page: Page, presses: number): Promise<readonly 
     }));
   }
   return stops;
+}
+
+/**
+ * Waits for the ring to shrink below `ceiling`, and reports where it landed.
+ *
+ * The DVR ring is emptied whenever the next tick belongs to a different world
+ * than the one behind it — a schema change, or a new scenario revision. Only a
+ * *drop* witnesses that: the count after a scenario start is small either
+ * because the ring was cleared or because it was small all along, and those two
+ * are the same number. So a caller reads the count first, starts the scenario,
+ * and waits here for the count to fall below what it saw.
+ *
+ * Returns the first count observed below the ceiling rather than re-reading
+ * afterwards, because recording continues and a second read would already have
+ * grown past the moment being witnessed.
+ */
+export async function waitForDvrRingBelow(page: Page, ceiling: number): Promise<number> {
+  const handle = await page.waitForFunction(
+    (want: number) => {
+      const count = Number.parseInt(
+        document.querySelector('.dvr-count')?.textContent ?? '',
+        10,
+      );
+      // Wrapped rather than returned bare: a cleared ring reads 0, and a bare 0
+      // is falsy, so the wait would sit through the exact event it is watching
+      // for.
+      return Number.isFinite(count) && count < want ? { count } : null;
+    },
+    ceiling,
+    { polling: 100 },
+  );
+  const observed = await handle.jsonValue();
+  if (observed === null) {
+    // Unreachable: `waitForFunction` resolves only on a truthy value, so the
+    // null branch of the predicate never lands here. Stated rather than cast
+    // away, because the cast that silences the compiler would also silence a
+    // genuine null.
+    throw new Error('The DVR ring wait resolved without reporting a count.');
+  }
+  return observed.count;
+}
+
+/** One `Runtime.getHeapUsage` reading, in bytes, for the page's whole isolate. */
+export interface HeapUsage {
+  readonly usedSize: number;
+  readonly totalSize: number;
+  readonly embedderHeapUsedSize: number;
+  readonly backingStorageSize: number;
+}
+
+/** A live CDP attachment that can force a collection and read what survived. */
+export interface HeapProbe {
+  /** Collects garbage, then reports what is still reachable. */
+  sample(): Promise<HeapUsage>;
+  /** Detaches the CDP session. Safe to call once, from a `finally`. */
+  detach(): Promise<void>;
+}
+
+/**
+ * Opens a CDP heap probe on the page.
+ *
+ * `performance.memory` is quantised and updated lazily, and `window.gc` needs a
+ * launch flag this suite does not set; CDP is the only way from a test to make
+ * V8 collect on demand and then report what genuinely survived. Chromium-only,
+ * which this suite already is.
+ *
+ * `sample()` collects twice. The first pass is what makes dropped snapshots
+ * unreachable; the second reclaims everything that only *became* unreachable
+ * during the first — objects held by weak references and by finalizers, of
+ * which a Three.js scene has many. Sampling after one pass reads a heap that is
+ * still holding a collection's worth of garbage, and that noise is the same
+ * order as the growth being measured.
+ *
+ * The caller owns the lifetime: open inside `try`, `detach()` in `finally`. A
+ * session left attached outlives the test and keeps the target alive.
+ */
+export async function openHeapProbe(page: Page): Promise<HeapProbe> {
+  const session = await page.context().newCDPSession(page);
+  let detached = false;
+  return {
+    async sample(): Promise<HeapUsage> {
+      await session.send('HeapProfiler.collectGarbage');
+      await session.send('HeapProfiler.collectGarbage');
+      return session.send('Runtime.getHeapUsage');
+    },
+    async detach(): Promise<void> {
+      if (detached) return;
+      detached = true;
+      await session.detach();
+    },
+  };
 }
