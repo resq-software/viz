@@ -67,6 +67,18 @@ builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
 
+// The forced-legacy browser-verification seam. Resolved HERE, once, from the host environment
+// rather than per request, because that is what makes it impossible to reach from a request: no
+// query string, header or cookie participates in the decision, and the hub is handed the answer.
+// OFF unless ASPNETCORE_ENVIRONMENT is exactly "BrowserVerification" AND
+// BrowserVerification:RejectV2Subscriptions is true — see BrowserVerificationMode for what the
+// two conditions do and, more usefully, what they do not do. Registered unconditionally, and
+// resolving to the disabled singleton in every other environment, so there is exactly one code
+// path into the hub and no environment-shaped branch in this file to get wrong.
+builder.Services.AddSingleton(
+    ResQ.Viz.Web.Services.BrowserVerificationMode.FromHost(
+        builder.Environment, builder.Configuration));
+
 // Control authority: which operator may command each asset, for how long, and what this process
 // is attached to. Resolved from configuration HERE, at registration time rather than on first
 // request, because the whole value of the mode guard is that a configuration this build has no
