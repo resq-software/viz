@@ -155,19 +155,32 @@ jobs:
           set -euo pipefail
           npm run --silent bundle:check | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Advisory audit (non-blocking)
-        # Surfaces high-severity npm advisories for visibility without
-        # blocking PRs. Socket Security (via security-scan.yml) is the
-        # enforcing gate for supply chain.
-        continue-on-error: true
-        run: npm audit --audit-level=high --legacy-peer-deps
-
+      # Uploaded BEFORE the advisory audit, deliberately: the `browser` job
+      # downloads this artifact, so producing it must not sit behind a step that
+      # is explicitly allowed to fail. It previously sat after the audit, and
+      # when a slow `npm audit` ran the job into its 10-minute ceiling the upload
+      # was skipped — taking `browser` (skipped, no artifact to download) and
+      # `required` down with it, after the budget check had already passed.
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: viz-wwwroot-${{ github.sha }}
           path: src/ResQ.Viz.Web/wwwroot/
           retention-days: 7
+
+      - name: Advisory audit (non-blocking)
+        # Surfaces high-severity npm advisories for visibility without
+        # blocking PRs. Socket Security (via security-scan.yml) is the
+        # enforcing gate for supply chain.
+        #
+        # `continue-on-error` only forgives a non-zero exit; it does nothing
+        # about wall clock. Without a bound of its own this step can still spend
+        # the job's whole remaining budget and have the runner cancel everything
+        # after it. Two minutes is ample for a registry that is answering, and
+        # irrelevant against the 10-minute job ceiling when it is not.
+        continue-on-error: true
+        timeout-minutes: 2
+        run: npm audit --audit-level=high --legacy-peer-deps
 
   # ── Operator console in a real browser (Playwright / Chromium) ──────
   # Serialized behind `gates` and `client-budget`: it runs the Debug host that
