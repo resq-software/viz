@@ -7,6 +7,12 @@
 #   gates          — org-wide reusable: dotnet build/test/format + security scan
 #   client         — org-wide reusable: node-ci (install + tsc + vite build)
 #   client-budget  — bundle-size enforcement + wwwroot artifact upload
+#   browser        — Playwright/Chromium against two real Kestrel servers
+#
+# `browser` needs `gates` and `client-budget` — and so, through
+# `client-budget`, `client` as well. It is serialized rather than run beside
+# them because it consumes the wwwroot artifact `client-budget` uploads, and
+# because it is the only job that needs a GPU-capable runner.
 #
 # The org's `node-ci.yml` gained `cache-dependency-path` support in
 # resq-software/.github#19, which unblocked viz's subdirectory lockfile
@@ -85,8 +91,11 @@ jobs:
   # (~15 s) and enforces the ceiling. Depends on `client` so a failing
   # tsc/build stops the pipeline before wasting a second build.
   #
-  # Bundle budgets in bytes. Current build is ~776 KB JS + 24 KB CSS;
-  # 800 KB / 50 KB gives measured headroom. Bumping is a policy decision.
+  # Bundle budgets in bytes, read and enforced by
+  # scripts/check-bundle-size.mjs, so `npm run bundle:check` reproduces this
+  # gate locally instead of it existing only inside a workflow file. The
+  # measured build is 576,486 B JS (70% of 800 KB) and 43,810 B CSS (82% of
+  # 52 KB). Bumping either is a policy decision.
   client-budget:
     needs: client
     runs-on: ubuntu-latest
@@ -136,27 +145,15 @@ jobs:
         run: npx vite build
 
       - name: Measure + enforce bundle-size budget
+        # The script's stdout is the Markdown report and its stderr carries the
+        # ::error::/::notice:: annotations, so the summary renders as a table
+        # rather than as workflow-command syntax. `--silent` suppresses npm's
+        # `> resq-viz-client@1.0.0 bundle:check` banner, which tee would
+        # otherwise paste into the summary as a stray blockquote. `pipefail`
+        # is what makes an over-budget exit code survive the pipe.
         run: |
           set -euo pipefail
-          js=$(stat -c%s wwwroot/assets/index-*.js)
-          css=$(stat -c%s wwwroot/assets/index-*.css)
-          {
-            echo "## Bundle size"
-            echo ""
-            echo "| Asset | Bytes | KB | Budget KB | Used |"
-            echo "|---|---:|---:|---:|---:|"
-            echo "| JS  | $js | $((js / 1024))  | $((BUNDLE_JS_BUDGET_BYTES / 1024))  | $((js  * 100 / BUNDLE_JS_BUDGET_BYTES))% |"
-            echo "| CSS | $css | $((css / 1024)) | $((BUNDLE_CSS_BUDGET_BYTES / 1024)) | $((css * 100 / BUNDLE_CSS_BUDGET_BYTES))% |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$js" -gt "$BUNDLE_JS_BUDGET_BYTES" ]; then
-            echo "::error::JS bundle $js bytes exceeds $BUNDLE_JS_BUDGET_BYTES budget"
-            exit 1
-          fi
-          if [ "$css" -gt "$BUNDLE_CSS_BUDGET_BYTES" ]; then
-            echo "::error::CSS bundle $css bytes exceeds $BUNDLE_CSS_BUDGET_BYTES budget"
-            exit 1
-          fi
-          echo "::notice::JS $(((js * 100) / BUNDLE_JS_BUDGET_BYTES))% of budget · CSS $(((css * 100) / BUNDLE_CSS_BUDGET_BYTES))% of budget"
+          npm run --silent bundle:check | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Advisory audit (non-blocking)
         # Surfaces high-severity npm advisories for visibility without
@@ -172,25 +169,134 @@ jobs:
           path: src/ResQ.Viz.Web/wwwroot/
           retention-days: 7
 
+  # ── Operator console in a real browser (Playwright / Chromium) ──────
+  # Serialized behind `gates` and `client-budget`: it runs the Debug host that
+  # `gates` proves compiles, and it downloads the exact wwwroot that
+  # `client-budget` measured, so the bytes under test are the bytes the budget
+  # passed rather than a second, separately-built copy of them.
+  #
+  # THIS JOB NEEDS A RUNNER WITH A WORKING GL DRIVER. Every Playwright wait
+  # polls inside the page on requestAnimationFrame, so the suite can never run
+  # faster than the console renders. Measured at 1440x900: ANGLE over a real GL
+  # driver renders 60 fps and waits return in tens of milliseconds;
+  # ANGLE/SwiftShader renders ~0.3 fps, at which `waitForSelector` and clicks
+  # time out; Mesa llvmpipe produced no WebGL2 at all and the application never
+  # booted. `playwright.config.ts` therefore launches with
+  # `--use-gl=angle --use-angle=gl`. On a GPU-less runner this job times out
+  # rather than quietly passing a weaker assertion — which is the honest
+  # failure, but it does mean a runner change is a gate change.
+  browser:
+    needs: [gates, client-budget]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: src/ResQ.Viz.Web
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # ResQ.Viz.Web references four projects under lib/dotnet-sdk; without
+          # the submodule there is nothing for the Debug build to compile
+          # against and every webServer start fails as "connection refused".
+          submodules: recursive
+          # Same reason as client-budget: the report upload below must not be
+          # able to pack a credentialed .git/config (zizmor: artipacked).
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/ResQ.Viz.Web/package-lock.json
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Download the measured client build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: viz-wwwroot-${{ github.sha }}
+          path: src/ResQ.Viz.Web/wwwroot/
+
+      - name: Build the host (Debug, no Vite)
+        # The csproj's ViteBuild target is conditioned on Release, so Debug
+        # compiles C# only and leaves the downloaded wwwroot untouched. The
+        # `--no-build` servers in playwright.config.ts need this to have run:
+        # letting `dotnet run` build instead would have the two servers racing
+        # each other for the same output directory.
+        run: dotnet build ResQ.Viz.Web.csproj -c Debug
+
+      - name: Export an HTTPS certificate for the test servers
+        # SessionController issues the `viz_session` cookie with Secure=true,
+        # so a plain-HTTP origin gets no room and every room-scoped route
+        # answers 401. Supplying the PFX through the environment takes
+        # run-browser-tests.sh's reuse path: it creates no temporary directory
+        # and its cleanup trap has nothing to remove.
+        run: |
+          set -euo pipefail
+          pfx="${RUNNER_TEMP}/resq-browser-verification.pfx"
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::${password}"
+          dotnet dev-certs https --export-path "$pfx" \
+            --password "$password" --format Pfx
+          echo "RESQ_BROWSER_PFX=${pfx}" >> "$GITHUB_ENV"
+          echo "RESQ_BROWSER_PFX_PASSWORD=${password}" >> "$GITHUB_ENV"
+
+      - name: Run the browser suite
+        # `retries: 0` in playwright.config.ts is deliberate and should stay
+        # that way. Room creation and scenario starts share one process-wide
+        # 10-per-minute `destructive` rate limiter; a full suite run already
+        # spends 7 of those on the normal server, so a single retry can push
+        # the next room past the limit and it comes up connected, empty and
+        # missionless — a failure that looks like a product bug.
+        run: npm run test:browser
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: viz-playwright-report-${{ github.sha }}
+          path: |
+            src/ResQ.Viz.Web/playwright-report/
+            src/ResQ.Viz.Web/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
     name: required
     runs-on: ubuntu-latest
-    needs: [gates, client, client-budget]
+    needs: [gates, client, client-budget, browser]
     permissions: {}    # pure aggregator: only reads needs.*.result env vars
     if: always()
     steps:
       - name: Assert all upstream jobs passed or were skipped
         env:
-          GATES:  ${{ needs.gates.result }}
-          CLIENT: ${{ needs.client.result }}
-          BUDGET: ${{ needs.client-budget.result }}
+          GATES:   ${{ needs.gates.result }}
+          CLIENT:  ${{ needs.client.result }}
+          BUDGET:  ${{ needs.client-budget.result }}
+          BROWSER: ${{ needs.browser.result }}
         run: |
           set -eu
           ok() { case "$1" in success|skipped|"") return 0;; *) return 1;; esac; }
           fail=0
-          ok "$GATES"  || { echo "::error::gates=$GATES";          fail=1; }
-          ok "$CLIENT" || { echo "::error::client=$CLIENT";        fail=1; }
-          ok "$BUDGET" || { echo "::error::client-budget=$BUDGET"; fail=1; }
+          ok "$GATES"   || { echo "::error::gates=$GATES";          fail=1; }
+          ok "$CLIENT"  || { echo "::error::client=$CLIENT";        fail=1; }
+          ok "$BUDGET"  || { echo "::error::client-budget=$BUDGET"; fail=1; }
+          ok "$BROWSER" || { echo "::error::browser=$BROWSER";      fail=1; }
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET"
+          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER"
