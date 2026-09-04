@@ -67,12 +67,69 @@ function serverEnvironment(
 
 const runServer = 'dotnet run --project ResQ.Viz.Web.csproj --configuration Debug --no-build';
 
+/**
+ * Whether this run is on the shared CI runner rather than a developer machine.
+ *
+ * This is the one distinction the budgets below turn on, and it is a hardware
+ * distinction, not a caution. The `browser` job runs on `ubuntu-latest`, which
+ * has no GPU: Chromium reports "No available adapters", ANGLE falls back to
+ * software rasterisation, and the whole console — server and client — runs
+ * between five and twenty times slower than it does locally.
+ */
+const onCi = Boolean(process.env['CI']);
+
+/**
+ * Per-test budget.
+ *
+ * 90 s is what this suite costs on a GPU-backed machine: the full four-spec run
+ * is 46 s there, and no single spec comes near the budget. The CI figure is not
+ * that number with slack added — it is measured, from the traces of run
+ * 33851821089, where the *same* application came up correct but slow:
+ *
+ *   * `page.goto` alone: 8.2 s, 8.4 s, 8.5 s, 11.6 s (locally, well under 1 s).
+ *   * Reaching a populated v2 console: 27.6 s on the narrow spec, and longer on
+ *     the desktop spec, whose SignalR WebSocket handshake 404'd after a 19.5 s
+ *     stall and cost a further ~40 s falling back to server-sent events.
+ *   * The DVR bar after that: another 17.6 s.
+ *
+ * So boot alone spent 53 s of the narrow spec's 90 s, and the spec then failed
+ * with 36 s left for forty-odd interactions that each cost seconds on a page
+ * rendering at a fraction of a frame per second. Nothing about it was wrong;
+ * it ran out of budget. 240 s is four times the observed boot cost, and four
+ * specs at that ceiling still fit inside the job's own 30-minute limit.
+ */
+export const PER_TEST_TIMEOUT_MS = onCi ? 240_000 : 90_000;
+
+/**
+ * Budget for a single `expect(locator)` assertion.
+ *
+ * Every such assertion polls actionability inside the page on
+ * `requestAnimationFrame`, so it can never resolve faster than the console
+ * paints. Two assertions in that run were the whole failure of their spec:
+ * `#legacy-console` visible took 20.3 s against this 15 s line — with 51 s of
+ * the test budget still unspent — and `#sidebar` visible took 17.4 s.
+ */
+export const EXPECT_TIMEOUT_MS = onCi ? 45_000 : 15_000;
+
+/**
+ * Ceiling on a wait for a console branch to finish booting.
+ *
+ * A ceiling, not the timeout actually used: `waitForOperatorConsole` and
+ * `waitForLegacyConsole` take the smaller of this and what is left of the
+ * per-test budget, so the wait always loses to the budget with room for its own
+ * diagnostic. Sized from the desktop spec's measured boot, which needed more
+ * than the 49.6 s it was given and had its scenario answered 200 OK twenty
+ * seconds after the wait had already given up.
+ */
+export const CONSOLE_BOOT_TIMEOUT_MS = onCi ? 150_000 : 45_000;
+
 export default defineConfig({
   testDir: './e2e',
   // A console frame arrives at 10 Hz and a populated scenario takes a while to
-  // settle; the per-test budget is raised once here rather than per await.
-  timeout: 90_000,
-  expect: { timeout: 15_000 },
+  // settle; the per-test budget is raised once here rather than per await, and
+  // both budgets are hardware-derived — see the constants above.
+  timeout: PER_TEST_TIMEOUT_MS,
+  expect: { timeout: EXPECT_TIMEOUT_MS },
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env['CI']),
@@ -109,9 +166,21 @@ export default defineConfig({
         // not move the SwiftShader number — the cost is the base terrain and
         // water scene, which no test-side switch can remove.
         //
-        // So this suite needs a machine with a working GL driver, and says so
-        // by asking for one. A runner without one falls back to SwiftShader and
-        // will time out rather than quietly pass a weaker assertion.
+        // So this suite wants a machine with a working GL driver, and says so
+        // by asking for one. A runner without one falls back to software
+        // rasterisation, which is what `ubuntu-latest` does today.
+        //
+        // What that fallback costs was measured for real in run 33851821089,
+        // and it is slowness rather than breakage: every spec's application
+        // booted, connected, ran its scenario and rendered a correct, populated
+        // console — the narrow spec's own page snapshot shows the mission
+        // Running, "8 assets total: 3 air, 3 ground, 2 surface", and eight
+        // roster rows. What failed was the clock, at four different places, so
+        // the budgets above are sized from that run rather than from this one.
+        // Moving this job onto a GPU-backed runner would make them all
+        // unnecessary, and remains the fix that addresses the cause; until then
+        // the honest thing is a budget that admits how slow the runner is,
+        // never a weaker assertion.
         launchOptions: {
           args: [
             '--use-gl=angle',

@@ -20,10 +20,165 @@
 //     lands in the same room the page is watching — and a second browser context
 //     is a genuinely different operator, which is what the forced-legacy case
 //     needs so its cookie cannot cross ports into the normal server's room.
+//
+//  3. **A wait must lose to the test budget, not race it.** A wait with a fixed
+//     timeout is only as good as the smallest budget any spec gives it, and when
+//     the budget is the smaller of the two it is the *test* that is torn down —
+//     taking the wait's own explanation with it. The waits below therefore
+//     derive their timeout from what is left of the running test's budget, and
+//     keep a reserve for the diagnostic that explains a failure. See
+//     {@link bootWaitTimeoutMs}.
 
-import type { BrowserContext, Locator, Page } from '@playwright/test';
+import { test as base, type BrowserContext, type Locator, type Page } from '@playwright/test';
+
+import { CONSOLE_BOOT_TIMEOUT_MS } from '../../playwright.config';
 
 export { FORCED_LEGACY_ORIGIN, NORMAL_ORIGIN } from '../../playwright.config';
+
+/**
+ * When the running test's budget started, so the waits below can tell how much
+ * of it is left.
+ *
+ * Playwright publishes a test's *total* budget (`testInfo.timeout`) but not how
+ * much of it has been spent, and the difference is exactly what a wait needs in
+ * order to stop before the budget does. An auto fixture is the earliest hook
+ * inside a test's own clock, so this reads a shade early — which is the
+ * conservative direction: it can only under-report the time remaining.
+ *
+ * Keyed by the `TestInfo` rather than held in a module variable so it stays
+ * correct if this suite ever runs more than one worker.
+ */
+const budgetStartedAt = new WeakMap<object, number>();
+
+/**
+ * The suite's `test`, extended with the budget clock the waits below read.
+ *
+ * Specs import `test` from here rather than from `@playwright/test` for that
+ * one reason. `expect` is unaffected and still comes from the package.
+ */
+export const test = base.extend<{ readonly consoleBudgetClock: void }>({
+  consoleBudgetClock: [
+    async ({}, use, testInfo): Promise<void> => {
+      budgetStartedAt.set(testInfo, Date.now());
+      await use();
+    },
+    { auto: true },
+  ],
+});
+
+/**
+ * Milliseconds of the running test's budget still unspent, or `Infinity` when
+ * the test declared no timeout at all.
+ */
+function remainingBudgetMs(): number {
+  const info = test.info();
+  if (info.timeout === 0) return Number.POSITIVE_INFINITY;
+  const startedAt = budgetStartedAt.get(info);
+  if (startedAt === undefined) return info.timeout;
+  return info.timeout - (Date.now() - startedAt);
+}
+
+/**
+ * What a boot wait keeps back so its own failure can be explained.
+ *
+ * Reading the console's state out of a page this starved is not free: the same
+ * diagnostic `page.evaluate` took 2.2 s and 8.2 s in the two CI traces that
+ * reached it. Twenty seconds covers that with room for the round trip and for
+ * the error to be assembled and thrown.
+ */
+const DIAGNOSTIC_RESERVE_MS = 20_000;
+
+/** Floor on a boot wait, so a caller that arrives late still gets a real look. */
+const MINIMUM_BOOT_WAIT_MS = 5_000;
+
+/**
+ * How long a wait for a console branch may run.
+ *
+ * The smaller of the configured ceiling and what is left of the test's budget
+ * after the diagnostic reserve. That subtraction is the whole point: it is what
+ * makes the wait — which knows what it was waiting for — the thing that fails,
+ * rather than the test timeout, which does not.
+ *
+ * Before this, `waitForOperatorConsole` used a flat 45 s justified against "the
+ * 90-second per-test budget". The DVR heap spec's budget is not 90 s, and on CI
+ * that spec died reporting `page.evaluate: Test timeout of 60000ms exceeded` —
+ * the diagnostic killed by the failure it existed to describe.
+ */
+function bootWaitTimeoutMs(): number {
+  const affordable = remainingBudgetMs() - DIAGNOSTIC_RESERVE_MS;
+  return Math.max(MINIMUM_BOOT_WAIT_MS, Math.min(CONSOLE_BOOT_TIMEOUT_MS, affordable));
+}
+
+/** Everything worth knowing about a console that has not reached its branch. */
+export interface ConsoleObservation {
+  readonly branch: 'v2' | 'legacy' | 'boot';
+  readonly bootTitle: string | null;
+  readonly bootDetail: string | null;
+  readonly connection: string | null;
+  readonly mission: string | null;
+  readonly assetCount: string | null;
+  readonly rosterRows: number;
+  readonly simulationTime: string | null;
+}
+
+/** Runs in the page. Closes over nothing, so it survives serialization. */
+const OBSERVE_CONSOLE = (): ConsoleObservation => {
+  const branch = document.getElementById('operator-v2-console')?.hidden === false
+    ? 'v2'
+    : document.getElementById('legacy-console')?.hidden === false ? 'legacy' : 'boot';
+  // The boot section keeps its markup copy after it is hidden, so reading it
+  // unconditionally reports "Establishing simulation link…" beside a console
+  // that connected long ago — a diagnostic that invents a transport failure.
+  // It is only evidence while boot is the branch on screen.
+  const booting = branch === 'boot';
+  return {
+    branch,
+    bootTitle: booting
+      ? document.getElementById('operator-boot-title')?.textContent ?? null
+      : null,
+    bootDetail: booting
+      ? document.getElementById('operator-boot-detail')?.textContent ?? null
+      : null,
+    connection: document.getElementById('conn-label')?.textContent ?? null,
+    mission: document.querySelector('.operator-mission-title')?.textContent ?? null,
+    assetCount: document.getElementById('asset-count')?.textContent ?? null,
+    rosterRows: document.querySelectorAll('.ar-row').length,
+    simulationTime: document.getElementById('sim-time')?.textContent ?? null,
+  };
+};
+
+/**
+ * Reads the console's state for a failure message, and never throws.
+ *
+ * A diagnostic that can fail is a diagnostic that replaces the error it was
+ * meant to annotate — which is precisely what happened on CI, where the caller
+ * saw `page.evaluate: Test timeout of 60000ms exceeded` and learned nothing
+ * about the console. So every way this can go wrong (a torn-down page, a budget
+ * that expired anyway, a main thread too blocked to answer) degrades to `null`,
+ * and the caller reports its own failure with the state marked unreadable.
+ */
+async function observeConsole(page: Page): Promise<ConsoleObservation | null> {
+  let expire: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      page.evaluate(OBSERVE_CONSOLE),
+      new Promise<null>((resolve) => {
+        expire = setTimeout(() => resolve(null), DIAGNOSTIC_RESERVE_MS);
+      }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    if (expire !== undefined) clearTimeout(expire);
+  }
+}
+
+/** The observation rendered for an error message, readable or not. */
+function describeObservation(observed: ConsoleObservation | null): string {
+  return observed === null
+    ? '<unreadable — the page did not answer within the diagnostic reserve>'
+    : JSON.stringify(observed);
+}
 
 /** Scene frame the console draws in: +X east, +Y up, +Z south. */
 const COORDINATE_FRAME_LOCAL_EUS = 2;
@@ -102,8 +257,15 @@ export async function legacySightings(page: Page): Promise<LegacySighting[]> {
  * the moment a stream is chosen, and the legacy branch is also "not booting".
  * This waits on the v2 branch specifically, and on at least one roster row,
  * because a branch with an empty roster is a console nobody can act through.
+ *
+ * The timeout comes from {@link bootWaitTimeoutMs}, not from a constant here:
+ * this wait is the first thing every spec does, its cost is dominated by the
+ * runner's hardware, and its callers do not all share one budget.
  */
 export async function waitForOperatorConsole(page: Page, minimumRows = 1): Promise<void> {
+  // Read once. Deriving it again for the message would report what was left of
+  // the budget *after* the wait, not what the wait was actually given.
+  const timeoutMs = bootWaitTimeoutMs();
   try {
     await page.waitForFunction(
       (rows: number) => {
@@ -112,48 +274,73 @@ export async function waitForOperatorConsole(page: Page, minimumRows = 1): Promi
         return document.querySelectorAll('.ar-row').length >= rows;
       },
       minimumRows,
-      // Deliberately shorter than the 90-second per-test budget. Letting the
-      // test timeout be what fires would tear the page down before the `catch`
-      // below could read anything off it, and the diagnostic would report
-      // "Target page, context or browser has been closed" instead of the state
-      // that explains the failure. A wait that outlives its own error message
-      // is not a diagnostic.
-      { polling: 100, timeout: 45_000 },
+      { polling: 100, timeout: timeoutMs },
     );
   } catch (cause) {
-    // The one failure this wait has that is not about the console at all, and
-    // it is worth naming rather than leaving as a 90-second mystery.
+    // What this failure has meant in practice, from the one CI run that
+    // produced it (33851821089), read out of the uploaded traces rather than
+    // reasoned about:
     //
-    // A fresh room bootstraps itself with `POST /api/sim/session` and then a
-    // default scenario start. Both routes sit on the server's `destructive`
-    // rate limiter: one fixed window per *process*, ten requests per minute,
-    // shared by every console connected to it and not partitioned by room or by
-    // caller (`Program.cs`, `AddFixedWindowLimiter("destructive")`). Two calls
-    // per fresh room means five rooms a minute; past that the session is still
-    // issued but the scenario start is refused with 429, and the console comes
-    // up connected, on the live edge, and empty. Measured directly: request ten
-    // succeeds, request eleven is 429.
+    //   * **Not the rate limiter.** An earlier version of this message blamed
+    //     the server's process-wide `destructive` fixed window — ten requests a
+    //     minute, two spent per fresh room — for a room that came up connected
+    //     and empty. The traces refute it: every request on that limiter in the
+    //     whole run answered 200, the busiest 60-second window held four of
+    //     them, and no 429 was issued to anything. The desktop spec's scenario
+    //     start succeeded — twenty seconds *after* this wait had given up.
+    //   * **A slow runner.** `ubuntu-latest` has no GPU. Boot took 27.6 s on
+    //     one spec and past 50 s on another, whose SignalR WebSocket handshake
+    //     404'd after a 19.5 s stall (the negotiated connection id had expired
+    //     while the main thread was blocked) and then spent ~40 s falling back
+    //     to server-sent events. A `simulationTime` well ahead of an
+    //     `assetCount` of 0 is that: the room's clock runs from session
+    //     creation, and the fleet simply has not been asked for yet.
     //
-    // A single suite run makes six such calls and is comfortably inside the
-    // budget. `--repeat-each`, a retry storm, or repeated local runs against a
-    // reused server are what exhaust it.
-    const observed = await page.evaluate(() => ({
-      branch: document.getElementById('operator-v2-console')?.hidden === false
-        ? 'v2'
-        : document.getElementById('legacy-console')?.hidden === false ? 'legacy' : 'boot',
-      connection: document.getElementById('conn-label')?.textContent ?? null,
-      mission: document.querySelector('.operator-mission-title')?.textContent ?? null,
-      assetCount: document.getElementById('asset-count')?.textContent ?? null,
-      rosterRows: document.querySelectorAll('.ar-row').length,
-      simulationTime: document.getElementById('sim-time')?.textContent ?? null,
-    }));
+    // So read the observation below before concluding anything. A connected
+    // room whose boot title still says it is negotiating is a transport that
+    // has not finished; a v2 branch with a mission and no rows is a roster that
+    // has not rendered; and neither is a rate limit.
+    const observed = await observeConsole(page);
     throw new Error(
-      `The v2 operator console never reached ${minimumRows} roster row(s). `
-      + `Observed: ${JSON.stringify(observed)}. `
-      + 'A connected, empty room with no mission means the room was created but its '
-      + 'scenario start was refused: the server\'s "destructive" limiter is one '
-      + 'process-wide fixed window of 10 requests per minute, and each fresh room '
-      + 'spends two of them. Give the window a minute, or run fewer rooms per minute. '
+      `The v2 operator console never reached ${minimumRows} roster row(s) within `
+      + `${timeoutMs}ms. Observed: ${describeObservation(observed)}. `
+      + `Underlying wait: ${String(cause)}`,
+    );
+  }
+}
+
+/**
+ * Waits until the legacy branch owns the rail.
+ *
+ * The forced-legacy case reaches this branch only after a real SignalR
+ * negotiation completes and its v2 opt-in is really refused, which makes "the
+ * legacy console is visible" a boot-scale event rather than an ordinary
+ * assertion. Asserting it directly gives it the `expect` budget instead: on CI
+ * that assertion needed 20.3 s against a 15 s line and failed its spec with 51
+ * seconds of the test budget still unspent, while the page was honestly still
+ * on "Establishing simulation link…".
+ *
+ * This adds no claim of its own — the spec still asserts everything it asserted
+ * before. It only stops the spec's first assertion from doubling as a wait for
+ * the transport.
+ */
+export async function waitForLegacyConsole(page: Page): Promise<void> {
+  const timeoutMs = bootWaitTimeoutMs();
+  try {
+    await page.waitForFunction(
+      () => document.getElementById('legacy-console')?.hidden === false,
+      undefined,
+      { polling: 100, timeout: timeoutMs },
+    );
+  } catch (cause) {
+    const observed = await observeConsole(page);
+    throw new Error(
+      `The legacy console branch was never shown within ${timeoutMs}ms. `
+      + `Observed: ${describeObservation(observed)}. `
+      + 'Reaching this branch needs the hub connection to come up and its v2 '
+      + 'subscription to be refused; a boot title still reading "Establishing '
+      + 'simulation link…" means the transport never finished, which is a slow '
+      + 'or broken negotiation rather than a missing fallback. '
       + `Underlying wait: ${String(cause)}`,
     );
   }
@@ -339,11 +526,14 @@ export async function goLive(page: Page): Promise<void> {
  * a spec can arrange a population without also exercising — and depending on —
  * the catalog UI.
  *
- * Counts against the same process-wide `destructive` budget described on
- * {@link waitForOperatorConsole}: ten per minute for the whole server, and a
- * fresh room has already spent two of them before this is called. A spec that
- * starts a scenario is therefore a third call, which is why repeating such a
- * spec several times a minute is what runs the budget out.
+ * Counts against the server's process-wide `destructive` fixed window: ten
+ * requests a minute for the whole server, not partitioned by room or caller
+ * (`Program.cs`, `AddFixedWindowLimiter("destructive")`). One full suite run is
+ * nowhere near it — the busiest 60-second window on CI held four such requests,
+ * and every one of them answered 200. `--repeat-each`, a retry storm, or many
+ * local runs against one reused server are what could reach the limit, and a
+ * refusal would surface here as a thrown 429 rather than as a silently empty
+ * room.
  */
 export async function startScenario(page: Page, name: string): Promise<void> {
   const origin = new URL(page.url()).origin;

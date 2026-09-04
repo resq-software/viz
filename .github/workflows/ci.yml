@@ -175,16 +175,23 @@ jobs:
   # `client-budget` measured, so the bytes under test are the bytes the budget
   # passed rather than a second, separately-built copy of them.
   #
-  # THIS JOB NEEDS A RUNNER WITH A WORKING GL DRIVER. Every Playwright wait
-  # polls inside the page on requestAnimationFrame, so the suite can never run
-  # faster than the console renders. Measured at 1440x900: ANGLE over a real GL
-  # driver renders 60 fps and waits return in tens of milliseconds;
-  # ANGLE/SwiftShader renders ~0.3 fps, at which `waitForSelector` and clicks
-  # time out; Mesa llvmpipe produced no WebGL2 at all and the application never
-  # booted. `playwright.config.ts` therefore launches with
-  # `--use-gl=angle --use-angle=gl`. On a GPU-less runner this job times out
-  # rather than quietly passing a weaker assertion — which is the honest
-  # failure, but it does mean a runner change is a gate change.
+  # THIS JOB WANTS A RUNNER WITH A WORKING GL DRIVER, AND DOES NOT HAVE ONE.
+  # Every Playwright wait polls inside the page on requestAnimationFrame, so the
+  # suite can never run faster than the console renders. Measured at 1440x900:
+  # ANGLE over a real GL driver renders 60 fps and waits return in tens of
+  # milliseconds; ANGLE/SwiftShader renders ~0.3 fps; Mesa llvmpipe produced no
+  # WebGL2 at all and the application never booted. `playwright.config.ts`
+  # therefore launches with `--use-gl=angle --use-angle=gl`.
+  #
+  # `ubuntu-latest` below has no GPU, so that flag degrades to SwiftShader and
+  # the ~0.3 fps number is the one in force. What that costs was measured for
+  # real in run 33851821089 and it is slowness, not breakage: every spec booted,
+  # connected, ran its scenario and rendered a correct populated console — the
+  # narrow spec's own snapshot shows the mission Running with eight roster rows.
+  # What failed was the clock, so the budgets in `playwright.config.ts` are
+  # sized from that run and widen on CI. Moving this job to a GPU-backed runner
+  # is the fix that addresses the cause and would make those budgets moot; a
+  # runner change is a gate change either way.
   browser:
     needs: [gates, client-budget]
     runs-on: ubuntu-latest
@@ -258,11 +265,17 @@ jobs:
 
       - name: Run the browser suite
         # `retries: 0` in playwright.config.ts is deliberate and should stay
-        # that way. Room creation and scenario starts share one process-wide
-        # 10-per-minute `destructive` rate limiter; a full suite run already
-        # spends 7 of those on the normal server, so a single retry can push
-        # the next room past the limit and it comes up connected, empty and
-        # missionless — a failure that looks like a product bug.
+        # that way, but not for the reason this comment used to give. It claimed
+        # a retry would exhaust the process-wide 10-per-minute `destructive`
+        # rate limiter and leave a room connected, empty and missionless. The
+        # traces from run 33851821089 refute that: every request on that limiter
+        # answered 200, and the busiest 60-second window held four of them.
+        #
+        # The real reason is this runner's speed. A spec here costs minutes, not
+        # seconds, and the job's 30-minute ceiling has no room for a second
+        # attempt at all four — a retry would convert a clear failure into a
+        # cancelled job. Retries would also hide exactly the kind of slow, real
+        # regression this suite exists to catch.
         run: npm run test:browser
 
       - name: Upload Playwright report

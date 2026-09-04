@@ -22,7 +22,7 @@
 // while the window stayed the same shape. Both are gates, not tuning knobs: the
 // fix for either failing is a compact playback frame, never a larger budget.
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
 import {
   contactRow,
@@ -34,6 +34,11 @@ import {
   openHeapProbe,
   reportTrack,
   startScenario,
+  // `test` comes from the support module, not from `@playwright/test`: it
+  // carries the auto fixture that records when the budget started, which is
+  // what lets `waitForOperatorConsole` stop — and explain itself — before the
+  // budget this spec sets below runs out.
+  test,
   waitForAssetRows,
   waitForDomainCounts,
   waitForDvr,
@@ -115,13 +120,35 @@ const RETAINED_BYTES_PER_FRAME_LIMIT = 384 * 1024;
 
 const MIB = 1024 * 1024;
 
+/**
+ * Extra budget this spec needs beyond the suite's per-test default.
+ *
+ * Filling the ring is eighteen wall-clock seconds of 10 Hz broadcasts, and the
+ * two forced collections either side of it walk a 150-asset scene — on the
+ * GPU-less CI runner a single `page.evaluate` over this page measured 8.2 s.
+ * Sixty seconds covers both with room, and is an addition rather than an
+ * absolute so it stays correct on either hardware.
+ */
+const RING_FILL_ALLOWANCE_MS = 60_000;
+
 test.describe('operator console — DVR retained heap', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test('stays inside budget with a full 150-asset ring', async ({ page }) => {
     // Filling the ring is 180 frames at 10 Hz — eighteen seconds that no amount
-    // of waiting-on-state can compress — on top of booting a 150-asset scene.
-    test.setTimeout(60_000);
+    // of waiting-on-state can compress — on top of booting a 150-asset scene
+    // and forcing two full collections over it. So this spec needs *more* than
+    // the suite's per-test budget, and the extension is written as one.
+    //
+    // It used to read `setTimeout(60_000)`, which is smaller than the suite
+    // default it was meant to raise. That inversion is what turned a slow CI
+    // boot into an unreadable failure: the 45-second console wait plus its
+    // diagnostic could not fit inside 60 seconds, so the test timeout fired
+    // first and the run reported `page.evaluate: Test timeout of 60000ms
+    // exceeded` instead of anything about the console. The waits now size
+    // themselves against whatever budget is in force, and the budget is no
+    // longer smaller than the work.
+    test.setTimeout(test.info().timeout + RING_FILL_ALLOWANCE_MS);
 
     await page.goto(NORMAL_ORIGIN);
     await waitForOperatorConsole(page);

@@ -19,7 +19,7 @@
 // each case a fresh room: the room is bound to a `Secure` `viz_session` cookie,
 // and a new context starts with no cookies.
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
 import {
   assetRow,
@@ -34,7 +34,12 @@ import {
   NORMAL_ORIGIN,
   reportTrack,
   tabThrough,
+  // `test` comes from the support module, not from `@playwright/test`: it
+  // carries the auto fixture that records when the budget started, which is
+  // what lets the boot waits stop before the test timeout does.
+  test,
   waitForDvr,
+  waitForLegacyConsole,
   waitForOperatorConsole,
   waitForSimulationAdvance,
   watchLegacyBranch,
@@ -310,6 +315,13 @@ test.describe('operator console — forced legacy', () => {
     // ignores the port, and both servers are 127.0.0.1.
     await watchLegacyBranch(context);
     await page.goto(FORCED_LEGACY_ORIGIN);
+
+    // Reaching this branch takes a full SignalR negotiation whose v2 opt-in is
+    // then refused — a boot-scale event, and the only one in this spec. Waiting
+    // on it explicitly keeps the assertions below on the `expect` budget they
+    // are actually sized for, instead of making the first of them carry the
+    // transport as well. Nothing here is asserted; the assertion follows.
+    await waitForLegacyConsole(page);
 
     const legacy = page.locator('#legacy-console');
     await expect(legacy).toBeVisible();
