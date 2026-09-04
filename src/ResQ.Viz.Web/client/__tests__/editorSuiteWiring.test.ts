@@ -73,6 +73,52 @@ describe('deferred editor suite wiring', () => {
         ).toBe(false);
     });
 
+    it('records the schema that is actually driving the scene', () => {
+        // A v2 session that kept recording v1 frames would replay an air-only
+        // fleet: every ground asset, surface asset and observed contact would
+        // vanish on scrub, and the timeline would present that as the run.
+        const frameHandler = appSrc.slice(
+            appSrc.indexOf("c.on('ReceiveFrame'"),
+            appSrc.indexOf("c.on('ReceiveSnapshotV2'"),
+        );
+        expect(frameHandler).toContain("dvr?.record({ kind: 'v1', frame })");
+        expect(frameHandler.indexOf('if (_v2Active) return;'))
+            .toBeLessThan(frameHandler.indexOf('dvr?.record('));
+
+        const ingest = appSrc.slice(
+            appSrc.indexOf('function _ingestSnapshot'),
+            appSrc.indexOf('function _resumeHeldSnapshot'),
+        );
+        expect(ingest).toContain("dvr?.record({ kind: 'v2', snapshot: projected })");
+        // Only a reconstructed, projected frame is something a playhead can land
+        // on, and it must be captured before the replay bail-out returns.
+        expect(ingest.indexOf('projectSnapshot')).toBeLessThan(ingest.indexOf('dvr?.record('));
+        expect(ingest.indexOf('dvr?.record('))
+            .toBeLessThan(ingest.indexOf('if (dvr && !dvr.isLive) return;'));
+    });
+
+    it('hands the DVR the live edge rather than the frozen ring on Go Live', () => {
+        const init = initBody();
+        expect(init).toMatch(/getLatestLiveFrame:\s*\(\)\s*=>\s*_latestLiveRecord\(\)/);
+        expect(init).toMatch(/onRefreshLiveResources:[\s\S]*?controlAuthority\?\.refresh\(\)/);
+        // Recording freezes during replay, so the app's own newest held state is
+        // the only live edge there is.
+        const provider = appSrc.slice(
+            appSrc.indexOf('function _latestLiveRecord'),
+            appSrc.indexOf('function _renderV1ReplayFrame'),
+        );
+        expect(provider).toMatch(/_v2Active[\s\S]*?kind: 'v2', snapshot: _lastSnapshot/);
+        expect(provider).toMatch(/kind: 'v1', frame: _lastFrame/);
+        expect(provider).not.toContain('recorder');
+    });
+
+    it('lets the recorder own its retention rather than fixing a v1 window', () => {
+        // The window is per-schema — 3,000 v1 frames or 180 v2 snapshots — and a
+        // caller-supplied 3,000 would apply the legacy window to snapshots that
+        // are three orders of magnitude larger.
+        expect(initBody()).toMatch(/recorder = new m_rec\.FrameRecorder\(\)/);
+    });
+
     it('keeps the suite out of the entry chunk', () => {
         // A static `import { Dvr } from './editor/dvr'` would pull the suite back
         // into the entry chunk and blow the client-budget gate. Type-only imports

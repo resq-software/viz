@@ -26,7 +26,8 @@ describe('DVR global keyboard ownership', () => {
     const pause = vi.fn();
     const step = vi.fn();
     new Dvr({
-      recorder: new FrameRecorder(4),
+      recorder: new FrameRecorder(),
+      getLatestLiveFrame: () => null,
       onApply: vi.fn(),
       onServerPause: pause,
       onServerStep: step,

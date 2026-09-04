@@ -17,7 +17,8 @@ describe('camera and transport keyboard ownership', () => {
     const controller = new UnityCamera(camera, canvas);
     const pause = vi.fn();
     new Dvr({
-      recorder: new FrameRecorder(4),
+      recorder: new FrameRecorder(),
+      getLatestLiveFrame: () => null,
       onApply: vi.fn(),
       onServerPause: pause,
       onServerStep: vi.fn(),

@@ -77,7 +77,7 @@ import type { EditorDock } from './editor/dock';
 import type { TransformGizmo } from './editor/gizmo';
 import type { FpvOsd } from './sensors/fpvOsd';
 import type { CameraModeControl } from './cameraMode';
-import type { FrameRecorder } from './editor/recorder';
+import type { FrameRecorder, RecordedFrame } from './editor/recorder';
 import type { Dvr } from './editor/dvr';
 // ── Multi-domain asset layer ─────────────────────────────────────────────────
 // `sceneFrame`, `domainRegistration` and `chaseCamera` are small and are needed
@@ -463,16 +463,18 @@ async function _initEditorSuite(): Promise<void> {
     // Keep chase/FPV locked to the newly-selected drone (and drop to FREE if cleared).
     const cam = cameraMode;
     selection.subscribe(() => { if (cam.mode !== 'free') cam.reapply(); });
-    // DVR — rolling recorder + scrub timeline over the frame stream. Live frames
-    // always record; scrubbing replays buffered frames via _renderFrame, and live
-    // application is gated on `dvr.isLive` in the ReceiveFrame handler.
-    // 3000 frames ≈ 5 min at 10 Hz (was 60 s, which read as "stuck at 0:59").
-    recorder = new m_rec.FrameRecorder(3000);
+    // DVR — rolling recorder + scrub timeline over the frame stream. Live ticks
+    // always record; scrubbing replays them via `_renderRecordedFrame`, and live
+    // application is gated on `dvr.isLive` in the two stream handlers.
+    // The recorder owns its own retention: 3,000 v1 frames (≈ 5 min at 10 Hz) or
+    // 180 projected v2 snapshots (≈ 18 s), whichever schema is driving.
+    recorder = new m_rec.FrameRecorder();
     // Unified bottom bar: at the live edge the controls drive the server sim; scrub
-    // back and the same controls play back the buffer (snap-applied via _renderFrame).
+    // back and the same controls play back the buffer (snap-applied per schema).
     dvr = new m_dvr.Dvr({
         recorder,
-        onApply: (frame) => _renderV1ReplayFrame(frame),
+        onApply: recorded => _renderRecordedFrame(recorded),
+        getLatestLiveFrame: () => _latestLiveRecord(),
         onServerPause: (paused) => { operatorActions.setPaused(paused); },
         onServerStep: () => { operatorActions.step(); },
         onServerSpeed: (factor) => { operatorActions.setSpeed(factor); },
@@ -485,11 +487,11 @@ async function _initEditorSuite(): Promise<void> {
             if (!live) { interactionMode.enterReplay(); return; }
             interactionMode.goLive();
             _resumeHeldSnapshot();
-            // A scrub can last minutes, and a lease outlives nothing. The
-            // authority picture is re-read before the operator can act on the
-            // live picture that has just come back.
-            controlAuthority?.refresh();
         },
+        // A scrub can last minutes, and a lease outlives nothing. The authority
+        // picture is re-read here — after the live edge is back on screen — so
+        // the operator never acts on a lease read for a recording.
+        onRefreshLiveResources: () => { controlAuthority?.refresh(); },
     });
     // Declarative scene config — export/import the terrain + scenario setup as a
     // shareable JSON descriptor (AirSim settings.json analog). V2 reads only the
@@ -2500,6 +2502,36 @@ function _renderFrame(frame: VizFrame, snap = false): void {
     _updateA11yTelemetry(drones, frame.time ?? 0);
 }
 
+/**
+ * Apply one recorded tick through the render path its schema was captured on.
+ *
+ * The tag is the whole point: a v2 recording carries the projected snapshot, so
+ * scrubbing keeps every ground asset, surface asset and observed contact on
+ * screen. Both arms are pure rendering with `snap` — no scenario presentation,
+ * no environment application, no intro. Those run only when a LIVE frame
+ * advances the authoritative revision, or a recording would restage a scenario
+ * every time the playhead crossed its first frame.
+ */
+function _renderRecordedFrame(recorded: RecordedFrame): void {
+    if (recorded.kind === 'v2') { _renderSnapshot(recorded.snapshot, true); return; }
+    _renderV1ReplayFrame(recorded.frame);
+}
+
+/**
+ * The newest tick this client is HOLDING, which the frozen ring is not.
+ *
+ * Recording stops the moment replay starts, so the ring's last slot ages with
+ * the scrub while `_lastSnapshot` and `_lastFrame` keep advancing underneath it.
+ * The DVR reads this on Go Live so the live edge — not the end of the clip — is
+ * what comes back on screen.
+ */
+function _latestLiveRecord(): RecordedFrame | null {
+    if (_v2Active) {
+        return _lastSnapshot === null ? null : { kind: 'v2', snapshot: _lastSnapshot };
+    }
+    return _lastFrame === null ? null : { kind: 'v1', frame: _lastFrame };
+}
+
 /** Retires v2 roster truth while the current DVR still applies a legacy frame. */
 function _renderV1ReplayFrame(frame: VizFrame): void {
     _displayedSnapshot = null;
@@ -2896,12 +2928,14 @@ function _wireConnection(c: HubConnection): void {
         const drones = frame.drones ?? [];
         startupCoordinator.onV1Frame(drones.length);
         loadingOverlay.onFrame();
-        dvr?.record(frame);
         // Both streams describe the same tick. Once v2 is driving, the v1 frame
-        // is recorded for the DVR and nothing else — applying both would
-        // reconcile every air asset twice per tick against two projections, and
-        // the v1 one carries no rovers to reconcile the rest against.
+        // is dropped entirely — applying both would reconcile every air asset
+        // twice per tick against two projections, and RECORDING it would give
+        // the DVR a rolling window of air-only frames for a mixed-domain run,
+        // which replays as a fleet that loses every rover and vessel on scrub.
+        // `_ingestSnapshot` records the projected snapshot instead.
         if (_v2Active) return;
+        dvr?.record({ kind: 'v1', frame });
         // While scrubbing/replaying, buffered frames drive the scene; live
         // frames keep recording (above) but must not overwrite the view.
         if (dvr && !dvr.isLive) return;   // no DVR yet ⇒ always live
@@ -3038,10 +3072,10 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
         });
     }
 
-    // The DVR buffers v1 frames only, so a scrub replays the air assets and
-    // nothing else. Live snapshots are still projected while scrubbing —
-    // cheap, and it keeps the descriptor cache current so going live does
-    // not arrive on a frame whose descriptors were pruned in the meantime.
+    // Live snapshots are still projected while scrubbing — cheap, and it keeps
+    // the descriptor cache current so going live does not arrive on a frame
+    // whose descriptors were pruned in the meantime. It is also what makes the
+    // held live edge below a complete picture rather than a stale one.
     // The wall clock is the projection's documented last resort and reaches
     // an age only when no frame this session has carried a dateable report —
     // in which case nothing is dateable against it either.
@@ -3065,6 +3099,12 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
         };
     }
     scenarioRuntime.apply(projected.scenario, snapshot.assets.length, streamMode);
+    // Recorded AFTER reconstruction: a delta is a patch, and only the merged
+    // projection is a frame a playhead can land on. Recorded after the runtime
+    // too, so a scenario that has just been presented has already cleared the
+    // ring and this is the first frame of the new run rather than the last of
+    // the old one. `Dvr.record` is a no-op away from the live edge.
+    dvr?.record({ kind: 'v2', snapshot: projected });
     if (dvr && !dvr.isLive) return;
 
     _applyLiveSnapshot(projected);

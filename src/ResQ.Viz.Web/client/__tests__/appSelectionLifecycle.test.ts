@@ -148,7 +148,14 @@ describe('the fleet render has one selected-asset exemption and complete contact
         const load = bodyOf('_ensureFleetUi');
         expect(load).toMatch(/dvr && !dvr\.isLive[\s\S]*?_refreshFleetRoster\(\)/);
         expect(load).toMatch(/_renderSnapshot\(_displayedSnapshot, true\)/);
-        expect(appSrc).toMatch(/onApply:\s*\(frame\)\s*=>\s*_renderV1ReplayFrame\(frame\)/);
+        // The DVR now applies a MODE-TAGGED record, so the dispatch — not the
+        // v1 renderer — is what onApply names. Each arm must still be reachable:
+        // a v2 record narrowed to the v1 path would drop every rover, vessel and
+        // contact from a scrub while looking like a working replay.
+        expect(appSrc).toMatch(/onApply:\s*recorded\s*=>\s*_renderRecordedFrame\(recorded\)/);
+        const dispatch = bodyOf('_renderRecordedFrame');
+        expect(dispatch).toMatch(/recorded\.kind === 'v2'[\s\S]*?_renderSnapshot\(recorded\.snapshot, true\)/);
+        expect(dispatch).toMatch(/_renderV1ReplayFrame\(recorded\.frame\)/);
         const replay = bodyOf('_renderV1ReplayFrame');
         expect(replay.indexOf('_displayedSnapshot = null'))
             .toBeLessThan(replay.indexOf('_renderFrame(frame, true)'));
