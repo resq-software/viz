@@ -294,6 +294,22 @@ describe('EditorWorkspace at desktop width', () => {
     expect(h.mount.querySelector('.ri-move')?.getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('is dismissable from its own header, not only from the top bar', async () => {
+    // The workspace covers the console at medium width. A surface that can only
+    // be left through the control that opened it is a surface an operator can
+    // be stuck inside once focus is anywhere else.
+    const h = (active = harness());
+    await h.clickToggle();
+    expect(h.shell.editorOpen).toBe(true);
+
+    (h.mount.querySelector('.resq-editor-close') as HTMLButtonElement).click();
+    await h.settle();
+
+    expect(h.shell.editorOpen).toBe(false);
+    expect((h.mount.querySelector('.resq-editor') as HTMLElement).hidden).toBe(true);
+    expect(document.activeElement).toBe(h.toggle);
+  });
+
   it('closes back to the toggle and keeps page-session panel state', async () => {
     const h = (active = harness());
     h.selection.set('drone', 'd1');

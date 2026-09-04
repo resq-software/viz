@@ -67,6 +67,11 @@ export class ControlLeasePanel {
   };
   private _busy = false;
   private _confirming = false;
+  /** The last outcome this panel reported, or '' for none. Held separately from
+   *  the blocked reason so `_render` can decide between them every time rather
+   *  than leaving whichever was written last on screen. */
+  private _message = '';
+  private _isError = false;
 
   constructor(options: LeasePanelOptions) {
     const card = panelCard(
@@ -145,7 +150,8 @@ export class ControlLeasePanel {
       // asset's authority to another's name.
       this._confirming = false;
       setText(this._grant, '—');
-      this._showStatus(null);
+      this._message = '';
+      this._isError = false;
     }
     this._state = state;
     this._render();
@@ -161,7 +167,9 @@ export class ControlLeasePanel {
 
   /** Reports the outcome of the last lease operation, or clears it. */
   setStatus(message: string | null, isError = false): void {
-    this._showStatus(message, isError);
+    this._message = message ?? '';
+    this._isError = isError;
+    this._render();
   }
 
   /** States what policy actually granted, never what was requested: a console
@@ -170,13 +178,6 @@ export class ControlLeasePanel {
     setText(this._grant, clamped
       ? `${grantedSeconds}s granted (${requestedSeconds}s requested — clamped by policy)`
       : `${grantedSeconds}s granted`);
-  }
-
-  private _showStatus(message: string | null, isError = false): void {
-    setHidden(this._status, message === null);
-    setText(this._status, message ?? '');
-    this._status.setAttribute('role', isError ? 'alert' : 'status');
-    this._status.classList.toggle('is-error', isError);
   }
 
   private _render(): void {
@@ -199,9 +200,17 @@ export class ControlLeasePanel {
     setDisabled(this._preemptConfirm, !live || !heldByOther || !justified);
     this._justification.disabled = !this._state.mutationsEnabled;
 
-    if (this._state.blockedReason !== null && !this._busy) {
-      this._showStatus(this._state.blockedReason);
-    }
+    // Derived on every render, never written once and left: a reason that
+    // outlives the refusal it explains sits beside a control the operator can
+    // now use and tells them they cannot.
+    const message = this._message !== ''
+      ? this._message
+      : this._busy ? '' : this._state.blockedReason ?? '';
+    setHidden(this._status, message === '');
+    setText(this._status, message);
+    const isError = this._isError && this._message !== '';
+    this._status.setAttribute('role', isError ? 'alert' : 'status');
+    this._status.classList.toggle('is-error', isError);
   }
 
   private _describeAuthority(): string {

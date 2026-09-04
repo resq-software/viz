@@ -90,9 +90,11 @@ export interface EditorAuthoringSurfaces {
  *
  *  * **Nothing it moves becomes unreachable.** Every surface is a descendant of
  *    the shell's editor layer, so the layer's own `hidden`/`inert` is the only
- *    thing that can withhold it, and the labelled top-bar toggle is the only
- *    thing that sets that. Below {@link EDITOR_MIN_WIDTH} the toggle reports
- *    unavailable instead of opening content the layout cannot show.
+ *    thing that can withhold it, and it is withheld only by controls that say so
+ *    — the labelled top-bar toggle and this workspace's own Close button — or by
+ *    the two automatic writers named below. Below {@link EDITOR_MIN_WIDTH} the
+ *    toggle reports unavailable instead of opening content the layout cannot
+ *    show.
  *  * **Leaving it leaves nothing behind.** The medium-width branch closes and
  *    inerts the rail and the context layer on the way in; the prior rail state
  *    is restored on *every* exit, including the ones nobody clicked — cinematic
@@ -164,7 +166,7 @@ export class EditorWorkspace {
 
     /** Re-reads the shell and the viewport and applies both. */
     sync(): void {
-        const open = this._ports.isOpen();
+        const open = this.isOpen;
         if (open) this._ensureChrome();
         this._applyLayout(open);
         this._applyRailLock(open && this.layout === 'fullscreen');
@@ -184,7 +186,7 @@ export class EditorWorkspace {
     /** Re-attempts an authoring load that failed. */
     retry(): void {
         this._loading = null;
-        if (this._ports.isOpen()) void this._ensureAuthoring();
+        if (this.isOpen) void this._ensureAuthoring();
     }
 
     /** Drops the listeners this owns. Surfaces are page-session and stay put. */
@@ -269,7 +271,7 @@ export class EditorWorkspace {
         close.type = 'button';
         close.className = 'resq-editor-close';
         close.textContent = 'Close editor';
-        close.addEventListener('click', () => this._ports.setOpen(false));
+        close.addEventListener('click', () => this.close());
         head.append(title, close);
 
         const body = doc.createElement('div');

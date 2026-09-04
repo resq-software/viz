@@ -1941,8 +1941,18 @@ function _ensureAdvancedSafety(): void {
         .then(([m, api]) => {
             _advancedSafetyLoading = false;
             // A store replaced while the chunk was in flight would leave these
-            // panels reading an authority nothing else consults.
-            if (advancedSafety !== null || controlAuthority !== authority) return;
+            // panels reading an authority nothing else consults. Declining still
+            // has to leave the disclosure somewhere an operator can act from: a
+            // surface abandoned on "Loading…" is one nothing can bring back.
+            if (advancedSafety !== null) return;
+            if (controlAuthority !== authority) {
+                _setAdvancedStatus(
+                    'Advanced / Safety was not mounted because control authority was replaced '
+                    + 'while it loaded.',
+                    true,
+                );
+                return;
+            }
             advancedSafety = m.mountAdvancedSafety({
                 mount: operatorShell.mounts.advancedSafety,
                 authority,
@@ -3403,6 +3413,7 @@ window.addEventListener('beforeunload', () => {
     _authoritySelection?.();
     advancedSafety?.dispose();
     controlAuthority?.dispose();
+    editorWorkspace?.dispose();
 });
 
 let _starting = false;

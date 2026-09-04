@@ -726,4 +726,31 @@ describe('replay', () => {
     expect(h.mount.querySelector('[data-panel="link"]')?.textContent)
       .toContain('interaction.replay');
   });
+
+  it('takes every replay reason back down on Live, on all three gated panels', async () => {
+    const h = harness();
+    await settle();
+    h.select('uav-1');
+    await settle();
+
+    h.interaction.enterReplay();
+    for (const name of ['lease', 'link', 'track']) {
+      const status = h.mount
+        .querySelector<HTMLElement>(`[data-panel="${name}"] .advanced-status`)!;
+      expect(status.hidden, name).toBe(false);
+      expect(status.textContent, name).toContain('Return to Live');
+    }
+
+    h.interaction.goLive();
+    await settle();
+
+    // A reason that outlives the refusal it explains sits beside a control the
+    // operator can now use, and says they cannot. Every panel takes it back.
+    for (const name of ['lease', 'link', 'track']) {
+      const status = h.mount
+        .querySelector<HTMLElement>(`[data-panel="${name}"] .advanced-status`)!;
+      expect(status.textContent, name).toBe('');
+      expect(status.hidden, name).toBe(true);
+    }
+  });
 });

@@ -171,4 +171,11 @@ describe('deferred editor suite wiring', () => {
         expect(init).not.toContain('new m_gizmo.TransformGizmo');
         expect(init).not.toContain('new m_cfg.SceneConfigPanel');
     });
+
+    it('tears the workspace down with everything else the session subscribed', () => {
+        // The workspace holds a window resize listener and a MutationObserver on
+        // the editor layer. Every other long-lived subscriber in this block is
+        // dropped here; one that is not is a listener nobody can reach to stop.
+        expect(appSrc).toMatch(/beforeunload[\s\S]*?editorWorkspace\?\.dispose\(\)/);
+    });
 });
