@@ -142,19 +142,25 @@ describe('rendered shell contracts', () => {
 
   it('preserves safe-area block padding after every matching responsive override', () => {
     const main = read('../styles/main.css');
-    const editor = read('../styles/editor.css');
+    // The timeline bar is an always-on operator overlay, not an authoring
+    // surface: it moved out of the Editor's stylesheet when the Editor
+    // became a lazily-loaded workspace, so its rules are read from there.
+    const overlays = read('../styles/operator-overlays.css');
 
     for (const width of [390, 700, 900]) {
       expect(effectivePadding(main, '#hud-top', 'top', width), `HUD at ${width}px`)
         .toBe('env(safe-area-inset-top)');
-      expect(effectivePadding(editor, '.resq-dvr', 'bottom', width), `DVR at ${width}px`)
+      expect(effectivePadding(overlays, '.resq-dvr', 'bottom', width), `DVR at ${width}px`)
         .toBe('env(safe-area-inset-bottom)');
     }
   });
 
   it('keeps every remaining managed sheet inside the final safe-area cascade', () => {
     const main = read('../styles/main.css');
-    const editor = read('../styles/editor.css');
+    // The timeline bar is an always-on operator overlay, not an authoring
+    // surface: it moved out of the Editor's stylesheet when the Editor
+    // became a lazily-loaded workspace, so its rules are read from there.
+    const overlays = read('../styles/operator-overlays.css');
     const operator = read('../styles/operator.css');
     const assets = read('../styles/assets.css');
 
@@ -175,9 +181,9 @@ describe('rendered shell contracts', () => {
     for (const width of [390, 900]) {
       expect(effectiveProperty(main, '#key-hints', 'inset-inline-start', width), `hints start at ${width}px`)
         .toContain('env(safe-area-inset-left)');
-      expect(effectiveProperty(editor, '.resq-dvr', 'padding-inline-start', width), `DVR start at ${width}px`)
+      expect(effectiveProperty(overlays, '.resq-dvr', 'padding-inline-start', width), `DVR start at ${width}px`)
         .toContain('env(safe-area-inset-left)');
-      expect(effectiveProperty(editor, '.resq-dvr', 'padding-inline-end', width), `DVR end at ${width}px`)
+      expect(effectiveProperty(overlays, '.resq-dvr', 'padding-inline-end', width), `DVR end at ${width}px`)
         .toContain('env(safe-area-inset-right)');
       expect(effectiveProperty(operator, '.operator-context-layer', 'padding-inline-start', width))
         .toContain('env(safe-area-inset-left)');
@@ -192,7 +198,10 @@ describe('rendered shell contracts', () => {
 
   it('keeps medium and desktop chrome inside both inline safe edges', () => {
     const main = read('../styles/main.css');
-    const editor = read('../styles/editor.css');
+    // The timeline bar is an always-on operator overlay, not an authoring
+    // surface: it moved out of the Editor's stylesheet when the Editor
+    // became a lazily-loaded workspace, so its rules are read from there.
+    const overlays = read('../styles/operator-overlays.css');
     const assets = read('../styles/assets.css');
 
     for (const width of [900, 1200]) {
@@ -212,7 +221,7 @@ describe('rendered shell contracts', () => {
         .toContain('env(safe-area-inset-left)');
       expect(effectiveProperty(assets, '.asset-panel', 'right', width), `asset end at ${width}px`)
         .toContain('env(safe-area-inset-right)');
-      expect(effectiveInlinePadding(editor, '.resq-dvr', 'end', width), `DVR end at ${width}px`)
+      expect(effectiveInlinePadding(overlays, '.resq-dvr', 'end', width), `DVR end at ${width}px`)
         .toContain('env(safe-area-inset-right)');
     }
 
@@ -225,17 +234,20 @@ describe('rendered shell contracts', () => {
   });
 
   it('fits the compact DVR core controls and a flexible scrubber within 390px', () => {
-    const editor = read('../styles/editor.css');
+    // The timeline bar is an always-on operator overlay, not an authoring
+    // surface: it moved out of the Editor's stylesheet when the Editor
+    // became a lazily-loaded workspace, so its rules are read from there.
+    const overlays = read('../styles/operator-overlays.css');
     const operator = read('../styles/operator.css');
 
-    expect(effectiveProperty(editor, '.dvr-scrub', 'min-width', 390)).toBe('0');
+    expect(effectiveProperty(overlays, '.dvr-scrub', 'min-width', 390)).toBe('0');
     for (const width of [390, 700]) {
       for (const lowPriority of ['.dvr-rec', '.dvr-tostart', '.dvr-speed']) {
-        expect(effectiveProperty(editor, lowPriority, 'display', width), `${lowPriority} at ${width}px`)
+        expect(effectiveProperty(overlays, lowPriority, 'display', width), `${lowPriority} at ${width}px`)
           .toBe('none');
       }
       for (const core of ['.dvr-play', '.dvr-step', '.dvr-reset', '.dvr-time', '.dvr-live']) {
-        expect(effectiveProperty(editor, core, 'display', width), `${core} at ${width}px`)
+        expect(effectiveProperty(overlays, core, 'display', width), `${core} at ${width}px`)
           .not.toBe('none');
       }
     }

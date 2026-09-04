@@ -1,7 +1,7 @@
 // ResQ Viz - Bottom timeline bar (live transport + DVR record / scrub / replay)
 // SPDX-License-Identifier: Apache-2.0
 
-import '../styles/editor.css';
+import '../styles/operator-overlays.css';
 import type { VizFrame } from '../types';
 import { shouldIgnoreGlobalShortcut } from '../ui/hotkeys';
 import { GLOBAL_SHORTCUTS } from '../ui/globalShortcuts';

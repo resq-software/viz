@@ -79,6 +79,7 @@ import type { FpvOsd } from './sensors/fpvOsd';
 import type { CameraModeControl } from './cameraMode';
 import type { FrameRecorder, RecordedFrame } from './editor/recorder';
 import type { Dvr } from './editor/dvr';
+import type { EditorWorkspace } from './editor/workspace';
 // ── Multi-domain asset layer ─────────────────────────────────────────────────
 // `sceneFrame`, `domainRegistration` and `chaseCamera` are small and are needed
 // the moment a v2 snapshot lands, so they ship with the entry chunk. Everything
@@ -339,13 +340,22 @@ const windCompass  = new WindCompass();
 // + CSS ship in a separate chunk and stay out of the entry bundle.
 let cockpit: Cockpit | null = null;
 
-// ── Editor suite (deferred) ──────────────────────────────────────────────────
-// The dock, outliner, inspector, gizmo, DVR and onboard sensors pull in the
-// heavy three/addons controls and the whole editor stylesheet. Loading them
-// with the entry chunk delayed first paint for every visitor, so they are
-// fetched after the scene has rendered its first frame instead. Total bytes
-// downloaded are unchanged — the editor is still always initialised — but the
-// terrain and drones appear without waiting on it.
+// ── Deferred surfaces ────────────────────────────────────────────────────────
+// Two tiers, and the difference between them is what an operator can do
+// without them.
+//
+//  * **After paint, always.** The DVR + recorder, the camera modes, the FPV OSD
+//    and the onboard PiP. Watching, scrubbing and switching cameras are not
+//    authoring, so an operator who never opens Editor still gets all of it.
+//    They are fetched once the scene has rendered its first frame rather than
+//    with the entry chunk, so terrain and drones appear without waiting on
+//    them; the bytes are the same, the first paint is not.
+//  * **On the first Editor open, if ever.** The dock, hierarchy, inspector,
+//    transform handles and scene import/export, which pull in the heavy
+//    three/addons controls and the whole authoring stylesheet. `EditorWorkspace`
+//    owns that fetch; the handles below are assigned from what it builds so the
+//    per-frame updates and hotkeys keep talking to those same instances, and
+//    they stay null in a session that never opens the workspace.
 let editorDock = null as EditorDock | null;
 let outliner = null as Outliner | null;
 let inspector = null as Inspector | null;
@@ -354,6 +364,7 @@ let fpvOsd = null as FpvOsd | null;
 let cameraMode = null as CameraModeControl | null;
 let recorder = null as FrameRecorder | null;
 let dvr = null as Dvr | null;
+let editorWorkspace = null as EditorWorkspace | null;
 
 const selection = new SelectionStore();
 /**
@@ -368,56 +379,16 @@ selection.subscribe(() => { _selectionGeneration += 1; });
 let _legacyScenario: string | null = null;
 
 async function _initEditorSuite(): Promise<void> {
-    const [m_dock, m_outliner, m_inspector, m_gizmo, m_pip, m_osd, m_cam, m_rec, m_dvr, m_cfg] =
+    const [m_pip, m_osd, m_cam, m_rec, m_dvr, m_ws] =
         await Promise.all([
-            import('./editor/dock'),
-            import('./editor/outliner'),
-            import('./editor/inspector'),
-            import('./editor/gizmo'),
             import('./sensors/onboardPip'),
             import('./sensors/fpvOsd'),
             import('./cameraMode'),
             import('./editor/recorder'),
             import('./editor/dvr'),
-            import('./editor/sceneConfig'),
+            import('./editor/workspace'),
         ]);
 
-    // Editor selection layer — SelectionStore is the editor's single source of
-    // truth (Inspector now; outliner / gizmos later). Legacy HUD surfaces publish
-    // to it at their selection chokepoints (`_selectFromAnySurface` / `_deselectAll`).
-    // Editor dock — one managed, collapsible left column hosting the editor panels
-    // (Outliner on top, Inspector below); toggle with the ☰ button or the `\` key.
-    editorDock = new m_dock.EditorDock();
-    outliner = new m_outliner.Outliner(selection, editorDock.host());
-    outliner.onSelect(_selectEntity);
-    inspector = new m_inspector.Inspector(selection, () => _lastFrame, editorDock.host());
-    inspector.onClose(() => _deselectAll());
-    // Transform gizmo — translate handles on the selected drone. Server-authority
-    // safe: it drags a client-owned proxy and sends a goto (with altitude) on
-    // release, then tracks the drone between drags. Reuses the goto endpoint.
-    gizmo = new m_gizmo.TransformGizmo({
-        scene: viz.scene,
-        camera: viz.cameraController.camera,
-        domElement: viz.renderer.domElement,
-        store: selection,
-        setCameraEnabled: (v) => { viz.cameraController.enabled = v; },
-        getDronePosition: () => droneManager.getSelectedPosition(),
-        sendGoto: (target) => {
-            const id = droneManager.selectedId;
-            if (!id) return;
-            // The marker is only drawn for a command that was actually issued —
-            // a target pin over a world nothing was told about is a lie the
-            // operator would act on.
-            if (operatorActions.commandDrone(id, { type: 'goto', target }).success) {
-                viz.showTargetMarker(new THREE.Vector3(target[0], target[1], target[2]), target[1]);
-            }
-        },
-        addTick: (fn) => viz.addTickCallback(fn),
-        gate: interactionMode.guard,
-    });
-    // The main camera renders the gizmo's dedicated layer; the FPV PiP camera
-    // (layer 0 only) does not, so the move handles never clutter the onboard window.
-    viz.cameraController.camera.layers.enable(m_gizmo.GIZMO_LAYER);
     // Onboard FPV picture-in-picture — the selected drone's camera, scissor-rendered
     // into a corner of the canvas. Self-wires via the selection store + post-render
     // hook (no retained binding); toggle with `P`.
@@ -493,45 +464,113 @@ async function _initEditorSuite(): Promise<void> {
         // the operator never acts on a lease read for a recording.
         onRefreshLiveResources: () => { controlAuthority?.refresh(); },
     });
-    // Declarative scene config — export/import the terrain + scenario setup as a
-    // shareable JSON descriptor (AirSim settings.json analog). V2 reads only the
-    // streamed runtime; legacy retains the local event-backed compatibility value.
-    new m_cfg.SceneConfigPanel({
-        getTerrain: () => _currentPresetKey,
-        getScenario: () => operatorShell.mode === 'v2'
-            ? scenarioRuntime.currentName
-            : _legacyScenario,
-        canApplyTerrain: key => Object.prototype.hasOwnProperty.call(PRESETS, key),
-        applyTerrain: (key) => {
-            _switchPreset(key as PresetKey);
-            _markOperatorOverride();
+    // Editor workspace — the one owner of every authoring surface: the panel
+    // column, the hierarchy, the inspector, the transform handles and scene
+    // import/export. None of it is fetched, built or reachable until the
+    // labelled top-bar Editor toggle asks for it; the recording surfaces above
+    // are deliberately not part of it, because watching, scrubbing and camera
+    // switching are not authoring.
+    editorWorkspace = new m_ws.EditorWorkspace(
+        {
+            mount: operatorShell.mounts.editor,
+            toggle: _editorToggle(),
+            rail: _sidebarElement(),
+            context: operatorShell.mounts.context,
+            isOpen: () => operatorShell.editorOpen,
+            setOpen: open => operatorShell.setEditorOpen(open),
+            // The shell writes the rail's `hidden`, so reading it back is
+            // reading the shell rather than a second copy of the answer.
+            isRailOpen: () => !_sidebarElement().hidden,
+            setRailOpen: open => operatorShell.setRailOpen(open),
+            isContextOpen: () => operatorShell.contextOpen,
+            setContextOpen: open => operatorShell.setContextOpen(open),
+            viewportWidth: () => window.innerWidth,
         },
-        applyScenario: (name) => name === null
-            ? { success: true }
-            : m_cfg.applyScenarioForMode(name, {
-                mode: () => operatorShell.mode,
-                v2ScenarioNames: () => consoleResources?.catalog.status === 'ready'
-                    ? consoleResources.catalog.value.scenarios.map(scenario => scenario.name)
-                    : null,
-                v2Session: () => _rawScenarioSession,
-                confirmV2Replace: scenario => window.confirm(
-                    `Start ${scenario}? This replaces the current simulation state.`,
-                ),
-                runtime: scenarioRuntime,
-            }),
-        gate: interactionMode.guard,
-    });
+        {
+            selection,
+            gate: interactionMode.guard,
+            getFrame: () => _lastFrame,
+            onSelect: _selectEntity,
+            onDeselect: () => _deselectAll(),
+            onCommand: (droneId: string, cmd: string) => {
+                operatorActions.commandDrone(droneId, { type: cmd });
+            },
+            // Transform gizmo — translate handles on the selected drone.
+            // Server-authority safe: it drags a client-owned proxy and sends a
+            // goto (with altitude) on release, then tracks the drone between
+            // drags. Reuses the goto endpoint.
+            gizmo: {
+                scene: viz.scene,
+                camera: viz.cameraController.camera,
+                domElement: viz.renderer.domElement,
+                setCameraEnabled: (v) => { viz.cameraController.enabled = v; },
+                getDronePosition: () => droneManager.getSelectedPosition(),
+                sendGoto: (target) => {
+                    const id = droneManager.selectedId;
+                    if (!id) return;
+                    // The marker is only drawn for a command that was actually
+                    // issued — a target pin over a world nothing was told about
+                    // is a lie the operator would act on.
+                    if (operatorActions.commandDrone(id, { type: 'goto', target }).success) {
+                        viz.showTargetMarker(
+                            new THREE.Vector3(target[0], target[1], target[2]), target[1],
+                        );
+                    }
+                },
+                addTick: (fn) => viz.addTickCallback(fn),
+            },
+            // Declarative scene config — export/import the terrain + scenario
+            // setup as a shareable JSON descriptor (AirSim settings.json
+            // analog). V2 reads only the streamed runtime; legacy retains the
+            // local event-backed compatibility value.
+            sceneConfig: {
+                getTerrain: () => _currentPresetKey,
+                getScenario: () => operatorShell.mode === 'v2'
+                    ? scenarioRuntime.currentName
+                    : _legacyScenario,
+                canApplyTerrain: key => Object.prototype.hasOwnProperty.call(PRESETS, key),
+                applyTerrain: (key) => {
+                    _switchPreset(key as PresetKey);
+                    _markOperatorOverride();
+                },
+                applyScenario: async (name) => name === null
+                    ? { success: true }
+                    : (await import('./editor/sceneConfig')).applyScenarioForMode(name, {
+                        mode: () => operatorShell.mode,
+                        v2ScenarioNames: () => consoleResources?.catalog.status === 'ready'
+                            ? consoleResources.catalog.value.scenarios.map(s => s.name)
+                            : null,
+                        v2Session: () => _rawScenarioSession,
+                        confirmV2Replace: scenario => window.confirm(
+                            `Start ${scenario}? This replaces the current simulation state.`,
+                        ),
+                        runtime: scenarioRuntime,
+                    }),
+            },
+            // The app keeps its handles so the per-frame updates, the click
+            // swallow and the `M` key keep talking to the same instances the
+            // workspace built. They are assigned here, inside the initialiser,
+            // and never re-declared: a shadowing `const` is what once left the
+            // whole gizmo and DVR silently dead.
+            onReady: surfaces => {
+                editorDock = surfaces.dock;
+                outliner = surfaces.outliner;
+                inspector = surfaces.inspector;
+                gizmo = surfaces.gizmo;
+            },
+            onError: error => { log.error('editor workspace failed to load', error); },
+        },
+    );
+}
 
-    // Inspector wiring lives here so the callbacks register with the instance
-    // that was just created — attaching them at module scope would run before
-    // the suite exists and silently never fire.
-    inspector.onCommand((droneId: string, cmd: string) => {
-        operatorActions.commandDrone(droneId, { type: cmd });
-    });
-    // "Move" button → toggle the reposition gizmo for the selected drone. The
-    // gizmo owns the on/off truth, so the M key and this button stay in sync.
-    const _insp = inspector, _giz = gizmo;
-    inspector.onMove(() => { _insp.setMoveActive(_giz.toggleMoveMode()); });
+/** The top-bar Editor control. Present because the shell required it at boot. */
+function _editorToggle(): HTMLElement {
+    return document.getElementById('btn-editor-toggle') as HTMLElement;
+}
+
+/** The operator rail. Present because the shell required it at boot. */
+function _sidebarElement(): HTMLElement {
+    return document.getElementById('sidebar') as HTMLElement;
 }
 
 // Kick the editor suite off once the browser has actually painted a frame.
@@ -1548,6 +1587,23 @@ function _deselectAll(): void {
     _syncFleetSelection();
     _pilotHeadingFor = null;
 }
+/**
+ * `M` — the reposition handles. They live in the Editor workspace now, so a
+ * press with the workspace closed opens it rather than doing nothing: a
+ * shortcut whose surface is withdrawn has to bring the surface back, not
+ * swallow the press. Below the desktop threshold the shell refuses the open,
+ * which is the same answer the labelled toggle gives.
+ */
+function _toggleMoveMode(): void {
+    if (!editorWorkspace) return;
+    if (!operatorShell.editorOpen) {
+        editorWorkspace.open();
+        return;
+    }
+    const surfaces = editorWorkspace.surfaces;
+    if (surfaces) surfaces.inspector.setMoveActive(surfaces.gizmo.toggleMoveMode());
+}
+
 // Select any entity kind from the editor layer (outliner rows). Drones and
 // assets light up the legacy HUD surfaces; hazards, detections and tracks drive
 // only the editor store + Inspector and clear any stale asset selection so the
@@ -2222,9 +2278,7 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
             // v1 drone kind: the gizmo releases by POSTing a v1 `goto`, which is
             // an air-only endpoint, so offering handles on a rover would end in
             // a drag that silently does nothing.
-            if (selection.current?.kind === 'drone') {
-                if (inspector && gizmo) inspector.setMoveActive(gizmo.toggleMoveMode());
-            }
+            if (selection.current?.kind === 'drone') _toggleMoveMode();
             break;
         }
         case 'KeyF': {

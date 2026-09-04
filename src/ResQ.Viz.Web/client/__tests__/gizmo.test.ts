@@ -13,7 +13,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
-import { clampGotoAltitude, MIN_GOTO_ALTITUDE, TransformGizmo } from '../editor/gizmo';
+import { clampGotoAltitude, GIZMO_LAYER, MIN_GOTO_ALTITUDE, TransformGizmo } from '../editor/gizmo';
 import { SelectionStore } from '../editor/selection';
 import type { MutationGate } from '../operator/interactionMode';
 
@@ -84,6 +84,33 @@ function harness(gate?: MutationGate): Harness {
         },
     };
 }
+
+describe('TransformGizmo camera layer', () => {
+    it('enables its own helper layer on the camera it was handed', () => {
+        // The handles live on a dedicated layer so the FPV picture-in-picture
+        // (layer 0 only) never renders them. That used to be switched on beside
+        // the construction site in app.ts, which stopped being possible when the
+        // gizmo moved behind the lazily-loaded Editor workspace: app.ts would
+        // have had to import GIZMO_LAYER statically and drag TransformControls
+        // into the entry chunk. Handles rendered by no camera are handles that
+        // do not exist.
+        const camera = new THREE.PerspectiveCamera();
+        expect(camera.layers.isEnabled(GIZMO_LAYER)).toBe(false);
+
+        new TransformGizmo({
+            scene: new THREE.Scene(),
+            camera,
+            domElement: document.createElement('div'),
+            store: new SelectionStore(),
+            setCameraEnabled: () => {},
+            getDronePosition: () => null,
+            sendGoto: vi.fn(),
+            addTick: () => {},
+        });
+
+        expect(camera.layers.isEnabled(GIZMO_LAYER)).toBe(true);
+    });
+});
 
 describe('TransformGizmo replay gate', () => {
     it('commands a go-to on release at the live edge', () => {

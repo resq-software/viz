@@ -83,6 +83,12 @@ export class TransformGizmo {
         const helper = control.getHelper();
         helper.traverse((o) => o.layers.set(GIZMO_LAYER));
         opts.scene.add(helper);
+        // The gizmo enables its own layer on the camera it was handed. It used
+        // to be switched on beside the construction site, which stopped being
+        // safe the moment the handles moved behind the Editor workspace: the
+        // app would have had to import GIZMO_LAYER statically — pulling
+        // TransformControls into the entry chunk — to keep doing it.
+        opts.camera.layers.enable(GIZMO_LAYER);
         this._control = control;
 
         control.addEventListener('mouseDown', () => {

@@ -1,7 +1,7 @@
 // ResQ Viz - Onboard camera picture-in-picture (FPV / depth / segmentation)
 // SPDX-License-Identifier: Apache-2.0
 
-import '../styles/editor.css';
+import '../styles/operator-overlays.css';
 import * as THREE from 'three';
 import type { SelectionStore } from '../editor/selection';
 import { GLOBAL_SHORTCUTS } from '../ui/globalShortcuts';

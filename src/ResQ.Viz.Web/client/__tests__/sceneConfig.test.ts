@@ -396,6 +396,36 @@ describe('SceneConfigPanel import transaction', () => {
 // two, so an operator scrubbed back over a recording can still take the scene
 // they are looking at away with them, and cannot push it into the live sim.
 
+describe('SceneConfigPanel mount', () => {
+    const deps = {
+        getTerrain: () => 'alpine',
+        getScenario: () => null,
+        applyTerrain: vi.fn(),
+        applyScenario: vi.fn(),
+    };
+
+    it('mounts where it is told, so the Editor workspace can own it', () => {
+        // It used to plant itself on the body with `fixed` offsets, which is how
+        // a control ends up floating over the scene with nothing able to
+        // withdraw it. Inside the workspace it is revealed and hidden with every
+        // other authoring surface, by the one Editor toggle.
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+
+        new SceneConfigPanel({ ...deps, mount: host });
+
+        expect(host.querySelector('.resq-scenecfg')).not.toBeNull();
+        expect(document.querySelectorAll('.resq-scenecfg')).toHaveLength(1);
+    });
+
+    it('still falls back to the body when no mount is given', () => {
+        new SceneConfigPanel({ ...deps });
+
+        const root = document.querySelector('.resq-scenecfg');
+        expect(root?.parentElement).toBe(document.body);
+    });
+});
+
 describe('SceneConfigPanel replay gate', () => {
     const REPLAY_GATE: MutationGate = (action) => ({
         success: false,

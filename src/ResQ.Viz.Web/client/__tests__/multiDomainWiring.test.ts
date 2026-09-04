@@ -465,9 +465,13 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/confirmV2Replace:[\s\S]*?window\.confirm/);
     expect(sceneConfigSrc).toMatch(/publishLegacyStart[\s\S]*?resq:scenario-start/);
     expect(appSrc).not.toMatch(/applyScenario:[\s\S]*?\/api\/sim\/scenario\//);
-    const configAt = appSrc.indexOf('new m_cfg.SceneConfigPanel');
-    const inspectorAt = appSrc.indexOf('// Inspector wiring', configAt);
-    const config = appSrc.slice(configAt, inspectorAt);
+    // The panel is constructed by the Editor workspace now; app.ts supplies the
+    // terrain/scenario wiring as the workspace's `sceneConfig` port.
+    const configAt = appSrc.indexOf('sceneConfig: {');
+    expect(configAt, 'scene-config port not found in app.ts').toBeGreaterThan(-1);
+    const endAt = appSrc.indexOf('// The app keeps its handles', configAt);
+    expect(endAt, 'scene-config port is unbounded').toBeGreaterThan(configAt);
+    const config = appSrc.slice(configAt, endAt);
     expect(config).toContain('Object.prototype.hasOwnProperty.call(PRESETS, key)');
     expect(config).not.toContain('canApplyTerrain: key => key in PRESETS');
     expect(config).toMatch(/applyTerrain:[\s\S]*?_switchPreset\([\s\S]*?_markOperatorOverride\(\)/);

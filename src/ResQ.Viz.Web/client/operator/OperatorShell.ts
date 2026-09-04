@@ -6,7 +6,6 @@ import { ManagedLayerVisibility } from '../ui/managedLayerVisibility';
 
 const EDITOR_CHROME_SELECTOR = [
   '.resq-dock',
-  '.resq-dock-toggle',
   '.resq-scenecfg',
   '.resq-dvr',
   '.resq-transport',

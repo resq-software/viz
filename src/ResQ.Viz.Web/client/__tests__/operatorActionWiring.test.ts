@@ -24,6 +24,10 @@ const appSrc = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), '../app.ts'),
     'utf8',
 );
+const workspaceSrc = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../editor/workspace.ts'),
+    'utf8',
+);
 
 /** Source between the first `open` at/after `anchor` and its matching `close`. */
 function balancedAfter(anchor: string, open: string, close: string): string {
@@ -103,8 +107,17 @@ describe('operator action wiring in app.ts', () => {
         // panel's command issuer each check the gate themselves; app.ts is what
         // makes it the *same* gate.
         expect(argsAfter('new ControlPanel(')).toContain('interactionMode.guard');
-        expect(blockAfter('gizmo = new m_gizmo.TransformGizmo(')).toContain('interactionMode.guard');
-        expect(blockAfter('new m_cfg.SceneConfigPanel(')).toContain('interactionMode.guard');
+        // The transform gizmo and the scene-config panel are built by the Editor
+        // workspace now, so app.ts hands the gate over once and the workspace
+        // passes it on. Both hops are pinned: a workspace that took the gate and
+        // then forgot to give it to one of them is the same silent hole as
+        // app.ts never passing it.
+        expect(argsAfter('editorWorkspace = new m_ws.EditorWorkspace('))
+            .toContain('gate: interactionMode.guard');
+        expect(workspaceSrc)
+            .toMatch(/new gizmoModule\.TransformGizmo\(\{[\s\S]*?gate: ports\.gate/);
+        expect(workspaceSrc)
+            .toMatch(/new configModule\.SceneConfigPanel\(\{[\s\S]*?gate: ports\.gate/);
         expect(appSrc).toMatch(/gatedCommandIssuer\(\s*interactionMode\.guard/);
     });
 });

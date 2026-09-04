@@ -127,6 +127,48 @@ describe('deferred editor suite wiring', () => {
         const staticEditorImport =
             /^import\s+(?!type\b)[^;]*from\s+'\.\/(editor|sensors)\/(?!selection)/m;
         expect(staticEditorImport.test(appSrc)).toBe(false);
-        expect(appSrc).toMatch(/await Promise\.all\(\s*\[\s*import\('\.\/editor\//);
+        expect(appSrc).toMatch(/await Promise\.all\(\s*\[\s*import\('\.\/sensors\//);
+        expect(initBody()).toContain("import('./editor/workspace')");
+    });
+
+    it('keeps the recording surfaces independent of the Editor', () => {
+        // An operator who never opens Editor still watches, scrubs and switches
+        // cameras, so the DVR, the recorder, the camera modes, the FPV OSD and
+        // the onboard PiP are built after paint regardless. Only the authoring
+        // surfaces wait for the toggle.
+        // Scoped to the eager `Promise.all`, which is what "fetched after paint"
+        // means. A dynamic import inside a callback is not an eager load.
+        const init = initBody();
+        const eager = init.slice(init.indexOf('await Promise.all('), init.indexOf(']);'));
+        for (const overlay of [
+            "import('./sensors/onboardPip')", "import('./sensors/fpvOsd')",
+            "import('./cameraMode')", "import('./editor/recorder')", "import('./editor/dvr')",
+        ]) expect(eager, overlay).toContain(overlay);
+        for (const authoring of [
+            "import('./editor/dock')", "import('./editor/outliner')",
+            "import('./editor/inspector')", "import('./editor/gizmo')",
+            "import('./editor/sceneConfig')",
+        ]) expect(eager, authoring).not.toContain(authoring);
+    });
+
+    it('builds every authoring surface through the one workspace owner', () => {
+        // Two owners of "is the Editor showing" is how a control ends up mounted
+        // with nothing able to reveal it. app.ts constructs the workspace and
+        // keeps only the handles its per-frame updates and hotkeys need.
+        const init = initBody();
+        expect(init).toMatch(/editorWorkspace = new m_ws\.EditorWorkspace\(/);
+        expect(init).toMatch(/mount: operatorShell\.mounts\.editor/);
+        expect(init).toMatch(/isOpen: \(\) => operatorShell\.editorOpen/);
+        expect(init).toMatch(/setOpen: open => operatorShell\.setEditorOpen\(open\)/);
+        for (const surface of ['editorDock', 'outliner', 'inspector', 'gizmo']) {
+            expect(
+                new RegExp(`${surface} = surfaces\\.`).test(init),
+                `${surface} is not taken from the workspace's surfaces`,
+            ).toBe(true);
+        }
+        // app.ts never reaches past the workspace to build one itself.
+        expect(init).not.toContain('new m_dock.EditorDock');
+        expect(init).not.toContain('new m_gizmo.TransformGizmo');
+        expect(init).not.toContain('new m_cfg.SceneConfigPanel');
     });
 });

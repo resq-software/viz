@@ -699,6 +699,7 @@ describe('the shipped operator shell contract', () => {
       '../styles/operator.css',
       '../styles/assets.css',
       '../styles/editor.css',
+      '../styles/operator-overlays.css',
       '../ui/cockpit.css',
     ];
     const offenders: string[] = [];
@@ -719,6 +720,7 @@ describe('the shipped operator shell contract', () => {
     const operator = read('../styles/operator.css');
     const assets = read('../styles/assets.css');
     const editor = read('../styles/editor.css');
+    const overlays = read('../styles/operator-overlays.css');
     const cockpit = read('../ui/cockpit.css');
     const mappings: ReadonlyArray<readonly [string, string, string]> = [
       [main, '#scene-container', '--layer-scene'],
@@ -726,12 +728,11 @@ describe('the shipped operator shell contract', () => {
       [main, '.settings-panel', '--layer-context'],
       [assets, '.asset-panel', '--layer-context'],
       [operator, '.operator-editor-layer', '--layer-editor'],
-      [editor, '.resq-dock', '--layer-editor'],
       [main, '#hud-top', '--layer-hud'],
       [main, '.mission-chrome', '--layer-hud'],
       [main, '.partition-banner', '--layer-hud'],
       [main, '.telemetry-strip', '--layer-hud'],
-      [editor, '.resq-dvr', '--layer-hud'],
+      [overlays, '.resq-dvr', '--layer-hud'],
       [cockpit, '.cockpit', '--layer-hud'],
       [main, '#key-hints', '--layer-popover'],
       [main, '.scenario-intro', '--layer-modal'],
@@ -742,6 +743,12 @@ describe('the shipped operator shell contract', () => {
     for (const [css, selector, layer] of mappings) {
       expect(cssRule(css, selector), selector).toContain(`z-index: var(${layer})`);
     }
+
+    // The authoring column used to carry its own `z-index: var(--layer-editor)`
+    // because it floated over the scene at body level. It is a descendant of
+    // `.operator-editor-layer` now, which owns the stacking above — so a second
+    // declaration in the authoring sheet could only ever disagree with it.
+    expect(editor).not.toContain('z-index');
   });
 
   it('keeps the blocking layer above every other shared layer', () => {
@@ -779,20 +786,27 @@ describe('the shipped operator shell contract', () => {
     const operator = read('../styles/operator.css');
     const main = read('../styles/main.css');
     const editor = read('../styles/editor.css');
+    const overlays = read('../styles/operator-overlays.css');
     const assets = read('../styles/assets.css');
 
     expect(operator).toMatch(/@media \(min-width: 1100px\)[\s\S]*?#sidebar[\s\S]*?\.operator-context-layer/);
     expect(operator).toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?#sidebar[\s\S]*?transform:\s*translateX\(-100%\)[\s\S]*?\.operator-context-layer[\s\S]*?\.operator-editor-layer/);
     expect(main).toMatch(/@media \(max-width: 1099px\)[\s\S]*?#scene-container[\s\S]*?left:\s*0/);
-    expect(editor).toMatch(/@media \(max-width: 1099px\)[\s\S]*?\.resq-dvr[\s\S]*?left:\s*0/);
-    expect(editor).toMatch(/@media \(max-width: 1099px\)[\s\S]*?\.resq-dock[\s\S]*?display:\s*none/);
+    expect(overlays).toMatch(/@media \(max-width: 1099px\)[\s\S]*?\.resq-dvr[\s\S]*?left:\s*0/);
+    // Between 760px and 1,099px the Editor is a full-screen workspace, so the
+    // dock is *inside* it and must render: hiding it at 1,099px (as it was when
+    // the dock floated over the scene) would leave the hierarchy and inspector
+    // unreachable at exactly the width the workspace was designed for. The
+    // authoring column is withheld only where the Editor itself is unavailable.
+    expect(editor).toMatch(/@media \(max-width: 759px\)[\s\S]*?\.resq-editor[\s\S]*?display:\s*none/);
+    expect(editor).not.toMatch(/@media \(max-width: 1099px\)/);
     expect(assets).toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?\.asset-panel[\s\S]*?left:/);
   });
 
   it('reserves effective safe-area HUD and DVR extents throughout the shell', () => {
     const tokens = read('../styles/tokens.css');
     const operator = read('../styles/operator.css');
-    const editor = read('../styles/editor.css');
+    const overlays = read('../styles/operator-overlays.css');
     const main = read('../styles/main.css');
 
     expect(tokens).toContain('--effective-hud-h: calc(var(--hud-h) + env(safe-area-inset-top))');
@@ -801,7 +815,7 @@ describe('the shipped operator shell contract', () => {
     expect(operator).toMatch(/#sidebar[\s\S]*?top:\s*var\(--effective-hud-h\)[\s\S]*?bottom:\s*var\(--effective-dvr-h\)/);
     expect(operator).toContain('var(--effective-hud-h)');
     expect(operator).toContain('var(--effective-dvr-h)');
-    expect(editor).toMatch(/\.resq-dvr[\s\S]*?height:\s*var\(--effective-dvr-h\)[\s\S]*?padding-block-end:\s*env\(safe-area-inset-bottom\)/);
+    expect(overlays).toMatch(/\.resq-dvr[\s\S]*?height:\s*var\(--effective-dvr-h\)[\s\S]*?padding-block-end:\s*env\(safe-area-inset-bottom\)/);
   });
 
   it('covers every compact sidebar, context, and DVR native target with 44px hit areas', () => {

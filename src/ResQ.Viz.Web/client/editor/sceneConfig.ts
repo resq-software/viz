@@ -1,6 +1,7 @@
 // ResQ Viz - Declarative scene config (export / import)
 // SPDX-License-Identifier: Apache-2.0
 
+import '../styles/editor.css';
 import { getLogger } from '../log';
 import type { ApiFailure, Result } from '../api';
 import { liveGate, type MutationGate } from '../operator/interactionMode';
@@ -72,6 +73,11 @@ export interface SceneConfigDeps {
     /** Shared live/replay gate. Import writes the world and is gated; export
      *  only reads what is already on screen and never is. */
     readonly gate?: MutationGate;
+    /** Where the control mounts. Defaults to the body so a standalone
+     *  construction behaves as it always did; the Editor workspace passes its
+     *  own header, which is what keeps the pair inside one reachable surface
+     *  instead of floating over the scene with nothing owning it. */
+    readonly mount?: HTMLElement;
 }
 
 export type SceneScenarioApplyResult =
@@ -327,7 +333,7 @@ export class SceneConfigPanel {
         status.hidden = true;
 
         root.append(exportBtn, importBtn, fileInput, status);
-        document.body.appendChild(root);
+        (this._d.mount ?? document.body).appendChild(root);
         return { root, exportBtn, importBtn, fileInput, status };
     }
 }
