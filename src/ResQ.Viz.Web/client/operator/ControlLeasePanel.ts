@@ -73,6 +73,12 @@ export class ControlLeasePanel {
   private _message = '';
   private _isError = false;
 
+  /** True when {@link setStatus} recorded the current message while mutations
+   *  were gated shut. Such a message is a refusal, and a refusal is only true
+   *  while its condition holds: {@link _render} drops it the moment the gate
+   *  reopens, so a reason can never outlive what it explains. */
+  private _messageWhileBlocked = false;
+
   constructor(options: LeasePanelOptions) {
     const card = panelCard(
       options.mount,
@@ -152,6 +158,7 @@ export class ControlLeasePanel {
       setText(this._grant, '—');
       this._message = '';
       this._isError = false;
+      this._messageWhileBlocked = false;
     }
     this._state = state;
     this._render();
@@ -169,6 +176,7 @@ export class ControlLeasePanel {
   setStatus(message: string | null, isError = false): void {
     this._message = message ?? '';
     this._isError = isError;
+    this._messageWhileBlocked = this._message !== '' && !this._state.mutationsEnabled;
     this._render();
   }
 
@@ -180,7 +188,19 @@ export class ControlLeasePanel {
       : `${grantedSeconds}s granted`);
   }
 
+  /** Drops a refusal recorded while the mutation gate was shut, once it has
+   *  reopened. Called first thing in every render, so returning to Live takes
+   *  the reason down in the same paint that re-enables the controls it was
+   *  refusing — never one where the two disagree. */
+  private _dropStaleRefusal(): void {
+    if (!this._messageWhileBlocked || !this._state.mutationsEnabled) return;
+    this._message = '';
+    this._isError = false;
+    this._messageWhileBlocked = false;
+  }
+
   private _render(): void {
+    this._dropStaleRefusal();
     const { authority, mode, selectedId } = this._state;
     setText(this._mode, describeMode(mode));
     setText(this._holder, this._describeAuthority());

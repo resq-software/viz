@@ -727,6 +727,54 @@ describe('replay', () => {
       .toContain('interaction.replay');
   });
 
+  // The blockedReason path above is one of two ways a replay reason reaches the
+  // status line. The other is the boundary gate: a click that gets past the
+  // disabled mirror is refused at the send, and that refusal is *written* to
+  // the panel rather than derived. A written reason has no condition attached
+  // to it, so nothing took it back down — it sat beside a re-enabled control
+  // and told the operator they could not use it. Same defect as above, one
+  // path further in, which is why it is asserted separately.
+  it('takes a boundary refusal back down on Live too, on all three gated panels',
+    async () => {
+      const h = harness();
+      await settle();
+      h.select('uav-1');
+      await settle();
+      // The track report is refused for a missing identifier before it ever
+      // reaches the gate, so give it a valid one while the form is still live.
+      typeInto(h.mount, 'track-id', 'browser-track-1');
+      h.interaction.enterReplay();
+
+      // Bypass the disabled mirror the way a stale listener or a devtools poke
+      // would, on each gated panel's own action.
+      for (const action of ['acquire', 'cut', 'report']) {
+        const control = button(h.mount, action);
+        control.disabled = false;
+        control.removeAttribute('disabled');
+        control.click();
+      }
+      await settle();
+
+      for (const name of ['lease', 'link', 'track']) {
+        const status = h.mount
+          .querySelector<HTMLElement>(`[data-panel="${name}"] .advanced-status`)!;
+        expect(status.textContent, name).toContain('Return to Live');
+      }
+
+      h.interaction.goLive();
+      await settle();
+
+      for (const name of ['lease', 'link', 'track']) {
+        const status = h.mount
+          .querySelector<HTMLElement>(`[data-panel="${name}"] .advanced-status`)!;
+        expect(status.textContent, name).toBe('');
+        expect(status.hidden, name).toBe(true);
+      }
+      // And the controls really are usable again, so the reason had to go.
+      expect(button(h.mount, 'acquire').disabled).toBe(false);
+      expect(button(h.mount, 'report').disabled).toBe(false);
+    });
+
   it('takes every replay reason back down on Live, on all three gated panels', async () => {
     const h = harness();
     await settle();

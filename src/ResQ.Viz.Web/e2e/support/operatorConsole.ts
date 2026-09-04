@@ -31,14 +31,6 @@ const COORDINATE_FRAME_LOCAL_EUS = 2;
 /** `TrackSourceKind.OperatorEntered` — what the console's own report form sends. */
 const TRACK_SOURCE_OPERATOR_ENTERED = 6;
 
-/** Asset counts as the HUD publishes them. */
-export interface DomainCounts {
-  readonly air: number;
-  readonly ground: number;
-  readonly surface: number;
-  readonly total: number;
-}
-
 /** One moment `#legacy-console` was rendered, as the page recorded it. */
 export interface LegacySighting {
   readonly atMs: number;
@@ -191,22 +183,6 @@ export function contextPanel(page: Page): Locator {
   return page.locator('#operator-context-layer .asset-panel');
 }
 
-/** Reads the HUD's published per-domain asset counts. */
-export async function domainCounts(page: Page): Promise<DomainCounts> {
-  return page.evaluate(() => {
-    const read = (id: string): number => {
-      const value = Number.parseInt(document.getElementById(id)?.textContent ?? '', 10);
-      return Number.isFinite(value) ? value : -1;
-    };
-    return {
-      air: read('air-count'),
-      ground: read('ground-count'),
-      surface: read('surface-count'),
-      total: read('asset-count'),
-    };
-  });
-}
-
 /** Waits until the HUD publishes exactly these per-domain counts. */
 export async function waitForDomainCounts(
   page: Page,
@@ -241,11 +217,6 @@ export async function dvrFrameCount(page: Page): Promise<number> {
     const value = Number.parseInt(document.querySelector('.dvr-count')?.textContent ?? '', 10);
     return Number.isFinite(value) ? value : -1;
   });
-}
-
-/** Whether the DVR is at the live edge. `REC` records; `REPLAY` does not. */
-export async function isLive(page: Page): Promise<boolean> {
-  return page.evaluate(() => document.querySelector('.dvr-reclabel')?.textContent === 'REC');
 }
 
 /** The HUD's simulation clock, in seconds, or NaN before the first frame. */
