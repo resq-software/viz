@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ResQ Viz is a single-route WebGL application: all state (scenario preset,
+  camera, overlays) lives in query parameters on `/`, which crawlers should
+  not enumerate as distinct URLs. One entry is correct here — add more only
+  if genuinely distinct, indexable documents are ever served.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://viz.resq.software/</loc>
+    <lastmod>2026-09-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
