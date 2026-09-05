@@ -69,7 +69,8 @@ public static class VizSnapshotV2Builder
             capture.BackhaulKilled,
             capture.Transport.Paused,
             capture.Transport.Speed,
-            capture.Transport.Tick);
+            capture.Transport.Tick,
+            capture.ScenarioKey);
     }
 
     /// <summary>Builds the v2 frame for a capture, reusing the v1 frame already built from it.</summary>

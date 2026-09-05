@@ -116,6 +116,10 @@ public sealed partial class SimulationRoom
             _assets = candidate;
             _swarm = candidateSwarm;
             _swarmTick = 0;
+            // Routes are fitted around positions in the world that was just replaced, so they
+            // have to go with it — a surviving ring would send a rover to a waypoint chosen on
+            // terrain the replacement may have changed underneath it.
+            _groundSurface.ResetState();
 
             // A replacement is the same two authoritative transitions Reset + NotifyScenario
             // published before this method existed: clear, then activate. Neither intermediate
@@ -124,6 +128,7 @@ public sealed partial class SimulationRoom
             _scenarioRevision += 2;
             next = new ScenarioSessionState(name, candidate.SimulationTimeSeconds, _scenarioRevision);
             _scenario = next;
+            _scenarioKey = name;
 
             ClearAssetEventBuffer();
             ClearTracks();

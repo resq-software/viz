@@ -16,9 +16,16 @@ import type { DroneManager } from './drones';
 import type { InvestorMode } from './investorMode';
 import type { DroneState } from './types';
 import { isDroneReady } from './types';
+import { terrainHeight } from './terrain';
 
 /** Eased-transition duration when jumping to a framing preset. */
 const PRESET_TWEEN_MS = 600;
+
+/** Operator eye height above the ground under the camera, in metres. */
+const EYE_HEIGHT_M = 1.8;
+
+/** Minimum clearance the survey framing keeps over the ground beneath it. */
+const SURVEY_CLEARANCE_M = 220;
 
 interface Deps {
     viz: Scene;
@@ -84,14 +91,26 @@ export class CameraPresets {
         this._d.viz.chaseObject(entry);
     }
 
-    /** GROUND: operator eye-level, peering up at the swarm from 1.8 m. */
+    /**
+     * GROUND: operator eye-level, peering up at the fleet from 1.8 m.
+     *
+     * Eye level is measured from the ground <em>beneath the camera</em>, not
+     * from sea level. A literal `y = 1.8` buried the viewer on any terrain
+     * standing proud of the water: the alpine convoy sites are over a hundred
+     * metres up, so the camera sat that far inside the hill and the scene
+     * rendered black. The defect survived because nothing ever reached this
+     * preset — it is applied from a scenario environment, and no scenario that
+     * declared one could be started from the interface.
+     */
     ground(): void {
         const positions = this._readyPositions();
         if (positions.length === 0) return;
 
         const { center, extent } = this._bounds(positions);
         const offset = Math.max(extent * 1.1, 40);
-        const pos = new THREE.Vector3(center.x, 1.8, center.z + offset);
+        const x = center.x;
+        const z = center.z + offset;
+        const pos = new THREE.Vector3(x, terrainHeight(x, z) + EYE_HEIGHT_M, z);
         const target = new THREE.Vector3(center.x, center.y + 8, center.z);
         this._d.viz.cameraController.setPose(pos, target, { tweenMs: PRESET_TWEEN_MS });
     }
@@ -112,15 +131,33 @@ export class CameraPresets {
      * tuning is required.
      */
     terrainSurvey(sunAzimuthDeg: number, distance = 1750, height = 560): void {
+        // Anchored on the fleet, not on the world origin. The arc was drawn
+        // around (0,0,0) and aimed there, which framed the middle of the map
+        // whatever the scenario was doing — and several presets work nowhere
+        // near it: the coastal column runs at x = -1000, the ground convoy at
+        // x = 640. Framing the terrain rather than the swarm is still the point,
+        // so the fleet only supplies the centre; the distance and height that
+        // put a landscape on screen are unchanged.
+        const positions = this._readyPositions();
+        const anchor = positions.length > 0
+            ? this._bounds(positions).center
+            : new THREE.Vector3();
+
         const theta = THREE.MathUtils.degToRad(sunAzimuthDeg + 90);
-        const pos = new THREE.Vector3(
-            Math.sin(theta) * distance,
-            height,
-            Math.cos(theta) * distance,
+        const x = anchor.x + Math.sin(theta) * distance;
+        const z = anchor.z + Math.cos(theta) * distance;
+        // `height` is a framing altitude ABOVE THE GROUND, not above sea level.
+        // Taken absolutely it put the camera inside any terrain that rose past
+        // it — the alpine massif does — and the scene rendered black from within
+        // the hillside. Clearing the local ground keeps the intended framing
+        // wherever the arc happens to land.
+        const y = Math.max(height, terrainHeight(x, z) + SURVEY_CLEARANCE_M);
+        // Aim slightly above the ground under the fleet so the horizon sits high
+        // in frame and terrain fills the lower two-thirds.
+        this._d.viz.cameraController.setPose(
+            new THREE.Vector3(x, y, z),
+            new THREE.Vector3(anchor.x, terrainHeight(anchor.x, anchor.z) + 40, anchor.z),
         );
-        // Aim slightly above the ground plane so the horizon sits high in frame
-        // and terrain fills the lower two-thirds.
-        this._d.viz.cameraController.setPose(pos, new THREE.Vector3(0, 40, 0));
     }
 
     /** INVESTOR: toggle the scripted cinematic dolly (same as Ctrl+Shift+R). */

@@ -26,6 +26,13 @@ public sealed partial class SimulationRoom
     private long _scenarioRevision;
 
     /// <summary>Publishes a successfully loaded scenario and updates the swarm policy atomically.</summary>
+    /// <remarks>
+    /// The key is retained as well as forwarded, because a frame has to be able to say which
+    /// preset it belongs to. Hazards used to be one deployment-wide list republished on every
+    /// frame of every scenario, so a flood ran with the same standing fire as a wildfire and its
+    /// marker sat burning in open water. Carrying the key on the capture is what lets the frame
+    /// builder pick the set that belongs to the preset actually running.
+    /// </remarks>
     /// <param name="name">Configured scenario name.</param>
     public void NotifyScenario(string name)
     {
@@ -33,6 +40,7 @@ public sealed partial class SimulationRoom
 
         lock (_lock)
         {
+            _scenarioKey = name;
             _swarm.SetScenario(name, _assets.Drones.ToList());
             _scenario = new ScenarioSessionState(
                 name,

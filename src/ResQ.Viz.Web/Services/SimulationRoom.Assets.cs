@@ -59,6 +59,12 @@ namespace ResQ.Viz.Web.Services;
 /// endpoint — and nothing downstream may render a command affordance on one.
 /// </param>
 /// <param name="Scenario">Scenario active for this same reading, or null when the room is custom.</param>
+/// <param name="ScenarioKey">
+/// Which preset this room is running, so a frame can carry the hazards that belong to it.
+/// Defaulted to empty because a room that has never been given a scenario is a real state — a
+/// bare session, or one built by a test — and it resolves to the deployment-wide hazard set,
+/// which is what shipped before hazards were per-scenario at all.
+/// </param>
 public sealed record RoomAssetFrame(
     TransportState Transport,
     double SimulationTimeSeconds,
@@ -68,7 +74,8 @@ public sealed record RoomAssetFrame(
     IReadOnlyList<AssetState> Assets,
     IReadOnlyList<DroneSnapshot> Drones,
     IReadOnlyList<AgedExternalTrack> Tracks,
-    ScenarioSessionState? Scenario = null);
+    ScenarioSessionState? Scenario = null,
+    string ScenarioKey = "");
 
 // The multi-domain asset surface: everything the v2 API and the v2 frame pipeline need from a
 // room, and nothing the v1 path uses. Split from SimulationRoom.cs the way CommandCatalog and
@@ -151,7 +158,8 @@ public sealed partial class SimulationRoom
                 Descriptors: _assets.Descriptors,
                 Assets: _assets.States,
                 Drones: CaptureDroneSnapshots(),
-                Tracks: CaptureTracks().Tracks);
+                Tracks: CaptureTracks().Tracks,
+                ScenarioKey: _scenarioKey);
         }
     }
 
@@ -285,22 +293,35 @@ public sealed partial class SimulationRoom
         return result;
     }
 
-    /// <summary>Dispatches under the room lock and synchronizes air-asset swarm ownership.</summary>
+    /// <summary>Dispatches under the room lock and synchronizes each domain's coordinator ownership.</summary>
     private AssetCommandResult SendAssetCommandCore(in SimulatedAssetCommand command)
     {
         var result = _assets.SendCommand(in command);
 
-        if (result.IsAccepted
-            && _assets.TryGet(command.AssetId, out var asset)
-            && asset is { Domain: AssetDomain.Air })
+        if (result.IsAccepted && _assets.TryGet(command.AssetId, out var asset) && asset is not null)
         {
-            if (command.Kind == AssetCommandKind.ResumeAutonomy)
+            bool resuming = command.Kind == AssetCommandKind.ResumeAutonomy;
+
+            // Each domain's own coordinator, and only that one. Ground and surface used to
+            // fall through here entirely, which was harmless exactly as long as nothing
+            // tasked them: the moment they had a coordinator, an operator who drove a rover
+            // somewhere would have watched it turn back onto its patrol on the next 2 Hz pass.
+            switch (asset.Domain)
             {
-                _swarm.AttachAuto(command.AssetId);
-            }
-            else
-            {
-                _swarm.DetachManual(command.AssetId);
+                case AssetDomain.Air when resuming:
+                    _swarm.AttachAuto(command.AssetId);
+                    break;
+                case AssetDomain.Air:
+                    _swarm.DetachManual(command.AssetId);
+                    break;
+                case AssetDomain.Ground or AssetDomain.Surface when resuming:
+                    _groundSurface.AttachAuto(command.AssetId);
+                    break;
+                case AssetDomain.Ground or AssetDomain.Surface:
+                    _groundSurface.DetachManual(command.AssetId);
+                    break;
+                default:
+                    break;
             }
         }
 

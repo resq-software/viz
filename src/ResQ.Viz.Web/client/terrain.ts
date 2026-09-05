@@ -813,6 +813,13 @@ export class Terrain {
             waterLevel: activeWaterLevel(),
             fog:        scene.fog !== null,
             waterColor: _activePreset.waterColor,
+            // Sampled through the module's own height function rather than from
+            // inside the water module, so the surface fades against the same
+            // height field the ground mesh was just built from — including any
+            // heightmap override or erosion pass applied to this preset. Water
+            // faded against the raw noise would meet a shoreline the visible
+            // terrain does not have.
+            depthSampler: terrainHeight,
         });
         this._sceneAdd(scene, water);
     }
