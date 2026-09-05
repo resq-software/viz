@@ -372,7 +372,8 @@
           "date": "2026-03-11",
           "reason": "The relicensing commit is dated 2026-03-11. The dataset was ODbL from launch until then, so ANY snapshot taken before that date was received under ODbL and carries the share-alike access duty. Re-download from source and record the date."
         }
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/CDLA-Permissive-2.0.txt"
     },
     "google-open-buildings": {
       "name": "Google Open Buildings v3",
@@ -665,7 +666,8 @@
       "notes": "waternormals.jpg is vendored from the Three.js examples. MIT requires the copyright notice and permission notice in all copies - a vendored binary asset is a copy.",
       "class": "attribution",
       "licence_text_sha256": null,
-      "restrictions": []
+      "restrictions": [],
+      "licence_text_path": "tools/licences/texts/threejs-MIT.txt"
     }
   }
 }

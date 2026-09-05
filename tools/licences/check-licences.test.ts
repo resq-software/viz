@@ -18,7 +18,7 @@
 
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +102,53 @@ describe("parseIso", () => {
         strictEqual(parseIso(undefined), null);
         strictEqual(parseIso("not-a-date"), null);
         ok(typeof parseIso("2022-06-15") === "number");
+    });
+
+    it("rejects impossible calendar dates instead of rolling them over", () => {
+        // Date.parse alone accepts these and silently moves them: "2026-02-30"
+        // becomes 2 March and "2026-06-31" becomes 1 July. A licence boundary
+        // that quietly shifts by a day or two is worse than one that fails.
+        strictEqual(parseIso("2026-02-30"), null);
+        strictEqual(parseIso("2026-06-31"), null);
+        strictEqual(parseIso("2026-13-01"), null);
+        strictEqual(parseIso("2026-00-10"), null);
+        // A real leap day must still parse.
+        ok(typeof parseIso("2024-02-29") === "number");
+        strictEqual(parseIso("2026-02-29"), null, "2026 is not a leap year");
+    });
+
+    it("still accepts a full ISO date-time", () => {
+        ok(typeof parseIso("2026-08-01T00:00:00Z") === "number");
+    });
+});
+
+describe("malformed bbox", () => {
+    // Not a bypass — an inverted box still failed clip and still tripped
+    // exclude-region before this validation, both measured. But a rule that
+    // answers a licence question from coordinates that cannot describe a place
+    // on Earth is guessing, so the engine now refuses rather than evaluates.
+    const clip: Restriction[] = [{ kind: "clip", region: "us-territory" }];
+
+    it("is unresolvable rather than silently evaluated", () => {
+        for (const bad of [
+            [10, 5, 0, 1],        // corners inverted
+            [-200, 0, -190, 1],   // longitude out of range
+            [0, -100, 1, -95],    // latitude out of range
+            [0, 0, 1],            // too few components
+        ]) {
+            deepStrictEqual(
+                codes(clip, ctx({ area: { id: "a", bbox: bad } })),
+                ["restriction-unresolvable"],
+                `bbox ${JSON.stringify(bad)}`,
+            );
+        }
+    });
+
+    it("does not let an inverted box evade an exclusion", () => {
+        const r: Restriction[] = [{ kind: "exclude-region", region: "alaska", from: "2022-06-15" }];
+        // Same footprint, corners swapped. Must not come back clean.
+        deepStrictEqual(codes(r, ctx({ area: { id: "a", bbox: [-148, 70.5, -149, 70] } })),
+            ["restriction-unresolvable"]);
     });
 });
 
@@ -297,5 +344,93 @@ describe("gate, end to end", () => {
     it("accepts 3DEP inside US territory", () => {
         const r = runGate(manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: at }, [-100, 35, -99, 36]));
         ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+    });
+
+    it("rejects a symlink that leaves the scanned root", () => {
+        // The lexical `../` escape and the symlink escape are different holes;
+        // resolve() closes only the first. Measured before the fix: the gate
+        // hashed the external file and reported "Licence gate passed".
+        const root = mkdtempSync(join(tmpdir(), "licgate-root-"));
+        const outside = mkdtempSync(join(tmpdir(), "licgate-out-"));
+        mkdirSync(join(root, "data", "tiles"), { recursive: true });
+        writeFileSync(join(outside, "secret.tif"), "x");
+        symlinkSync(join(outside, "secret.tif"), join(root, "data", "tiles", "t.tif"));
+        writeFileSync(join(root, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: at }, [-100, 35, -99, 36])));
+
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", root,
+                "--registry", REGISTRY, "--manifest", join(root, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"), "a symlink out of the root must not pass");
+        ok(out.includes("path-escapes-root"), out.slice(0, 400));
+    });
+});
+
+describe("verified_on cannot be faked", () => {
+    // This is the one field asserting a human read the licence. Before the fix
+    // it used Date.parse directly, so an unparseable value gave NaN and a future
+    // value gave a negative age — and both compared false against the staleness
+    // limit, making garbage indistinguishable from fresh verification.
+    function gateWithVerifiedOn(value: unknown): { passed: boolean; codes: string[] } {
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["usgs-3dep"].verified_on = value;
+        const dir = mkdtempSync(join(tmpdir(), "licgate-reg-"));
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        return {
+            passed: out.includes("Licence gate passed"),
+            codes: [...out.matchAll(/^ERROR {2}([a-z-]+)/gm)].map((m) => m[1]!),
+        };
+    }
+
+    for (const bad of ["not-a-date", "2099-01-01", "2026-02-30"]) {
+        it(`rejects verified_on ${JSON.stringify(bad)}`, () => {
+            const r = gateWithVerifiedOn(bad);
+            ok(!r.passed, `${JSON.stringify(bad)} must not read as verified`);
+            ok(r.codes.includes("invalid-verification-date"), r.codes.join(","));
+        });
+    }
+
+    it("treats an empty verified_on as never-verified, not as an invalid date", () => {
+        // "" is falsy, so it takes the earlier branch and reports the honest
+        // warning rather than an error. That is the right answer: empty means
+        // nobody has read the licence, which --strict already blocks on.
+        const r = gateWithVerifiedOn("");
+        deepStrictEqual(r.codes, [], "empty is a warning, not an error");
+        ok(r.passed, "non-strict mode still passes; --strict is what blocks it");
+    });
+
+    it("accepts a real past date", () => {
+        const r = gateWithVerifiedOn("2026-09-05");
+        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+    });
+});
+
+describe("full-licence-text sources", () => {
+    it("every one declares a licence_text_path that exists and is non-empty", async () => {
+        const reg = (await import(`file://${REGISTRY}`, { with: { type: "json" } })).default;
+        const repoRoot = join(HERE, "..", "..");
+        const broken: string[] = [];
+        for (const [key, e] of Object.entries<any>(reg.sources)) {
+            if (key.startsWith("_") || e.notice_kind !== "full-licence-text") continue;
+            if (!e.licence_text_path) { broken.push(`${key}: no licence_text_path`); continue; }
+            const p = join(repoRoot, e.licence_text_path);
+            if (!existsSync(p)) { broken.push(`${key}: ${e.licence_text_path} missing`); continue; }
+            if (readFileSync(p, "utf8").trim().length === 0) broken.push(`${key}: ${e.licence_text_path} empty`);
+        }
+        deepStrictEqual(broken, [],
+            "a licence requiring its full text to ship is not discharged by a placeholder");
     });
 });

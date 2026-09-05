@@ -79,16 +79,23 @@ jobs:
           fi
 
   # --strict promotes "licence text not hashed" and "licence never read against
-  # its publisher page" from warnings to errors. The register honestly records
-  # `verified_on: null` for sources nobody has read yet, so this job FAILS today
-  # by design — that is the signal, not a bug. Measured on the current tree: 13
-  # unhashed-licence + 13 unverified-source.
+  # its publisher page" from warnings to errors.
   #
-  # It is advisory until those are filled in, so that landing the gate does not
-  # block an unrelated release. Flip `continue-on-error` to false once every
+  # TIMING, because it is easy to misread: `release: types: [published]` fires
+  # AFTER the release exists, so this job can never PREVENT a publication. It is
+  # a post-publication audit. The job that actually blocks is `gate` above, which
+  # runs on every pull_request and on push to main — that is where a bad source
+  # is stopped, and it is not advisory.
+  #
+  # This one stays advisory because the register honestly records
+  # `verified_on: null` for sources nobody has read yet, so it fails today by
+  # design: 13 unhashed-licence + 13 unverified-source on the current tree.
+  # Making it blocking now would fail an unrelated release without telling
+  # anyone anything new. Flip `continue-on-error` to false once every
   # shipped-path source carries a `verified_on` date and a `licence_text_sha256`
-  # — that is the point at which "we read the licence" becomes enforceable
-  # rather than merely asserted.
+  # — that is when "we read the licence" becomes enforceable rather than
+  # asserted. To gate publication itself rather than audit it, the check has to
+  # move into the release-producing workflow, ahead of the upload step.
   gate-strict:
     if: github.event_name == 'release'
     continue-on-error: true
@@ -109,7 +116,7 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      - name: Licence gate (strict — unread licences block release)
+      - name: Licence gate (strict — post-publication audit, advisory)
         run: |
           node --experimental-strip-types tools/licences/check-licences.ts \
             --root . --registry tools/licences/licences.json \

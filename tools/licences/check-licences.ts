@@ -14,11 +14,11 @@
  * Node 22+: node --experimental-strip-types check-licences.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, extname, resolve, sep } from "node:path";
 
-import { evaluateRestrictions, KNOWN_KINDS, type BBox, type Restriction } from "./restrictions.ts";
+import { evaluateRestrictions, KNOWN_KINDS, parseIso, type BBox, type Restriction } from "./restrictions.ts";
 
 // ---------------------------------------------------------------- types
 
@@ -47,6 +47,10 @@ interface SourceEntry {
   notice_required?: boolean;
   /** v2: "full-licence-text" means a one-line credit does not discharge it. */
   notice_kind?: "string" | "full-licence-text";
+  /** v2: repo-relative path to the verbatim licence text. REQUIRED when
+   *  notice_kind is "full-licence-text" — a licence that obliges the text to
+   *  travel with the data is not discharged by a promise to add it later. */
+  licence_text_path?: string;
   /** v2: layer kinds this source may legitimately supply. A bathymetry layer
    *  sourced from a land-cover product is a provenance error, not a licence one,
    *  but it invalidates the notice generated for it either way. */
@@ -183,6 +187,35 @@ function walk(dir: string, out: string[] = []): string[] {
 const sha256 = (abs: string) =>
   createHash("sha256").update(readFileSync(abs)).digest("hex");
 
+/**
+ * Returns a reason string when a manifest path reaches outside ROOT, else null.
+ *
+ * `resolve` alone closes only the `../` escape. A symlink placed inside the root
+ * and pointing out of it resolves clean lexically, so the physical path has to
+ * be checked too — `realpathSync` follows every link in the chain. A dangling
+ * symlink throws there, and is reported rather than swallowed: a path the gate
+ * cannot resolve is one it cannot vouch for.
+ */
+function pathEscape(relPath: string): string | null {
+  const lexical = resolve(ROOT, relPath);
+  if (lexical !== ROOT && !lexical.startsWith(ROOT + sep)) {
+    return "Manifest path resolves outside the scanned root. Provenance can only be asserted for files inside it.";
+  }
+  if (!existsSync(lexical)) return null;   // reported separately as missing-file
+  try {
+    if (lstatSync(lexical).isSymbolicLink()) {
+      const physical = realpathSync(lexical);
+      if (physical !== ROOT && !physical.startsWith(ROOT + sep)) {
+        return `Manifest path is a symlink leaving the scanned root (points at ${physical}). `
+          + `The gate would hash bytes it is not gating.`;
+      }
+    }
+  } catch (e) {
+    return `Manifest path could not be resolved: ${(e as Error).message}`;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- checks
 
 const manifestPaths = new Map<string, { area: Area; tile: Tile }>();
@@ -213,12 +246,15 @@ for (const area of manifest.areas ?? []) {
     }
     manifestPaths.set(norm, { area, tile });
 
-    // A manifest path that resolves outside ROOT would have the gate hash a file
-    // it is not gating. Caught incidentally today only when the traversal depth
-    // happens not to resolve; make it explicit.
-    if (!resolve(ROOT, norm).startsWith(ROOT + sep) && resolve(ROOT, norm) !== ROOT) {
-      add("error", "path-escapes-root", norm,
-        `Manifest path resolves outside the scanned root. Provenance can only be asserted for files inside it.`);
+    // A manifest path that reaches outside ROOT would have the gate hash a file
+    // it is not gating — the provenance record would describe bytes that are
+    // not the shipped bytes. Two distinct escapes, and `resolve` only closes the
+    // first: `../` in the path, and a SYMLINK inside the root pointing out of
+    // it. Verified: before this check, a symlinked tile pointing outside made
+    // the gate hash the external file and report "Licence gate passed".
+    const escape = pathEscape(norm);
+    if (escape) {
+      add("error", "path-escapes-root", norm, escape);
     }
 
     // A tile with no layers has no provenance at all, and the layer loop below
@@ -254,6 +290,25 @@ for (const area of manifest.areas ?? []) {
       if (noticeRequired && !entry.notice) {
         add("error", "missing-notice", where,
           `${entry.name} requires a notice but the registry carries no notice text. Attribution cannot be generated.`);
+      }
+
+      // A licence that obliges its full text to travel with the data is not
+      // discharged by a credit line, and certainly not by a TODO in the
+      // generated notice — which is what this emitted before. Require the text
+      // to exist and be non-empty at generation time.
+      if (entry.notice_kind === "full-licence-text") {
+        const p = entry.licence_text_path;
+        if (!p) {
+          add("error", "missing-licence-text", where,
+            `${entry.name} is notice_kind "full-licence-text" but declares no licence_text_path. `
+            + `Its licence requires the verbatim text to ship with the data.`);
+        } else if (pathEscape(p) || !existsSync(resolve(ROOT, p))) {
+          add("error", "missing-licence-text", where,
+            `${entry.name}: licence_text_path "${p}" is not a readable file inside the root.`);
+        } else if (readFileSync(resolve(ROOT, p), "utf8").trim().length === 0) {
+          add("error", "missing-licence-text", where,
+            `${entry.name}: licence_text_path "${p}" is empty.`);
+        }
       }
 
       // v2: the layer kind must be one this source can legitimately supply.
@@ -299,10 +354,26 @@ for (const area of manifest.areas ?? []) {
         add("warn", "unverified-source", where,
           `${entry.name}: licence has never been read against its primary publisher page.`);
       } else {
-        const ageDays = (Date.now() - Date.parse(entry.verified_on)) / 86_400_000;
-        if (ageDays > registry.policy.verification_max_age_days) {
-          add("warn", "stale-verification", where,
-            `${entry.name}: last verified ${Math.floor(ageDays)} days ago (limit ${registry.policy.verification_max_age_days}).`);
+        // `verified_on` is the one field asserting a human read the licence, so
+        // it must not be satisfiable by a value that is not a date. This used
+        // Date.parse directly: an unparseable value gave NaN and a future value
+        // gave a negative age, and BOTH compared false against the limit — so
+        // "not-a-date" and "verified in 2099" each read as freshly verified.
+        const verifiedMs = parseIso(entry.verified_on);
+        if (verifiedMs === null) {
+          add("error", "invalid-verification-date", where,
+            `${entry.name}: verified_on is ${JSON.stringify(entry.verified_on)}, which is not a valid ISO date. `
+            + `This field asserts someone read the licence; it must not be satisfiable by a non-date.`);
+        } else if (verifiedMs > Date.now()) {
+          add("error", "invalid-verification-date", where,
+            `${entry.name}: verified_on is ${JSON.stringify(entry.verified_on)}, which is in the future. `
+            + `A licence cannot have been read on a date that has not happened yet.`);
+        } else {
+          const ageDays = (Date.now() - verifiedMs) / 86_400_000;
+          if (ageDays > registry.policy.verification_max_age_days) {
+            add("warn", "stale-verification", where,
+              `${entry.name}: last verified ${Math.floor(ageDays)} days ago (limit ${registry.policy.verification_max_age_days}).`);
+          }
         }
       }
     }
@@ -379,15 +450,17 @@ function buildNotice(): string {
   }
 
   if (fullText.length) {
-    lines.push("## Licence texts that must ship in full", "",
-      "The sources below are not discharged by a credit line. Their licence requires the",
-      "full text to travel with the data, so it must be reproduced verbatim below this",
-      "heading before release.",
+    lines.push("## Licence texts", "",
+      "The licences below require their full text to travel with the data. Reproduced",
+      "verbatim from the path each entry records in the registry; the gate refuses to",
+      "generate this file if one of them is missing or empty.",
       "");
     for (const [, s] of fullText) {
-      lines.push(`- **${s.name}** — ${s.spdx ?? "see licence"}: <${s.licence_url}>`);
+      lines.push(`### ${s.name} — ${s.spdx ?? "see licence"}`, "", `<${s.licence_url}>`, "", "```");
+      // Validated in the main loop, so this read cannot be reached with a bad path.
+      lines.push(readFileSync(resolve(ROOT, s.licence_text_path!), "utf8").trimEnd());
+      lines.push("```", "");
     }
-    lines.push("", "> TODO: paste the verbatim licence text for each entry above.", "");
   }
 
   if (pd.length) {

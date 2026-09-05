@@ -75,8 +75,19 @@ export interface Violation {
 
 // --------------------------------------------------------------- geometry
 
+/** Validates a bbox before any rule reasons about it.
+ *
+ *  A malformed box does not currently produce a bypass — an inverted box still
+ *  fails `clip` and still trips `exclude-region`, both checked. But every rule
+ *  here answers a licence question, and answering one from coordinates that
+ *  cannot describe a place on Earth is guessing. Rejecting returns null, which
+ *  the callers turn into `restriction-unresolvable`: loud, and fail-closed. */
 function asBox(b: readonly number[]): BBox | null {
-    return b.length === 4 && b.every(Number.isFinite) ? (b as unknown as BBox) : null;
+    if (b.length !== 4 || !b.every(Number.isFinite)) return null;
+    const [minLon, minLat, maxLon, maxLat] = b as [number, number, number, number];
+    if (minLon > maxLon || minLat > maxLat) return null;
+    if (minLon < -180 || maxLon > 180 || minLat < -90 || maxLat > 90) return null;
+    return [minLon, minLat, maxLon, maxLat];
 }
 
 /** True when `inner` lies entirely within `outer`. Curated areas are small, so
@@ -94,10 +105,35 @@ export function intersects(a: BBox, b: BBox): boolean {
 // --------------------------------------------------------------- dates
 
 /** Parses an ISO date or date-time to epoch ms, or null if unusable.
+ *
+ *  `Date.parse` alone is not enough: it accepts impossible calendar dates and
+ *  silently rolls them over — measured, `Date.parse("2026-02-30")` returns a
+ *  finite timestamp for 2 March, and "2026-06-31" for 1 July. A licence
+ *  boundary that quietly moves by a day or two is worse than one that fails,
+ *  so the calendar fields are round-tripped and must come back unchanged.
+ *
  *  Returning null rather than NaN keeps every comparison explicit — a date the
  *  gate cannot parse must fail closed, not silently compare false. */
 export function parseIso(value: string | undefined): number | null {
     if (!value) return null;
+
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(value.trim());
+    if (!m) return null;
+
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+    // Round-trip the calendar fields: if the Date rolled over, the components
+    // come back different and the input named a day that does not exist.
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    if (probe.getUTCFullYear() !== year
+        || probe.getUTCMonth() !== month - 1
+        || probe.getUTCDate() !== day) {
+        return null;
+    }
+
     const ms = Date.parse(value);
     return Number.isFinite(ms) ? ms : null;
 }
