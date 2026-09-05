@@ -120,10 +120,17 @@ describe('ControlPanel scenario cards', () => {
     const MARKUP = `
         <select id="drone-select"></select>
         <select id="fault-drone-select"></select>
-        <div class="scenario-grid">
-            <button class="scenario-card" data-scenario="single"></button>
-            <button class="scenario-card" data-scenario="sar"></button>
+        <div class="scn-filters">
+            <button class="scn-chip" data-filter="all" data-name="All" aria-pressed="true"><span class="chip-n">0</span></button>
+            <button class="scn-chip" data-filter="disaster" data-name="Disaster" aria-pressed="false"><span class="chip-n">0</span></button>
+            <button class="scn-chip" data-filter="multi" data-name="Multi-domain" aria-pressed="false"><span class="chip-n">0</span></button>
+            <button class="scn-chip" data-filter="dev" data-name="Dev and load" aria-pressed="false"><span class="chip-n">0</span></button>
         </div>
+        <div class="scenario-grid" data-filter="all">
+            <button class="scenario-card" data-scenario="single" data-group="dev"></button>
+            <button class="scenario-card" data-scenario="sar" data-group="dev"></button>
+        </div>
+        <p id="scn-status"></p>
     `;
 
     function stubScenarios(names: unknown): void {
@@ -149,27 +156,118 @@ describe('ControlPanel scenario cards', () => {
         new ControlPanel();
         await settle();
 
+        // Catalog order, not server order and not markup order: disasters lead,
+        // multi-domain follow, dev fixtures land last.
         expect(cardKeys()).toEqual(
-            ['single', 'sar', 'wildfire-interface', 'flood-response']);
+            ['wildfire-interface', 'flood-response', 'single', 'sar']);
     });
 
-    it('labels a known preset from its environment', async () => {
+    it('labels a preset from the catalog, with its asset count and domains', async () => {
+        stubScenarios(['flood-response']);
+        new ControlPanel();
+        await settle();
+
+        const card = document.querySelector('.scenario-card[data-scenario="flood-response"]')!;
+        expect(card.querySelector('.sc-name')!.textContent).toBe('FLOOD RESCUE');
+        expect(card.querySelector('.sc-count')!.textContent).toBe('8');
+        expect([...card.querySelectorAll('.sc-d')].map(e => e.textContent))
+            .toEqual(['AIR', 'GND', 'SEA']);
+        expect(card.getAttribute('data-group')).toBe('multi');
+    });
+
+    it('renders an air-only preset with one domain chip, not three', async () => {
+        // The chip RUN is the signal — an absent domain draws nothing, which is
+        // what lets the column be read down without a legend.
         stubScenarios(['wildfire-interface']);
         new ControlPanel();
         await settle();
 
         const card = document.querySelector('.scenario-card[data-scenario="wildfire-interface"]')!;
-        expect(card.querySelector('.sc-name')!.textContent).toBe('WILDFIRE');
-        expect(card.querySelector('.sc-desc')!.textContent).toBe('WUI INTERFACE');
+        expect([...card.querySelectorAll('.sc-d')].map(e => e.textContent)).toEqual(['AIR']);
     });
 
-    it('falls back to a humanised id for a preset with no environment', async () => {
-        stubScenarios(['mixed-load-150']);
+    it('marks a preset it has never heard of as a visible gap', async () => {
+        // The old fallback printed the word "preset" as a description, which read
+        // like a real card carrying no information.
+        stubScenarios(['brand-new-preset']);
         new ControlPanel();
         await settle();
 
-        const card = document.querySelector('.scenario-card[data-scenario="mixed-load-150"]')!;
-        expect(card.querySelector('.sc-name')!.textContent).toBe('Mixed Load 150');
+        const card = document.querySelector('.scenario-card[data-scenario="brand-new-preset"]')!;
+        expect(card.querySelector('.sc-name')!.textContent).toBe('BRAND NEW PRESET');
+        expect(card.querySelector('.sc-count')!.textContent).toBe('—');
+        expect(card.getAttribute('title')).toContain('Unlisted preset');
+    });
+
+    it('never renders a lower-case acronym', async () => {
+        // `_humanise` upcased only the first letter of each kebab segment, which
+        // turned multi-agency-sar into "Multi Agency Sar".
+        stubScenarios(['multi-agency-sar', 'sar', 'alpine-sar']);
+        new ControlPanel();
+        await settle();
+
+        for (const el of document.querySelectorAll('.sc-name')) {
+            expect(el.textContent).toBe(el.textContent!.toUpperCase());
+        }
+    });
+
+    it('groups rows under a heading and orders them by the catalog', async () => {
+        stubScenarios(['single', 'flood-response', 'wildfire-interface']);
+        new ControlPanel();
+        await settle();
+
+        const grid = document.querySelector('.scenario-grid')!;
+        const flow = [...grid.children].map(el => el.classList.contains('scn-head')
+            ? `#${(el as HTMLElement).dataset['group']}`
+            : (el as HTMLElement).dataset['scenario']);
+        // Disasters lead, multi-domain follow, dev fixtures land last.
+        // `sar` rides along because the markup fixture ships it beside `single`.
+        expect(flow).toEqual([
+            '#disaster', 'wildfire-interface',
+            '#multi', 'flood-response',
+            '#dev', 'single', 'sar',
+        ]);
+    });
+
+    it('counts each chip against the rows that actually exist', async () => {
+        stubScenarios(['single', 'sar', 'flood-response', 'wildfire-interface']);
+        new ControlPanel();
+        await settle();
+
+        const chip = (f: string): HTMLElement =>
+            document.querySelector<HTMLElement>(`.scn-chip[data-filter="${f}"]`)!;
+        expect(chip('all').dataset['count']).toBe('4');
+        expect(chip('disaster').dataset['count']).toBe('1');
+        expect(chip('multi').dataset['count']).toBe('1');
+        expect(chip('dev').dataset['count']).toBe('2');
+    });
+
+    it('filters the list to one group when a chip is pressed', async () => {
+        stubScenarios(['single', 'flood-response']);
+        new ControlPanel();
+        await settle();
+
+        document.querySelector<HTMLElement>('.scn-chip[data-filter="multi"]')!.click();
+
+        const grid = document.querySelector<HTMLElement>('.scenario-grid')!;
+        expect(grid.dataset['filter']).toBe('multi');
+        expect(document.querySelector('.scn-chip[data-filter="multi"]')!
+            .getAttribute('aria-pressed')).toBe('true');
+        expect(document.querySelector('.scn-chip[data-filter="all"]')!
+            .getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('falls back to All when the pressed chip has nothing under it', async () => {
+        // A server offering fewer presets than the catalog knows must not leave
+        // the operator staring at an empty list.
+        stubScenarios(['single', 'flood-response']);
+        new ControlPanel();
+        await settle();
+
+        document.querySelector<HTMLElement>('.scn-chip[data-filter="disaster"]')!.click();
+
+        expect(document.querySelector<HTMLElement>('.scenario-grid')!.dataset['filter'])
+            .toBe('all');
     });
 
     it('never duplicates a card the markup already provides', async () => {

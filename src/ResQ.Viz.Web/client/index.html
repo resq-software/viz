@@ -199,27 +199,62 @@
             </div>
         </div>
 
-        <div class="panel-section">
-            <h2 class="section-title">Scenarios</h2>
-            <div class="scenario-grid">
-                <button class="scenario-card" type="button" data-scenario="single">
-                    <span class="sc-name">Single</span>
-                    <span class="sc-desc">1 drone</span>
+        <!-- Scenarios: filter chips over a bounded, uniform-row catalog list.
+             Nineteen presets as two-column cards was 634px of a 948px rail, which
+             pushed Terrain, Commands, Spawn, Weather and Faults below the fold.
+             These four rows stay hand-written so the rail is fully labelled on
+             first paint, before /api/sim/scenarios resolves — and they are the
+             only rows that exist at all if that fetch fails. Their text is
+             byte-identical to `scenarioCatalog.ts`, which a unit test pins, so
+             there is one source of truth and no relabelling flash. -->
+        <section class="panel-section panel-scenarios" aria-labelledby="sec-scenarios">
+            <h2 class="section-title" id="sec-scenarios">Scenarios</h2>
+
+            <div class="scn-filters" role="group" aria-label="Filter scenarios">
+                <button class="scn-chip" type="button" data-filter="all"      data-name="All"          aria-pressed="true">All<span class="chip-n">4</span></button>
+                <button class="scn-chip" type="button" data-filter="disaster" data-name="Disaster"     aria-pressed="false">Disaster<span class="chip-n">0</span></button>
+                <button class="scn-chip" type="button" data-filter="multi"    data-name="Multi-domain" aria-pressed="false">Multi<span class="chip-n">0</span></button>
+                <button class="scn-chip" type="button" data-filter="dev"      data-name="Dev and load" aria-pressed="false">Dev<span class="chip-n">4</span></button>
+            </div>
+
+            <div class="scenario-grid" data-filter="all">
+                <h3 class="scn-head" data-group="dev">Dev &amp; load</h3>
+                <button class="scenario-card" type="button" data-scenario="single" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="1"
+                        aria-label="Single, 1 asset, air"
+                        title="SINGLE — One drone, the smallest live world">
+                    <span class="sc-name">SINGLE</span><span class="sc-count">1</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">1</kbd>
                 </button>
-                <button class="scenario-card" type="button" data-scenario="swarm-5">
-                    <span class="sc-name">Swarm 5</span>
-                    <span class="sc-desc">5 drones</span>
+                <button class="scenario-card" type="button" data-scenario="swarm-5" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="2"
+                        aria-label="Swarm 5, 5 assets, air"
+                        title="SWARM 5 — Five-drone formation and mesh drill">
+                    <span class="sc-name">SWARM 5</span><span class="sc-count">5</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">2</kbd>
                 </button>
-                <button class="scenario-card" type="button" data-scenario="swarm-20">
-                    <span class="sc-name">Swarm 20</span>
-                    <span class="sc-desc">20 drones</span>
+                <button class="scenario-card" type="button" data-scenario="swarm-20" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="3"
+                        aria-label="Swarm 20, 20 assets, air"
+                        title="SWARM 20 — Twenty-drone saturation trial">
+                    <span class="sc-name">SWARM 20</span><span class="sc-count">20</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">3</kbd>
                 </button>
-                <button class="scenario-card" type="button" data-scenario="sar">
-                    <span class="sc-name">SAR</span>
-                    <span class="sc-desc">Search &amp; rescue</span>
+                <button class="scenario-card" type="button" data-scenario="sar" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="4"
+                        aria-label="Sar sweep, 3 assets, air"
+                        title="SAR SWEEP — Lead, scout and relay in a search box">
+                    <span class="sc-name">SAR SWEEP</span><span class="sc-count">3</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">4</kbd>
                 </button>
             </div>
-        </div>
+
+            <p id="scn-status" class="sr-only" role="status"></p>
+        </section>
 
         <div class="panel-section">
             <h2 class="section-title">Terrain</h2>
@@ -378,7 +413,7 @@
         <span><kbd>Space</kbd> Stop sim</span>
         <span><kbd>R</kbd> Reset sim</span>
         <span><kbd>Tab</kbd> Sidebar</span>
-        <span><kbd>1&#x2013;4</kbd> Scenarios</span>
+        <span><kbd>1&#x2013;5</kbd> Scenarios</span>
         <span><kbd>Click drone</kbd> Select</span>
         <span><kbd>Click ground</kbd> Send drone here</span>
         <span><kbd>[</kbd> / <kbd>]</kbd> Prev / next drone</span>

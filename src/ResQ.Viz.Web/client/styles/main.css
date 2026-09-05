@@ -798,35 +798,153 @@ kbd {
 }
 .terrain-card.active .tc-name { color: var(--accent); }
 
-.scenario-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.scenario-card {
+/* ── Scenarios · filter chips + dense catalog list ─────────────────────────
+   Nineteen presets as 2-col cards was 634px of a 948px rail. The same nineteen
+   as fixed 24px rows in a bounded scroller is ~250px that never grows, so
+   Terrain, Commands, Spawn, Weather and Faults stay above the fold however many
+   presets the server offers. One track template is shared by every row, so the
+   counts and domain chips form real columns you read DOWN. */
+
+.panel-scenarios { gap: 8px; --scn-cols: 1fr 24px 64px 14px; }
+
+.scn-filters {
+  display: flex; flex-wrap: wrap; gap: 3px; padding: 3px;
   background: rgba(255, 255, 255, 0.025);
-  box-shadow: var(--ring);
-  border-radius: var(--r-2);
-  padding: 10px 12px;
-  cursor: pointer;
-  text-align: left;
+  border-radius: var(--r-2); box-shadow: var(--ring);
+}
+.scn-chip {
+  appearance: none; background: transparent; border: 0;
+  color: var(--text-muted);
+  font-family: var(--mono); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 24px; padding: 0 8px;
+  border-radius: var(--r-1); cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+.scn-chip:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.scn-chip[aria-pressed='true'] {
+  background: var(--accent-soft); color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--info-glow);
+}
+.scn-chip .chip-n {
+  font-size: 8.5px; font-weight: 500; letter-spacing: 0;
+  color: var(--text-faint); font-variant-numeric: tabular-nums;
+}
+.scn-chip[aria-pressed='true'] .chip-n { color: var(--accent); opacity: 0.7; }
+/* A group the server offered nothing for is dimmed and inert — an empty filter
+   is information, a missing chip is a mystery. */
+.scn-chip[data-count='0'] { opacity: 0.3; pointer-events: none; }
+/* The one saturated non-accent mark in this section, on the only group that
+   costs you something to run. Not a four-tint classification scheme. */
+.scn-chip[data-filter='dev']::before {
+  content: ''; width: 4px; height: 4px; border-radius: 1px;
+  background: var(--warning); flex-shrink: 0;
+}
+
+.scenario-grid {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: clamp(170px, 25vh, 340px);
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+}
+/* Bottom fade only when there IS more below, so a short filtered list keeps its
+   last row at full strength. `.is-scrollable` is measured in controls.ts. */
+.scenario-grid.is-scrollable {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+}
+
+.scn-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: 7px;
+  min-height: 18px; padding: 0 8px 0 10px;
+  font-family: var(--mono); font-size: 8.5px; font-weight: 600;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--surface-3); border-radius: var(--r-1);
+}
+.scn-head::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+/* A filtered view is already one group, so its heading would be a tautology. */
+.scenario-grid:not([data-filter='all']) .scn-head { display: none; }
+
+.scenario-grid[data-filter='disaster'] .scenario-card:not([data-group='disaster']),
+.scenario-grid[data-filter='multi']    .scenario-card:not([data-group='multi']),
+.scenario-grid[data-filter='dev']      .scenario-card:not([data-group='dev']) { display: none; }
+
+.scenario-card {
+  display: grid; grid-template-columns: var(--scn-cols);
+  align-items: center; gap: 6px;
+  min-height: 24px; padding: 0 8px 0 10px;
+  background: transparent; box-shadow: none;
+  border-radius: var(--r-1); text-align: left; cursor: pointer;
   transition: background var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
 }
-.scenario-card:hover  { background: rgba(255, 255, 255, 0.05); box-shadow: var(--ring-strong); }
+.scenario-card:hover  { background: rgba(255, 255, 255, 0.075); transform: translateX(2px); }
+.scenario-card:active { transform: translateX(1px) scale(0.995); }
+
+/* Armed mission. The inset bar survives monochrome and forced-colors; the glow
+   is reinforcement, not the message. */
 .scenario-card.active {
   background: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--info-glow), 0 0 14px var(--info-soft);
+  box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px var(--info-glow), 0 0 14px var(--info-soft);
 }
-.scenario-card .sc-name {
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
+.scenario-card.active .sc-name  { color: var(--accent); }
+.scenario-card.active .sc-count { color: var(--accent); }
+.scenario-card.active .sc-d     { color: var(--accent); box-shadow: inset 0 0 0 1px var(--info-glow); }
+.scenario-card.active .sc-key   { color: var(--accent); box-shadow: inset 0 0 0 1px var(--info-glow); }
+
+.sc-name {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  font-family: var(--sans); font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.01em; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden;
+  transition: color var(--t-fast);
 }
-.scenario-card .sc-desc {
-  font-family: var(--mono);
-  font-size: 9px;
-  color: var(--text-muted);
-  margin-top: 3px;
-  letter-spacing: 0.06em;
+/* Leader rule — fills the gap a short label leaves and carries the eye to the
+   numbers, the way a contents page does. */
+.sc-name::after {
+  content: ''; flex: 1 1 auto; min-width: 6px; height: 1px;
+  background: linear-gradient(to right, var(--line-strong), transparent 72%);
+  opacity: 0.4; transition: opacity var(--t-fast);
 }
-.scenario-card.active .sc-desc { color: var(--accent); }
+.scenario-card:hover .sc-name { color: var(--text); }
+.scenario-card:hover .sc-name::after { opacity: 0.85; }
+.scenario-card.active .sc-name::after {
+  background: linear-gradient(to right, var(--info-glow), transparent 72%); opacity: 1;
+}
+
+.sc-count {
+  justify-self: end; font-family: var(--mono); font-size: 9.5px;
+  font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+
+/* Domain as a WORD, matching the shipped `.ap-domain` recipe in assets.css —
+   neither surface depends on hue to tell a rover from a vessel. An ABSENT domain
+   renders no chip at all, so the run's width carries the fact and no legend is
+   needed. Hue in this console means asset OPERATIONAL STATE, and is not spent
+   here. */
+.sc-dom { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; }
+.sc-d {
+  font-family: var(--mono); font-size: 7.5px; font-weight: 600;
+  letter-spacing: 0.1em; color: var(--text-faint);
+  padding: 1px 3px; border-radius: var(--radius-token);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.sc-key {
+  justify-self: end; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 13px; height: 13px;
+  font-family: var(--mono); font-size: 8px; font-weight: 600;
+  color: var(--text-faint); border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* Narrow rail: tighten the chip run so the label column keeps ~15 characters. */
+@media (max-width: 900px) {
+  .panel-scenarios { --scn-cols: 1fr 22px 56px 14px; }
+  .sc-d { padding: 1px 2px; letter-spacing: 0.06em; }
+}
 
 /* ── Scrollbar polish ───────────────────────────────────────────────────── */
 
@@ -1676,24 +1794,32 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   color: inherit;
   border: 0;
   width: 100%;
-  display: block;
 }
-.scenario-card { text-align: left; }
-.terrain-card  { text-align: center; }
-.scenario-card .sc-name,
-.scenario-card .sc-desc,
-.terrain-card  .tc-icon,
-.terrain-card  .tc-name {
+/* `display` is set per card kind, NOT shared. It used to be declared on the
+   group above, after the scenario-card rules and at equal specificity, so it won
+   the cascade — which would silently flatten the scenario row's grid back to a
+   stack. `.terrain-card` still wants block and now says so itself rather than
+   relying on being blockified as a grid item. */
+.terrain-card { display: block; text-align: center; }
+.terrain-card .tc-icon,
+.terrain-card .tc-name {
   display: block;
 }
 
 /* Custom focus ring on cards — slightly stronger than the default :focus-visible
    so keyboard users can spot the active card against the panel. */
-.scenario-card:focus-visible,
+/* No `background: var(--accent-soft)` here: that is exactly what `.active`
+   paints, so tabbing across nineteen rows made each one impersonate the running
+   scenario in turn. The outline alone is the focus signal.
+   The offset is split because a POSITIVE offset on a row is clipped by the
+   scenario list's scroll container; the terrain grid has no such container. */
 .terrain-card:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  background: var(--accent-soft);
+}
+.scenario-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* Honor user motion preferences. The 3D scene itself is exempt (it's the
@@ -1708,6 +1834,9 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   /* Conn dot reconnect pulse is informational — replace flash with steady dim. */
   .conn-dot.reconnecting { animation: none; opacity: 0.7; }
   .cockpit:not(.hidden) { animation: none; }
+  /* The global rule only zeroes transition-duration; an INSTANT 2px slide is
+     still movement, so the row nudge is removed rather than merely hurried. */
+  .scenario-card:hover, .scenario-card:active { transform: none; }
 }
 
 /* ── Selected-drone cockpit (flight instruments) ────────────────────────── */
@@ -1740,14 +1869,15 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
 @media (forced-colors: active) {
   .hud, #hud-top, #sidebar, .settings-panel, #drone-panel, #key-hints,
   .event-log, .el-row, .minimap, #wind-compass, .cockpit-row, .ro-row,
-  .scenario-card, .terrain-card {
+  .scenario-card, .terrain-card, .scn-head {
     background: Canvas;
     border: 1px solid CanvasText;
     backdrop-filter: none;
   }
   :focus-visible,
   input:focus, select:focus, .field-select:focus,
-  .scenario-card:focus-visible, .terrain-card:focus-visible {
+  .scenario-card:focus-visible, .terrain-card:focus-visible,
+  .scn-chip:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 2px;
   }

@@ -66,8 +66,6 @@ const SKY_PROFILES: Readonly<Record<SkyModel, SkyProfile>> = {
 export interface ScenarioEnvironment extends SceneEnvironment {
     /** Scenario id — must match the key in appsettings.json `Scenarios`. */
     readonly key: string;
-    /** Operator-facing label for the intro card and mission chrome. */
-    readonly displayName: string;
     readonly terrainPreset: PresetKey;
     readonly skyModel: SkyModel;
     /**
@@ -112,7 +110,6 @@ export interface ScenarioEnvironment extends SceneEnvironment {
 export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>> = {
     'wildfire-interface': {
         key: 'wildfire-interface',
-        displayName: 'WILDFIRE — WUI INTERFACE',
         terrainPreset: 'ridgeline',
         sunElevationDeg: 12,
         sunAzimuthDeg: 285,
@@ -128,7 +125,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'hurricane-melissa': {
         key: 'hurricane-melissa',
-        displayName: 'HURRICANE MELISSA — LANDFALL',
         terrainPreset: 'coastal',
         sunElevationDeg: 6,
         sunAzimuthDeg: 200,
@@ -142,7 +138,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'flood-riverine': {
         key: 'flood-riverine',
-        displayName: 'RIVERINE FLOOD — VALLEY INUNDATION',
         terrainPreset: 'alpine',
         sunElevationDeg: 35,
         sunAzimuthDeg: 140,
@@ -156,7 +151,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'urban-collapse': {
         key: 'urban-collapse',
-        displayName: 'URBAN COLLAPSE — STRUCTURE SEARCH',
         terrainPreset: 'canyon',
         sunElevationDeg: 20,
         sunAzimuthDeg: 95,
@@ -170,7 +164,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'alpine-sar': {
         key: 'alpine-sar',
-        displayName: 'ALPINE SAR — AVALANCHE RESPONSE',
         terrainPreset: 'alpine',
         sunElevationDeg: 22,
         sunAzimuthDeg: 160,
@@ -186,7 +179,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'canyon-sar': {
         key: 'canyon-sar',
-        displayName: 'CANYON SAR — SLOT GORGE',
         terrainPreset: 'canyon',
         // High sun is the point: it drives hard, high-contrast shadow into the
         // gorge, and deep occlusion is what makes the WebGPU line-of-sight
@@ -214,7 +206,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     // the scenario exists to show.
     'flood-response': {
         key: 'flood-response',
-        displayName: 'FLOOD RESPONSE — INUNDATED VALLEY',
         terrainPreset: 'alpine',
         sunElevationDeg: 28,
         sunAzimuthDeg: 155,
@@ -227,7 +218,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'coastal-search': {
         key: 'coastal-search',
-        displayName: 'COASTAL SEARCH — OFFSHORE SWEEP',
         terrainPreset: 'coastal',
         sunElevationDeg: 30,
         sunAzimuthDeg: 210,
@@ -240,7 +230,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'coastal-transit': {
         key: 'coastal-transit',
-        displayName: 'COASTAL TRANSIT — CHANNEL RUN',
         terrainPreset: 'coastal',
         sunElevationDeg: 44,
         sunAzimuthDeg: 175,
@@ -252,7 +241,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'port-incident': {
         key: 'port-incident',
-        displayName: 'PORT INCIDENT — HARBOUR RESPONSE',
         terrainPreset: 'coastal',
         sunElevationDeg: 16,
         sunAzimuthDeg: 240,
@@ -265,7 +253,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'ground-convoy': {
         key: 'ground-convoy',
-        displayName: 'GROUND CONVOY — GRADED ASCENT',
         terrainPreset: 'alpine',
         sunElevationDeg: 38,
         sunAzimuthDeg: 130,
@@ -277,7 +264,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     },
     'mixed-ground': {
         key: 'mixed-ground',
-        displayName: 'MIXED GROUND — COMBINED TEAM',
         terrainPreset: 'alpine',
         sunElevationDeg: 34,
         sunAzimuthDeg: 145,
