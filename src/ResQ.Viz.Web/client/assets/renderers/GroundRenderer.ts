@@ -202,6 +202,40 @@ const _UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 const _UNIT_CYL = new THREE.CylinderGeometry(1, 1, 1, 10);
 const _UNIT_SPHERE = new THREE.SphereGeometry(1, 10, 8);
 
+/**
+ * Unit hull with a sloped bow and a cut-back stern, in the same 1×1×1 envelope
+ * as {@link _UNIT_BOX} so it scales and positions identically.
+ *
+ * A rover drawn as a plain box reads as a crate on wheels and — worse for a
+ * fleet picture — reads the same from either end, so which way it points has to
+ * be inferred from the light bar alone. A sloped forward deck gives the
+ * silhouette a nose, which is the cheapest available fix for heading legibility
+ * and most of what a shape this small on screen has to convey.
+ *
+ * Authored as a side profile (x along the vehicle, y up) and extruded across the
+ * width, then rotated so the extrusion axis becomes X and the profile axis
+ * becomes Z — the +Z-forward convention the rest of this renderer uses.
+ */
+const _UNIT_HULL = (() => {
+    const profile = new THREE.Shape();
+    profile.moveTo(-0.5, -0.5);   // stern, bottom
+    profile.lineTo(0.5, -0.5);    // bow, bottom
+    profile.lineTo(0.5, 0.02);    // bow, top of the lower plate
+    profile.lineTo(0.16, 0.5);    // sloped bonnet up to the deck
+    profile.lineTo(-0.4, 0.5);    // deck run
+    profile.lineTo(-0.5, 0.16);   // cut-back stern
+    profile.closePath();
+
+    const geo = new THREE.ExtrudeGeometry(profile, { depth: 1, bevelEnabled: false });
+    // ExtrudeGeometry lays the profile in XY and extrudes along +Z from 0 to
+    // depth, so centre it before rotating or the hull sits off to one side of
+    // everything positioned against it.
+    geo.translate(0, 0, -0.5);
+    geo.rotateY(-Math.PI / 2);
+    geo.computeVertexNormals();
+    return geo;
+})();
+
 interface GroundEntry {
   readonly root: THREE.Group;
   /** Steering knuckles, empty for anything without a steering linkage. */
@@ -474,7 +508,7 @@ function buildRover(shape: PlatformShape): BuiltRover {
   const hullBaseM = 0.02;
   const hullTopM = hullBaseM + hullHeightM;
 
-  const hull = new THREE.Mesh(_UNIT_BOX, chassisMat);
+  const hull = new THREE.Mesh(_UNIT_HULL, chassisMat);
   hull.scale.set(hullWidthM, hullHeightM, hullLengthM);
   hull.position.y = hullBaseM + hullHeightM / 2;
   hull.castShadow = true;
@@ -503,9 +537,17 @@ function buildRover(shape: PlatformShape): BuiltRover {
   mast.position.set(0, hullTopM + mastHeightM / 2, mastZ);
   root.add(mast);
 
-  const sensorHead = new THREE.Mesh(_UNIT_BOX, chassisMat);
-  sensorHead.scale.set(hullWidthM * 0.3, 0.12, 0.14);
-  sensorHead.position.set(0, hullTopM + mastHeightM + 0.06, mastZ);
+  // Yoke and ball rather than a box on a stick: the box read as cargo, and the
+  // one thing this part has to say is that the rover is carrying something that
+  // looks at the world.
+  const yoke = new THREE.Mesh(_UNIT_BOX, chassisMat);
+  yoke.scale.set(hullWidthM * 0.26, 0.05, 0.05);
+  yoke.position.set(0, hullTopM + mastHeightM + 0.055, mastZ);
+  root.add(yoke);
+
+  const sensorHead = new THREE.Mesh(_UNIT_SPHERE, chassisMat);
+  sensorHead.scale.setScalar(0.075);
+  sensorHead.position.set(0, hullTopM + mastHeightM + 0.02, mastZ);
   sensorHead.castShadow = true;
   root.add(sensorHead);
 

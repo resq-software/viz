@@ -3,13 +3,31 @@
 
 import type { DroneState } from './types';
 import { getLogger } from './log';
+import type { ScenarioGroup } from './scenarioCatalog';
+import {
+    SCENARIO_ORDER, SCENARIO_GROUP_LABELS, SCENARIO_HOTKEYS,
+    scenarioCardFor, scenarioSpokenName, scenarioTitle, domainWords,
+} from './scenarioCatalog';
 
 const log = getLogger('controls');
 
 export class ControlPanel {
     constructor() {
         this._bindSimButtons();
+        // Cards for every preset the SERVER offers, not just the four in the
+        // markup. Fire-and-forget, and it re-binds when it lands: a failed fetch
+        // leaves exactly the four hard-coded cards, which is what shipped.
+        void this._addServerScenarioCards();
         this._bindScenarioCards();
+        this._bindScenarioFilters();
+        // Every start path converges here: an optimistic click below, the digit
+        // hotkeys, and app.ts's imported scene config, which POSTs and dispatches
+        // this event directly. Without it an imported config can start a scenario
+        // and leave the rail lit for a different one.
+        document.addEventListener('resq:scenario-start', (e) => {
+            const detail = (e as CustomEvent<{ name?: string }>).detail;
+            if (detail?.name) this._setActiveScenario(detail.name);
+        });
         this._bindSpawn();
         this._bindCommandButtons();
         this._bindFaultButtons();
@@ -60,21 +78,258 @@ export class ControlPanel {
         this._on('btn-reset', () => this._post('/api/sim/reset'));
     }
 
+    /**
+     * Adds a card for every scenario the server offers that the markup omits.
+     *
+     * The markup hard-codes four cards — the drone-count fixtures and SAR —
+     * while this build ships nineteen presets, including every disaster and every
+     * multi-domain one. The other fifteen had no way in at all: not merely
+     * inconvenient, but the reason their environments never appeared, because a
+     * scenario's sky, fog, camera and weather are applied from the
+     * `resq:scenario-start` event, and only starting one from the UI raises it.
+     * A preset reachable exclusively by POSTing the API ran with whatever look
+     * the previous scenario had left behind.
+     *
+     * Cards are appended rather than replacing the markup, so the four that were
+     * always there keep their hand-written labels and their order.
+     */
+    private async _addServerScenarioCards(): Promise<void> {
+        const grid = document.querySelector<HTMLElement>('.scenario-grid');
+        if (!grid) return;
+
+        let names: string[];
+        try {
+            const res = await fetch('/api/sim/scenarios');
+            if (!res.ok) return;
+            const body: unknown = await res.json();
+            if (!Array.isArray(body)) return;
+            names = body.filter((n): n is string => typeof n === 'string' && n.length > 0);
+        } catch {
+            // Offline, or the endpoint is gone. The markup's own cards stand.
+            return;
+        }
+
+        const cards = new Map<string, HTMLElement>();
+        for (const el of grid.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]')) {
+            const id = el.dataset['scenario'];
+            if (id && !cards.has(id)) cards.set(id, el);
+        }
+
+        let added = 0;
+        for (const name of names) {
+            if (cards.has(name)) continue;
+            cards.set(name, this._buildScenarioCard(name));
+            added++;
+        }
+        // Re-lay-out only when the DOM actually changed, so the common case of a
+        // server offering nothing new costs one fetch and no listener churn.
+        if (added === 0) return;
+        this._layOutScenarioList(grid, cards);
+        this._bindScenarioCards();
+        this._refreshScenarioFilter();
+    }
+
+    /**
+     * One scenario row, entirely from the catalog.
+     *
+     * No parsing and no id-derived labels: copy used to be reverse-engineered by
+     * splitting an environment's display name on an em dash, which could not
+     * serve a preset that has no environment and fell back to the literal word
+     * "preset".
+     */
+    private _buildScenarioCard(name: string): HTMLButtonElement {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'scenario-card';
+        card.dataset['scenario'] = name;
+
+        const entry = scenarioCardFor(name);
+        card.dataset['group'] = entry.group;
+        card.dataset['dom'] = entry.dom;
+        card.setAttribute('aria-label', scenarioSpokenName(entry));
+        card.title = scenarioTitle(entry);
+        if (entry.hotkey !== undefined) card.setAttribute('aria-keyshortcuts', entry.hotkey);
+
+        const span = (cls: string, text: string): HTMLSpanElement => {
+            const el = document.createElement('span');
+            el.className = cls;
+            el.textContent = text;
+            return el;
+        };
+
+        // Hidden from AT: the spoken name above already says the domains as
+        // words, and these three-letter chips would be read as noise.
+        const dom = span('sc-dom', '');
+        dom.setAttribute('aria-hidden', 'true');
+        for (const word of domainWords(entry.dom)) dom.appendChild(span('sc-d', word));
+
+        card.append(
+            span('sc-name', entry.label),
+            span('sc-count', entry.count > 0 ? String(entry.count) : '—'),
+            dom,
+        );
+        if (entry.hotkey !== undefined) {
+            const key = document.createElement('kbd');
+            key.className = 'sc-key';
+            key.textContent = entry.hotkey;
+            card.appendChild(key);
+        }
+        return card;
+    }
+
+    /**
+     * Rebuilds the list in catalog order, with a sticky header per group.
+     *
+     * `replaceChildren` MOVES nodes that are already in the tree, so the four
+     * markup rows keep their listeners and their `data-bound` marker — which is
+     * what lets this reorder them out of markup order without re-binding them and
+     * double-POSTing on the next click. DOM order is visual order, with no CSS
+     * `order`, so tab order cannot diverge from what is on screen.
+     */
+    private _layOutScenarioList(grid: HTMLElement, cards: Map<string, HTMLElement>): void {
+        const rank = (id: string): number => {
+            const i = SCENARIO_ORDER.indexOf(id);
+            return i < 0 ? SCENARIO_ORDER.length : i;   // unlisted presets sort last
+        };
+        const flow: Node[] = [];
+        let group: ScenarioGroup | null = null;
+        for (const [id, el] of [...cards].sort((a, b) => rank(a[0]) - rank(b[0]))) {
+            const next = scenarioCardFor(id).group;
+            if (next !== group) {
+                group = next;
+                const head = document.createElement('h3');
+                head.className = 'scn-head';
+                head.dataset['group'] = next;
+                head.textContent = SCENARIO_GROUP_LABELS.get(next) ?? next;
+                flow.push(head);
+            }
+            flow.push(el);
+        }
+        grid.replaceChildren(...flow);
+    }
+
+    /** One delegated listener for the whole chip bar, so a later chip works too. */
+    private _bindScenarioFilters(): void {
+        const bar = document.querySelector<HTMLElement>('.scn-filters');
+        if (!bar) return;
+        bar.addEventListener('click', (e) => {
+            const chip = (e.target as Element | null)?.closest<HTMLElement>('.scn-chip');
+            if (!chip) return;
+            this._selectFilter(chip.dataset['filter'] ?? 'all');
+        });
+        this._refreshScenarioFilter();
+    }
+
+    /** Applies one filter to the list and the chip bar. */
+    private _selectFilter(filter: string): void {
+        const grid = document.querySelector<HTMLElement>('.scenario-grid');
+        if (!grid) return;
+        grid.dataset['filter'] = filter;
+        document.querySelectorAll<HTMLElement>('.scn-chip').forEach(chip => {
+            chip.setAttribute(
+                'aria-pressed', String((chip.dataset['filter'] ?? 'all') === filter));
+        });
+        grid.scrollTop = 0;
+        this._refreshScenarioFilter();
+    }
+
+    /**
+     * Re-counts the chips against the rows that actually exist, names them for
+     * assistive tech, announces the result and marks the list scrollable.
+     *
+     * Counting the DOM rather than the catalog keeps the chips honest when the
+     * server offers fewer presets than this build knows about. If the selected
+     * chip then has nothing under it, the filter falls back to All rather than
+     * leaving an empty list on screen.
+     */
+    private _refreshScenarioFilter(): void {
+        const bar = document.querySelector<HTMLElement>('.scn-filters');
+        const grid = document.querySelector<HTMLElement>('.scenario-grid');
+        if (!bar || !grid) return;
+
+        const cards = grid.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]');
+        const tally = new Map<string, number>();
+        for (const card of cards) {
+            const group = card.dataset['group'] ?? 'dev';
+            tally.set(group, (tally.get(group) ?? 0) + 1);
+        }
+        const countFor = (f: string): number =>
+            f === 'all' ? cards.length : (tally.get(f) ?? 0);
+
+        bar.querySelectorAll<HTMLElement>('.scn-chip').forEach(chip => {
+            const filter = chip.dataset['filter'] ?? 'all';
+            const n = countFor(filter);
+            chip.dataset['count'] = String(n);
+            const slot = chip.querySelector('.chip-n');
+            if (slot) slot.textContent = String(n);
+            chip.setAttribute('aria-label', `${chip.dataset['name'] ?? filter}, ${n} scenarios`);
+        });
+
+        const current = grid.dataset['filter'] ?? 'all';
+        if (current !== 'all' && countFor(current) === 0) { this._selectFilter('all'); return; }
+        const status = document.getElementById('scn-status');
+        if (status) status.textContent = `${countFor(current)} scenarios listed`;
+        grid.classList.toggle('is-scrollable', grid.scrollHeight > grid.clientHeight + 1);
+    }
+
+    /**
+     * Marks one row as the armed mission.
+     *
+     * Called optimistically from the click handler for instant feedback, and
+     * again from the `resq:scenario-start` listener so every start path lights
+     * the same row. It is idempotent, so the double call on a click is free.
+     *
+     * If the started scenario is hidden by the current chip the filter snaps back
+     * to All: an armed row you cannot see is worse than a filter.
+     */
+    private _setActiveScenario(name: string): void {
+        const grid = document.querySelector<HTMLElement>('.scenario-grid');
+        let hit: HTMLElement | null = null;
+        for (const card of document.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]')) {
+            const on = card.dataset['scenario'] === name;
+            card.classList.toggle('active', on);
+            card.setAttribute('aria-pressed', String(on));
+            if (on) hit = card;
+        }
+        if (!hit || !grid) return;
+        const filter = grid.dataset['filter'] ?? 'all';
+        if (filter !== 'all' && hit.dataset['group'] !== filter) this._selectFilter('all');
+        hit.scrollIntoView({ block: 'nearest' });
+    }
+
+    /**
+     * Binds any scenario card that is not already bound.
+     *
+     * Runs more than once — once for the markup's cards and again when the
+     * server's arrive — so it has to be idempotent in two separate ways. A card
+     * already carrying a listener is skipped, because binding twice would POST
+     * the scenario twice per click and the second POST would be refused by the
+     * destructive-action limiter. And the active-state sweep re-queries the live
+     * card list inside the handler rather than closing over the list as it stood
+     * at bind time, so clicking one of the original four still clears a card that
+     * was appended after them.
+     */
     private _bindScenarioCards(): void {
         const cards = document.querySelectorAll<HTMLElement>('.scenario-card');
-        // Initialise aria-pressed so AT users hear "not pressed" for every card.
-        cards.forEach(card => card.setAttribute('aria-pressed', 'false'));
         cards.forEach(card => {
+            // Initialise aria-pressed so AT users hear "not pressed" for every card.
+            if (!card.hasAttribute('aria-pressed')) {
+                card.setAttribute('aria-pressed', 'false');
+            }
+            if (card.dataset['bound'] === '1') return;
+            card.dataset['bound'] = '1';
             card.addEventListener('click', () => {
                 const name = card.dataset['scenario'];
                 if (!name) return;
-                // Visually + semantically mark the chosen card as the active one.
-                cards.forEach(c => {
-                    const active = c === card;
-                    c.classList.toggle('active', active);
-                    c.setAttribute('aria-pressed', String(active));
+                // Paint optimistically so the row answers the click immediately,
+                // then put it back if the POST was refused — the indicator gets
+                // to be fast, but it does not get to lie.
+                const previous = document.querySelector<HTMLElement>('.scenario-card.active')
+                    ?.dataset['scenario'] ?? null;
+                this._setActiveScenario(name);
+                void this._runScenario(name).then(ok => {
+                    if (!ok && previous !== null) this._setActiveScenario(previous);
                 });
-                void this._runScenario(name);
             });
         });
     }
@@ -86,10 +341,11 @@ export class ControlPanel {
      * direct reference. Failed starts do not play the intro so the
      * viewer never sees a title card for a scenario that didn't run.
      */
-    private async _runScenario(name: string): Promise<void> {
+    private async _runScenario(name: string): Promise<boolean> {
         const ok = await this._post(`/api/sim/scenario/${name}`);
-        if (!ok) return;
+        if (!ok) return false;
         document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
+        return true;
     }
 
     private _bindSpawn(): void {
@@ -153,12 +409,13 @@ export class ControlPanel {
                 // Space (play/pause) is owned by the editor Transport bar.
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
                 case 'Tab':    e.preventDefault(); document.getElementById('sidebar')?.classList.toggle('collapsed'); break;
-                case 'Digit1': await this._runScenario('single');   break;
-                case 'Digit2': await this._runScenario('swarm-5');  break;
-                case 'Digit3': await this._runScenario('swarm-20'); break;
-                case 'Digit4': await this._runScenario('sar');      break;
-                case 'Digit5': await this._runScenario('multi-agency-sar'); break;
+                default:       break;
             }
+            // Scenario digits come from the catalog rather than a second hand-kept
+            // switch, so the badge painted on a row and the key that starts it
+            // cannot drift apart.
+            const hotkeyed = SCENARIO_HOTKEYS.get(e.code);
+            if (hotkeyed !== undefined) await this._runScenario(hotkeyed);
         });
     }
 

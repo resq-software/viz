@@ -102,11 +102,20 @@ public sealed partial class SimulationRoom
         _logger.LogInformation("[room {RoomId}] Heightmap cleared.", Id);
     }
 
-    /// <summary>Notifies the swarm controller of the active scenario.</summary>
+    /// <summary>Notifies the swarm controller of the active scenario, and records it.</summary>
+    /// <remarks>
+    /// The key is retained as well as forwarded, because a frame has to be able to say which
+    /// preset it belongs to. Hazards used to be one deployment-wide list republished on every
+    /// frame of every scenario, so a flood ran with the same standing fire as a wildfire and its
+    /// marker sat burning in open water. Carrying the key on the capture is what lets the frame
+    /// builder pick the set that belongs to the preset actually running.
+    /// </remarks>
+    /// <param name="name">Scenario key that has just been started.</param>
     public void NotifyScenario(string name)
     {
         lock (_lock)
         {
+            _scenarioKey = name ?? "";
             _swarm.SetScenario(name, _assets.Drones.ToList());
         }
         Touch();

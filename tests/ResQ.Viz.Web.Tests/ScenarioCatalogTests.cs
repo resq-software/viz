@@ -277,12 +277,28 @@ public sealed partial class ScenarioCatalogTests
     /// imply: a rover that stops has a last known position that stays true however stale the
     /// report, and a hull that cannot hold station does not.
     /// </para>
+    /// <para>
+    /// The rover is <b>parked explicitly</b>, and that matters. The ground assertion used to hold
+    /// for free, because nothing in the build ever tasked a ground asset and every rover therefore
+    /// sat at its spawn — so the test read as "a stopped rover" while actually measuring "a rover
+    /// nobody had given anywhere to go". Once <see cref="GroundSurfaceCoordinator"/> began driving
+    /// the ground fleet that premise evaporated and this failed, correctly: a rover under way does
+    /// accumulate position error. Parking it restores the condition the assertion is about rather
+    /// than relaxing the assertion to match whatever the fleet happens to be doing, and it
+    /// exercises the operator-override path on the way past — a parked rover that the coordinator
+    /// then retasked would fail here too.
+    /// </para>
     /// </remarks>
     [Fact]
     public void The_Link_Loss_Preset_Publishes_A_Different_Failure_Behaviour_Per_Domain()
     {
         var room = CreateRoom(TerrainFor("link-loss-divergence"));
         new ScenarioService(AppConfiguration()).TryRun("link-loss-divergence", room).Should().BeTrue();
+
+        var rover = room.CaptureAssetFrame().Descriptors
+            .Should().ContainSingle(d => d.Domain == AssetDomain.Ground).Which;
+        room.SendAssetCommand(new SimulatedAssetCommand(AssetCommandKind.Park, rover.AssetId))
+            .IsAccepted.Should().BeTrue("the assertion below is about a rover that is stopped");
 
         for (int i = 0; i < StepsBeforeJudging; i++)
         {
