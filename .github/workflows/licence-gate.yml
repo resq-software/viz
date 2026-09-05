@@ -1,0 +1,77 @@
+name: licence-gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Runs BEFORE the gate. A gate whose own rules are inert reports success on
+      # data it should have rejected, and that failure mode is invisible from the
+      # gate's own output — the suite is the only thing that can see it.
+      - name: Gate self-test
+        run: node --experimental-strip-types --test tools/licences/check-licences.test.ts
+
+      - name: Validate manifest against schema
+        run: |
+          npx --yes ajv-cli@5 validate \
+            -s tools/licences/manifest.schema.json \
+            -d data/manifest.json \
+            --spec=draft2020 --strict=false
+      - name: Licence gate
+        run: |
+          node --experimental-strip-types tools/licences/check-licences.ts \
+            --root . --registry tools/licences/licences.json \
+            --manifest data/manifest.json --emit-notice NOTICE.md
+      - name: Fail if NOTICE is stale
+        # `git diff --quiet` exits 0 for an UNTRACKED file, so on the first run —
+        # or on any branch where NOTICE.md was never committed — the generated
+        # notice was silently accepted and never compared to anything. Verified:
+        # with NOTICE.md untracked, `git diff --quiet -- NOTICE.md` returns 0.
+        # `git status --porcelain` reports `?? NOTICE.md`, and stays empty when the
+        # regenerated file is byte-identical, so it catches the missing case
+        # without false-positives on a clean run.
+        run: |
+          status="$(git status --porcelain -- NOTICE.md)"
+          if [ -n "$status" ]; then
+            echo "::error::NOTICE.md is missing or out of date. Re-run the gate locally and commit the result."
+            echo "git status: $status"
+            git --no-pager diff -- NOTICE.md || true
+            exit 1
+          fi
+  # --strict promotes "licence text not hashed" and "licence never read against
+  # its publisher page" from warnings to errors. The register honestly records
+  # `verified_on: null` for sources nobody has read yet, so this job FAILS today
+  # by design — that is the signal, not a bug. Measured on the current tree: 13
+  # unhashed-licence + 13 unverified-source.
+  #
+  # It is advisory until those are filled in, so that landing the gate does not
+  # block an unrelated release. Flip `continue-on-error` to false once every
+  # shipped-path source carries a `verified_on` date and a `licence_text_sha256`
+  # — that is the point at which "we read the licence" becomes enforceable
+  # rather than merely asserted.
+  gate-strict:
+    if: github.event_name == 'release'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Licence gate (strict)
+        run: |
+          node --experimental-strip-types tools/licences/check-licences.ts \
+            --root . --registry tools/licences/licences.json \
+            --manifest data/manifest.json --strict
