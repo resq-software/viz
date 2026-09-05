@@ -1,0 +1,48 @@
+# ResQ Viz
+
+> Real-time 3D coordination for autonomous drone swarms — mesh topology, hazard
+> fusion, and decentralized consensus when infrastructure fails.
+
+ResQ Viz is the browser-based visualization surface for ResQ Tactical OS, the
+decentralized kinetic operating system for autonomous disaster response. It
+renders a live simulation of a drone swarm — flight dynamics, mesh link
+topology, hazard fields, and terrain — streamed from an ASP.NET Core simulation
+host over SignalR.
+
+Site root: https://viz.resq.software/
+
+## Shape of this site
+
+This is a single-route WebGL2 application, not a document site. There are no
+sub-pages to crawl: scenario, camera, and overlay state live in query
+parameters on `/`. Rendering requires WebGL2 and JavaScript.
+
+- [ResQ Viz](https://viz.resq.software/): the live 3D viewer.
+
+## Machine-readable endpoints
+
+- [Sitemap XML](https://viz.resq.software/sitemap.xml)
+- [Web app manifest](https://viz.resq.software/site.webmanifest)
+- [Security contact (RFC 9116)](https://viz.resq.software/.well-known/security.txt)
+- [Crawler policy](https://viz.resq.software/robots.txt): includes AIPREF
+  `Content-Signal:` directives. ResQ opts out of AI *training* on this content
+  while allowing real-time, user-prompted retrieval.
+
+The REST API under `/api/` and the SignalR hub at `/viz` drive the simulation
+and are not part of the public documented surface — they are disallowed in
+`robots.txt` and are not a stable contract.
+
+## Elsewhere in the ResQ stack
+
+- [ResQ Systems](https://resq.software): the main site — platform, protocol,
+  and research.
+- [Documentation](https://docs.resq.software)
+- [Status](https://status.resq.software)
+- [Source](https://github.com/resq-software)
+
+## Contact
+
+- General: contact@resq.software
+- Security: security@resq.software
+
+Publisher: ResQ Systems, Inc.
