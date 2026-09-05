@@ -39,8 +39,13 @@ const RISE_BASE     = 7.5;        // m/s upward at birth
 // inside normal viewing range. At 3.5m growing to 15.5m the column is 3-5x
 // taller than a sprite, and the clamp is not reached until 37m, i.e. only when
 // the camera is inside the plume — which is what its own comment says it is for.
-const SIZE_BIRTH    = 3.5;        // metres
-const SIZE_GROWTH   = 12.0;       // added over a lifetime
+//
+// These metres are scaled by 620/960 against the values those ratios were tuned
+// at, because `uScale` now carries the world-correct projection factor (~960 at
+// a 1000px buffer) rather than the 620 they were tuned against. The rendered
+// size is unchanged; it is now merely correct about why.
+const SIZE_BIRTH    = 2.3;        // metres
+const SIZE_GROWTH   = 7.8;        // added over a lifetime
 
 // Overdraw, not this value, decides what reaches the screen. With the old sizes
 // roughly 112 sprite layers stacked at 100m, and 1 - (1 - 0.34*0.382*0.715)^112
@@ -55,7 +60,17 @@ function _buildPuffTexture(): THREE.CanvasTexture {
     const S = 128;
     const c = document.createElement('canvas');
     c.width = c.height = S;
-    const ctx = c.getContext('2d')!;
+    // happy-dom, and any other canvas-less environment, returns null here. The
+    // same guard the asset manager's label canvas carries, and for the same
+    // reason: losing the gradient in a test is survivable, throwing out of the
+    // constructor is not — it made FireSmoke impossible to instantiate at all
+    // outside a browser, so nothing about it could be unit-tested.
+    const ctx = c.getContext('2d');
+    if (!ctx) {
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.NoColorSpace;
+        return tex;
+    }
     const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
     // Falloff starts immediately. Holding 0.65 out to 45% of the radius made
     // nearly half of every sprite a hard plate: area-weighted mean coverage 0.382,
@@ -131,7 +146,10 @@ export class FireSmoke {
                 // near-white. These read as dark grey→charcoal smoke on screen.
                 uColorLow:  { value: new THREE.Color(0.020, 0.018, 0.016) }, // charcoal base
                 uColorHigh: { value: new THREE.Color(0.175, 0.170, 0.165) }, // thinned grey top
-                uScale:     { value: 620.0 },   // world→screen point-size factor
+                // Seeded with the old constant purely so a caller that never
+                // calls setPointSizeScale still renders; app.ts sets the real
+                // value at construction and again on every resize.
+                uScale:     { value: 620.0 },
             },
             vertexShader: /* glsl */`
                 attribute float aAlpha;
@@ -187,6 +205,19 @@ export class FireSmoke {
     }
 
     /** Advance the simulation. Call once per frame with elapsed seconds. */
+    /**
+     * Sets the world-metres to framebuffer-pixels factor for the sprites.
+     *
+     * Must be re-applied on resize and on any field-of-view change: it depends
+     * on the drawing buffer's height and the camera's fov, so a value sampled
+     * once is wrong the moment the window changes size or the page moves to a
+     * display with a different pixel ratio.
+     */
+    setPointSizeScale(scale: number): void {
+        if (!Number.isFinite(scale) || scale <= 0) return;
+        this._mat.uniforms['uScale']!.value = scale;
+    }
+
     tick(dt: number): void {
         if (dt <= 0) return;
         this._elapsed += dt;

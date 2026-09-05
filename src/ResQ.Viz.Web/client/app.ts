@@ -787,6 +787,22 @@ viz.addTickCallback((dt) => { if (!prefersReducedMotion()) tickTerrainClouds(dt)
 // Fire smoke plumes rise + drift every frame (idles cheaply when no fires).
 viz.addTickCallback((dt) => fireSmoke.tick(dt));
 
+// ─── Point-sprite projection ───────────────────────────────────────────────
+//
+// `gl_PointSize` is in framebuffer pixels, so a sprite sized in world metres
+// needs the drawing buffer's height and the camera's fov to convert. Both
+// particle systems used to hardcode a constant for that — smoke 620,
+// precipitation 900 — so they disagreed about one camera, both were wrong, and
+// a sprite's apparent WORLD size changed whenever the window was resized or the
+// page moved to a display with a different pixel ratio. One source now, applied
+// at construction and again on every resize.
+function _applyPointSizeScale(): void {
+    const scale = viz.pointSizeScale();
+    fireSmoke.setPointSizeScale(scale);
+    precipitation?.setPointSizeScale(scale);
+}
+
+
 // ─── Falling weather ───────────────────────────────────────────────────────
 //
 // Rain, snow and wildfire ash, declared per scenario in `scenarioEnvironments`.
@@ -832,6 +848,9 @@ function _applyPrecipitation(
             // has already run and this one must not resurrect the old weather.
             if (token !== _precipLoad) return;
             precipitation = new Precipitation(viz.scene, spec.kind, spec.intensity);
+            // Built after the resize hook was registered, so it has to be told
+            // the current factor rather than waiting for the next resize.
+            precipitation.setPointSizeScale(viz.pointSizeScale());
         })
         .catch((err) => {
             log.error('precipitation failed to load; scenario runs with a clear sky', err);
@@ -841,6 +860,13 @@ function _applyPrecipitation(
 viz.addTickCallback((dt) => {
     precipitation?.update(dt, viz.cameraController.camera.position);
 });
+
+// Registered here, below `precipitation`, and not beside the function above:
+// `_applyPointSizeScale` reads that binding, and a top-level `let` sits in its
+// temporal dead zone until its own declaration is evaluated — so calling this
+// any earlier is a ReferenceError at load that the type checker cannot see.
+_applyPointSizeScale();
+viz.addResizeCallback(_applyPointSizeScale);
 
 // ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 

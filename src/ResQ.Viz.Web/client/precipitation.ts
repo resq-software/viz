@@ -124,6 +124,10 @@ export class Precipitation {
                 uColor: { value: new THREE.Color(profile.color) },
                 uOpacity: { value: profile.opacity * scale },
                 uWind: { value: new THREE.Vector2(1, 0.3) },
+                // Replaced by the real projection factor as soon as app.ts has
+                // one; seeded with the constant this used to hardcode so the
+                // volume still draws if it never arrives.
+                uScale: { value: 900.0 },
             },
             vertexShader: PRECIP_VERT,
             fragmentShader: PRECIP_FRAG,
@@ -155,6 +159,19 @@ export class Precipitation {
             Math.floor(cameraPosition.y / box) * box,
             Math.floor(cameraPosition.z / box) * box,
         );
+    }
+
+    /**
+     * Sets the world-metres to framebuffer-pixels factor for the particles.
+     *
+     * `gl_PointSize` is in framebuffer pixels, so this depends on the drawing
+     * buffer's height and the camera's fov and must be re-applied on resize.
+     * This module and `smoke.ts` used to hardcode two DIFFERENT constants for
+     * the same camera, which is how they came to disagree.
+     */
+    setPointSizeScale(scale: number): void {
+        if (!Number.isFinite(scale) || scale <= 0) return;
+        this._mat.uniforms['uScale']!.value = scale;
     }
 
     /**
@@ -191,6 +208,7 @@ uniform float uDrift;
 uniform float uSize;
 uniform float uSpread;
 uniform vec2 uWind;
+uniform float uScale;
 varying float vSeed;
 void main() {
   vSeed = aSeed;
@@ -201,7 +219,7 @@ void main() {
   p.z += cos(uTime * 0.5 + aSeed * 17.7) * uDrift + uTime * uWind.y * uDrift;
   p = mod(p, uBox);
   vec4 mv = modelViewMatrix * vec4(uOrigin + p, 1.0);
-  gl_PointSize = clamp(uSize * 900.0 / max(-mv.z, 1.0), 1.0, 42.0);
+  gl_PointSize = clamp(uSize * uScale / max(-mv.z, 1.0), 1.0, 42.0);
   gl_Position = projectionMatrix * mv;
 }`;
 
