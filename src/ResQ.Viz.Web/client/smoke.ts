@@ -24,22 +24,46 @@ export interface SmokeSource {
 }
 
 const MAX_PARTICLES = 720;        // hard pool cap → bounded cost regardless of fire count
-const LIFE_MIN      = 4.0;        // seconds
-const LIFE_RANGE    = 3.0;
+// Lifetime sets the column's height: the rise integrates to RISE_BASE * life *
+// (1 - 0.55/2) = 5.44 * life, so 9-15s gives a 49-82m column where 4-7s gave
+// 22-38m.
+const LIFE_MIN      = 9.0;        // seconds
+const LIFE_RANGE    = 6.0;
 const RISE_BASE     = 7.5;        // m/s upward at birth
-const SIZE_BIRTH    = 9.0;        // metres
-const SIZE_GROWTH   = 34.0;       // added over a lifetime
-const MAX_ALPHA     = 0.34;       // wispy; overlap builds density without going opaque
+
+// A sprite must be much SMALLER than the column it belongs to, or the plume's
+// outline is the sprite's outline. At 9m growing to 43m, each puff was larger
+// than the whole 22-38m column and the fire rendered as a ball — and because
+// `gl_PointSize` clamps at 260px, every particle closer than 43*620/260 = 102m
+// drew at exactly the same size, which is what produced the hard circular edge
+// inside normal viewing range. At 3.5m growing to 15.5m the column is 3-5x
+// taller than a sprite, and the clamp is not reached until 37m, i.e. only when
+// the camera is inside the plume — which is what its own comment says it is for.
+const SIZE_BIRTH    = 3.5;        // metres
+const SIZE_GROWTH   = 12.0;       // added over a lifetime
+
+// Overdraw, not this value, decides what reaches the screen. With the old sizes
+// roughly 112 sprite layers stacked at 100m, and 1 - (1 - 0.34*0.382*0.715)^112
+// is 0.99998: the plume saturated to one flat colour and the terrain behind it
+// contributed nothing. Smaller sprites plus the re-stopped texture below bring
+// that to ~22 layers, where 0.20 composites to ~0.43 in the core and ~0.75 at
+// the dense base — dense enough to read, translucent enough to see through.
+const MAX_ALPHA     = 0.20;
 
 /** Soft round soot puff, drawn once to a canvas texture. */
 function _buildPuffTexture(): THREE.CanvasTexture {
-    const S = 64;
+    const S = 128;
     const c = document.createElement('canvas');
     c.width = c.height = S;
     const ctx = c.getContext('2d')!;
     const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    // Falloff starts immediately. Holding 0.65 out to 45% of the radius made
+    // nearly half of every sprite a hard plate: area-weighted mean coverage 0.382,
+    // about double what a soot puff should contribute, and a direct multiplier on
+    // the overdraw above. These stops mean 0.177.
     g.addColorStop(0.0, 'rgba(255,255,255,1.0)');
-    g.addColorStop(0.45, 'rgba(255,255,255,0.65)');
+    g.addColorStop(0.30, 'rgba(255,255,255,0.45)');
+    g.addColorStop(0.65, 'rgba(255,255,255,0.12)');
     g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, S, S);
@@ -208,10 +232,17 @@ export class FireSmoke {
             this._pos[b + 2]! += Math.cos(this._elapsed * 0.9 + s * 55.0) * 0.9 * dt;
 
             // Expand + fade: quick fade-in, long fade-out, dark→thin tint.
-            this._size[i]  = SIZE_BIRTH + SIZE_GROWTH * t;
+            // Size and opacity vary per particle, not just with age. They were pure
+            // functions of `t`, so every particle of the same age was identical and
+            // the plume had no internal structure — a smooth featureless ramp that
+            // survives any alpha fix on its own. `s` is the wander seed already
+            // read above; `sv2` decorrelates opacity from size so a big puff is not
+            // automatically an opaque one.
+            const sv2      = (s * 7.31) % 1;
+            this._size[i]  = (SIZE_BIRTH + SIZE_GROWTH * t) * (0.70 + 0.60 * s);
             const fadeIn   = Math.min(1.0, t / 0.12);
             const fadeOut  = 1.0 - Math.max(0.0, (t - 0.55) / 0.45);
-            this._alpha[i] = MAX_ALPHA * fadeIn * fadeOut;
+            this._alpha[i] = MAX_ALPHA * fadeIn * fadeOut * (0.60 + 0.80 * sv2);
             this._tint[i]  = Math.min(1.0, t * 1.3);
         }
 
