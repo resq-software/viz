@@ -787,6 +787,61 @@ viz.addTickCallback((dt) => { if (!prefersReducedMotion()) tickTerrainClouds(dt)
 // Fire smoke plumes rise + drift every frame (idles cheaply when no fires).
 viz.addTickCallback((dt) => fireSmoke.tick(dt));
 
+// ─── Falling weather ───────────────────────────────────────────────────────
+//
+// Rain, snow and wildfire ash, declared per scenario in `scenarioEnvironments`.
+// The module that draws it is fetched on the first scenario that asks for it and
+// never otherwise, so a clear-sky session pays nothing — the entry bundle is
+// measured in CI and three.js already accounts for most of it.
+
+/** Active precipitation volume, or null when the sky is clear. */
+let precipitation: import('./precipitation').Precipitation | null = null;
+/** What is currently falling, so re-applying the same weather does not rebuild it. */
+let _precipKind: string | null = null;
+/** Guards against two scenario switches racing the same dynamic import. */
+let _precipLoad = 0;
+
+/**
+ * Starts, swaps or stops the falling weather for a scenario.
+ *
+ * @param spec What should be falling, or null for a clear sky.
+ */
+function _applyPrecipitation(
+    spec: { kind: import('./precipitation').PrecipitationKind; intensity: number } | null,
+): void {
+    const wanted = spec ? `${spec.kind}:${spec.intensity}` : null;
+    if (wanted === _precipKind) return;
+    _precipKind = wanted;
+
+    // Every path tears the old volume down first, including the null one: a
+    // scenario switch that went clear used to be the case that leaked, because
+    // nothing else ever removes it.
+    precipitation?.dispose();
+    precipitation = null;
+    const token = ++_precipLoad;
+    if (!spec) return;
+
+    // Reduced motion gets the sky it asked for. A screenful of falling
+    // particles is exactly the kind of large-field motion WCAG 2.3.3 is about,
+    // and the scenario still reads through its sky, fog and hazards.
+    if (prefersReducedMotion()) return;
+
+    void import('./precipitation')
+        .then(({ Precipitation }) => {
+            // A later scenario switch won while this was in flight; its own call
+            // has already run and this one must not resurrect the old weather.
+            if (token !== _precipLoad) return;
+            precipitation = new Precipitation(viz.scene, spec.kind, spec.intensity);
+        })
+        .catch((err) => {
+            log.error('precipitation failed to load; scenario runs with a clear sky', err);
+        });
+}
+
+viz.addTickCallback((dt) => {
+    precipitation?.update(dt, viz.cameraController.camera.position);
+});
+
 // ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 
 const keyHints      = document.getElementById('key-hints');
@@ -1615,6 +1670,7 @@ document.addEventListener('resq:scenario-start', (e) => {
         applyScene: (env) => {
             viz.applyEnvironment(env);
             viz.setSkyProfile(skyProfileFor(env));
+            _applyPrecipitation(env.precipitation ?? null);
         },
         switchPreset: (key, waterLevel) => _switchPreset(key, waterLevel),
         setCamera: (preset: CameraPresetKey, env) => {

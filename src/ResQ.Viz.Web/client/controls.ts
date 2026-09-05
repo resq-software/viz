@@ -3,12 +3,22 @@
 
 import type { DroneState } from './types';
 import { getLogger } from './log';
+import { SCENARIO_ENVIRONMENTS } from './scenarioEnvironments';
 
 const log = getLogger('controls');
+
+/** Turns a scenario id into something readable when it has no environment. */
+function _humanise(key: string): string {
+    return key.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
 
 export class ControlPanel {
     constructor() {
         this._bindSimButtons();
+        // Cards for every preset the SERVER offers, not just the four in the
+        // markup. Fire-and-forget, and it re-binds when it lands: a failed fetch
+        // leaves exactly the four hard-coded cards, which is what shipped.
+        void this._addServerScenarioCards();
         this._bindScenarioCards();
         this._bindSpawn();
         this._bindCommandButtons();
@@ -60,16 +70,106 @@ export class ControlPanel {
         this._on('btn-reset', () => this._post('/api/sim/reset'));
     }
 
+    /**
+     * Adds a card for every scenario the server offers that the markup omits.
+     *
+     * The markup hard-codes four cards — the drone-count fixtures and SAR —
+     * while this build ships nineteen presets, including every disaster and every
+     * multi-domain one. The other fifteen had no way in at all: not merely
+     * inconvenient, but the reason their environments never appeared, because a
+     * scenario's sky, fog, camera and weather are applied from the
+     * `resq:scenario-start` event, and only starting one from the UI raises it.
+     * A preset reachable exclusively by POSTing the API ran with whatever look
+     * the previous scenario had left behind.
+     *
+     * Cards are appended rather than replacing the markup, so the four that were
+     * always there keep their hand-written labels and their order.
+     */
+    private async _addServerScenarioCards(): Promise<void> {
+        const grid = document.querySelector<HTMLElement>('.scenario-grid');
+        if (!grid) return;
+
+        let names: string[];
+        try {
+            const res = await fetch('/api/sim/scenarios');
+            if (!res.ok) return;
+            const body: unknown = await res.json();
+            if (!Array.isArray(body)) return;
+            names = body.filter((n): n is string => typeof n === 'string' && n.length > 0);
+        } catch {
+            // Offline, or the endpoint is gone. The markup's own cards stand.
+            return;
+        }
+
+        const present = new Set(
+            Array.from(
+                grid.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]'),
+                (el) => el.dataset['scenario'] ?? '',
+            ),
+        );
+
+        let added = 0;
+        for (const name of names) {
+            if (present.has(name)) continue;
+            present.add(name);
+            grid.appendChild(this._buildScenarioCard(name));
+            added++;
+        }
+        // Re-bind only when the DOM actually changed, so the common case of a
+        // server offering nothing new costs one fetch and no listener churn.
+        if (added > 0) this._bindScenarioCards();
+    }
+
+    /** One scenario card, labelled from its environment or from its own id. */
+    private _buildScenarioCard(name: string): HTMLButtonElement {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'scenario-card';
+        card.dataset['scenario'] = name;
+
+        const env = SCENARIO_ENVIRONMENTS[name];
+        // The environment's display name is written for an operator ("WILDFIRE —
+        // WUI INTERFACE"); its first clause is the label and the rest is the
+        // description. A preset with no environment gets its id humanised, which
+        // is honest about there being nothing better to say.
+        const [title, ...rest] = (env?.displayName ?? _humanise(name)).split('—');
+        const nameEl = document.createElement('span');
+        nameEl.className = 'sc-name';
+        nameEl.textContent = (title ?? name).trim();
+        const descEl = document.createElement('span');
+        descEl.className = 'sc-desc';
+        descEl.textContent = rest.join('—').trim() || 'preset';
+
+        card.append(nameEl, descEl);
+        return card;
+    }
+
+    /**
+     * Binds any scenario card that is not already bound.
+     *
+     * Runs more than once — once for the markup's cards and again when the
+     * server's arrive — so it has to be idempotent in two separate ways. A card
+     * already carrying a listener is skipped, because binding twice would POST
+     * the scenario twice per click and the second POST would be refused by the
+     * destructive-action limiter. And the active-state sweep re-queries the live
+     * card list inside the handler rather than closing over the list as it stood
+     * at bind time, so clicking one of the original four still clears a card that
+     * was appended after them.
+     */
     private _bindScenarioCards(): void {
         const cards = document.querySelectorAll<HTMLElement>('.scenario-card');
-        // Initialise aria-pressed so AT users hear "not pressed" for every card.
-        cards.forEach(card => card.setAttribute('aria-pressed', 'false'));
         cards.forEach(card => {
+            // Initialise aria-pressed so AT users hear "not pressed" for every card.
+            if (!card.hasAttribute('aria-pressed')) {
+                card.setAttribute('aria-pressed', 'false');
+            }
+            if (card.dataset['bound'] === '1') return;
+            card.dataset['bound'] = '1';
             card.addEventListener('click', () => {
                 const name = card.dataset['scenario'];
                 if (!name) return;
                 // Visually + semantically mark the chosen card as the active one.
-                cards.forEach(c => {
+                document.querySelectorAll<HTMLElement>('.scenario-card').forEach(c => {
                     const active = c === card;
                     c.classList.toggle('active', active);
                     c.setAttribute('aria-pressed', String(active));
