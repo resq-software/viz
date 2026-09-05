@@ -277,17 +277,30 @@ public sealed partial class SimulationRoom
         {
             result = _assets.SendCommand(in command);
 
-            if (result.IsAccepted
-                && _assets.TryGet(command.AssetId, out var asset)
-                && asset is { Domain: AssetDomain.Air })
+            if (result.IsAccepted && _assets.TryGet(command.AssetId, out var asset))
             {
-                if (command.Kind == AssetCommandKind.ResumeAutonomy)
+                bool resuming = command.Kind == AssetCommandKind.ResumeAutonomy;
+
+                // Each domain's own coordinator, and only that one. Ground and surface used to
+                // fall through here entirely, which was harmless exactly as long as nothing
+                // tasked them: the moment they had a coordinator, an operator who drove a rover
+                // somewhere would have watched it turn back onto its patrol on the next 2 Hz pass.
+                switch (asset.Domain)
                 {
-                    _swarm.AttachAuto(command.AssetId);
-                }
-                else
-                {
-                    _swarm.DetachManual(command.AssetId);
+                    case AssetDomain.Air when resuming:
+                        _swarm.AttachAuto(command.AssetId);
+                        break;
+                    case AssetDomain.Air:
+                        _swarm.DetachManual(command.AssetId);
+                        break;
+                    case AssetDomain.Ground or AssetDomain.Surface when resuming:
+                        _groundSurface.AttachAuto(command.AssetId);
+                        break;
+                    case AssetDomain.Ground or AssetDomain.Surface:
+                        _groundSurface.DetachManual(command.AssetId);
+                        break;
+                    default:
+                        break;
                 }
             }
         }
