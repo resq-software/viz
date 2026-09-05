@@ -85,8 +85,64 @@ public sealed class TerrainNoiseService : ITerrain
         };
     }
 
+    /// <summary>Spacing, in metres, of the probes the slope estimate is taken across.</summary>
+    /// <remarks>
+    /// Wide enough to read the landform rather than a single noise octave, narrow enough that a
+    /// rover-sized footprint is not averaged away.
+    /// </remarks>
+    private const double SurfaceSlopeProbeM = 6.0;
+
+    /// <summary>Gradient above which ground is treated as exposed rather than vegetated.</summary>
+    /// <remarks>
+    /// About 30 degrees. Soil and plant cover do not hold on a slope much steeper than this, so
+    /// the ground a vehicle meets there is rock and scree.
+    /// </remarks>
+    private const double BareGroundSlopeGradient = 0.58;
+
     /// <inheritdoc/>
-    public SurfaceType GetSurfaceType(double x, double z) => SurfaceType.Vegetation;
+    /// <remarks>
+    /// This returned <see cref="SurfaceType.Vegetation"/> unconditionally, so every rover in every
+    /// preset drove on one surface everywhere. That was not merely coarse: the whole traction
+    /// model downstream became unreachable. <c>GroundSurfaces.For</c> carries distinct traction
+    /// and rolling-resistance rows per material, and <c>Traversability</c> can emit
+    /// <c>traversability.blocked.traction</c> and <c>traversability.costly.surface</c> — none of
+    /// which could ever fire, because the one material returned here sits mid-table and trips
+    /// neither. The consequences were wired; only the input was missing.
+    /// <para>
+    /// The classification is DERIVED from the height field this service already generates, so it
+    /// cannot disagree with the terrain a vehicle is actually driving on:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>Dunes are sand end to end, which is bare ground by definition.</item>
+    /// <item>Anything steeper than <see cref="BareGroundSlopeGradient"/> is rock and scree.</item>
+    /// <item>Everything else is vegetated, the conservative default.</item>
+    /// </list>
+    /// <para>
+    /// Two classifications are deliberately NOT produced here.
+    /// <see cref="SurfaceType.Water"/> is decided upstream by the environment sampler from
+    /// elevation against sea level, and returning it here as well would be a second water model
+    /// free to disagree with the first. <see cref="SurfaceType.Urban"/> is not produced at all:
+    /// this service has no building mask, and inventing one would put a pavement traction bonus
+    /// on ground with nothing standing on it — a number that looks surveyed and is not.
+    /// </para>
+    /// </remarks>
+    public SurfaceType GetSurfaceType(double x, double z)
+    {
+        if (string.Equals(_preset, "dunes", StringComparison.Ordinal))
+        {
+            return SurfaceType.BareGround;
+        }
+
+        // Central differences over the same height field the contact solver samples, so the
+        // classification and the grade a vehicle is assessed on come from one source.
+        double dx = (GetElevation(x + SurfaceSlopeProbeM, z) - GetElevation(x - SurfaceSlopeProbeM, z))
+            / (2 * SurfaceSlopeProbeM);
+        double dz = (GetElevation(x, z + SurfaceSlopeProbeM) - GetElevation(x, z - SurfaceSlopeProbeM))
+            / (2 * SurfaceSlopeProbeM);
+        double gradient = Math.Sqrt((dx * dx) + (dz * dz));
+
+        return gradient > BareGroundSlopeGradient ? SurfaceType.BareGround : SurfaceType.Vegetation;
+    }
 
     // ── Shared noise primitives ──────────────────────────────────────────────
 
