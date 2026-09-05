@@ -148,7 +148,7 @@ describe('buildHierarchy when a v2 frame carries its own v1 shadow', () => {
             NonNullable<SceneFrame['assets']>[number];
     }
     function drone(id: string, status: string) {
-        return { id, status } as unknown as SceneFrame['drones'][number];
+        return { id, status } as unknown as NonNullable<SceneFrame['drones']>[number];
     }
 
     const frame: SceneFrame = {
@@ -184,7 +184,7 @@ describe('buildHierarchy when a v2 frame carries its own v1 shadow', () => {
         // so hiding it would lose it from the hierarchy altogether.
         const mixed: SceneFrame = {
             ...frame,
-            drones: [...frame.drones, drone('legacy-1', 'hover')],
+            drones: [...(frame.drones ?? []), drone('legacy-1', 'hover')],
         };
         const drones = buildHierarchy(mixed).find(g => g.kind === 'drone')!;
         expect(drones.items).toEqual([{ id: 'legacy-1', sub: 'hover' }]);

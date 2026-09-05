@@ -196,4 +196,99 @@ public class VizFrameBuilderTests
         frame.Speed.Should().Be(1);
         frame.Tick.Should().Be(0);
     }
+
+    // ─── Per-scenario hazards ───────────────────────────────────────────────
+
+    /// <summary>A scenario with its own hazards publishes those, not the deployment-wide set.</summary>
+    /// <remarks>
+    /// Hazards were one list read once at construction and republished on every frame of every
+    /// scenario, so the preset named for its disaster showed the same standing fire as every
+    /// other one — in a flood, burning in open water.
+    /// </remarks>
+    [Fact]
+    public void A_Scenario_With_Its_Own_Hazards_Publishes_Those()
+    {
+        var frame = ScenarioHazardBuilder().Build([], simTime: 0, scenarioKey: "the-flood");
+
+        frame.Hazards.Select(h => h.Id).Should().Equal("flood-zone");
+        frame.Hazards.Should().NotContain(h => h.Type == "fire",
+            "the deployment-wide fire belongs to no particular scenario");
+    }
+
+    /// <summary>A scenario with no hazards of its own keeps the deployment-wide set.</summary>
+    /// <remarks>
+    /// The fallback is what makes this change additive: a deployment that configures nothing
+    /// per-scenario behaves exactly as it did before the section existed. Resolving an unknown
+    /// key to an empty list instead would silently delete every standing hazard.
+    /// </remarks>
+    [Fact]
+    public void A_Scenario_Without_Its_Own_Hazards_Falls_Back_To_The_Deployment_Set()
+    {
+        var builder = ScenarioHazardBuilder();
+
+        builder.Build([], simTime: 0, scenarioKey: "not-configured")
+            .Hazards.Select(h => h.Id).Should().Equal("standing-fire");
+        builder.Build([], simTime: 0)
+            .Hazards.Should().ContainSingle(
+                "a session that has started no scenario still has standing hazards")
+            .Which.Id.Should().Be("standing-fire");
+    }
+
+    /// <summary>The shipped presets each carry hazards that belong to their own disaster.</summary>
+    /// <remarks>
+    /// Asserted against the configuration the host actually loads, because the defect this
+    /// guards is a configuration one: every scenario resolving to the same two zones. A preset
+    /// may legitimately have no set of its own, but one that declares a set must not be
+    /// publishing another scenario's.
+    /// </remarks>
+    [Theory]
+    [InlineData("wildfire-interface", "fire")]
+    [InlineData("flood-response", "flood")]
+    [InlineData("urban-collapse", "debris")]
+    [InlineData("hurricane-melissa", "high-wind")]
+    public void Shipped_Presets_Carry_Hazards_Of_Their_Own_Kind(string scenario, string expectedType)
+    {
+        var frame = new VizFrameBuilder(ShippedConfiguration())
+            .Build([], simTime: 0, scenarioKey: scenario);
+
+        frame.Hazards.Should().NotBeEmpty("'{0}' declares a hazard set", scenario);
+        frame.Hazards.Should().Contain(h => h.Type == expectedType);
+        frame.Hazards.Should().OnlyContain(h => h.Id.Length > 0);
+    }
+
+    /// <summary>A flood preset carries no fire, which is the case that started this.</summary>
+    [Fact]
+    public void The_Flood_Preset_Does_Not_Publish_A_Fire()
+    {
+        new VizFrameBuilder(ShippedConfiguration())
+            .Build([], simTime: 0, scenarioKey: "flood-response")
+            .Hazards.Should().NotContain(h => h.Type == "fire");
+    }
+
+    /// <summary>Configuration with one deployment-wide hazard and one scenario's own.</summary>
+    private static VizFrameBuilder ScenarioHazardBuilder() =>
+        new(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Simulation:HazardZones:0:Id"] = "standing-fire",
+                ["Simulation:HazardZones:0:Type"] = "fire",
+                ["Simulation:HazardZones:0:Center:0"] = "0",
+                ["Simulation:HazardZones:0:Center:1"] = "0",
+                ["Simulation:HazardZones:0:Center:2"] = "0",
+                ["Simulation:HazardZones:0:Radius"] = "20",
+                ["Simulation:ScenarioHazards:the-flood:0:Id"] = "flood-zone",
+                ["Simulation:ScenarioHazards:the-flood:0:Type"] = "flood",
+                ["Simulation:ScenarioHazards:the-flood:0:Center:0"] = "10",
+                ["Simulation:ScenarioHazards:the-flood:0:Center:1"] = "0",
+                ["Simulation:ScenarioHazards:the-flood:0:Center:2"] = "10",
+                ["Simulation:ScenarioHazards:the-flood:0:Radius"] = "50",
+            })
+            .Build());
+
+    /// <summary>The configuration the host itself loads, from the test output directory.</summary>
+    private static IConfiguration ShippedConfiguration() =>
+        new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false)
+            .Build();
 }

@@ -66,7 +66,13 @@ public sealed record RoomAssetFrame(
     IReadOnlyList<AssetDescriptor> Descriptors,
     IReadOnlyList<AssetState> Assets,
     IReadOnlyList<DroneSnapshot> Drones,
-    IReadOnlyList<AgedExternalTrack> Tracks);
+    IReadOnlyList<AgedExternalTrack> Tracks,
+    // Which preset this room is running, so a frame can carry the hazards that
+    // belong to it. Defaulted to empty because a room that has never been given a
+    // scenario is a real state — a bare session, or one built by a test — and it
+    // resolves to the deployment-wide hazard set, which is what shipped before
+    // hazards were per-scenario at all.
+    string ScenarioKey = "");
 
 // The multi-domain asset surface: everything the v2 API and the v2 frame pipeline need from a
 // room, and nothing the v1 path uses. Split from SimulationRoom.cs the way CommandCatalog and
@@ -148,7 +154,8 @@ public sealed partial class SimulationRoom
                 Descriptors: _assets.Descriptors,
                 Assets: _assets.States,
                 Drones: CaptureDroneSnapshots(),
-                Tracks: CaptureTracks().Tracks);
+                Tracks: CaptureTracks().Tracks,
+                ScenarioKey: _scenarioKey);
         }
     }
 

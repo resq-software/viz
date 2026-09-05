@@ -85,6 +85,16 @@ public sealed partial class SimulationRoom
     // dictionary here now travel on each air asset's descriptor — one population, one source.
     private AssetWorld _assets;
     private int _swarmTick;
+
+    /// <summary>
+    /// Preset this room is running, or empty when it has never been given one.
+    /// </summary>
+    /// <remarks>
+    /// Guarded by <c>_lock</c> like the rest of the room's mutable state, and published on every
+    /// <see cref="RoomAssetFrame"/> so a frame can carry the hazards belonging to its scenario
+    /// rather than one fixed deployment-wide set.
+    /// </remarks>
+    private string _scenarioKey = "";
     // Terrain preset currently installed, remembered so a reset can restore the matching sea
     // level. Without it a reset silently reverts the water surface to the default while the
     // terrain keeps its preset, and a vessel ends up floating over dry land.
