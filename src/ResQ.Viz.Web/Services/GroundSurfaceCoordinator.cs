@@ -77,6 +77,25 @@ public sealed partial class GroundSurfaceCoordinator
     /// </remarks>
     private readonly HashSet<string> _manual = new(StringComparer.Ordinal);
 
+    /// <summary>Routable assets that this pass could not fit any drivable route for.</summary>
+    private readonly HashSet<string> _unrouted = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Assets that are under autonomy but holding because no drivable route could be fitted.
+    /// </summary>
+    /// <remarks>
+    /// An asset that gets no route is skipped silently: it simply never moves. On the smooth
+    /// procedural terrain this was written against that is rare enough to go unnoticed, but real
+    /// elevation makes it common, and a whole fleet sitting still is indistinguishable from a
+    /// working scenario unless something reports it. Exposed rather than logged so a test can
+    /// assert on it and a frame can publish it — the point is that it stops being invisible.
+    /// <para>
+    /// Reset and rebuilt every <see cref="Tick"/>, so it reflects the current pass rather than
+    /// accumulating.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyCollection<string> UnroutedAssetIds => _unrouted;
+
     /// <summary>One asset's route, its place in it, and any diversion overriding it.</summary>
     private sealed class PatrolRole(IReadOnlyList<Vector3> route)
     {
@@ -209,6 +228,8 @@ public sealed partial class GroundSurfaceCoordinator
         ArgumentNullException.ThrowIfNull(sampler);
         ArgumentNullException.ThrowIfNull(dispatch);
 
+        _unrouted.Clear();
+
         for (var i = 0; i < assets.Count; i++)
         {
             var asset = assets[i];
@@ -228,6 +249,7 @@ public sealed partial class GroundSurfaceCoordinator
             // operator move earns it a fresh fit.
             if (role.Route.Count == 0 && role.Diversion is null)
             {
+                _unrouted.Add(asset.AssetId);
                 continue;
             }
 

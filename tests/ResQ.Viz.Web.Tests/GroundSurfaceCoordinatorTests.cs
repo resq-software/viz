@@ -225,6 +225,45 @@ public sealed class GroundSurfaceCoordinatorTests
         coordinator.DivertNearest(unreachable, Assets(room), sampler).Should().BeNull();
     }
 
+    /// <summary>A healthy fleet reports nothing unrouted.</summary>
+    [Fact]
+    public void A_Fleet_That_Is_Routed_Reports_Nothing_Unrouted()
+    {
+        var (coordinator, room, log) = Fixture(rover: true, vessel: true);
+
+        Pass(coordinator, room, log, simTime: 0.0);
+
+        coordinator.UnroutedAssetIds.Should().BeEmpty(
+            "both platforms were staged on their own medium and got a route");
+    }
+
+    /// <summary>An asset that cannot be routed is reported rather than silently skipped.</summary>
+    /// <remarks>
+    /// The coordinator holds an asset it cannot fit a route for, which is right — but it used to
+    /// do so invisibly, and an asset that never moves looks exactly like a working one. Real
+    /// elevation makes this path common, so it has to be observable before the terrain lands, or
+    /// the whole re-authoring risk is unmeasurable.
+    /// </remarks>
+    [Fact]
+    public void An_Asset_With_No_Fittable_Route_Is_Reported()
+    {
+        var room = new SimulationRoom(
+            id: "coordinator-unrouted", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
+
+        // A hull staged on drivable ground: nothing navigable surrounds it, so no ring fits.
+        Spawn(room, "usv-aground", VehicleClass.SurfaceVessel, RoverSpawn,
+            (env, plan) => new SurfaceAssetFactory(env).Create(plan));
+
+        var coordinator = new GroundSurfaceCoordinator();
+        var log = new List<SimulatedAssetCommand>();
+        Pass(coordinator, room, log, simTime: 0.0);
+
+        coordinator.UnroutedAssetIds.Should().Contain(
+            "usv-aground",
+            "an asset the coordinator holds because it could fit no route must say so — "
+            + "a fleet sitting still is otherwise indistinguishable from a working scenario");
+    }
+
     // ─── Fixture ────────────────────────────────────────────────────────────
 
     /// <summary>A room holding the requested platforms, plus a coordinator and a command log.</summary>
