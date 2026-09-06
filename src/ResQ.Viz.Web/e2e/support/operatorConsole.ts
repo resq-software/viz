@@ -602,6 +602,22 @@ export async function reportTrack(
  * compositor what a click would actually land on.
  */
 export async function hitTestOwn(target: Locator): Promise<boolean> {
+  // Scroll first, because `elementFromPoint` is VIEWPORT-relative while the
+  // question being asked is about occlusion, not scroll position. A control at
+  // the bottom edge of a scrollable rail has its centre outside the visible box,
+  // so the point resolves to whatever is painted there — the scene canvas — and
+  // the check reports an overlay that does not exist.
+  //
+  // Measured: the last scenario card sat at y=698 with height 24 in a 720px
+  // viewport, so its centre fell at 710 and hit the canvas. Scrolled into view
+  // it is the top hit, and clicking it selects the scenario. The card became the
+  // last one when the rail was rebuilt from a two-column grid into a longer
+  // dense list; nothing about it is unreachable.
+  //
+  // Scrolling is also what a user does, and what Playwright's own actionability
+  // does before clicking, so this keeps the assertion the one worth making:
+  // once the control is in view, is anything on top of it?
+  await target.scrollIntoViewIfNeeded();
   return target.evaluate((element: Element) => {
     const box = element.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return false;

@@ -167,10 +167,29 @@ test.describe('operator console — desktop', () => {
 
     const commandButtons = panel.locator('.ap-cmd button');
     expect(await commandButtons.count()).toBeGreaterThan(0);
+
+    // EVERY command is inert. That is the guarantee, and it admits no exception.
     for (const button of await commandButtons.all()) {
       await expect(button).toHaveAttribute('aria-disabled', 'true');
-      await expect(button).toHaveAttribute('title', /unavailable during replay/);
+      // ...and each says why: a control that goes grey with nothing to say reads
+      // as broken rather than as closed.
+      await expect(button).not.toHaveAttribute('title', '');
     }
+
+    // Replay is the stated reason for the commands whose only blocker IS replay
+    // — but not necessarily for all of them, and requiring it everywhere
+    // contradicts the panel's own documented precedence. `AssetPanel` ranks what
+    // the asset can do above whether the console is live, because an asset-level
+    // refusal survives returning to Live: a moving vessel's Undock reads "not
+    // available while active" whatever the transport is doing, and that is the
+    // more actionable of the two sentences. The stricter assertion passed only
+    // while no scenario shipped an asset with a command its own state refuses.
+    const titles = await commandButtons.evaluateAll(
+      (buttons) => buttons.map((button) => button.getAttribute('title') ?? ''));
+    expect(
+      titles.some((title) => /unavailable during replay/.test(title)),
+      `replay must be the stated reason for the commands it blocks; saw ${JSON.stringify(titles)}`,
+    ).toBe(true);
 
     // Shape two — the control still looks pressable, and the mutation is
     // refused at `OperatorActions`' gate rather than at the button. That is what
@@ -203,11 +222,20 @@ test.describe('operator console — desktop', () => {
     await expect(leaseAcquire).toBeEnabled();
     await expect(linkCut).toBeEnabled();
     await expect(trackReport).toBeEnabled();
-    for (const button of await commandButtons.all()) {
-      await expect(button).toHaveAttribute('aria-disabled', 'false');
-    }
-    // The refusal reason must not outlive the refusal.
-    await expect(panel.locator('.ap-cmd.is-blocked')).toHaveCount(0);
+    // The REPLAY refusal must not outlive the replay — that is what returning to
+    // Live undoes, and all it undoes. A command its own asset refuses stays
+    // refused and says so, which is the behaviour wanted: Undock on a moving
+    // vessel is not something going Live can grant.
+    await expect(panel.locator('.ap-cmd button[title*="unavailable during replay"]'))
+      .toHaveCount(0);
+
+    // Everything blocked only by replay is now open. Asserting that no command
+    // is blocked AT ALL would be asserting something about the scenario's assets
+    // rather than about the transport.
+    const openCount = await commandButtons
+      .filter({ has: page.locator(':scope[aria-disabled="false"]') }).count();
+    expect(openCount, 'returning to Live must reopen the commands replay had closed')
+      .toBeGreaterThan(0);
     await expect(
       advanced.getByText('Replay — this console is not at the live edge'),
     ).toHaveCount(0);
