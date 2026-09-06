@@ -55,11 +55,21 @@ jobs:
             -d data/manifest.json \
             --spec=draft2020 --strict=false
 
-      - name: Licence gate
+      # --strict here, not just on release. This runs on every pull_request and
+      # on push to main, so it is the check that actually PREVENTS an unverified
+      # source reaching a release — a job triggered by `release: published` fires
+      # after the release exists and can only audit it.
+      #
+      # Strict was advisory when this landed because the register recorded
+      # `verified_on: null` for sources nobody had read. Those licences have now
+      # been read at their publisher pages and their texts vendored and hashed,
+      # so strict passes with 0 warnings and there is no longer a reason to let
+      # it fail quietly.
+      - name: Licence gate (strict)
         run: |
           node --experimental-strip-types tools/licences/check-licences.ts \
             --root . --registry tools/licences/licences.json \
-            --manifest data/manifest.json --emit-notice NOTICE.md
+            --manifest data/manifest.json --emit-notice NOTICE.md --strict
 
       - name: Fail if NOTICE is stale
         # `git diff --quiet` exits 0 for an UNTRACKED file, so on the first run —
@@ -78,27 +88,19 @@ jobs:
             exit 1
           fi
 
-  # --strict promotes "licence text not hashed" and "licence never read against
-  # its publisher page" from warnings to errors.
+  # Post-publication audit. `release: types: [published]` fires AFTER the
+  # release exists, so this job cannot PREVENT anything — the check that blocks
+  # is the strict gate in the `gate` job above, which runs on every
+  # pull_request and on push to main. This one re-runs it against the published
+  # ref so a release is on record as having been checked, and it is no longer
+  # advisory: the licences are read, vendored and hashed, so a failure here
+  # means something drifted after merge and is worth waking someone up for.
   #
-  # TIMING, because it is easy to misread: `release: types: [published]` fires
-  # AFTER the release exists, so this job can never PREVENT a publication. It is
-  # a post-publication audit. The job that actually blocks is `gate` above, which
-  # runs on every pull_request and on push to main — that is where a bad source
-  # is stopped, and it is not advisory.
-  #
-  # This one stays advisory because the register honestly records
-  # `verified_on: null` for sources nobody has read yet, so it fails today by
-  # design: 13 unhashed-licence + 13 unverified-source on the current tree.
-  # Making it blocking now would fail an unrelated release without telling
-  # anyone anything new. Flip `continue-on-error` to false once every
-  # shipped-path source carries a `verified_on` date and a `licence_text_sha256`
-  # — that is when "we read the licence" becomes enforceable rather than
-  # asserted. To gate publication itself rather than audit it, the check has to
-  # move into the release-producing workflow, ahead of the upload step.
+  # To gate the act of publication itself, the check has to live in whatever
+  # creates the release. Nothing in this repository currently does — releases
+  # are cut outside CI — so there is no earlier step to hook into today.
   gate-strict:
     if: github.event_name == 'release'
-    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
@@ -116,7 +118,7 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      - name: Licence gate (strict — post-publication audit, advisory)
+      - name: Licence gate (strict — post-publication audit)
         run: |
           node --experimental-strip-types tools/licences/check-licences.ts \
             --root . --registry tools/licences/licences.json \

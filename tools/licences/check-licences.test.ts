@@ -418,6 +418,72 @@ describe("verified_on cannot be faked", () => {
     });
 });
 
+describe("symlinks in a scanned data root", () => {
+    // Two different holes. The manifest-path check catches a tile that POINTS
+    // out of the root. This catches a link the walk would otherwise follow —
+    // `statSync` reports a symlinked directory as an ordinary one, so the scan
+    // would descend and record files physically outside the root under paths
+    // that look inside it.
+    function gateOverTree(build: (root: string) => void): { passed: boolean; codes: string[]; out: string } {
+        const root = mkdtempSync(join(tmpdir(), "licgate-sym-"));
+        mkdirSync(join(root, "data", "tiles"), { recursive: true });
+        build(root);
+        writeFileSync(join(root, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", root,
+                "--registry", REGISTRY, "--manifest", join(root, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        return {
+            passed: out.includes("Licence gate passed"),
+            codes: [...out.matchAll(/^ERROR {2}([a-z-]+)/gm)].map((m) => m[1]!),
+            out,
+        };
+    }
+
+    it("rejects a symlinked file", () => {
+        const outside = mkdtempSync(join(tmpdir(), "licgate-out-"));
+        writeFileSync(join(outside, "real.tif"), "x");
+        const r = gateOverTree((root) => {
+            writeFileSync(join(root, "data", "tiles", "t.tif"), "x");
+            symlinkSync(join(outside, "real.tif"), join(root, "data", "tiles", "linked.tif"));
+        });
+        ok(!r.passed);
+        ok(r.codes.includes("symlink-in-data-root"), r.codes.join(","));
+    });
+
+    it("does not descend a symlinked directory", () => {
+        const outside = mkdtempSync(join(tmpdir(), "licgate-outdir-"));
+        mkdirSync(join(outside, "hidden"), { recursive: true });
+        writeFileSync(join(outside, "hidden", "sneaky.tif"), "x");
+        const r = gateOverTree((root) => {
+            writeFileSync(join(root, "data", "tiles", "t.tif"), "x");
+            symlinkSync(join(outside, "hidden"), join(root, "data", "linked-dir"));
+        });
+        ok(!r.passed);
+        ok(r.codes.includes("symlink-in-data-root"), r.codes.join(","));
+        // The file behind the link must never be enumerated as if it were ours.
+        ok(!r.out.includes("sneaky.tif"), "walk followed the symlinked directory");
+    });
+});
+
+describe("strict mode", () => {
+    it("passes on the committed tree, so the blocking gate can run strict", () => {
+        // The gate job runs --strict. If a source loses its verified_on or its
+        // licence_text_sha256, CI fails — which is the point, but it should fail
+        // for that reason and not because strict was never satisfiable at all.
+        const repoRoot = join(HERE, "..", "..");
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", repoRoot,
+                "--registry", REGISTRY, "--manifest", join(repoRoot, "data", "manifest.json"), "--strict"],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(out.includes("Licence gate passed"), out.slice(-600));
+    });
+});
+
 describe("full-licence-text sources", () => {
     it("every one declares a licence_text_path that exists and is non-empty", async () => {
         const reg = (await import(`file://${REGISTRY}`, { with: { type: "json" } })).default;

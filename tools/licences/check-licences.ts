@@ -14,7 +14,7 @@
  * Node 22+: node --experimental-strip-types check-licences.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, lstatSync, realpathSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, extname, resolve, sep } from "node:path";
 
@@ -169,6 +169,9 @@ function ignored(relPath: string): boolean {
   );
 }
 
+/** Symlinks encountered inside a scanned data root; reported by the caller. */
+const symlinksFound: string[] = [];
+
 function walk(dir: string, out: string[] = []): string[] {
   let entries: string[];
   try { entries = readdirSync(dir); } catch { return out; }
@@ -176,10 +179,18 @@ function walk(dir: string, out: string[] = []): string[] {
     const abs = join(dir, entry);
     const rel = relative(ROOT, abs);
     if (ignored(rel)) continue;
+
+    // lstat, NOT stat: stat follows the link, so a symlinked DIRECTORY reports
+    // as an ordinary one and the walk descends through it, recording files that
+    // are physically outside the root under paths that look inside it. A data
+    // root holds bytes we redistribute, so those must be real files — a link of
+    // any kind is refused rather than resolved.
     let st;
-    try { st = statSync(abs); } catch { continue; }
+    try { st = lstatSync(abs); } catch { continue; }
+    if (st.isSymbolicLink()) { symlinksFound.push(rel); continue; }
+
     if (st.isDirectory()) walk(abs, out);
-    else if (scanExts.has(extname(entry).toLowerCase())) out.push(rel);
+    else if (st.isFile() && scanExts.has(extname(entry).toLowerCase())) out.push(rel);
   }
   return out;
 }
@@ -407,6 +418,12 @@ for (const root of scanRoots) {
   if (!existsSync(abs)) continue;
   walk(abs, scanned);
 }
+for (const rel of symlinksFound) {
+  add("error", "symlink-in-data-root", rel,
+    `Symlink inside a scanned data root. The gate asserts provenance for bytes it hashes, and a `
+    + `link can point anywhere — including outside the root. Commit the real file instead.`);
+}
+
 for (const rel of scanned) {
   if (!manifestPaths.has(rel)) {
     add("error", "unmanifested-asset", rel,

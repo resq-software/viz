@@ -16,6 +16,7 @@ tools/licences/
   check-licences.ts       the gate
   check-licences.test.ts  its tests
   manifest.schema.json    schema for the provenance manifest
+  texts/                  verbatim licence texts that must ship with the data
 data/manifest.json        emitted by the bake pipeline
 NOTICE.md                 generated — never hand-edited
 .github/workflows/licence-gate.yml
@@ -31,8 +32,9 @@ node --experimental-strip-types tools/licences/check-licences.ts \
 node --experimental-strip-types --test tools/licences/check-licences.test.ts
 ```
 
-`--strict` promotes warnings to errors. See the workflow for why that job is
-advisory today.
+`--strict` promotes "licence text not hashed" and "licence never read against its
+publisher page" to errors. CI runs it that way on every pull request and on push
+to main, so run it locally before pushing.
 
 ## The idea
 
@@ -97,6 +99,9 @@ the two.
 | `layer-source-mismatch` | error | This source does not supply that layer kind. |
 | `upstream-header-mismatch` | error | The captured header names a producer the declared source is not. |
 | `unknown-restriction-kind` | error | The registry declares a rule this build cannot evaluate. |
+| `symlink-in-data-root` | error | A link inside a scanned root. Data roots hold bytes we redistribute; those must be real files. |
+| `invalid-verification-date` | error | `verified_on` is not a valid past ISO date. |
+| `missing-licence-text` | error | A `full-licence-text` source has no readable `licence_text_path`. |
 | `unmanifested-asset` | error | Asset in a scanned root with no provenance record. |
 | `hash-mismatch` | error | File contents changed without a re-bake. |
 | `missing-file` / `path-escapes-root` | error | Manifest describes a file the gate cannot verify. |
@@ -112,10 +117,14 @@ the two.
 add one is to write a registry entry, and writing one honestly requires having
 read the licence.
 
-**Hash the licence text.** Upstream terms change and nothing notifies you. One
-dataset in this register moved from ODbL to CDLA-Permissive-2.0, and third-party
-catalogues still describe it by its old licence — so anything fetched before that
-date came under the old terms. That is what `fetched-after` encodes.
+**Hash the licence text.** `licence_text_sha256` pins the licence text *this
+repo ships*, so our vendored copy cannot drift or be edited unnoticed. It does
+not detect the publisher relicensing — nothing can, automatically. That is what
+re-reading the page and bumping `verified_on` is for, and why `--strict` fails
+on a stale one. Upstream terms do change: one dataset in this register moved
+from ODbL to CDLA-Permissive-2.0, and third-party catalogues still describe it
+by its old licence, so anything fetched before that date came under the old
+terms. That is what `fetched-after` encodes.
 
 **Trace the lineage, not the badge.** The costliest errors in this register came
 from aggregates: a permissively-badged global relief model whose land layer is a
@@ -127,10 +136,13 @@ aggregator's own rights, not the rights of everything inside it.
 Whole-tree scanning flagged every UI icon in the repo, which is the fastest way to
 get a gate switched off. Widen the roots, never the ignore list.
 
-**Warnings, not errors, for unverified licences.** Entries ship with
-`verified_on: null` where the licence has not been read against its publisher
-page. That is honest and does not block development; `--strict` is what makes it
-block a release.
+**Unverified licences are warnings; the blocking gate runs `--strict`.** An
+entry may carry `verified_on: null` where the licence has not been read against
+its publisher page, and plain runs report that as a warning so local development
+is not blocked. CI runs the gate with `--strict` on every pull request and on
+push to main, which promotes those to errors — so an unread licence cannot reach
+main. The job triggered by `release: published` fires after a release exists and
+can only audit it, never prevent it.
 
 ## Not covered by this tool
 

@@ -355,7 +355,7 @@
       "class": "attribution",
       "spdx": "CDLA-Permissive-2.0",
       "licence_url": "https://github.com/microsoft/GlobalMLBuildingFootprints",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "4531a67d443284d93ffed0803df5b10634aff21c3d77e381f2d48af01d875868",
       "verified_on": "2026-09-05",
       "notice": "Building footprints: Microsoft Global ML Building Footprints, licensed by Microsoft under CDLA-Permissive-2.0. Modified (resampled and merged).",
       "courtesy_credit": null,
@@ -636,7 +636,7 @@
     "ambientcg": {
       "name": "ambientCG (Lennart Demes)",
       "spdx": "CC0-1.0",
-      "verified_on": null,
+      "verified_on": "2026-09-05",
       "licence_url": "https://ambientcg.com/license",
       "notice": null,
       "notice_required": false,
@@ -645,15 +645,16 @@
         "texture"
       ],
       "coverage": "n/a",
-      "notes": "Not geospatial, but the gate scans these extensions and these files ARE redistribution. Registering them makes the hand-maintained textures/terrain/CREDITS.md a GENERATED artefact instead - which is what the register says provenance should be.",
+      "notes": "Read at ambientcg.com/license on 2026-09-05: assets are released under the Creative Commons CC0 1.0 Universal License, and the page states you may copy, modify, distribute and perform them, even for commercial purposes, without asking permission. Registering these makes the hand-maintained textures/terrain/CREDITS.md a GENERATED artefact instead.",
       "class": "public-domain",
-      "licence_text_sha256": null,
-      "restrictions": []
+      "licence_text_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "restrictions": [],
+      "licence_text_path": "tools/licences/texts/CC0-1.0.txt"
     },
     "threejs-examples": {
       "name": "Three.js example assets",
       "spdx": "MIT",
-      "verified_on": null,
+      "verified_on": "2026-09-05",
       "licence_url": "https://github.com/mrdoob/three.js/blob/master/LICENSE",
       "notice": "Water normal map from the Three.js examples, Copyright (c) 2010-2026 three.js authors, MIT License.",
       "notice_required": true,
@@ -665,7 +666,7 @@
       "coverage": "n/a",
       "notes": "waternormals.jpg is vendored from the Three.js examples. MIT requires the copyright notice and permission notice in all copies - a vendored binary asset is a copy.",
       "class": "attribution",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
       "restrictions": [],
       "licence_text_path": "tools/licences/texts/threejs-MIT.txt"
     }
