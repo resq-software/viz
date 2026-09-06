@@ -331,6 +331,13 @@ public sealed partial class SimV2Controller
             return null;
         }
 
+        return LinkRefusal(room, envelope, now);
+    }
+
+    /// <summary>Records and returns the shared unreachable-link command refusal.</summary>
+    private ObjectResult LinkRefusal(
+        SimulationRoom room, AssetCommandEnvelope envelope, DateTimeOffset now)
+    {
         var detail =
             $"Asset '{Sanitize(envelope.AssetId)}' cannot hear this command: its command link is "
             + "held down, so nothing issued over it would reach the asset. It is meanwhile acting "

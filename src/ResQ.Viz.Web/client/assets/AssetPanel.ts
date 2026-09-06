@@ -34,13 +34,14 @@ import { buildAssetCards, buildTrackCards } from './panelCards';
 import type { PanelCard } from './panelCards';
 import {
   DESTRUCTIVE_COMMANDS,
-  PARAMETER_SPECS,
   VERTICAL_REFERENCES,
+  commandFailureCode,
   evaluateCommand,
   loadAssetCapabilities,
   newIdempotencyKey,
   pointTarget,
   postAssetCommand,
+  parameterSpec,
   surfaceElevationUnderAssetM,
   targetForAsset,
 } from './panelCommands';
@@ -56,6 +57,9 @@ import type {
 } from './panelCommands';
 import type { AssetDescriptor, AssetState, ExternalTrackState, MotionConstraints } from './types';
 import { DataFreshness, TrackClassification } from './types';
+import { liveGate } from '../operator/interactionMode';
+import type { MutationGate } from '../operator/interactionMode';
+import type { CommandAuthority } from '../operator/controlAuthorityStore';
 
 const log = getLogger('assetPanel');
 
@@ -71,10 +75,21 @@ export type PanelSubject =
   }
   | { readonly kind: 'track'; readonly track: ExternalTrackState };
 
+function isRenderedAndAccessible(element: HTMLElement): boolean {
+  const view = element.ownerDocument.defaultView;
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    if (current.hidden || current.hasAttribute('inert')
+        || current.getAttribute('aria-hidden') === 'true') return false;
+    const style = view?.getComputedStyle(current);
+    if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+  }
+  return true;
+}
+
 /** Construction options. Every collaborator is injectable, so the panel can be
  *  driven with no server and no scene in a test. */
 export interface AssetPanelOptions {
-  readonly mount?: HTMLElement;
+  readonly mount: HTMLElement;
   readonly issueCommand?: CommandIssuer;
   readonly loadCapabilities?: (assetId: string) => Promise<AssetCapabilitiesReport | null>;
   /** Supplied when the host can turn a gesture into a scene point. Absent means
@@ -85,6 +100,13 @@ export interface AssetPanelOptions {
    *  Doubles per consecutive failure up to {@link CAPABILITY_RETRY_CEILING}.
    *  Injectable so a test can drive the recovery without a real wait. */
   readonly capabilityRetryMs?: number;
+  /** Who may command the asset, and with what lease. Absent means the host has
+   *  wired no authority — a v1 session, or a headless panel — and the envelope
+   *  then carries no issuer, exactly as it did before leases existed. */
+  readonly authority?: CommandAuthority | null;
+  /** Whether the console is commanding the live world at all. Defaults to
+   *  permitting everything, so an ungated panel behaves as it always has. */
+  readonly mutationGate?: MutationGate;
 }
 
 /** Default first retry delay for a failed capability fetch. */
@@ -131,6 +153,7 @@ export class AssetPanel {
   private readonly _commandHost: HTMLElement;
   private readonly _commandNote: HTMLParagraphElement;
   private readonly _status: HTMLParagraphElement;
+  private readonly _close: HTMLButtonElement;
   private readonly _cards = new Map<string, CardParts>();
   private readonly _commands = new Map<string, CommandParts>();
 
@@ -140,9 +163,15 @@ export class AssetPanel {
   private readonly _loadCapabilities: (assetId: string) => Promise<AssetCapabilitiesReport | null>;
   private readonly _pickTarget: TargetPicker | null;
   private readonly _retryBaseMs: number;
+  private readonly _authority: CommandAuthority | null;
+  private readonly _gate: MutationGate;
+  private _unsubscribeAuthority: (() => void) | null = null;
 
   private _closeFn: (() => void) | null = null;
   private _subjectId: string | null = null;
+  private _subjectKey: string | null = null;
+  private _generation = 0;
+  private _disposed = false;
   /** The view last rendered, kept because a command is issued from a click that
    *  arrives between frames and still has to be aimed at *this* asset. */
   private _view: AssetView | null = null;
@@ -152,18 +181,21 @@ export class AssetPanel {
   private _retryTimer: ReturnType<typeof setTimeout> | null = null;
   private _retryAttempt = 0;
   private _commandSignature = '';
-  private _busy = false;
+  private _busyOperation: { readonly generation: number; readonly token: symbol } | null = null;
 
-  constructor(options: AssetPanelOptions = {}) {
+  constructor(options: AssetPanelOptions) {
+    if (!options?.mount) throw new Error('AssetPanel requires an explicit mount');
     this._issue = options.issueCommand ?? postAssetCommand;
     this._loadCapabilities = options.loadCapabilities ?? loadAssetCapabilities;
     this._pickTarget = options.pickTarget ?? null;
     this._retryBaseMs = options.capabilityRetryMs ?? CAPABILITY_RETRY_MS;
+    this._authority = options.authority ?? null;
+    this._gate = options.mutationGate ?? liveGate;
 
     this._root = document.createElement('aside');
     this._root.className = 'asset-panel';
-    this._root.hidden = true;
-    this._root.setAttribute('aria-label', 'Selected asset');
+    this._root.setAttribute('aria-label', 'Selected entity');
+    this._syncVisibility(false);
 
     const header = document.createElement('header');
     header.className = 'ap-head';
@@ -184,14 +216,14 @@ export class AssetPanel {
 
     identity.append(this._domainTag, this._title, this._badge);
 
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'ap-close';
-    close.setAttribute('aria-label', 'Close asset panel');
-    close.textContent = '×';
-    close.addEventListener('click', () => this._dismiss());
+    this._close = document.createElement('button');
+    this._close.type = 'button';
+    this._close.className = 'ap-close';
+    this._close.setAttribute('aria-label', 'Close selected entity');
+    this._close.textContent = '×';
+    this._close.addEventListener('click', () => this._dismiss());
 
-    header.append(identity, close);
+    header.append(identity, this._close);
 
     this._body = document.createElement('div');
     this._body.className = 'ap-body';
@@ -224,11 +256,15 @@ export class AssetPanel {
     footer.append(this._commandNote, this._retry, this._commandHost, this._status);
 
     this._root.append(header, this._body, footer);
-    this._root.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this._dismiss();
-    });
+    options.mount.appendChild(this._root);
 
-    (options.mount ?? document.body).appendChild(this._root);
+    // Authority changes arrive from the network, not from the frame stream: a
+    // preemption while the world is paused would otherwise go unpainted until
+    // something else happened to re-render, and the operator would go on
+    // pressing a control that has already stopped working.
+    this._unsubscribeAuthority = this._authority?.subscribe(() => {
+      if (!this._disposed && this._view) this._renderCommands(this._view);
+    }) ?? null;
   }
 
   /** The panel's root element, for a host that wants to place it itself. */
@@ -241,6 +277,11 @@ export class AssetPanel {
     return this._subjectId;
   }
 
+  /** Whether the selected subject currently has an operable rendered panel. */
+  get isVisible(): boolean {
+    return this._subjectId !== null && isRenderedAndAccessible(this._root);
+  }
+
   /** Called when the operator dismisses the panel. */
   onClose(fn: () => void): void {
     this._closeFn = fn;
@@ -248,8 +289,10 @@ export class AssetPanel {
 
   /** Hides the panel and forgets its subject. */
   hide(): void {
-    this._root.hidden = true;
+    this._syncVisibility(false);
+    this._invalidateSubject();
     this._subjectId = null;
+    this._subjectKey = null;
     this._view = null;
     this._forgetReport();
     this._clearCommands();
@@ -277,7 +320,7 @@ export class AssetPanel {
       this.hide();
       return;
     }
-    this._root.hidden = false;
+    this._syncVisibility(true);
     if (subject.kind === 'track') {
       this._renderTrack(subject.track, simulationNowMs);
     } else {
@@ -287,7 +330,12 @@ export class AssetPanel {
 
   /** Detaches the panel and drops its listeners. */
   dispose(): void {
-    this._cancelRetry();
+    if (this._disposed) return;
+    this._disposed = true;
+    this._unsubscribeAuthority?.();
+    this._unsubscribeAuthority = null;
+    this._invalidateSubject();
+    this._forgetReport();
     this._clearCommands();
     this._cards.clear();
     this._closeFn = null;
@@ -300,6 +348,14 @@ export class AssetPanel {
     this._closeFn?.();
   }
 
+  /** Keeps visual and accessibility visibility coherent across frame renders. */
+  private _syncVisibility(hasSubject: boolean): void {
+    this._root.setAttribute('data-context-visible', String(hasSubject));
+    const hidden = !hasSubject || this._root.hasAttribute('data-context-obscured');
+    this._root.hidden = hidden;
+    this._root.setAttribute('aria-hidden', String(hidden));
+  }
+
   // ── Asset ─────────────────────────────────────────────────────────────────
 
   private _renderAsset(subject: Extract<PanelSubject, { kind: 'asset' }>): void {
@@ -307,12 +363,12 @@ export class AssetPanel {
     const descriptor = subject.descriptor ?? null;
     const state = subject.state ?? null;
 
-    if (this._subjectId !== view.id) {
-      this._subjectId = view.id;
-      this._status.textContent = '';
-      this._requestCapabilities(view.id);
-    }
+    const changed = this._beginSubject('asset', view.id);
+    if (changed) this._requestCapabilities(view.id);
     this._view = view;
+
+    this._root.setAttribute('aria-label', 'Selected asset');
+    this._close.setAttribute('aria-label', 'Close selected asset');
 
     this._title.textContent = view.displayName || view.id;
     this._domainTag.textContent = domainLabel(view.domain);
@@ -340,15 +396,15 @@ export class AssetPanel {
   // ── Track ─────────────────────────────────────────────────────────────────
 
   private _renderTrack(track: ExternalTrackState, simulationNowMs: number | null): void {
-    if (this._subjectId !== track.trackId) {
-      this._subjectId = track.trackId;
-      this._status.textContent = '';
-    }
+    this._beginSubject('track', track.trackId);
     // Any report cached from a previously selected asset is dropped — along with
     // any retry still pending for it — so one asset's buttons can never be left
     // standing beside another entity's data.
     this._view = null;
     this._forgetReport();
+
+    this._root.setAttribute('aria-label', 'Observed contact');
+    this._close.setAttribute('aria-label', 'Close observed contact');
 
     this._title.textContent = track.label ?? track.trackId;
     this._domainTag.textContent = 'Track';
@@ -450,7 +506,9 @@ export class AssetPanel {
    * commands" note for that asset until it was deselected.
    */
   private _requestCapabilities(assetId: string, isRetry = false): void {
+    if (this._disposed) return;
     if (!isRetry && this._reportAssetId === assetId && this._reportStatus !== 'failed') return;
+    const generation = this._generation;
     this._cancelRetry();
     this._report = null;
     this._reportAssetId = assetId;
@@ -460,11 +518,11 @@ export class AssetPanel {
       .then((report) => {
         // A late answer for an asset no longer selected is dropped rather than
         // painted over the current one.
-        if (this._reportAssetId !== assetId) return;
+        if (!this._isCurrentAsset(assetId, generation)) return;
         if (!report) {
           // `loadAssetCapabilities` resolves null only when the report could not
           // be read. That is a failure, not an asset with nothing to offer.
-          this._failReport(assetId, 'report unreadable');
+          this._failReport(assetId, generation, 'report unreadable');
           return;
         }
         this._reportStatus = 'ready';
@@ -473,13 +531,14 @@ export class AssetPanel {
         this._commandSignature = '';
       })
       .catch((err: unknown) => {
-        if (this._reportAssetId !== assetId) return;
-        this._failReport(assetId, String(err));
+        if (!this._isCurrentAsset(assetId, generation)) return;
+        this._failReport(assetId, generation, String(err));
       });
   }
 
   /** Records a failed fetch and queues the next attempt. */
-  private _failReport(assetId: string, reason: string): void {
+  private _failReport(assetId: string, generation: number, reason: string): void {
+    if (!this._isCurrentAsset(assetId, generation)) return;
     log.warn('capability report unavailable', { assetId, error: reason });
     this._report = null;
     this._reportStatus = 'failed';
@@ -495,7 +554,7 @@ export class AssetPanel {
     this._retryAttempt += 1;
     this._retryTimer = setTimeout(() => {
       this._retryTimer = null;
-      if (this._reportAssetId === assetId && this._reportStatus === 'failed') {
+      if (this._isCurrentAsset(assetId, generation) && this._reportStatus === 'failed') {
         this._requestCapabilities(assetId, true);
       }
     }, delay);
@@ -604,7 +663,7 @@ export class AssetPanel {
   private _syncBounds(parts: CommandParts, view: AssetView, motion: MotionConstraints): void {
     const ctx = this._boundsContext(parts, view);
     for (const [key, input] of parts.inputs) {
-      const spec = PARAMETER_SPECS[key];
+      const spec = parameterSpec(key);
       if (!spec) continue;
       const { min, max } = spec.bounds(motion, ctx);
       // An unbounded side carries no attribute at all rather than a placeholder:
@@ -624,9 +683,19 @@ export class AssetPanel {
   ): void {
     // A refusal always carries a reason, including the transient one: a control
     // that goes grey with nothing to say reads as broken rather than as busy.
+    //
+    // The order is the order the operator can act in. What the asset can do and
+    // what this client can supply come first, because they are facts about the
+    // vehicle and the form; then whether the console is commanding the live
+    // world at all; then whether it may command *this* asset. Collapsing the
+    // last two into one message would leave an operator unable to tell a replay
+    // from a lease they do not hold — one is undone by returning to Live, the
+    // other by a phone call or a preemption.
     const reason = availability.reason
       ?? this._parameterProblem(parts, motion, view)
-      ?? (this._busy ? 'a command is already in flight' : null);
+      ?? this._interactionProblem()
+      ?? this._authorityProblem(view.id)
+      ?? (this._busyOperation !== null ? 'a command is already in flight' : null);
     const enabled = reason === null;
 
     // `aria-disabled` rather than the `disabled` attribute. A disabled control
@@ -641,6 +710,30 @@ export class AssetPanel {
     if (parts.reason.textContent !== shown) parts.reason.textContent = shown;
     parts.reason.hidden = shown === '';
     parts.button.title = shown;
+  }
+
+  /** Why nothing may be commanded at all right now, or null. Read from the
+   *  shared gate rather than re-derived, so this can only ever mirror the
+   *  boundary that will actually refuse the send. */
+  private _interactionProblem(): string | null {
+    const allowed = this._gate('asset.command');
+    return allowed.success
+      ? null
+      : 'unavailable during replay — return to Live to command';
+  }
+
+  /**
+   * Why this console may not command *this asset* right now, or null.
+   *
+   * Authority is an issuer-level fact and is deliberately not folded into the
+   * capability report: the asset's command set describes the asset, and a set
+   * that shrank for a non-holder would differ from the one the server accepts.
+   * So the control stays, and carries the holder as its reason.
+   */
+  private _authorityProblem(assetId: string): string | null {
+    if (!this._authority) return null;
+    const decision = this._authority.authorize(assetId);
+    return decision.allowed ? null : decision.reason;
   }
 
   /**
@@ -665,7 +758,7 @@ export class AssetPanel {
   ): string | null {
     const ctx = this._boundsContext(parts, view);
     for (const [key, input] of parts.inputs) {
-      const spec = PARAMETER_SPECS[key];
+      const spec = parameterSpec(key);
       if (!spec) return `this client cannot supply the "${key}" parameter`;
       const value = Number(input.value);
       if (input.value.trim() === '' || !Number.isFinite(value)) {
@@ -698,7 +791,7 @@ export class AssetPanel {
     let datum: HTMLSelectElement | null = null;
 
     for (const key of capability.requiredParameters) {
-      const spec = PARAMETER_SPECS[key];
+      const spec = parameterSpec(key);
       // An unsupported key is not skipped silently: `evaluateCommand` has already
       // blocked the command and named the key, and the button stays visible so the
       // operator can see what the asset accepts and this client cannot yet send.
@@ -776,59 +869,89 @@ export class AssetPanel {
         : `${humanise(capability.kind)} is not available.`);
       return;
     }
-    if (this._busy) return;
+    if (this._busyOperation !== null) return;
 
     const assetId = this._subjectId;
     const view = this._view;
     if (!assetId || !view || !this._report) return;
+    const generation = this._generation;
+    const picker = capability.requiresTarget ? this._pickTarget : null;
+    if (capability.requiresTarget && !picker) return;
 
-    let target: unknown;
-    if (capability.requiresTarget) {
-      const picker = this._pickTarget;
-      if (!picker) return;
-      this._announce(`Pick a destination for ${humanise(capability.kind).toLowerCase()}.`);
-      const picked = await picker(capability.kind, humanise(capability.kind));
-      if (!picked) {
-        this._announce('Destination cancelled.');
+    const operation = { generation, token: Symbol(capability.kind) };
+    this._busyOperation = operation;
+    parts.wrap.classList.add('is-busy');
+    this._renderCommands(view);
+
+    try {
+      let target: unknown;
+      if (capability.requiresTarget && picker) {
+        this._announce(`Pick a destination for ${humanise(capability.kind).toLowerCase()}.`);
+        const picked = await picker(capability.kind, humanise(capability.kind));
+        if (!this._isCurrentAsset(assetId, generation)) return;
+        if (!picked) {
+          this._announce('Destination cancelled.');
+          return;
+        }
+        // A map pick answers *where*, not *how high*: its `Y` is the surface the ray
+        // hit. `targetForAsset` decides the height by domain — the surface for
+        // something that drives or floats on it, the reported altitude for something
+        // that flies — so a picked `goTo` is not a commanded descent into terrain.
+        target = pointTarget(targetForAsset(picked, view));
+      }
+
+      const parameters: Record<string, string> = {};
+      for (const [key, input] of parts.inputs) {
+        const spec = parameterSpec(key);
+        if (!spec) return;
+        parameters[key] = String(spec.toWire(Number(input.value)));
+        // An altitude without its datum is refused at the boundary, and rightly:
+        // above-ground and mean-sea-level differ by the hill under the asset.
+        if (spec.needsVerticalReference && parts.datum) {
+          parameters['verticalReference'] = parts.datum.value;
+        }
+      }
+
+      // Asked immediately before the send, never cached from the render: a
+      // lease can lapse or be taken between the press and the destination pick.
+      const authorized = this._authority?.authorize(assetId) ?? null;
+      if (authorized && !authorized.allowed) {
+        this._announce(`${humanise(capability.kind)} unavailable: ${authorized.reason}.`);
         return;
       }
-      // A map pick answers *where*, not *how high*: its `Y` is the surface the ray
-      // hit. `targetForAsset` decides the height by domain — the surface for
-      // something that drives or floats on it, the reported altitude for something
-      // that flies — so a picked `goTo` is not a commanded descent into terrain.
-      target = pointTarget(targetForAsset(picked, view));
-    }
 
-    const parameters: Record<string, string> = {};
-    for (const [key, input] of parts.inputs) {
-      const spec = PARAMETER_SPECS[key];
-      if (!spec) return;
-      parameters[key] = String(spec.toWire(Number(input.value)));
-      // An altitude without its datum is refused at the boundary, and rightly:
-      // above-ground and mean-sea-level differ by the hill under the asset.
-      if (spec.needsVerticalReference && parts.datum) {
-        parameters['verticalReference'] = parts.datum.value;
-      }
-    }
+      const request: AssetCommandRequestBody = {
+        kind: capability.kind,
+        idempotencyKey: newIdempotencyKey(),
+        ...(authorized === null
+          ? {}
+          : { issuerId: authorized.issuerId, controlLeaseId: authorized.controlLeaseId }),
+        ...(target === undefined ? {} : { target }),
+        ...(Object.keys(parameters).length === 0 ? {} : { parameters }),
+      };
 
-    const request: AssetCommandRequestBody = {
-      kind: capability.kind,
-      idempotencyKey: newIdempotencyKey(),
-      ...(target === undefined ? {} : { target }),
-      ...(Object.keys(parameters).length === 0 ? {} : { parameters }),
-    };
-
-    this._busy = true;
-    parts.wrap.classList.add('is-busy');
-    try {
       const outcome = await this._issue(assetId, request);
-      this._announce(outcome.message);
+      // Before the control comes back, and regardless of what is selected now:
+      // a refusal coded `authority.*` or `control.*` means this console's
+      // picture of who holds the asset is already wrong, and the next press
+      // must not be issued on the belief that just failed.
+      const code = commandFailureCode(outcome);
+      if (code !== null) this._authority?.invalidateFromFailure(code);
+      if (this._isCurrentAsset(assetId, generation)) this._announce(outcome.message);
     } catch (err: unknown) {
       log.error('command failed to send', err);
-      this._announce(`${humanise(capability.kind)} failed to send.`);
+      if (this._isCurrentAsset(assetId, generation)) {
+        this._announce(`${humanise(capability.kind)} failed to send.`);
+      }
     } finally {
-      this._busy = false;
-      parts.wrap.classList.remove('is-busy');
+      if (this._busyOperation?.token === operation.token
+        && this._busyOperation.generation === generation) {
+        this._busyOperation = null;
+        parts.wrap.classList.remove('is-busy');
+        if (this._isCurrentAsset(assetId, generation) && this._view) {
+          this._renderCommands(this._view);
+        }
+      }
     }
   }
 
@@ -840,5 +963,30 @@ export class AssetPanel {
     this._commandHost.textContent = '';
     this._commands.clear();
     this._commandSignature = '';
+  }
+
+  private _beginSubject(kind: 'asset' | 'track', id: string): boolean {
+    const key = `${kind}:${id}`;
+    if (this._subjectKey === key) return false;
+    this._invalidateSubject();
+    this._subjectKey = key;
+    this._subjectId = id;
+    this._status.textContent = '';
+    this._view = null;
+    this._forgetReport();
+    this._clearCommands();
+    return true;
+  }
+
+  private _invalidateSubject(): void {
+    this._generation += 1;
+    this._busyOperation = null;
+  }
+
+  private _isCurrentAsset(assetId: string, generation: number): boolean {
+    return !this._disposed
+      && this._generation === generation
+      && this._subjectKey === `asset:${assetId}`
+      && this._reportAssetId === assetId;
   }
 }

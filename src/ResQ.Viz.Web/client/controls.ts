@@ -3,6 +3,8 @@
 
 import type { DroneState } from './types';
 import { getLogger } from './log';
+import { liveGate, type MutationGate } from './operator/interactionMode';
+import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import type { ScenarioGroup } from './scenarioCatalog';
 import {
     SCENARIO_ORDER, SCENARIO_GROUP_LABELS, SCENARIO_HOTKEYS,
@@ -11,8 +13,20 @@ import {
 
 const log = getLogger('controls');
 
+/** Everything on the legacy console that changes the world, as the selectors
+ *  {@link ControlPanel.setMutationsEnabled} mirrors the gate onto. Reads — the
+ *  drone/fault pickers, the wind sliders — are deliberately absent: an operator
+ *  watching a replay can still line a command up. */
+const MUTATION_CONTROLS =
+    '#btn-start, #btn-stop, #btn-reset, #btn-spawn, #btn-weather, .cmd-btn, .fault-btn';
+
 export class ControlPanel {
-    constructor() {
+    private readonly _root: HTMLElement;
+    private readonly _gate: MutationGate;
+
+    constructor(legacyRoot: HTMLElement, gate: MutationGate = liveGate) {
+        this._root = legacyRoot;
+        this._gate = gate;
         this._bindSimButtons();
         // Cards for every preset the SERVER offers, not just the four in the
         // markup. Fire-and-forget, and it re-binds when it lands: a failed fetch
@@ -33,8 +47,21 @@ export class ControlPanel {
         this._bindFaultButtons();
         this._bindWeatherSliders();
         this._bindWeatherApply();
-        this._bindSidebarToggle();
         this._bindKeyboard();
+    }
+
+    /**
+     * Mirror the gate onto the controls so a refused button also *looks*
+     * refused. This is presentation, not enforcement: `_post` is the boundary,
+     * and it is consulted whether or not this was ever called.
+     */
+    setMutationsEnabled(enabled: boolean): void {
+        this._root.querySelectorAll<HTMLButtonElement>(MUTATION_CONTROLS)
+            .forEach(el => { el.disabled = !enabled; });
+        // Scenario cards are not buttons, so `disabled` means nothing to them;
+        // aria-disabled is what a screen reader reads out.
+        this._root.querySelectorAll<HTMLElement>('.scenario-card')
+            .forEach(el => el.setAttribute('aria-disabled', String(!enabled)));
     }
 
     updateDroneList(drones: DroneState[]): void {
@@ -44,7 +71,7 @@ export class ControlPanel {
     }
 
     private _syncSelect(selectId: string, ids: string[]): void {
-        const sel = document.getElementById(selectId) as HTMLSelectElement | null;
+        const sel = this._root.querySelector<HTMLSelectElement>(`#${selectId}`);
         if (!sel) return;
         const current = sel.value;
         // Set membership instead of `ids.includes` / `options.some`: the old
@@ -310,7 +337,7 @@ export class ControlPanel {
      * was appended after them.
      */
     private _bindScenarioCards(): void {
-        const cards = document.querySelectorAll<HTMLElement>('.scenario-card');
+        const cards = this._root.querySelectorAll<HTMLElement>('.scenario-card');
         cards.forEach(card => {
             // Initialise aria-pressed so AT users hear "not pressed" for every card.
             if (!card.hasAttribute('aria-pressed')) {
@@ -353,7 +380,7 @@ export class ControlPanel {
     }
 
     private _bindCommandButtons(): void {
-        document.querySelectorAll<HTMLElement>('.cmd-btn').forEach(btn => {
+        this._root.querySelectorAll<HTMLElement>('.cmd-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const cmd = btn.dataset['cmd'];
                 if (cmd) void this._sendCommand(cmd);
@@ -362,7 +389,7 @@ export class ControlPanel {
     }
 
     private _bindFaultButtons(): void {
-        document.querySelectorAll<HTMLElement>('.fault-btn').forEach(btn => {
+        this._root.querySelectorAll<HTMLElement>('.fault-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const fault = btn.dataset['fault'];
                 if (fault) void this._injectFault(fault);
@@ -372,8 +399,8 @@ export class ControlPanel {
 
     private _bindWeatherSliders(): void {
         const bind = (sliderId: string, displayId: string) => {
-            const s = document.getElementById(sliderId) as HTMLInputElement | null;
-            const d = document.getElementById(displayId);
+            const s = this._root.querySelector<HTMLInputElement>(`#${sliderId}`);
+            const d = this._root.querySelector<HTMLElement>(`#${displayId}`);
             if (s && d) s.addEventListener('input', () => { d.textContent = s.value; });
         };
         bind('wind-speed', 'wind-speed-val');
@@ -384,31 +411,16 @@ export class ControlPanel {
         this._on('btn-weather', () => this._applyWeather());
     }
 
-    private _bindSidebarToggle(): void {
-        const sidebar = document.getElementById('sidebar');
-        this._on('btn-sidebar-toggle', () => sidebar?.classList.toggle('collapsed'));
-        // On small viewports the sidebar is an on-demand overlay (styled in
-        // main.css): start collapsed so the scene + timeline own the full width,
-        // and re-apply the per-breakpoint default whenever the viewport crosses
-        // the mobile threshold. A manual toggle still overrides until the next
-        // crossing.
-        const mq = window.matchMedia('(max-width: 900px)');
-        const applyDefault = (mobile: boolean): void => { sidebar?.classList.toggle('collapsed', mobile); };
-        applyDefault(mq.matches);
-        mq.addEventListener('change', (e) => applyDefault(e.matches));
-    }
-
     private _bindKeyboard(): void {
         document.addEventListener('keydown', async (e) => {
-            const target = e.target as Element | null;
-            if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
+            if (!this._root.isConnected || this._root.closest('[hidden], [inert]') !== null) return;
+            if (shouldIgnoreGlobalShortcut(e)) return;
             // Shift+Digit is reserved for camera presets (see app.ts). Skip so
             // Shift+1 doesn't also run the `single` scenario.
             if (e.shiftKey && e.code.startsWith('Digit')) return;
             switch (e.code) {
                 // Space (play/pause) is owned by the editor Transport bar.
                 case 'KeyR':   await this._post('/api/sim/reset'); break;
-                case 'Tab':    e.preventDefault(); document.getElementById('sidebar')?.classList.toggle('collapsed'); break;
                 default:       break;
             }
             // Scenario digits come from the catalog rather than a second hand-kept
@@ -421,7 +433,7 @@ export class ControlPanel {
 
     private async _spawnDrone(): Promise<void> {
         const getVal = (id: string, fallback: string) =>
-            (document.getElementById(id) as HTMLInputElement | null)?.value ?? fallback;
+            this._root.querySelector<HTMLInputElement>(`#${id}`)?.value ?? fallback;
         const x = parseFloat(getVal('spawn-x', '0'));
         const y = parseFloat(getVal('spawn-y', '50'));
         const z = parseFloat(getVal('spawn-z', '0'));
@@ -429,26 +441,28 @@ export class ControlPanel {
     }
 
     private async _sendCommand(type: string): Promise<void> {
-        const droneId = (document.getElementById('drone-select') as HTMLSelectElement | null)?.value;
+        const droneId = this._root.querySelector<HTMLSelectElement>('#drone-select')?.value;
         if (!droneId) return;
         await this._post(`/api/sim/drone/${droneId}/cmd`, { type });
     }
 
     private async _injectFault(type: string): Promise<void> {
-        const droneId = (document.getElementById('fault-drone-select') as HTMLSelectElement | null)?.value;
+        const droneId = this._root.querySelector<HTMLSelectElement>('#fault-drone-select')?.value;
         if (!droneId) return;
         await this._post('/api/sim/fault', { droneId, type });
     }
 
     private async _applyWeather(): Promise<void> {
-        const mode      = (document.getElementById('weather-mode')  as HTMLSelectElement | null)?.value ?? 'calm';
-        const windSpeed = parseFloat((document.getElementById('wind-speed') as HTMLInputElement | null)?.value ?? '5');
-        const windDir   = parseFloat((document.getElementById('wind-dir')   as HTMLInputElement | null)?.value ?? '0');
+        const mode = this._root.querySelector<HTMLSelectElement>('#weather-mode')?.value ?? 'calm';
+        const windSpeed = parseFloat(
+            this._root.querySelector<HTMLInputElement>('#wind-speed')?.value ?? '5');
+        const windDir = parseFloat(
+            this._root.querySelector<HTMLInputElement>('#wind-dir')?.value ?? '0');
         await this._post('/api/sim/weather', { mode, windSpeed, windDirection: windDir });
     }
 
     private _on(id: string, fn: () => void): void {
-        document.getElementById(id)?.addEventListener('click', fn);
+        this._root.querySelector<HTMLElement>(`#${id}`)?.addEventListener('click', fn);
     }
 
     /**
@@ -458,6 +472,15 @@ export class ControlPanel {
      * should only fire on success (e.g. scenario intro overlay).
      */
     private async _post(url: string, body?: unknown): Promise<boolean> {
+        // Every legacy mutation leaves through here, which is exactly why the
+        // gate is asked here: one check covers the buttons, the cards, the
+        // command/fault rows, the weather form and the keyboard shortcuts, and
+        // a control added later cannot forget it.
+        const allowed = this._gate(url);
+        if (!allowed.success) {
+            log.info('legacy mutation refused away from the live edge', { url });
+            return false;
+        }
         try {
             const opts: RequestInit = body
                 ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }

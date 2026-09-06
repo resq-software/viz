@@ -13,9 +13,11 @@
 // Only this file needs a DOM, so it opts into happy-dom via the docblock above
 // rather than switching the whole suite off the default node environment.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ControlPanel } from '../controls';
+import type { MutationGate } from '../operator/interactionMode';
+import { OperatorShell } from '../operator/OperatorShell';
 import type { DroneState } from '../types';
 
 function drone(id: string): DroneState {
@@ -29,18 +31,61 @@ function optionValues(selectId: string): string[] {
     return Array.from(sel.options, o => o.value);
 }
 
+function legacyRoot(): HTMLElement {
+    return document.getElementById('legacy-console') as HTMLElement;
+}
+
+function installShellFixture(): HTMLElement {
+    document.body.innerHTML = `
+        <button id="btn-sidebar-toggle" type="button"></button>
+        <button id="btn-editor-toggle" type="button"></button>
+        <span id="editor-unavailable-note">Desktop workspace required</span>
+        <aside id="sidebar">
+            <section id="operator-boot">
+                <div id="operator-boot-status">
+                    <strong id="operator-boot-title"></strong>
+                    <p id="operator-boot-detail"></p>
+                </div>
+            </section>
+            <section id="operator-v2-console">
+                <div id="operator-mission"></div>
+                <div id="fleet-filter"></div>
+                <h2 id="fleet-heading" tabindex="-1">Fleet</h2>
+                <div id="fleet-roster"></div>
+                <details id="advanced-safety"><summary>Advanced</summary></details>
+                <button id="btn-spawn-asset"></button>
+                <button id="btn-environment"></button>
+            </section>
+            <section id="legacy-console"></section>
+        </aside>
+        <div id="operator-context-layer"></div>
+        <div id="operator-modal-layer"></div>
+        <div id="operator-editor-layer"></div>
+    `;
+    return legacyRoot();
+}
+
 beforeEach(() => {
     // ControlPanel's constructor reaches for many elements but guards every
     // lookup with `?.`, so the two selects it actually syncs are enough.
     document.body.innerHTML = `
-        <select id="drone-select"></select>
-        <select id="fault-drone-select"></select>
+        <section id="legacy-console">
+            <select id="drone-select"></select>
+            <select id="fault-drone-select"></select>
+            <button id="legacy-button"><span id="legacy-button-child">Action</span></button>
+            <textarea id="legacy-textarea"></textarea>
+            <div id="legacy-editable" contenteditable="true"><span id="legacy-editable-child">Text</span></div>
+            <details><summary id="legacy-summary"><span id="legacy-summary-child">Details</span></summary></details>
+            <a id="legacy-link" href="#target"><span id="legacy-link-child">Link</span></a>
+        </section>
     `;
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe('ControlPanel.updateDroneList', () => {
     it('adds one option per drone', () => {
-        new ControlPanel().updateDroneList([drone('a'), drone('b')]);
+        new ControlPanel(legacyRoot()).updateDroneList([drone('a'), drone('b')]);
 
         for (const id of SELECT_IDS) {
             expect(optionValues(id)).toEqual(['a', 'b']);
@@ -50,7 +95,7 @@ describe('ControlPanel.updateDroneList', () => {
     it('does not append a duplicate option for a repeated id', () => {
         // The regression: `present` is a snapshot, so without recording the id
         // before appending, the second 'a' appended a second <option>.
-        new ControlPanel().updateDroneList([drone('a'), drone('a'), drone('b')]);
+        new ControlPanel(legacyRoot()).updateDroneList([drone('a'), drone('a'), drone('b')]);
 
         for (const id of SELECT_IDS) {
             expect(optionValues(id)).toEqual(['a', 'b']);
@@ -58,7 +103,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('stays stable when the same roster is re-sent', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([drone('a'), drone('b')]);
@@ -69,7 +114,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('removes options for drones that are gone', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b'), drone('c')]);
         panel.updateDroneList([drone('b')]);
 
@@ -79,7 +124,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('empties the select when the roster empties', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([]);
 
@@ -89,7 +134,7 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('keeps the current selection when that drone is still present', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         const sel = document.getElementById('drone-select') as HTMLSelectElement;
         sel.value = 'b';
@@ -100,13 +145,238 @@ describe('ControlPanel.updateDroneList', () => {
     });
 
     it('handles a roster that both drops and adds drones in one update', () => {
-        const panel = new ControlPanel();
+        const panel = new ControlPanel(legacyRoot());
         panel.updateDroneList([drone('a'), drone('b')]);
         panel.updateDroneList([drone('b'), drone('c')]);
 
         for (const id of SELECT_IDS) {
             expect(optionValues(id)).toEqual(['b', 'c']);
         }
+    });
+});
+
+describe('ControlPanel keyboard isolation', () => {
+    it('leaves Tab to ordinary browser focus navigation', () => {
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'Tab',
+            bubbles: true,
+            cancelable: true,
+        });
+
+        document.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('does not run global shortcuts while the legacy branch is hidden and inert', () => {
+        const root = legacyRoot();
+        root.hidden = true;
+        root.setAttribute('inert', '');
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(root);
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR', bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit1', bubbles: true }));
+
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('does not run legacy shortcuts while the rail ancestor is closed', () => {
+        const root = installShellFixture();
+        const shell = new OperatorShell(document);
+        shell.setMode('legacy');
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(root);
+        shell.setRailOpen(false);
+
+        for (const code of ['KeyR', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5']) {
+            document.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+        }
+
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        'legacy-button', 'legacy-button-child', 'legacy-textarea', 'legacy-editable-child',
+        'legacy-summary', 'legacy-summary-child', 'legacy-link', 'legacy-link-child',
+    ])(
+        'does not run or consume a shortcut from interactive target %s',
+        id => {
+            const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+                new Response(null, { status: 200 }));
+            vi.stubGlobal('fetch', fetchMock);
+            new ControlPanel(legacyRoot());
+            const event = new KeyboardEvent('keydown', {
+                code: 'KeyR', bubbles: true, cancelable: true,
+            });
+
+            document.getElementById(id)!.dispatchEvent(event);
+
+            expect(event.defaultPrevented).toBe(false);
+            expect(fetchMock).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        { ctrlKey: true },
+        { metaKey: true },
+        { altKey: true },
+    ])('does not run or consume a reserved modifier shortcut', modifiers => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'KeyR', bubbles: true, cancelable: true, ...modifiers,
+        });
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves an already handled event alone', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'KeyR', bubbles: true, cancelable: true,
+        });
+        event.preventDefault();
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps an ordinary unmodified body shortcut working', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyRoot());
+        const event = new KeyboardEvent('keydown', {
+            code: 'KeyR', bubbles: true, cancelable: true,
+        });
+
+        document.body.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(fetchMock).toHaveBeenCalledOnce();
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sim/reset');
+    });
+});
+
+// ── Replay gate ─────────────────────────────────────────────────────────────
+//
+// Every legacy mutation leaves through `_post`, so that is where the shared
+// live/replay gate is consulted. These drive each control the way an operator
+// does and assert the fetch never happens — the gate is the boundary, not the
+// disabled attribute the mirror below sets.
+
+const REPLAY_GATE: MutationGate = (action) => ({
+    success: false,
+    error: { kind: 'replay', code: 'interaction.replay', action },
+});
+
+function legacyMutationFixture(): HTMLElement {
+    document.body.innerHTML = `
+        <section id="legacy-console">
+            <button id="btn-start"></button>
+            <button id="btn-stop"></button>
+            <button id="btn-reset"></button>
+            <div class="scenario-card" data-scenario="swarm-5"></div>
+            <input id="spawn-x" value="1"><input id="spawn-y" value="2"><input id="spawn-z" value="3">
+            <button id="btn-spawn"></button>
+            <select id="drone-select"><option value="uav-1" selected>uav-1</option></select>
+            <button class="cmd-btn" data-cmd="rtl"></button>
+            <select id="fault-drone-select"><option value="uav-1" selected>uav-1</option></select>
+            <button class="fault-btn" data-fault="gps"></button>
+            <select id="weather-mode"><option value="storm" selected>storm</option></select>
+            <input id="wind-speed" value="5"><input id="wind-dir" value="0">
+            <button id="btn-weather"></button>
+        </section>
+    `;
+    return legacyRoot();
+}
+
+/** Clicks or presses everything on the legacy console that mutates the world. */
+function driveEveryLegacyMutation(): void {
+    for (const id of ['btn-start', 'btn-stop', 'btn-reset', 'btn-spawn', 'btn-weather']) {
+        document.getElementById(id)?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    for (const selector of ['.scenario-card', '.cmd-btn', '.fault-btn']) {
+        document.querySelector<HTMLElement>(selector)
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    for (const code of ['KeyR', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5']) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+    }
+}
+
+describe('ControlPanel replay gate', () => {
+    it('posts every legacy mutation at the live edge', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyMutationFixture());
+
+        driveEveryLegacyMutation();
+
+        expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('posts nothing at all while replaying', () => {
+        const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        new ControlPanel(legacyMutationFixture(), REPLAY_GATE);
+
+        driveEveryLegacyMutation();
+
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { edge: 'live', gate: undefined, times: 1 },
+        { edge: 'replay', gate: REPLAY_GATE, times: 0 },
+    ])('announces a scenario start $times time(s) at the $edge edge', async ({ gate, times }) => {
+        vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 })));
+        const started = vi.fn();
+        document.addEventListener('resq:scenario-start', started);
+        const root = legacyMutationFixture();
+        if (gate === undefined) new ControlPanel(root);
+        else new ControlPanel(root, gate);
+
+        document.querySelector<HTMLElement>('.scenario-card')
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        // The announcement rides the POST's resolution, so let the microtask
+        // queue drain before concluding it did not happen.
+        await new Promise(done => setTimeout(done, 0));
+
+        expect(started).toHaveBeenCalledTimes(times);
+        document.removeEventListener('resq:scenario-start', started);
+    });
+
+    it('mirrors the gate onto its controls without becoming the boundary', () => {
+        const panel = new ControlPanel(legacyMutationFixture());
+        const start = document.getElementById('btn-start') as HTMLButtonElement;
+        const card = document.querySelector<HTMLElement>('.scenario-card')!;
+
+        panel.setMutationsEnabled(false);
+        expect(start.disabled).toBe(true);
+        expect(card.getAttribute('aria-disabled')).toBe('true');
+
+        panel.setMutationsEnabled(true);
+        expect(start.disabled).toBe(false);
+        expect(card.getAttribute('aria-disabled')).toBe('false');
+    });
+
+    it('still syncs the drone roster while replaying', () => {
+        const panel = new ControlPanel(legacyMutationFixture(), REPLAY_GATE);
+        panel.updateDroneList([drone('uav-9')]);
+
+        expect(optionValues('drone-select')).toEqual(['uav-9']);
     });
 });
 
@@ -118,19 +388,21 @@ describe('ControlPanel scenario cards', () => {
     // reachable solely by POSTing the API ran with whatever look the previous
     // scenario left behind.
     const MARKUP = `
-        <select id="drone-select"></select>
-        <select id="fault-drone-select"></select>
-        <div class="scn-filters">
-            <button class="scn-chip" data-filter="all" data-name="All" aria-pressed="true"><span class="chip-n">0</span></button>
-            <button class="scn-chip" data-filter="disaster" data-name="Disaster" aria-pressed="false"><span class="chip-n">0</span></button>
-            <button class="scn-chip" data-filter="multi" data-name="Multi-domain" aria-pressed="false"><span class="chip-n">0</span></button>
-            <button class="scn-chip" data-filter="dev" data-name="Dev and load" aria-pressed="false"><span class="chip-n">0</span></button>
-        </div>
-        <div class="scenario-grid" data-filter="all">
-            <button class="scenario-card" data-scenario="single" data-group="dev"></button>
-            <button class="scenario-card" data-scenario="sar" data-group="dev"></button>
-        </div>
-        <p id="scn-status"></p>
+        <section id="legacy-console">
+            <select id="drone-select"></select>
+            <select id="fault-drone-select"></select>
+            <div class="scn-filters">
+                <button class="scn-chip" data-filter="all" data-name="All" aria-pressed="true"><span class="chip-n">0</span></button>
+                <button class="scn-chip" data-filter="disaster" data-name="Disaster" aria-pressed="false"><span class="chip-n">0</span></button>
+                <button class="scn-chip" data-filter="multi" data-name="Multi-domain" aria-pressed="false"><span class="chip-n">0</span></button>
+                <button class="scn-chip" data-filter="dev" data-name="Dev and load" aria-pressed="false"><span class="chip-n">0</span></button>
+            </div>
+            <div class="scenario-grid" data-filter="all">
+                <button class="scenario-card" data-scenario="single" data-group="dev"></button>
+                <button class="scenario-card" data-scenario="sar" data-group="dev"></button>
+            </div>
+            <p id="scn-status"></p>
+        </section>
     `;
 
     function stubScenarios(names: unknown): void {
@@ -153,7 +425,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('adds a card for every preset the server offers', async () => {
         stubScenarios(['single', 'sar', 'wildfire-interface', 'flood-response']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         // Catalog order, not server order and not markup order: disasters lead,
@@ -164,7 +436,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('labels a preset from the catalog, with its asset count and domains', async () => {
         stubScenarios(['flood-response']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         const card = document.querySelector('.scenario-card[data-scenario="flood-response"]')!;
@@ -179,7 +451,7 @@ describe('ControlPanel scenario cards', () => {
         // The chip RUN is the signal — an absent domain draws nothing, which is
         // what lets the column be read down without a legend.
         stubScenarios(['wildfire-interface']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         const card = document.querySelector('.scenario-card[data-scenario="wildfire-interface"]')!;
@@ -190,7 +462,7 @@ describe('ControlPanel scenario cards', () => {
         // The old fallback printed the word "preset" as a description, which read
         // like a real card carrying no information.
         stubScenarios(['brand-new-preset']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         const card = document.querySelector('.scenario-card[data-scenario="brand-new-preset"]')!;
@@ -203,7 +475,7 @@ describe('ControlPanel scenario cards', () => {
         // `_humanise` upcased only the first letter of each kebab segment, which
         // turned multi-agency-sar into "Multi Agency Sar".
         stubScenarios(['multi-agency-sar', 'sar', 'alpine-sar']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         for (const el of document.querySelectorAll('.sc-name')) {
@@ -213,7 +485,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('groups rows under a heading and orders them by the catalog', async () => {
         stubScenarios(['single', 'flood-response', 'wildfire-interface']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         const grid = document.querySelector('.scenario-grid')!;
@@ -231,7 +503,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('counts each chip against the rows that actually exist', async () => {
         stubScenarios(['single', 'sar', 'flood-response', 'wildfire-interface']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         const chip = (f: string): HTMLElement =>
@@ -244,7 +516,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('filters the list to one group when a chip is pressed', async () => {
         stubScenarios(['single', 'flood-response']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         document.querySelector<HTMLElement>('.scn-chip[data-filter="multi"]')!.click();
@@ -261,7 +533,7 @@ describe('ControlPanel scenario cards', () => {
         // A server offering fewer presets than the catalog knows must not leave
         // the operator staring at an empty list.
         stubScenarios(['single', 'flood-response']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         document.querySelector<HTMLElement>('.scn-chip[data-filter="disaster"]')!.click();
@@ -272,7 +544,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('never duplicates a card the markup already provides', async () => {
         stubScenarios(['single', 'single', 'sar']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         expect(cardKeys().filter(k => k === 'single')).toHaveLength(1);
@@ -283,7 +555,7 @@ describe('ControlPanel scenario cards', () => {
         // POST would be refused by the destructive-action limiter — so the
         // operator would see a failure for an action that did work.
         stubScenarios(['single', 'sar', 'alpine-sar']);
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         const posts: string[] = [];
@@ -300,7 +572,7 @@ describe('ControlPanel scenario cards', () => {
 
     it('keeps the markup cards when the server list cannot be read', async () => {
         globalThis.fetch = (() => Promise.reject(new Error('offline'))) as unknown as typeof fetch;
-        new ControlPanel();
+        new ControlPanel(legacyRoot());
         await settle();
 
         expect(cardKeys()).toEqual(['single', 'sar']);

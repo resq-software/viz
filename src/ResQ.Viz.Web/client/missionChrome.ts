@@ -48,6 +48,8 @@ export class MissionChrome {
     private _scenarioStartTime = 0;
     /** True until the first frame arrives after a scenario-start. */
     private _needsAnchor = false;
+    /** False while the authoritative v2 mission card owns scenario presentation. */
+    private _enabled = true;
 
     constructor() {
         this._el = document.createElement('div');
@@ -73,8 +75,25 @@ export class MissionChrome {
 
         document.addEventListener('resq:scenario-start', (ev) => {
             const name = (ev as CustomEvent<{ name: string }>).detail?.name;
-            if (name) this._onScenarioStart(name);
+            if (this._enabled && name) this._onScenarioStart(name);
         });
+    }
+
+    /** Enables the legacy-only strip, or clears and hides it while v2 owns mission state. */
+    setEnabled(enabled: boolean): void {
+        if (this._enabled === enabled) return;
+        this._enabled = enabled;
+        if (enabled) return;
+
+        // Never reveal a pre-v2 scenario if this page later returns to legacy.
+        this._scenarioName = null;
+        this._scenarioStartTime = 0;
+        this._needsAnchor = false;
+        this._nameEl.textContent = '';
+        this._timeEl.textContent = '';
+        this._phaseEl.textContent = '';
+        this._el.classList.add('hidden');
+        this._el.setAttribute('aria-hidden', 'true');
     }
 
     /**
@@ -84,7 +103,7 @@ export class MissionChrome {
      * running sim clock had already accumulated.
      */
     update(simTime: number): void {
-        if (this._scenarioName === null) return;
+        if (!this._enabled || this._scenarioName === null) return;
         if (this._needsAnchor) {
             this._scenarioStartTime = simTime;
             this._needsAnchor = false;

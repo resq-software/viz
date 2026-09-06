@@ -1,0 +1,364 @@
+/* ResQ Viz - operator shell ownership and responsive scaffolding */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* The native hidden attribute must win over legacy component display rules. */
+.operator-branch[hidden],
+.operator-layer[hidden],
+#sidebar[hidden] {
+  display: none !important;
+}
+
+.operator-branch {
+  min-width: 0;
+}
+
+.legacy-console,
+.operator-v2-console {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.legacy-mode-notice {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.operator-boot {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 16px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-1);
+}
+
+.operator-boot strong {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+
+.operator-boot-status {
+  display: grid;
+  gap: 6px;
+}
+
+.operator-boot-detail {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.operator-boot[data-state="error"] {
+  border-color: var(--primary-text);
+  background: var(--primary-soft);
+}
+
+.operator-boot[data-state="error"] :is(.operator-boot-kicker, strong) {
+  color: var(--primary-text);
+}
+
+.operator-boot-kicker,
+.operator-section-kicker {
+  color: var(--info);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.operator-card,
+.operator-fleet {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-1);
+}
+
+.operator-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.operator-mission-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.operator-mission-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.operator-mission-state {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.operator-mission-value {
+  white-space: nowrap;
+}
+
+.operator-mission-pending,
+.operator-resource-error {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.operator-mission-pending {
+  color: var(--warning);
+}
+
+.operator-resource-error {
+  color: var(--danger);
+}
+
+.operator-mission-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.operator-mission-actions .btn {
+  min-width: 0;
+  padding-inline: 7px;
+}
+
+.operator-mission-actions [data-action="retry-catalog"] {
+  grid-column: 1 / -1;
+}
+
+.operator-primary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.operator-mount:empty {
+  min-height: 1px;
+}
+
+.operator-advanced summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.operator-advanced p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hud-action-text {
+  width: auto;
+  min-width: 64px;
+  padding-inline: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#btn-editor-toggle[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.operator-layer {
+  position: fixed;
+  inset: var(--effective-hud-h) 0 var(--effective-dvr-h) 0;
+  pointer-events: none;
+}
+
+.operator-layer > * {
+  pointer-events: auto;
+}
+
+.operator-context-layer { z-index: var(--layer-context); }
+.operator-editor-layer  { z-index: var(--layer-editor); }
+.operator-modal-layer   { z-index: var(--layer-modal); }
+
+body.investor-mode .operator-context-layer,
+body.investor-mode .operator-editor-layer {
+  display: none !important;
+  pointer-events: none;
+}
+
+/* Additive suppression leaves component-owned hidden/ARIA state live while
+   Investor is active. This attribute hides immediately; inert is synchronized
+   by the shell, including for deferred body-level editor chrome. */
+[data-investor-suppressed] {
+  display: none !important;
+  pointer-events: none;
+}
+
+:is(.operator-v2-console, .operator-layer, #sidebar) :focus-visible,
+:is(#btn-sidebar-toggle, #btn-editor-toggle):focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--info-soft);
+}
+
+@media (min-width: 1100px) {
+  #sidebar {
+    top: var(--effective-hud-h);
+    bottom: var(--effective-dvr-h);
+    min-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  .operator-context-layer {
+    inset: var(--effective-hud-h) 0 var(--effective-dvr-h) auto;
+    width: min(380px, 40vw);
+  }
+}
+
+@media (min-width: 760px) and (max-width: 1099px) {
+  #sidebar {
+    top: var(--effective-hud-h);
+    bottom: var(--effective-dvr-h);
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    transform: translateX(-100%);
+  }
+
+
+  #sidebar:not(.collapsed) { transform: translateX(0); }
+
+  .operator-context-layer {
+    inset: auto 0 var(--effective-dvr-h) 0;
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
+  }
+
+  .operator-editor-layer {
+    inset: var(--effective-hud-h) 0 var(--effective-dvr-h) 0;
+    min-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    background: var(--background);
+  }
+}
+
+@media (max-width: 759px) {
+  #sidebar {
+    width: min(100vw, var(--sidebar-w));
+    top: var(--effective-hud-h);
+    bottom: var(--effective-dvr-h);
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  .operator-context-layer {
+    inset: auto 0 var(--effective-dvr-h) 0;
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
+  }
+
+  .operator-primary-actions .btn,
+  #sidebar button,
+  #sidebar select,
+  #sidebar input[type="text"],
+  #sidebar input[type="number"],
+  #sidebar input[type="range"],
+  #sidebar summary,
+  #sidebar a[href],
+  #sidebar label:has(input[type="checkbox"], input[type="radio"]),
+  .operator-context-layer button,
+  .operator-context-layer select,
+  .operator-context-layer input,
+  .operator-context-layer summary,
+  .operator-context-layer a[href],
+  .resq-dvr button,
+  .resq-dvr input[type="range"] {
+    min-height: 44px;
+  }
+
+  #sidebar button,
+  #sidebar summary,
+  #sidebar a[href],
+  .operator-context-layer button,
+  .operator-context-layer summary,
+  .operator-context-layer a[href],
+  .resq-dvr button {
+    min-width: 44px;
+  }
+
+  .resq-dvr button {
+    height: 44px;
+  }
+
+  #hud-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px;
+    padding-inline-start: max(8px, env(safe-area-inset-left));
+    padding-inline-end: max(8px, env(safe-area-inset-right));
+    overflow: hidden;
+  }
+
+  .hud-zone-center,
+  #hud-cockpit-toggle,
+  #hud-hints-toggle,
+  #hud-settings-toggle {
+    display: none;
+  }
+
+  .hud-zone-right {
+    min-width: 0;
+    justify-self: end;
+  }
+
+  .hud-action-group {
+    gap: 4px;
+  }
+
+  #btn-editor-toggle,
+  #btn-sidebar-toggle {
+    min-height: 44px;
+    height: 44px;
+  }
+
+  #btn-sidebar-toggle {
+    width: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #sidebar,
+  .operator-layer,
+  .operator-branch {
+    scroll-behavior: auto;
+    transition-duration: 0.01ms !important;
+  }
+}

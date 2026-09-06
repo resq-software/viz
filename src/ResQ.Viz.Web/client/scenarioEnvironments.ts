@@ -282,7 +282,9 @@ export function skyProfileFor(env: ScenarioEnvironment): SkyProfile {
 
 /** Lookup by scenario id. Returns null for dev fixtures, which have no environment. */
 export function environmentFor(scenarioKey: string): ScenarioEnvironment | null {
-    return SCENARIO_ENVIRONMENTS[scenarioKey] ?? null;
+    return Object.prototype.hasOwnProperty.call(SCENARIO_ENVIRONMENTS, scenarioKey)
+        ? SCENARIO_ENVIRONMENTS[scenarioKey]!
+        : null;
 }
 
 /** Everything the outer orchestrator needs, injected so this module stays testable. */

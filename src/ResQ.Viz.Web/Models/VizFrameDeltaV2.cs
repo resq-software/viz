@@ -260,6 +260,11 @@ public sealed record CarriedAssetStamp(
 /// outlives the retained buffer, and a client renders the hole rather than presenting a truncated
 /// log as continuous. Bounded memory was the requirement; completeness is not promised.
 /// </param>
+/// <param name="Scenario">Replacement active scenario, or null when unchanged or cleared.</param>
+/// <param name="ScenarioCleared">
+/// True when a previously active scenario was cleared. Required because null already means
+/// unchanged for the replacement field.
+/// </param>
 public sealed record VizDeltaV2(
     string SchemaVersion,
     Guid FrameId,
@@ -286,7 +291,9 @@ public sealed record VizDeltaV2(
     string? EnvironmentRevision = null,
     IReadOnlyList<CommandResult>? CommandResults = null,
     long EventHighWater = 0,
-    long DroppedEventCount = 0)
+    long DroppedEventCount = 0,
+    ScenarioSessionState? Scenario = null,
+    bool ScenarioCleared = false)
 {
     /// <summary>
     /// True when this delta changes something a viewer could see beyond the clock advancing.
@@ -341,5 +348,7 @@ public sealed record VizDeltaV2(
         || Transport is not null
         || Network is not null
         || NetworkCleared
-        || EnvironmentRevision is not null;
+        || EnvironmentRevision is not null
+        || Scenario is not null
+        || ScenarioCleared;
 }

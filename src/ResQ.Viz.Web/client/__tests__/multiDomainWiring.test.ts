@@ -45,6 +45,52 @@ const appSrc = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../app.ts'),
   'utf8',
 );
+const catalogLoaderSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/ScenarioCatalogLoader.ts'),
+  'utf8',
+);
+const sceneConfigSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../editor/sceneConfig.ts'),
+  'utf8',
+);
+const catalogLauncherSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/ScenarioCatalogLauncher.ts'),
+  'utf8',
+);
+const spawnDialogSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/SpawnAssetDialog.ts'),
+  'utf8',
+);
+const environmentDialogSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/EnvironmentDialog.ts'),
+  'utf8',
+);
+const controlsSrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../controls.ts'),
+  'utf8',
+);
+const advancedSafetySrc = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../operator/advancedSafety.ts'),
+  'utf8',
+);
+
+/** Drops comment text so a prose mention of a route is not read as a call. */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter(line => !line.trimStart().startsWith('//'))
+    .join('\n');
+}
+
+/** Slices one top-level function declaration out of a module's source text. */
+function declaration(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  expect(start, `${signature} is missing`).toBeGreaterThan(-1);
+  const end = source.indexOf('\n}\n', start);
+  expect(end, `${signature} is not a top-level declaration`).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
 
 /** Modules that must never be reachable from the entry chunk by a static edge.
  *  An `import type { … }` line is erased at build time and is fine; a value
@@ -55,8 +101,25 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './assets/fleetUi', why: 'fleet panel, filter and their stylesheet' },
   { path: './assets/AssetPanel', why: 'detail panel' },
   { path: './assets/AssetFilter', why: 'facet control' },
+  { path: './operator/AssetRoster', why: 'keyed fleet roster' },
   { path: './assets/overlays/TrackOverlay', why: 'external-contact overlay' },
   { path: './assets/chaseCamera', why: 'domain chase cameras' },
+  { path: './operator/MissionPanel', why: 'operator mission DOM' },
+  { path: './operator/ConsoleResources', why: 'operator resource orchestration' },
+  { path: './operator/scenarioPresentation', why: 'scenario catalog presentation copy' },
+  { path: './operator/ScenarioCatalog', why: 'searchable scenario modal and stylesheet' },
+  { path: './operator/consoleApi', why: 'operator-only typed API routes' },
+  { path: './operator/ScenarioCatalogLoader', why: 'scenario modal orchestration' },
+  { path: './operator/OperatorModalHost', why: 'shared lazy modal ownership' },
+  { path: './operator/ScenarioCatalogLauncher', why: 'scenario import and retry ownership' },
+  { path: './operator/SpawnAssetDialog', why: 'spawn form and the shared dialog stylesheet' },
+  { path: './operator/EnvironmentDialog', why: 'environment form and the shared dialog stylesheet' },
+  { path: './operator/advancedSafety', why: 'four safety panels and their stylesheet' },
+  { path: './operator/ControlLeasePanel', why: 'lease panel DOM' },
+  { path: './operator/LinkDrillPanel', why: 'link drill DOM' },
+  { path: './operator/TrackReportPanel', why: 'external-report form' },
+  { path: './operator/AuditPanel', why: 'authority trail view' },
+  { path: './operator/panelDom', why: 'Advanced/Safety DOM vocabulary' },
 ];
 
 describe('entry-chunk boundaries', () => {
@@ -73,10 +136,140 @@ describe('entry-chunk boundaries', () => {
     ).toBe(false);
   });
 
-  it('reaches the fleet UI, the contact overlay and the chase cameras through dynamic imports', () => {
+  it('reaches optional operator surfaces through dynamic imports', () => {
     expect(appSrc).toMatch(/import\('\.\/assets\/fleetUi'\)/);
     expect(appSrc).toMatch(/import\('\.\/assets\/overlays\/TrackOverlay'\)/);
     expect(appSrc).toMatch(/import\('\.\/assets\/chaseCamera'\)/);
+    expect(catalogLauncherSrc).toMatch(/import\('\.\/ScenarioCatalogLoader'\)/);
+    expect(appSrc).toMatch(/import\('\.\/operator\/consoleApi'\)/);
+    expect(catalogLoaderSrc).toContain("from './ScenarioCatalog'");
+    expect(catalogLoaderSrc).toContain("from './consoleApi'");
+  });
+
+  it('loads the spawn form only from the v2 trigger and lets it own its stylesheet', () => {
+    expect(appSrc).toMatch(/import\('\.\/operator\/SpawnAssetDialog'\)/);
+    // The dialog CSS rides the lazy chunk, never the entry stylesheet.
+    expect(spawnDialogSrc).toContain("import '../styles/operator-dialogs.css'");
+
+    const open = appSrc.slice(
+      appSrc.indexOf('async function _openSpawnAssetDialog'),
+      appSrc.indexOf('async function _postTransportPaused'),
+    );
+    expect(open).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
+    expect(open).toMatch(/consoleResources\?\.profiles \?\? \{ status: 'idle' \}/);
+    expect(open).toMatch(/spawn: request => api\.spawnAsset\(request\)/);
+    // Acceptance names an asset; only the stream puts one on the roster.
+    expect(open).not.toMatch(/fleetUi|_refreshFleetRoster|assets\.upsert/);
+
+    // The trigger goes through the gated action, which is what refuses the
+    // form away from the live edge; the action's effect is the opener.
+    expect(appSrc).toMatch(
+      /getElementById\('btn-spawn-asset'\)!\.addEventListener\('click',[\s\S]*?operatorActions\.spawnAsset\(\)/,
+    );
+    expect(appSrc).toMatch(/spawnAsset: \(\) => \{ void _openSpawnAssetDialog\(\); \}/);
+    // A retired shell must not leave a modal over the branch that replaced it.
+    expect(appSrc).toMatch(
+      /function _invalidateOperatorModals\(\)[\s\S]*?spawnDialog\?\.invalidate\(\)/,
+    );
+
+    // Legacy Spawn Drone stays on the v1 route inside ControlPanel.
+    expect(appSrc).not.toContain("apiPost('/api/sim/drone'");
+  });
+
+  it('loads Advanced/Safety only on first disclosure and lets it own its stylesheet', () => {
+    // The trigger is static markup because it has to exist before the module it
+    // loads; the shell owns the disclosure and hands app.ts the one-shot loader.
+    expect(appSrc).toMatch(/import\('\.\/operator\/advancedSafety'\)/);
+    expect(appSrc).toMatch(
+      /operatorShell\.onAdvancedSafetyExpand\(\(\) => \{ _ensureAdvancedSafety\(\); \}\)/,
+    );
+    // Four panels' worth of rules ride the lazy chunk, never the entry sheet.
+    expect(advancedSafetySrc).toContain("import '../styles/advancedSafety.css'");
+    expect(appSrc).not.toContain("import './styles/advancedSafety.css'");
+
+    const ensure = declaration(appSrc, 'function _ensureAdvancedSafety(');
+    // A view over the fleet surface's store, never a second one: two stores
+    // would answer "who holds this asset" separately.
+    expect(ensure).toMatch(/const authority = controlAuthority;/);
+    expect(ensure).toMatch(/if \(authority === null\)/);
+    expect(ensure).not.toMatch(/new ControlAuthorityStore|createConsoleIdentity/);
+    // A failed optional chunk leaves the rest of the console alone and retryable.
+    expect(ensure).toMatch(/_setAdvancedStatus\([\s\S]*?true,\s*\)/);
+    expect(appSrc).toMatch(/btn-advanced-retry'\)\?\.addEventListener[\s\S]*?retryAdvancedSafety\(\)/);
+
+    // Every v2 render feeds it, and so does the immediate selection sync — a
+    // previous asset's link state must not survive a frame interval.
+    expect(declaration(appSrc, 'function _renderSnapshot(')).toContain('_updateAdvancedSafety();');
+    expect(declaration(appSrc, 'function _syncFleetSelection(')).toContain('_updateAdvancedSafety();');
+    const update = declaration(appSrc, 'function _updateAdvancedSafety(');
+    expect(update).toMatch(/selectionGeneration: _selectionGeneration/);
+    // The frame's clock, never Date.now(): the store ages contacts on it.
+    expect(update).toMatch(/simulationTimeSeconds: _displayedSnapshot\?\.frame\.time \?\? 0/);
+    expect(update).not.toContain('Date.now()');
+  });
+
+  it('loads the environment form only from the v2 trigger and lets it own its stylesheet', () => {
+    expect(appSrc).toMatch(/import\('\.\/operator\/EnvironmentDialog'\)/);
+    // The dialog CSS rides the lazy chunk, never the entry stylesheet.
+    expect(environmentDialogSrc).toContain("import '../styles/operator-dialogs.css'");
+
+    const open = declaration(appSrc, 'async function _openEnvironmentDialog');
+    expect(open).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
+    // The app callbacks own authority; the dialog is handed them, never a route.
+    expect(open).toMatch(/applyTerrain: key => _switchPresetFromOperator\(key\)/);
+    expect(open).toMatch(/applyWeather: command => _applyOperatorWeather\(command\)/);
+    expect(open).toMatch(/viewportWidth: \(\) => window\.innerWidth/);
+    // Wrapping the optimistic path would post the preset a second time.
+    expect(open).not.toMatch(/_switchPreset\(/);
+    expect(open).not.toContain('/api/sim/');
+
+    expect(appSrc).toMatch(
+      /getElementById\('btn-environment'\)!\.addEventListener\('click',[\s\S]*?operatorActions\.applyWeather\(\)/,
+    );
+    expect(appSrc).toMatch(/applyWeather: \(\) => \{ void _openEnvironmentDialog\(\); \}/);
+    // A retired shell must not leave a modal over the branch that replaced it.
+    expect(appSrc).toMatch(
+      /function _invalidateOperatorModals\(\)[\s\S]*?environmentDialog\?\.invalidate\(\)/,
+    );
+
+    // Legacy Apply Weather stays on the v1 form inside ControlPanel.
+    expect(controlsSrc).toContain("'/api/sim/weather'");
+  });
+
+  it('keeps the operator environment writes authoritative and the override single', () => {
+    // Scenario and legacy terrain stay optimistic: scene first, POST unwatched.
+    const optimistic = declaration(appSrc, 'function _switchPreset(');
+    expect(optimistic).toContain('_applyPresetLocally(key, waterLevelOverride);');
+    expect(optimistic).toContain('void _postPreset(key);');
+    expect(optimistic).not.toContain('_markOperatorOverride');
+
+    // The operator path inverts it: a refused preset never reaches the scene.
+    const authoritative = declaration(appSrc, 'async function _switchPresetFromOperator');
+    expect(authoritative).toContain('const result = await _postPreset(key);');
+    expect(authoritative.indexOf('await _postPreset(key)'))
+      .toBeLessThan(authoritative.indexOf('_applyPresetLocally(key)'));
+    expect(authoritative).toContain('if (!result.success) return result;');
+
+    // Exactly the wire keys `SimController.SetWeather` binds, awaited.
+    const weather = declaration(appSrc, 'async function _applyOperatorWeather');
+    expect(weather).toContain("await apiPostJson<unknown>('/api/sim/weather'");
+    for (const key of ['mode: command.mode', 'windSpeed: command.windSpeed',
+      'windDirection: command.windDirection']) {
+      expect(weather).toContain(key);
+    }
+    expect(weather).toMatch(/if \(result\.success\) _markOperatorOverride\(\);/);
+
+    // One override mark per operator callback, and none in the dialog itself:
+    // two mechanisms for the same intent would drift.
+    for (const body of [authoritative, weather]) {
+      expect(body.match(/_markOperatorOverride\(\)/g)).toHaveLength(1);
+    }
+    expect(environmentDialogSrc).not.toContain('_markOperatorOverride');
+    // The dialog owns form state only — no routes, no fetch, no scene. Its
+    // header quotes the host's bounds in prose, so comments are stripped first.
+    const dialogCode = codeOnly(environmentDialogSrc);
+    expect(dialogCode).not.toContain('/api/sim/');
+    expect(dialogCode).not.toMatch(/\bapiPost|\bfetch\(/);
   });
 
   it('subscribes to the v2 snapshot message and keeps handling the v1 frame', () => {
@@ -85,6 +278,254 @@ describe('entry-chunk boundaries', () => {
     expect(appSrc).toMatch(/c\.on\('ReceiveSnapshotV2'/);
     expect(appSrc).toMatch(/c\.on\('ReceiveFrame'/);
     expect(appSrc).toMatch(/invoke<string>\('SubscribeSnapshots', true\)/);
+  });
+
+  it('routes startup negotiation through the coordinator before stream early returns', () => {
+    expect(appSrc).toContain("import { StartupCoordinator } from './operator/StartupCoordinator'");
+    expect(appSrc).toMatch(/new StartupCoordinator\(\{[\s\S]*?setMode:\s*mode\s*=>/);
+
+    const receiveFrameAt = appSrc.indexOf("c.on('ReceiveFrame'");
+    const receiveSnapshotAt = appSrc.indexOf("c.on('ReceiveSnapshotV2'");
+    const receiveFrame = appSrc.slice(receiveFrameAt, receiveSnapshotAt);
+    expect(receiveFrame).toMatch(/startupCoordinator\.onV1Frame\(drones\.length\)/);
+    expect(receiveFrame.indexOf('startupCoordinator.onV1Frame(drones.length)'))
+      .toBeLessThan(receiveFrame.indexOf('if (_v2Active) return'));
+
+    const ingestAt = appSrc.indexOf('function _ingestSnapshot');
+    const gapAt = appSrc.indexOf('function _onDeltaGap');
+    const ingest = appSrc.slice(ingestAt, gapAt);
+    expect(ingest).toMatch(/startupCoordinator\.onV2Snapshot\(\{\s*assetCount:\s*snapshot\.assets\.length,\s*scenario:\s*snapshot\.scenario,?\s*\}\)/);
+    expect(ingest.indexOf('startupCoordinator.onV2Snapshot'))
+      .toBeLessThan(ingest.indexOf('projectSnapshot'));
+  });
+
+  it('releases stale v2 render ownership only when startup enters legacy', () => {
+    expect(appSrc).toMatch(
+      /setMode:\s*mode\s*=>\s*\{[\s\S]*?if \(mode === 'legacy' && _v2Active\) _leaveV2\(\);[\s\S]*?operatorShell\.setMode\(mode\);[\s\S]*?\}/,
+    );
+  });
+
+  it('routes boot presentation through OperatorShell instead of ad hoc DOM writes', () => {
+    expect(appSrc).toMatch(
+      /new StartupCoordinator\(\{[\s\S]*?setBootStatus:\s*status\s*=>\s*\{[\s\S]*?operatorShell\.setBootStatus\(status\);[\s\S]*?if \(operatorShell\.mode === 'booting'\) loadingOverlay\.setStartupStatus\(status\);[\s\S]*?\}/,
+    );
+    expect(appSrc).not.toMatch(/getElementById\(['"]operator-boot-(?:status|title|detail)['"]\)/);
+  });
+
+  it('routes subscription rejection and connection lifecycle through startup coordination', () => {
+    expect(appSrc).toMatch(/function _subscribeSnapshots[\s\S]*?startupCoordinator\.onV2Rejected\(\)/);
+    const snapshotHandler = appSrc.slice(
+      appSrc.indexOf("c.on('ReceiveSnapshotV2'"),
+      appSrc.indexOf("c.on('ReceiveDeltaV2'"),
+    );
+    expect(snapshotHandler).toMatch(
+      /startupCoordinator\.onV2Rejected\(\);[\s\S]*?if \(_v2Active\) \{[\s\S]*?_leaveV2\(\);\s*\}[\s\S]*?return;/,
+    );
+    expect(appSrc).toMatch(/c\.onreconnected\([\s\S]*?startupCoordinator\.startNegotiation\(\)/);
+    expect(appSrc).toMatch(/connection\.start\(\)[\s\S]*?startupCoordinator\.startNegotiation\(\)[\s\S]*?_subscribeSnapshots\(\)/);
+    expect(appSrc).toMatch(/catch[\s\S]*?startupCoordinator\.onConnectionFailed\(\)/);
+    expect(appSrc).toMatch(/beforeunload[\s\S]*?startupCoordinator\.dispose\(\)/);
+  });
+
+  it('uses one retry scheduler for initial failures and exhausted reconnects', () => {
+    expect(appSrc).toContain("import { RetryScheduler } from './operator/RetryScheduler'");
+    expect(appSrc).toMatch(/new RetryScheduler\(\{[\s\S]*?retry:\s*\(\)\s*=>\s*\{\s*void start\(\);\s*\}/);
+
+    const onClose = appSrc.slice(
+      appSrc.indexOf('c.onclose'),
+      appSrc.indexOf('function _ingestSnapshot'),
+    );
+    expect(onClose).toContain('connectionRetry.request()');
+
+    const startAt = appSrc.indexOf('async function start(');
+    const start = appSrc.slice(startAt, appSrc.indexOf('\nvoid start();', startAt));
+    expect(start.indexOf('connectionRetry.cancel()')).toBeLessThan(start.indexOf('_starting = true'));
+    expect(start.match(/connectionRetry\.request\(\)/g)).toHaveLength(2);
+    expect(start).not.toMatch(/setTimeout\([\s\S]*?void start\(\)/);
+    expect(appSrc).toMatch(/beforeunload[\s\S]*?connectionRetry\.dispose\(\)/);
+  });
+
+  it('clears stale overlay errors after every successful explicit connection start', () => {
+    const startAt = appSrc.indexOf('async function start(');
+    const start = appSrc.slice(startAt, appSrc.indexOf('\nvoid start();', startAt));
+    const connectedAt = start.indexOf('await connection.start()');
+    const overlayAt = start.indexOf('loadingOverlay.onReconnected()');
+    const negotiateAt = start.indexOf('startupCoordinator.startNegotiation()');
+    const subscribeAt = start.indexOf('await _subscribeSnapshots()');
+
+    expect(connectedAt).toBeGreaterThanOrEqual(0);
+    expect(overlayAt).toBeGreaterThan(connectedAt);
+    expect(negotiateAt).toBeGreaterThan(overlayAt);
+    expect(subscribeAt).toBeGreaterThan(negotiateAt);
+  });
+
+  it('uses the exact mode-specific defaults and removes drone-count startup', () => {
+    expect(appSrc).toContain("apiPost('/api/sim/scenario/single')");
+    expect(appSrc).toMatch(/startV2Scenario:\s*async name =>[\s\S]*?import\('\.\/operator\/consoleApi'\)[\s\S]*?requestScenarioStart\(scenarioRuntime, name,/);
+    expect(appSrc).not.toContain("'/api/v2/sim/scenarios/flood-response/start'");
+    expect(appSrc).not.toContain('_autoSpawnIfEmpty');
+    expect(appSrc).not.toContain('/api/sim/state');
+    expect(appSrc).not.toMatch(/\bapiGet\b/);
+  });
+
+  it('keeps only the deterministic scenario runtime eager and lazily mounts mission UI', () => {
+    expect(appSrc).toContain("import { ScenarioRuntime } from './operator/ScenarioRuntime'");
+    expect(appSrc).toMatch(/import\('\.\/operator\/ConsoleResources'\)/);
+    expect(appSrc).toMatch(/import\('\.\/operator\/MissionPanel'\)/);
+    expect(appSrc).toMatch(/if \(operatorShell\.mode !== 'v2'\) return;/);
+  });
+
+  it('feeds authoritative mission state after projection and before replay returns', () => {
+    const ingest = appSrc.slice(
+      appSrc.indexOf('function _ingestSnapshot'),
+      appSrc.indexOf('function _onDeltaGap'),
+    );
+    const startupAt = ingest.indexOf('startupCoordinator.onV2Snapshot');
+    const projectionAt = ingest.indexOf('projectSnapshot');
+    const runtimeAt = ingest.indexOf('scenarioRuntime.apply');
+    const replayAt = ingest.indexOf("if (dvr && !dvr.isLive)");
+
+    expect(startupAt).toBeGreaterThanOrEqual(0);
+    expect(startupAt).toBeLessThan(projectionAt);
+    expect(projectionAt).toBeLessThan(runtimeAt);
+    expect(runtimeAt).toBeLessThan(replayAt);
+    expect(ingest).toMatch(/scenarioRuntime\.apply\([\s\S]*?projected\.scenario,[\s\S]*?snapshot\.assets\.length/);
+    expect(ingest).not.toContain('projected.assets.length, interactionMode');
+  });
+
+  it('runs scenario presentation effects only through the runtime callback', () => {
+    expect(appSrc).toMatch(/new ScenarioRuntime\(\{[\s\S]*?onPresent:\s*_presentAuthoritativeScenario/);
+    expect(appSrc).toMatch(/function _presentAuthoritativeScenario[\s\S]*?_deselectAll\(\)[\s\S]*?recorder\?\.clear\(\)[\s\S]*?_fittedToSwarm = false[\s\S]*?resq:scenario-start/);
+  });
+
+  it('wraps default starts and resets in request generations without optimistic activation', () => {
+    const startupAt = appSrc.indexOf('const startupCoordinator = new StartupCoordinator');
+    const controlsAt = appSrc.indexOf('const controlPanel = new ControlPanel');
+    const startup = appSrc.slice(startupAt, controlsAt);
+    expect(startup).toMatch(/startV2Scenario:\s*async name =>[\s\S]*?requestScenarioStart\(scenarioRuntime, name,/);
+    expect(startup).not.toContain('resq:scenario-start');
+
+    const resetAt = appSrc.indexOf('async function _resetMission');
+    const visibilityAt = appSrc.indexOf("document.addEventListener('visibilitychange'", resetAt);
+    const reset = appSrc.slice(resetAt, visibilityAt);
+    expect(reset).toMatch(/scenarioRuntime\.requested\(null\)/);
+    expect(reset).toMatch(/apiPost\('\/api\/sim\/reset'\)/);
+    expect(reset).toMatch(/requestAccepted\(request\)/);
+    expect(reset).toMatch(/requestFailed\(request\)/);
+  });
+
+  it('guards Reset reentry and releases the submitting latch on every outcome', () => {
+    expect(appSrc).toContain('let _resetRequestInFlight = false');
+    const resetAt = appSrc.indexOf('async function _resetMission');
+    const visibilityAt = appSrc.indexOf("document.addEventListener('visibilitychange'", resetAt);
+    const reset = appSrc.slice(resetAt, visibilityAt);
+    expect(reset).toMatch(/if \(operatorShell\.mode !== 'v2'\s*\|\| _resetRequestInFlight\s*\|\| scenarioRuntime\.requestInFlight\) return/);
+    expect(reset.indexOf('_resetRequestInFlight = true')).toBeLessThan(reset.indexOf('apiPost'));
+    expect(reset).toMatch(/try\s*\{[\s\S]*?apiPost\('\/api\/sim\/reset'\)[\s\S]*?catch[\s\S]*?requestFailed\(request\)[\s\S]*?finally[\s\S]*?_resetRequestInFlight = false/);
+    const initAt = appSrc.indexOf('async function _initEditorSuite');
+    const investorAt = appSrc.indexOf('const investorMode', initAt);
+    const init = appSrc.slice(initAt, investorAt);
+    // The DVR callback is now one gated call; the per-mode branching moved into
+    // the injected effect so the mission panel's Reset takes the same path.
+    expect(init).toMatch(/onServerReset:\s*\(\)\s*=>\s*\{\s*operatorActions\.reset\(\);\s*\}/);
+    expect(appSrc).toMatch(/reset:\s*\(\)\s*=>\s*\{[\s\S]*?operatorShell\.mode === 'legacy'[\s\S]*?apiPostOrWarn\('\/api\/sim\/reset'[\s\S]*?operatorShell\.mode === 'v2'[\s\S]*?_resetMission\(\)/);
+  });
+
+  it('applies the held v2 snapshot immediately when DVR returns Live', () => {
+    const initAt = appSrc.indexOf('async function _initEditorSuite');
+    const investorAt = appSrc.indexOf('const investorMode', initAt);
+    const init = appSrc.slice(initAt, investorAt);
+    expect(init).toMatch(
+      /onModeChange:\s*live\s*=>\s*\{[\s\S]*?interactionMode\.goLive\(\);\s*_resumeHeldSnapshot\(\);/,
+    );
+    // Leaving the live edge closes the mutations before anything else happens.
+    expect(init).toMatch(
+      /onModeChange:\s*live\s*=>\s*\{\s*if \(!live\) \{ interactionMode\.enterReplay\(\); return; \}/,
+    );
+
+    const resumeAt = appSrc.indexOf('function _resumeHeldSnapshot');
+    const nextAt = appSrc.indexOf('\nfunction ', resumeAt + 1);
+    const resume = appSrc.slice(resumeAt, nextAt);
+    const transportAt = resume.indexOf('_missionTransport =');
+    const runtimeAt = resume.indexOf('scenarioRuntime.resumeLive()');
+    const renderAt = resume.indexOf('_applyLiveSnapshot(latest, true)');
+    expect(resume).toContain('const latest = _lastSnapshot');
+    expect(transportAt).toBeGreaterThanOrEqual(0);
+    expect(transportAt).toBeLessThan(runtimeAt);
+    expect(runtimeAt).toBeLessThan(renderAt);
+  });
+
+  it('uses authoritative v2 scene-config truth and an explicitly legacy-only fallback', () => {
+    expect(appSrc).not.toMatch(/\b_currentScenario\b/);
+    expect(appSrc).toContain('_legacyScenario');
+    expect(appSrc).toMatch(/getScenario:\s*\(\)\s*=>[\s\S]*?scenarioRuntime\.currentName/);
+    expect(appSrc).toContain('applyScenarioForMode');
+    expect(appSrc).toMatch(/runtime:\s*scenarioRuntime/);
+    expect(appSrc).toContain('v2Session: () => _rawScenarioSession');
+    expect(appSrc).toMatch(/confirmV2Replace:[\s\S]*?window\.confirm/);
+    expect(sceneConfigSrc).toMatch(/publishLegacyStart[\s\S]*?resq:scenario-start/);
+    expect(appSrc).not.toMatch(/applyScenario:[\s\S]*?\/api\/sim\/scenario\//);
+    // The panel is constructed by the Editor workspace now; app.ts supplies the
+    // terrain/scenario wiring as the workspace's `sceneConfig` port.
+    const configAt = appSrc.indexOf('sceneConfig: {');
+    expect(configAt, 'scene-config port not found in app.ts').toBeGreaterThan(-1);
+    const endAt = appSrc.indexOf('// The app keeps its handles', configAt);
+    expect(endAt, 'scene-config port is unbounded').toBeGreaterThan(configAt);
+    const config = appSrc.slice(configAt, endAt);
+    expect(config).toContain('Object.prototype.hasOwnProperty.call(PRESETS, key)');
+    expect(config).not.toContain('canApplyTerrain: key => key in PRESETS');
+    expect(config).toMatch(/applyTerrain:[\s\S]*?_switchPreset\([\s\S]*?_markOperatorOverride\(\)/);
+    expect(config.indexOf('_switchPreset(')).toBeLessThan(config.indexOf('_markOperatorOverride()'));
+  });
+
+  it('loads independent typed resources only for v2 and retries on reconnect and visibility', () => {
+    expect(appSrc).toMatch(/loadCatalog:\s*async \(\)\s*=>[\s\S]*?getScenarioCatalog\(\)/);
+    expect(appSrc).toMatch(/loadProfiles:\s*async \(\)\s*=>[\s\S]*?getAssetProfiles\(\)/);
+    expect(appSrc).toMatch(/c\.onreconnected\([\s\S]*?_retryMissionResources\(\)/);
+    expect(appSrc).toMatch(/visibilitychange[\s\S]*?document\.hidden[\s\S]*?_retryMissionResources\('visibility'\)/);
+  });
+
+  it('keeps legacy mission chrome synchronized with negotiated mode', () => {
+    expect(appSrc).toMatch(/setMode:\s*mode\s*=>\s*\{[\s\S]*?missionChrome\.setEnabled\(mode === 'legacy'\)/);
+  });
+
+  it('owns the lazy scenario modal across load failure and shell transitions', () => {
+    const mode = appSrc.slice(
+      appSrc.indexOf('setMode: mode =>'),
+      appSrc.indexOf('setBootStatus:', appSrc.indexOf('setMode: mode =>')),
+    );
+    expect(mode.indexOf('_invalidateOperatorModals()')).toBeGreaterThanOrEqual(0);
+    expect(mode.indexOf('_invalidateOperatorModals()')).toBeLessThan(
+      mode.indexOf('operatorShell.setMode(mode)'),
+    );
+    expect(appSrc).toMatch(/setBootStatus:\s*status\s*=>[\s\S]*?status === 'error'[\s\S]*?_invalidateOperatorModals\(\)/);
+    expect(appSrc).toMatch(/suppressed[\s\S]*?_invalidateOperatorModals\(\)[\s\S]*?setInvestorSuppressed/);
+
+    expect(appSrc).toMatch(/new panelModule\.ScenarioCatalogLauncher\(\{[\s\S]*?operatorShell\.mounts\.modal[\s\S]*?panel\.changeTrigger/);
+    expect(catalogLauncherSrc).toContain("import('./ScenarioCatalogLoader')");
+    expect(catalogLauncherSrc).toMatch(/_generation[\s\S]*?_options\.mode\(\) !== 'v2'/);
+    expect(catalogLauncherSrc).toMatch(/\.catch\([\s\S]*?_loading = null/);
+    expect(catalogLauncherSrc).toContain('The scenario browser could not load.');
+    expect(catalogLoaderSrc).toContain('owner.activate(');
+    expect(catalogLoaderSrc).not.toContain('owner.begin()');
+    expect(appSrc).not.toContain('let _scenarioCatalog:');
+    expect(appSrc).not.toContain('_scenarioCatalogLoading');
+  });
+
+  it('confirms replacement from the raw v2 inventory before projection can drop assets', () => {
+    const ingestAt = appSrc.indexOf('function _ingestSnapshot');
+    const gapAt = appSrc.indexOf('function _onDeltaGap', ingestAt);
+    const ingest = appSrc.slice(ingestAt, gapAt);
+    const rawAt = ingest.indexOf('_rawScenarioSession =');
+    const projectionAt = ingest.indexOf('projectSnapshot');
+    expect(appSrc).toContain('let _rawScenarioSession = { assetCount: 0, tick: 0 }');
+    expect(rawAt).toBeGreaterThanOrEqual(0);
+    expect(rawAt).toBeLessThan(projectionAt);
+    expect(ingest).toMatch(/assetCount:\s*snapshot\.assets\.length[\s\S]*?tick:\s*snapshot\.tick/);
+
+    expect(appSrc).toContain('getSession: () => ({ ..._rawScenarioSession');
+    expect(appSrc).not.toContain('_lastSnapshot?.assets.length');
+    expect(appSrc).not.toContain('_lastSnapshot?.frame.tick');
   });
 });
 

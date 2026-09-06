@@ -153,6 +153,25 @@ public sealed class SwarmCoordinatorTests
     }
 
     [Fact]
+    public void ResetState_Makes_A_Late_Drone_Use_The_Default_Sector_Patrol()
+    {
+        var terrain = FlatTerrain();
+        var ctrl = new SwarmCoordinator(terrain);
+        var world = MakeWorld(terrain);
+        ctrl.SetScenario("single", world.Drones);
+
+        ctrl.ResetState();
+        world.AddDrone("d-late", new Vector3(0, 30, 0));
+        ctrl.Tick(0.0, world.Drones);
+        world.Step();
+
+        var velocity = world.Drones.Single().FlightModel.State.Velocity;
+        velocity.X.Should().BePositive(
+            "the default one-drone sector patrol starts east, unlike single's southwest lawnmower");
+        velocity.Z.Should().BeApproximately(0f, 0.001f);
+    }
+
+    [Fact]
     public void Tick_PastWaypointTimeout_AdvancesRouteIndex()
     {
         var terrain = FlatTerrain();

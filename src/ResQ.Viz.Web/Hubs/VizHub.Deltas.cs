@@ -150,6 +150,8 @@ public sealed partial class VizHub
     /// </exception>
     public async Task<string> SubscribeDeltas(bool subscribed)
     {
+        RejectV2SubscriptionIfForcedLegacy(subscribed, nameof(SubscribeDeltas));
+
         if (!Context.Items.TryGetValue(ConnectionRoomKey, out var roomObj) || roomObj is not SimulationRoom room)
         {
             _logger.LogWarning("SubscribeDeltas from {ConnectionId} with no bound room; ignoring.",

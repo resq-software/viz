@@ -33,7 +33,9 @@ import type {
   AssetCapabilitiesReport,
   AssetCommandCapability,
   CommandContext,
+  CommandOutcome,
 } from '../assets/panelCommands';
+import { CommandState } from '../operator/types';
 import {
   AssetFilter,
   applyFilter,
@@ -71,6 +73,7 @@ import {
 const T0 = '2026-08-30T12:00:00.000Z';
 /** Ten seconds after every fixture's `sourceTime`; the only "now" in this file. */
 const NOW_MS = Date.parse('2026-08-30T12:00:10.000Z');
+const PROTOTYPE_PARAMETER_NAMES = Object.getOwnPropertyNames(Object.prototype);
 
 const MOTION: MotionConstraints = {
   minSpeedMps: 0,
@@ -310,6 +313,23 @@ async function settle(): Promise<void> {
 
 /** A promise a test resolves itself, so a capability fetch can be left in flight
  *  without a timer. */
+/** What an accepted command comes back as. The command state is the server's,
+ *  so the panel is never handed a bare boolean to interpret. */
+function accepted(message: string): CommandOutcome {
+  return {
+    accepted: true,
+    message,
+    result: {
+      commandId: '0d5a2f3e-0000-4000-8000-000000000001',
+      state: CommandState.Accepted,
+      acceptedAt: null,
+      progressPercent: 0,
+      message: null,
+      reasonCode: null,
+    },
+  };
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((res) => { resolve = res; });
@@ -454,6 +474,38 @@ describe('evaluateCommand', () => {
 // ── The offered command set ─────────────────────────────────────────────────
 
 describe('AssetPanel commands', () => {
+  it.each(PROTOTYPE_PARAMETER_NAMES)(
+    'fails closed without throwing for hostile required parameter %s',
+    async (parameter) => {
+      const issue = vi.fn(async () => accepted('should not send'));
+      const { panel, mount } = mountPanel({
+        issueCommand: issue,
+        loadCapabilities: async () => report([
+          command({ kind: 'hostileParameter', requiredParameters: [parameter] }),
+        ]),
+      });
+      const subject: PanelSubject = { kind: 'asset', view: view() };
+
+      panel.render(subject, NOW_MS);
+      await settle();
+      expect(() => panel.render(subject, NOW_MS)).not.toThrow();
+      const button = mount.querySelector<HTMLButtonElement>('[data-kind="hostileParameter"] .ap-cmd-btn');
+      expect(button?.getAttribute('aria-disabled')).toBe('true');
+      expect(mount.querySelector('[data-kind="hostileParameter"] .ap-cmd-reason')?.textContent)
+        .toContain(`cannot supply the "${parameter}" parameter`);
+      expect(mount.querySelectorAll('[data-kind="hostileParameter"] .ap-field')).toHaveLength(0);
+      button?.click();
+      await settle();
+      expect(issue).not.toHaveBeenCalled();
+      panel.dispose();
+    },
+  );
+
+  it('requires an explicit context mount', () => {
+    expect(() => new AssetPanel({} as never)).toThrow(/mount/i);
+    expect(document.body.querySelector('.asset-panel')).toBeNull();
+  });
+
   it('offers exactly the declared commands and nothing else', async () => {
     const { panel, mount } = mountPanel({
       loadCapabilities: async () => report([command({ kind: 'hold' }), command({ kind: 'land', statePolicy: 'Responsive' })]),
@@ -536,8 +588,215 @@ describe('AssetPanel commands', () => {
     panel.dispose();
   });
 
+  it('drops the first A response after an A to B to A reselection', async () => {
+    const firstA = deferred<AssetCapabilitiesReport | null>();
+    const bravo = deferred<AssetCapabilitiesReport | null>();
+    const secondA = deferred<AssetCapabilitiesReport | null>();
+    const pending = [firstA, bravo, secondA];
+    const load = vi.fn(() => pending.shift()!.promise);
+    const { panel, mount } = mountPanel({ loadCapabilities: load });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    const beta: PanelSubject = { kind: 'asset', view: view({ id: 'b1' }) };
+
+    panel.render(alpha, NOW_MS);
+    panel.render(beta, NOW_MS);
+    panel.render(alpha, NOW_MS);
+    firstA.resolve(report([command({ kind: 'hold' })], 'a1'));
+    await settle();
+    panel.render(alpha, NOW_MS);
+    expect(buttons(mount)).toEqual([]);
+
+    secondA.resolve(report([command({ kind: 'land' })], 'a1'));
+    await settle();
+    panel.render(alpha, NOW_MS);
+    expect(buttons(mount)).toEqual(['land']);
+    panel.dispose();
+  });
+
+  it('guards asset and track subjects separately when their literal ids match', async () => {
+    let loadCount = 0;
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: loadCount++ === 0 ? 'hold' : 'land' }),
+      ], id),
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    await show(panel, alpha);
+    expect(buttons(mount)).toEqual(['hold']);
+
+    panel.render({ kind: 'track', track: { ...track(), trackId: 'a1' } }, NOW_MS);
+    await show(panel, alpha);
+    expect(buttons(mount)).toEqual(['land']);
+    expect(loadCount).toBe(2);
+    panel.dispose();
+  });
+
+  it('does not retry a capability failure that lands after disposal', async () => {
+    vi.useFakeTimers();
+    try {
+      const late = deferred<AssetCapabilitiesReport | null>();
+      const load = vi.fn(() => late.promise);
+      const { panel } = mountPanel({ loadCapabilities: load, capabilityRetryMs: 1 });
+      panel.render({ kind: 'asset', view: view() }, NOW_MS);
+      panel.dispose();
+      late.resolve(null);
+      await settle();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(load).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not issue a target command after selection changes while picking', async () => {
+    const picked = deferred<{ position: [number, number, number] } | null>();
+    const issue = vi.fn(async () => accepted('accepted'));
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
+      ], id),
+      pickTarget: () => picked.promise,
+      issueCommand: issue,
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    await show(panel, alpha);
+    mount.querySelector<HTMLButtonElement>('[data-kind="goTo"] .ap-cmd-btn')!.click();
+    panel.render({ kind: 'asset', view: view({ id: 'b1' }) }, NOW_MS);
+    picked.resolve({ position: [1, 2, 3] });
+    await settle();
+    expect(issue).not.toHaveBeenCalled();
+    panel.dispose();
+  });
+
+  it('serializes commands while a target pick is pending', async () => {
+    const picked = deferred<{ position: [number, number, number] } | null>();
+    const issue = vi.fn(async () => accepted('accepted'));
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
+        command({ kind: 'hold' }),
+      ], id),
+      pickTarget: () => picked.promise,
+      issueCommand: issue,
+    });
+    await show(panel, { kind: 'asset', view: view({ id: 'a1' }) });
+
+    mount.querySelector<HTMLButtonElement>('[data-kind="goTo"] .ap-cmd-btn')!.click();
+    const hold = mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!;
+    expect(hold.getAttribute('aria-disabled')).toBe('true');
+    hold.click();
+    picked.resolve({ position: [5, 0, 5] });
+    await settle();
+
+    expect(issue).toHaveBeenCalledTimes(1);
+    const [, goToRequest] = issue.mock.calls[0] as unknown as [string, { kind: string }];
+    expect(goToRequest.kind).toBe('goTo');
+    panel.dispose();
+  });
+
+  it('releases a target operation after cancellation so the next command can run', async () => {
+    const picked = deferred<{ position: [number, number, number] } | null>();
+    const issue = vi.fn(async () => accepted('accepted'));
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
+        command({ kind: 'hold' }),
+      ], id),
+      pickTarget: () => picked.promise,
+      issueCommand: issue,
+    });
+    await show(panel, { kind: 'asset', view: view({ id: 'a1' }) });
+
+    mount.querySelector<HTMLButtonElement>('[data-kind="goTo"] .ap-cmd-btn')!.click();
+    const hold = mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!;
+    expect(hold.getAttribute('aria-disabled')).toBe('true');
+    picked.resolve(null);
+    await settle();
+    expect(hold.getAttribute('aria-disabled')).toBe('false');
+    hold.click();
+    await settle();
+    expect(issue).toHaveBeenCalledTimes(1);
+    const [, holdRequest] = issue.mock.calls[0] as unknown as [string, { kind: string }];
+    expect(holdRequest.kind).toBe('hold');
+    panel.dispose();
+  });
+
+  it('releases a target operation after picker failure so the next command can run', async () => {
+    const issue = vi.fn(async () => accepted('accepted'));
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([
+        command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] }),
+        command({ kind: 'hold' }),
+      ], id),
+      pickTarget: async () => { throw new Error('picker failed'); },
+      issueCommand: issue,
+    });
+    await show(panel, { kind: 'asset', view: view({ id: 'a1' }) });
+
+    mount.querySelector<HTMLButtonElement>('[data-kind="goTo"] .ap-cmd-btn')!.click();
+    await settle();
+    const hold = mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!;
+    expect(hold.getAttribute('aria-disabled')).toBe('false');
+    expect(mount.querySelector('.ap-status')?.textContent).toContain('failed to send');
+    hold.click();
+    await settle();
+    expect(issue).toHaveBeenCalledTimes(1);
+    panel.dispose();
+  });
+
+  it('does not let an old selection operation release a newer busy owner', async () => {
+    const oldPick = deferred<{ position: [number, number, number] } | null>();
+    const newerIssue = deferred<CommandOutcome>();
+    const issue = vi.fn(() => newerIssue.promise);
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report(id === 'a1'
+        ? [command({ kind: 'goTo', requiresTarget: true, allowedTargetKinds: ['Point'] })]
+        : [command({ kind: 'hold' }), command({ kind: 'land' })], id),
+      pickTarget: () => oldPick.promise,
+      issueCommand: issue,
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    const bravo: PanelSubject = { kind: 'asset', view: view({ id: 'b1' }) };
+    await show(panel, alpha);
+    mount.querySelector<HTMLButtonElement>('[data-kind="goTo"] .ap-cmd-btn')!.click();
+
+    await show(panel, bravo);
+    mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!.click();
+    const land = mount.querySelector<HTMLButtonElement>('[data-kind="land"] .ap-cmd-btn')!;
+    expect(land.getAttribute('aria-disabled')).toBe('true');
+
+    oldPick.resolve({ position: [8, 0, 8] });
+    await settle();
+    expect(land.getAttribute('aria-disabled')).toBe('true');
+    land.click();
+    expect(issue).toHaveBeenCalledTimes(1);
+
+    newerIssue.resolve(accepted('Bravo accepted'));
+    await settle();
+    expect(land.getAttribute('aria-disabled')).toBe('false');
+    panel.dispose();
+  });
+
+  it('does not announce an old command outcome in a newly selected subject', async () => {
+    const outcome = deferred<CommandOutcome>();
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async id => report([command({ kind: 'hold' })], id),
+      issueCommand: () => outcome.promise,
+    });
+    const alpha: PanelSubject = { kind: 'asset', view: view({ id: 'a1' }) };
+    await show(panel, alpha);
+    mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')!.click();
+    const beta: PanelSubject = { kind: 'asset', view: view({ id: 'b1', displayName: 'Bravo' }) };
+    panel.render(beta, NOW_MS);
+    outcome.resolve(accepted('Alpha accepted'));
+    await settle();
+    expect(mount.querySelector('.ap-status')?.textContent).not.toContain('Alpha');
+    expect(mount.querySelector('.ap-title')?.textContent).toBe('Bravo');
+    panel.dispose();
+  });
+
   it('blocks a command the state forbids and refuses to issue it when pressed', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       loadCapabilities: async () => report([command({ kind: 'takeoff', statePolicy: 'Stationary' })]),
@@ -572,7 +831,7 @@ describe('AssetPanel commands', () => {
   });
 
   it('issues an enabled command with a fresh idempotency key', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'Hold accepted.' }));
+    const issue = vi.fn(async () => accepted('Hold accepted.'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       loadCapabilities: async () => report([command({ kind: 'hold' })]),
@@ -591,7 +850,7 @@ describe('AssetPanel commands', () => {
   });
 
   it('sends a picked destination as a named frame, never a bare triple', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'Go to accepted.' }));
+    const issue = vi.fn(async () => accepted('Go to accepted.'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => ({ position: [12, 0, -8] }),
@@ -616,7 +875,7 @@ describe('AssetPanel commands', () => {
 
   // A cancelled pick is not a failure and is certainly not a command.
   it('sends nothing when the operator cancels the destination pick', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => null,
@@ -739,7 +998,7 @@ describe('AssetPanel command-surface integrity', () => {
   });
 
   it('sends nothing when every blocked control in the set is pressed', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'ok' }));
+    const issue = vi.fn(async () => accepted('ok'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       loadCapabilities: async () => report([...CATALOG]),
@@ -763,7 +1022,7 @@ describe('AssetPanel command-surface integrity', () => {
   });
 
   it('withdraws a command when the asset goes stale, and refuses it from then on', async () => {
-    const issue = vi.fn(async () => ({ accepted: true, message: 'Go to accepted.' }));
+    const issue = vi.fn(async () => accepted('Go to accepted.'));
     const { panel, mount } = mountPanel({
       issueCommand: issue,
       pickTarget: async () => ({ position: [4, 0, 4] }),
@@ -970,6 +1229,18 @@ describe('AssetPanel domain cards', () => {
 // ── External tracks ─────────────────────────────────────────────────────────
 
 describe('AssetPanel and external tracks', () => {
+  it('uses domain-neutral accessible names for assets and contacts', () => {
+    const { panel, mount } = mountPanel({ loadCapabilities: async () => report([]) });
+    panel.render({ kind: 'asset', view: view() }, NOW_MS);
+    expect(panel.element.getAttribute('aria-label')).toBe('Selected asset');
+    expect(mount.querySelector('.ap-close')?.getAttribute('aria-label')).toBe('Close selected asset');
+
+    panel.render({ kind: 'track', track: track() }, NOW_MS);
+    expect(panel.element.getAttribute('aria-label')).toBe('Observed contact');
+    expect(mount.querySelector('.ap-close')?.getAttribute('aria-label')).toBe('Close observed contact');
+    panel.dispose();
+  });
+
   it('renders no command surface for a track', async () => {
     const load = vi.fn(async () => report([command({ kind: 'hold' })]));
     const { panel, mount } = mountPanel({ loadCapabilities: load });

@@ -1,9 +1,12 @@
 // ResQ Viz - Bottom timeline bar (live transport + DVR record / scrub / replay)
 // SPDX-License-Identifier: Apache-2.0
 
-import '../styles/editor.css';
+import '../styles/operator-overlays.css';
 import type { VizFrame } from '../types';
+import { shouldIgnoreGlobalShortcut } from '../ui/hotkeys';
+import { GLOBAL_SHORTCUTS } from '../ui/globalShortcuts';
 import { FrameRecorder, clampIndex } from './recorder';
+import type { RecordedFrame } from './recorder';
 import { nextSpeed } from './transport';
 
 /** Record cadence (ms/frame) — frames stream at ~10 Hz, so 1 buffer frame ≈ 100 ms. */
@@ -11,8 +14,21 @@ const FRAME_MS = 100;
 
 export interface DvrOptions {
     recorder: FrameRecorder;
-    /** Apply a buffered frame to the scene (snap) — used for scrub AND playback. */
-    onApply: (frame: VizFrame) => void;
+    /**
+     * Apply a recorded tick to the scene (snap) — used for scrub, playback AND
+     * the return to Live. Tagged, so the app routes a v1 frame and a projected
+     * v2 snapshot through their own render paths instead of narrowing one to
+     * the other.
+     */
+    onApply: (frame: RecordedFrame) => void;
+    /**
+     * The newest tick the APP is holding, which is not the newest tick the ring
+     * holds: recording freezes the moment replay starts, so the ring's last
+     * slot is as old as the scrub while the live stream keeps arriving. Read on
+     * Go Live so the live edge is what comes back on screen. Null when the app
+     * is holding nothing yet.
+     */
+    getLatestLiveFrame: () => RecordedFrame | null;
     /** LIVE play/pause → server sim (pause when true). */
     onServerPause: (paused: boolean) => void;
     /** LIVE step → advance the server sim one frame. */
@@ -21,6 +37,15 @@ export interface DvrOptions {
     onServerSpeed: (factor: number) => void;
     /** Reset the server sim (any mode). */
     onServerReset: () => void;
+    /** Reports transitions between the live edge and buffered replay. */
+    onModeChange?: (live: boolean) => void;
+    /**
+     * Re-read the session state a scrub may have outlived — mission truth and
+     * control authority. Runs on Go Live, AFTER the live edge is back on
+     * screen, so nothing is refreshed against a picture that is still a
+     * recording.
+     */
+    onRefreshLiveResources?: () => void;
 }
 
 /**
@@ -103,8 +128,8 @@ export class Dvr {
         return this._live;
     }
 
-    /** Capture a live frame; while live, keep the playhead pinned to "now". */
-    record(frame: VizFrame): void {
+    /** Capture a live tick; while live, keep the playhead pinned to "now". */
+    record(frame: RecordedFrame): void {
         // FREEZE the buffer while replaying: a rolling buffer that keeps shifting
         // under the playhead made playback drift and stick once it filled (~60 s).
         // Frozen → stable indices → replay plays a fixed clip cleanly; GO LIVE
@@ -183,10 +208,20 @@ export class Dvr {
 
     private _goLive(): void {
         this._stopPlayback();
+        const changed = !this._live;
         this._live = true;
         const max = Math.max(0, this._recorder.length - 1);
         this._playhead = max;
         this._el.scrub.value = String(max);
+        if (changed) {
+            // Order is the contract. Mutations reopen first, then the live edge
+            // replaces the replayed picture, and only then is the session state
+            // a scrub may have outlived re-read — for the frame now on screen.
+            this._opts.onModeChange?.(true);
+            const latest = this._opts.getLatestLiveFrame();
+            if (latest) this._opts.onApply(latest);
+            this._opts.onRefreshLiveResources?.();
+        }
         this._render(); // live frames resume via isLive in the ReceiveFrame handler
     }
 
@@ -232,6 +267,7 @@ export class Dvr {
     private _enterReplay(): void {
         if (!this._live) return;
         this._live = false;
+        this._opts.onModeChange?.(false);
         this._render();
     }
 
@@ -249,19 +285,20 @@ export class Dvr {
         this._renderTime();
     }
 
+    /** Duration the ring ACTUALLY holds — its own oldest and newest stamps, not
+     *  a nominal window, because once it wraps those are different sets. */
     private _spanSec(): number {
-        const len = this._recorder.length;
-        if (len < 2) return 0;
-        const a = this._recorder.frameAt(0)?.time ?? 0;
-        const b = this._recorder.frameAt(len - 1)?.time ?? 0;
+        if (this._recorder.length < 2) return 0;
+        const a = this._recorder.oldestTime ?? 0;
+        const b = this._recorder.newestTime ?? 0;
         return Math.max(0, b - a);
     }
 
     private _headSec(): number {
         const len = this._recorder.length;
         if (len < 1) return 0;
-        const a = this._recorder.frameAt(0)?.time ?? 0;
-        const f = this._recorder.frameAt(clampIndex(Math.floor(this._playhead), len))?.time ?? 0;
+        const a = this._recorder.oldestTime ?? 0;
+        const f = this._recorder.timeAt(clampIndex(Math.floor(this._playhead), len)) ?? 0;
         return Math.max(0, f - a);
     }
 
@@ -299,6 +336,14 @@ export class Dvr {
         this._el.live.classList.toggle('is-live', this._live);
         this._el.live.setAttribute('aria-pressed', String(this._live));
         this._el.scrub.classList.toggle('is-replay', replaying);
+        // Reset restarts the SERVER, in any mode — so away from the live edge
+        // the interaction gate refuses it. Advertised must equal accepted: a
+        // button that still looks pressable is a control that lies.
+        this._el.reset.disabled = replaying;
+        this._el.reset.setAttribute(
+            'aria-label',
+            replaying ? 'Reset simulation — unavailable during replay' : 'Reset simulation',
+        );
         // The buffer freezes during replay, so flag the mode plainly.
         this._el.reclabel.textContent = replaying ? 'REPLAY' : 'REC';
         this._el.count.style.display = replaying ? 'none' : '';
@@ -307,13 +352,11 @@ export class Dvr {
 
     private _bindKeyboard(): void {
         document.addEventListener('keydown', (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT') return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            if (e.code === 'Space') {
+            if (shouldIgnoreGlobalShortcut(e)) return;
+            if (e.code === GLOBAL_SHORTCUTS.transportPlayPause) {
                 e.preventDefault();
                 this._onPlayPause();
-            } else if (e.code === 'Period') {
+            } else if (e.code === GLOBAL_SHORTCUTS.transportStep) {
                 e.preventDefault();
                 this._onStep();
             }

@@ -5,7 +5,16 @@
   // src="./app.ts">). fallow does not parse HTML, so without this it treats
   // app.ts — and therefore almost every module it pulls in — as unreachable and
   // reports ~79% of the client as dead. Same root cause as knip.json's `entry`.
-  "entry": ["client/app.ts", "client/__tests__/*.test.ts"],
+  //
+  // Playwright discovers `e2e/**/*.spec.ts` from `playwright.config.ts`'s
+  // `testDir`, and the config itself is loaded by the Playwright CLI. Neither
+  // is imported by anything, which is exactly what makes them look dead here.
+  "entry": [
+    "client/app.ts",
+    "client/__tests__/*.test.ts",
+    "playwright.config.ts",
+    "e2e/**/*.spec.ts"
+  ],
 
   "ignorePatterns": [
     // Vendored Draco decoder shipped verbatim by three.js; not our source to

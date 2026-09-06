@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as THREE from 'three';
-import '../styles/editor.css';
+import '../styles/operator-overlays.css';
 import type { DroneState, Quat } from '../types';
 
 /** Vertical pixels the attitude ladder moves per degree of pitch. */

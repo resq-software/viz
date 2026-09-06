@@ -133,7 +133,19 @@
   --sidebar-w:    320px;
   --hud-h:        52px;
   --dvr-h:        46px;
+  --effective-hud-h: calc(var(--hud-h) + env(safe-area-inset-top));
+  --effective-dvr-h: calc(var(--dvr-h) + env(safe-area-inset-bottom));
   --gutter:       16px;
+
+  /* Shared application layer contract. Keep every operator surface on this scale. */
+  --layer-scene: 0;
+  --layer-rail: 100;
+  --layer-context: 150;
+  --layer-editor: 180;
+  --layer-hud: 200;
+  --layer-popover: 240;
+  --layer-modal: 300;
+  --layer-blocking: 400;
 
   /* type — DM Mono data, DM Sans body, Syne display. */
   --mono:         var(--font-mono);

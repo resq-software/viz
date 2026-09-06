@@ -370,6 +370,9 @@ public static class CommandRejectionReasons
     /// <summary>The idempotency key was reused for a materially different payload.</summary>
     public const string IdempotencyKeyReuse = "idempotency.keyReuse";
 
+    /// <summary>The command executed in a world that was replaced before its result could be recorded.</summary>
+    public const string WorldChangedAfterDispatch = "command.worldChangedAfterDispatch";
+
     /// <summary>The request body could not be deserialised at all.</summary>
     /// <remarks>
     /// Distinct from every other code here because it is raised by the model binder rather than

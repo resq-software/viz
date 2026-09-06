@@ -135,9 +135,10 @@ public sealed class SwarmCoordinator
     /// <summary>Whether the coordinator currently considers this drone manually controlled.</summary>
     public bool IsManual(string droneId) => _manual.Contains(droneId);
 
-    /// <summary>Clears all per-drone route and manual-control state (used on world reset).</summary>
+    /// <summary>Clears the scenario selector plus all route and manual-control state.</summary>
     public void ResetState()
     {
+        _scenario = "";
         _roles.Clear();
         _manual.Clear();
     }

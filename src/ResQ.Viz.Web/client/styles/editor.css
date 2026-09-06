@@ -22,18 +22,137 @@
    tighter, all-fields, mono numerics — distinct from the operator panels.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* ── Editor dock (managed panel column) ─────────────────────────────────────
-   The Outliner + Inspector mount into one left column owned by EditorDock,
-   replacing their old hand-positioned `fixed` offsets. The column is transparent
-   and ignores pointer events (so empty areas pass clicks to the 3D scene); the
-   panels inside re-enable them and self-cap their height with internal scroll. */
+/* ── Editor workspace (the one authoring surface) ────────────────────────────
+   Everything that authors the scene — the panel column, the hierarchy, the
+   inspector, the transform handles' inspector button and scene import/export —
+   lives inside the shell's editor layer and is revealed by exactly one labelled
+   top-bar toggle. At 1,100px and up it is a column beside the console; between
+   760px and 1,099px it takes the area between the HUD and the timeline, and the
+   rail and context layer are closed and inerted while it is up. Below 760px the
+   toggle reports unavailable and this never opens. */
 
-.resq-dock {
-  position: fixed;
-  z-index: 430;
+.resq-editor {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: calc(var(--sidebar-w) + 24px);
+  width: 300px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  pointer-events: none;
+  transition: left var(--t-mid) var(--ease);
+}
+
+/* The `hidden` attribute has to beat `display: flex` above; without this pair
+   the UA rule loses on specificity and a closed workspace still renders. */
+.resq-editor[hidden] {
+  display: none;
+}
+
+.operator-editor-layer > .resq-editor[data-layout='fullscreen'] {
+  inset: 0;
+  width: auto;
+  padding: 16px;
+  gap: 14px;
+  background: var(--background);
+  pointer-events: auto;
+}
+
+body:has(#sidebar.collapsed) .resq-editor[data-layout='dock'] {
+  left: 24px;
+}
+
+.resq-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  box-shadow: var(--ring);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
+  pointer-events: auto;
+}
+
+.resq-editor-title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.resq-editor-close {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: color var(--t-mid), border-color var(--t-mid);
+}
+
+.resq-editor-close:hover {
+  color: var(--accent);
+  border-color: var(--line-accent);
+}
+
+.resq-editor-close:focus-visible,
+.resq-editor-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.resq-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.resq-editor-body > * {
+  pointer-events: auto;
+}
+
+.resq-editor-status {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.resq-editor-status[hidden],
+.resq-editor-retry[hidden] {
+  display: none;
+}
+
+/* ── Editor dock (managed panel column) ─────────────────────────────────────
+   The Outliner + Inspector mount into one column owned by EditorDock, inside
+   the workspace above. The column is transparent and ignores pointer events (so
+   empty areas pass clicks to the 3D scene); the panels inside re-enable them
+   and self-cap their height with internal scroll. Its header carries a section
+   disclosure — button plus the `\` key — that folds the panels away; the header
+   stays put so the fold is always reversible with a mouse. */
+
+.resq-dock {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   pointer-events: none;
 }
 
@@ -41,27 +160,29 @@
   pointer-events: auto;
 }
 
-.resq-dock--left {
-  /* Below the dock toggle (hud + 16 + 42); left of the scene, past the sidebar. */
-  top: calc(var(--hud-h) + 58px);
-  left: calc(var(--sidebar-w) + 24px);
-  width: 268px;
-  /* Anchor the bottom too, so the column is height-bounded and can never grow
-     down into the bottom-left stack (sensor stats over the event log) or the
-     timeline bar. The panels below are flex-shrinkable and scroll internally,
-     so even a 20-drone hierarchy stays inside this box. */
-  bottom: calc(var(--dvr-h) + 236px);
+.resq-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  box-shadow: var(--ring);
+  backdrop-filter: var(--blur-soft);
+  -webkit-backdrop-filter: var(--blur-soft);
 }
 
-body.editor-collapsed .resq-dock {
-  display: none;
+.resq-dock-label {
+  flex: 1 1 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
-.resq-dock-toggle {
-  position: fixed;
-  top: calc(var(--hud-h) + 16px);
-  left: calc(var(--sidebar-w) + 24px);
-  z-index: 431;
+.resq-dock-collapse {
   width: 34px;
   height: 30px;
   display: grid;
@@ -78,19 +199,51 @@ body.editor-collapsed .resq-dock {
   transition: color var(--t-mid), border-color var(--t-mid);
 }
 
-.resq-dock-toggle:hover {
+.resq-dock-collapse:hover {
   color: var(--text);
   border-color: var(--line-strong);
 }
 
-.resq-dock-toggle:focus-visible {
+.resq-dock-collapse:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.resq-dock-toggle[aria-pressed='true'] {
+.resq-dock-collapse[aria-pressed='true'] {
   color: var(--accent);
   border-color: var(--line-accent);
+}
+
+.resq-dock-panels {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The section disclosure writes `hidden` on the panels; the body class is the
+   same fact at document scope, which is what the FPV/immersive and standalone
+   owners read. Both are declared, because a `hidden` attribute alone loses to
+   `display: flex` above on specificity and would render both branches. */
+body.editor-collapsed .resq-dock-panels,
+.resq-dock-panels[hidden] {
+  display: none;
+}
+
+.resq-dock--left {
+  width: 100%;
+}
+
+.resq-editor[data-layout='fullscreen'] .resq-dock-panels {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.resq-editor[data-layout='fullscreen'] .resq-dock-panels > * {
+  flex: 1 1 0;
+  max-height: 100%;
 }
 
 .resq-inspector {
@@ -255,157 +408,6 @@ body.editor-collapsed .resq-dock {
   background: var(--accent-soft);
 }
 
-/* ── Camera mode pill (FREE / CHASE / FPV) ───────────────────────────────── */
-.cam-mode-pill {
-  position: fixed;
-  top: calc(var(--hud-h) + 12px);
-  right: 16px;
-  z-index: 416;
-  padding: 5px 12px;
-  border: 1px solid var(--line-accent);
-  border-radius: var(--r-2);
-  background: var(--surface-2);
-  box-shadow: var(--ring), var(--shadow-1);
-  backdrop-filter: var(--blur-soft);
-  -webkit-backdrop-filter: var(--blur-soft);
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--text-dim);
-  pointer-events: none;
-}
-
-.cam-mode-pill[data-mode='chase'] { color: var(--accent); border-color: var(--accent); }
-.cam-mode-pill[data-mode='fpv']   { color: var(--danger); border-color: var(--danger); }
-
-/* ── FPV onboard OSD (real-FPV-style heads-up overlay) ───────────────────── */
-.fpv-osd {
-  position: fixed;
-  inset: var(--hud-h) 0 var(--dvr-h) 0; /* the canvas viewport, clear of the bars */
-  z-index: 410;
-  pointer-events: none;
-  font-family: var(--mono);
-  color: var(--foreground);
-  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.95);
-}
-
-.fpv-osd[hidden] { display: none; }
-
-.fpv-vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.5) 100%);
-}
-
-/* Viewfinder corner brackets — the "camera frame". */
-.fpv-frame { position: absolute; inset: 14px; }
-.fpv-corner { position: absolute; width: 26px; height: 26px; border: 2px solid rgba(255, 255, 255, 0.35); }
-.fpv-corner-tl { top: 0; left: 0; border-right: none; border-bottom: none; }
-.fpv-corner-tr { top: 0; right: 0; border-left: none; border-bottom: none; }
-.fpv-corner-bl { bottom: 0; left: 0; border-right: none; border-top: none; }
-.fpv-corner-br { bottom: 0; right: 0; border-left: none; border-top: none; }
-
-/* Attitude ladder (artificial horizon): anchor → roll → pitch → lines. */
-.fpv-ah { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
-.fpv-ah-roll { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.fpv-ah-pitch { position: absolute; left: 0; top: 0; }
-
-.fpv-ah-line { position: absolute; }
-.fpv-ah-horizon {
-  left: -310px;
-  width: 620px;
-  top: -1px;
-  height: 2px;
-  background: linear-gradient(90deg,
-    rgba(255, 255, 255, 0.9) 0 44%, transparent 44% 56%, rgba(255, 255, 255, 0.9) 56% 100%);
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
-}
-
-.fpv-ah-rung {
-  position: absolute;
-  left: -70px;
-  width: 140px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8);
-}
-.fpv-ah-label { position: absolute; right: -22px; top: -7px; font-size: 10px; opacity: 0.7; }
-
-/* Centre aircraft reticle. */
-.fpv-reticle {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 16px;
-  height: 16px;
-  transform: translate(-50%, -50%);
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-  box-shadow: 0 0 5px rgba(0, 0, 0, 0.9), 0 0 8px var(--accent-glow);
-}
-.fpv-reticle::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 3px;
-  height: 3px;
-  transform: translate(-50%, -50%);
-  background: var(--accent);
-  border-radius: 50%;
-}
-
-.fpv-stat {
-  position: absolute;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
-}
-
-.fpv-key { font-size: 10px; letter-spacing: 0.16em; opacity: 0.7; }
-.fpv-val { font-size: 22px; font-weight: 700; }
-
-.fpv-tl  { top: 22px; left: 28px; flex-direction: column; align-items: flex-start; gap: 2px; }
-.fpv-tr  { top: 22px; right: 28px; flex-direction: column; align-items: flex-end; gap: 4px; }
-.fpv-top { top: 22px; left: 50%; transform: translateX(-50%); flex-direction: column; align-items: center; gap: 2px; }
-.fpv-bl  { bottom: 22px; left: 28px; }
-.fpv-br  { bottom: 22px; right: 28px; }
-.fpv-bc  { bottom: 22px; left: 50%; transform: translateX(-50%); flex-direction: column; align-items: center; gap: 2px; }
-
-.fpv-armed { font-size: 24px; font-weight: 800; letter-spacing: 0.18em; color: var(--accent); }
-.fpv-armed:not(.is-armed) { color: var(--danger); }
-.fpv-id   { font-size: 12px; opacity: 0.85; letter-spacing: 0.1em; }
-
-.fpv-batrow { display: flex; align-items: baseline; gap: 8px; }
-.fpv-volt { font-size: 13px; opacity: 0.8; }
-.fpv-bat-bar {
-  width: 92px;
-  height: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.fpv-bat-fill { height: 100%; width: 100%; background: var(--accent); transition: width var(--t-mid); }
-.fpv-bat-fill.is-low { background: var(--danger); }
-
-.fpv-hdg { font-size: 20px; font-weight: 700; letter-spacing: 0.08em; }
-.fpv-timer { font-size: 11px; opacity: 0.7; letter-spacing: 0.06em; }
-.fpv-mode { font-size: 16px; font-weight: 700; letter-spacing: 0.14em; }
-.fpv-vs   { font-size: 13px; opacity: 0.85; }
-
-/* Immersive FPV: hide ALL editor + HUD chrome so the onboard view fills the
-   screen and the OSD is the sole display. */
-body.fpv-mode #sidebar,
-body.fpv-mode .resq-dock,
-body.fpv-mode .event-log,
-body.fpv-mode .minimap,
-body.fpv-mode #wind-compass,
-body.fpv-mode .resq-pip,
-body.fpv-mode #hud-top,
-body.fpv-mode .mission-chrome,
-body.fpv-mode .cam-mode-pill { display: none; }
 
 /* ── Outliner (scene hierarchy) ─────────────────────────────────────────────
    Left of the inspector. A live, grouped tree of every frame entity; rows are
@@ -530,299 +532,16 @@ body.fpv-mode .cam-mode-pill { display: none; }
   color: var(--text-faint);
 }
 
-/* ── Transport bar (play / pause / step / speed / reset) ─────────────────────
-   Bottom-centre of the scene area (right of the control sidebar). Compact pill
-   so it clears the drone panel (bottom-left) and mini-map (bottom-right). A6's
-   dock will formalise placement. */
 
-/* The former separate transport pill is gone — its play/step/speed/reset
-   controls are folded into the unified bottom bar (.resq-dvr), the single time
-   control: it drives the server sim at the live edge and the buffer when
-   scrubbed back. */
-
-/* ── Onboard FPV picture-in-picture ──────────────────────────────────────────
-   The DOM frame supplies the border + label; its `.pip-view` body is
-   transparent so the canvas (where the FPV is scissor-rendered) shows through.
-   Positioned right-of-centre to avoid the telemetry strip (top-right) and
-   mini-map (bottom-right). pointer-events: none — it's a passive overlay. */
-
-.resq-pip {
-  position: fixed;
-  right: 16px;
-  /* Stacked directly above the minimap (bottom: dvr-h+14, ~214px tall) so the
-     two sensor views group at the bottom-right and can never overlap — a centred
-     top:50% dropped into the minimap on shorter viewports. */
-  bottom: calc(var(--dvr-h) + 244px);
-  z-index: 415;
-  width: 272px;
-  border-radius: var(--r-2);
-  overflow: hidden;
-  box-shadow: var(--ring), var(--shadow-2);
-  pointer-events: none;
-  font-family: var(--mono);
-}
-
-.resq-pip[hidden] {
-  display: none;
-}
-
-.pip-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  background: var(--surface-3);
-  border: 1px solid var(--line-accent);
-  border-bottom: none;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent);
-}
-
-.pip-label::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent-glow);
-}
-
-.pip-view {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: transparent; /* the scissor-rendered canvas shows through here */
-  border: 1px solid var(--line-strong);
-  border-top: none;
-}
-
-/* ── Bottom timeline bar (live transport + DVR replay) ───────────────────────
-   The single bottom control bar, full width right of the sidebar. A solid
-   surface so nothing behind it bleeds through; the mini-map + compass are
-   lifted by --dvr-h to clear it. Left→right: REC indicator · transport group ·
-   scrubber · time · LIVE pill. */
-
-.resq-dvr {
-  position: fixed;
-  bottom: 0;
-  left: var(--sidebar-w);
-  right: 0;
-  z-index: 440;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  height: var(--dvr-h);
-  padding: 0 18px;
-  background: var(--surface-2);
-  border-top: 1px solid var(--line);
-  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
-  backdrop-filter: var(--blur-strong);
-  -webkit-backdrop-filter: var(--blur-strong);
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
-.resq-dvr > * {
-  pointer-events: auto;
-}
-
-.dvr-rec {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: var(--text-muted);
-}
-
-.dvr-rec::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  box-shadow: 0 0 8px var(--danger);
-  animation: dvr-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes dvr-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
-}
-
-.dvr-count {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.dvr-controls {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.dvr-btn {
-  min-width: 32px;
-  height: 30px;
-  padding: 0 8px;
-  display: grid;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--r-2);
-  background: transparent;
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  cursor: pointer;
-  transition: background var(--t-mid), color var(--t-mid), border-color var(--t-mid);
-}
-
-.dvr-btn:hover {
-  background: var(--inset);
-  color: var(--text);
-}
-
-.dvr-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.dvr-play {
-  color: var(--accent);
-  font-size: 15px;
-}
-
-.dvr-reset {
-  color: var(--text-muted);
-}
-
-.dvr-scrub {
-  flex: 1 1 auto;
-  height: 18px; /* tall, grabbable hit area */
-  margin: 0;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-  background: transparent;
-}
-
-/* Filled "played" portion via --dvr-fill (set in dvr.ts on seek/record). */
-.dvr-scrub::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(to right,
-    var(--accent) var(--dvr-fill, 0%), var(--line-strong) var(--dvr-fill, 0%));
-}
-
-.dvr-scrub::-moz-range-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--line-strong);
-}
-
-.dvr-scrub::-moz-range-progress {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--accent);
-}
-
-.dvr-scrub::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
-  margin-top: -5px;
-  border-radius: 50%;
-  background: var(--text);
-  border: 3px solid var(--accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-  cursor: grab;
-  transition: transform var(--t-mid);
-}
-
-.dvr-scrub::-webkit-slider-thumb:hover {
-  transform: scale(1.18);
-}
-
-.dvr-scrub::-moz-range-thumb {
-  width: 15px;
-  height: 15px;
-  border: 3px solid var(--accent);
-  border-radius: 50%;
-  background: var(--text);
-  cursor: grab;
-}
-
-.dvr-scrub:focus-visible {
-  outline: none;
-}
-
-.dvr-scrub:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-/* Firefox renders the thumb through ::-moz-range-thumb, so without this the
-   scrubber — a primary control — has no visible focus indicator there at all
-   once the default outline is removed above (WCAG 2.4.7). Kept as a separate
-   rule because one selector list is dropped wholesale by any engine that does
-   not recognise every selector in it. */
-.dvr-scrub:focus-visible::-moz-range-thumb {
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-.dvr-time {
-  flex: none;
-  min-width: 78px;
-  text-align: right;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-}
-
-.dvr-live {
-  flex: none;
-  padding: 5px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--inset);
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-  transition: color var(--t-mid), border-color var(--t-mid), background var(--t-mid);
-}
-
-.dvr-live:hover {
-  color: var(--text);
-  border-color: var(--line-accent);
-}
-
-.dvr-live.is-live {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
-.dvr-live:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 
 /* ── Scene config (export / import) ──────────────────────────────────────────
-   Small button pair at top-left, just right of the dock toggle. */
+   A button pair in the workspace header. It used to float over the scene on its
+   own `fixed` offsets; inside the workspace it is reached the same way as every
+   other authoring control, and it goes away with them. */
 
 .resq-scenecfg {
-  position: fixed;
-  top: calc(var(--hud-h) + 16px);
-  left: calc(var(--sidebar-w) + 24px + 42px);
-  z-index: 431;
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
@@ -860,45 +579,15 @@ body.fpv-mode .cam-mode-pill { display: none; }
    ────────────────────────────────────────────────────────────────────────── */
 
 /* Large-desktop → laptop: the sensor-stats tier is gone (main.css), so the dock
-   reclaims the freed vertical space and narrows to keep the left column light. */
+   column narrows to keep the left edge light. */
 @media (max-width: 1280px) {
-  .resq-dock--left { width: 240px; bottom: calc(var(--dvr-h) + 112px); }
+  .resq-editor[data-layout='dock'] { width: 272px; }
 }
 
-/* Small laptop: the editor dock (Hierarchy + Inspector) is a desktop feature —
-   drop it, its toggle, and the scene import/export pair that sits beside it. */
-@media (max-width: 1080px) {
-  .resq-dock,
-  .resq-dock-toggle,
-  .resq-scenecfg { display: none; }
+/* Below the desktop threshold the workspace is unavailable and its toggle says
+   so, so nothing here should ever be on screen. This is the belt to that
+   braces: a stylesheet that somehow arrives while the layer is open must not
+   paint a column across a phone. */
+@media (max-width: 759px) {
+  .resq-editor { display: none; }
 }
-
-/* Tablet / phone: retire the onboard FPV PiP; the timeline spans the full width
-   (the sidebar is a drawer overlay here, not a layout participant). */
-@media (max-width: 900px) {
-  .resq-pip { display: none; }
-  .resq-dvr { left: 0; padding: 0 12px; gap: 10px; }
-}
-
-/* Phone: fold the timeline down to the essentials so it never overflows —
-   drop the REC counter, speed and reset; keep transport + scrub + clock + live. */
-@media (max-width: 560px) {
-  .resq-dvr { gap: 8px; padding: 0 8px; }
-  .dvr-reclabel,
-  .dvr-count,
-  .dvr-speed,
-  .dvr-reset { display: none; }
-}
-
-/* When the sidebar collapses, every surface anchored to its width slides left
-   into the freed column — dock, toggle, the scene import/export pair, AND the
-   full-width timeline bar. Reacts to the sidebar's own class so it survives
-   regardless of stylesheet load order. */
-.resq-dock--left,
-.resq-dock-toggle,
-.resq-scenecfg,
-.resq-dvr { transition: left var(--t-mid) var(--ease); }
-body:has(#sidebar.collapsed) .resq-dock--left,
-body:has(#sidebar.collapsed) .resq-dock-toggle { left: 24px; }
-body:has(#sidebar.collapsed) .resq-scenecfg { left: calc(24px + 42px); }
-body:has(#sidebar.collapsed) .resq-dvr { left: 0; }

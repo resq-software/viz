@@ -38,6 +38,15 @@ namespace ResQ.Viz.Web.Services;
 /// </remarks>
 public interface IRoomLifecycleObserver
 {
+    /// <summary>Baselines this observer before it becomes visible to reset notifications.</summary>
+    /// <remarks>
+    /// Called once under the room lock. It must not call back into the room, block or throw. The
+    /// baseline prevents an older outside-lock notification from being mistaken for a new reset by
+    /// an observer first registered after a newer world was already committed.
+    /// </remarks>
+    /// <param name="revision">Current committed world revision.</param>
+    void InitializeWorldRevision(long revision);
+
     /// <summary>One asset has been removed from the room.</summary>
     /// <remarks>
     /// Raised after the removal, so a probe run from here already reports the asset as gone.
@@ -51,7 +60,12 @@ public interface IRoomLifecycleObserver
     /// world may go on to reuse, so what an observer holds about the old population is stale in
     /// full rather than in part.
     /// </remarks>
-    void OnWorldReset();
+    /// <param name="revision">
+    /// Monotonic room-local world revision. An observer retaining state may ignore a notification
+    /// older than one it has already applied, because callbacks run outside the room lock and can
+    /// overlap across concurrent replacements.
+    /// </param>
+    void OnWorldReset(long revision);
 
     /// <summary>A periodic pass for state that lapses on its own with nobody watching.</summary>
     /// <remarks>
@@ -91,6 +105,15 @@ public sealed partial class SimulationRoom
     private readonly object _lifecycleGate = new();
     private volatile IRoomLifecycleObserver[] _lifecycleObservers = [];
     private int _upkeepTick;
+    // Guarded by the room lock. Captured with each committed world swap and carried through the
+    // outside-lock notification so observers can reject an older callback that resumes late.
+    private long _worldRevision;
+
+    /// <summary>Current committed world revision, read under the room lock.</summary>
+    internal long WorldRevision
+    {
+        get { lock (_lock) return _worldRevision; }
+    }
 
     /// <summary>Subscribes an observer to this room's asset lifecycle.</summary>
     /// <remarks>
@@ -109,18 +132,26 @@ public sealed partial class SimulationRoom
     {
         ArgumentNullException.ThrowIfNull(observer);
 
-        lock (_lifecycleGate)
+        lock (_lock)
         {
-            var current = _lifecycleObservers;
-            if (Array.IndexOf(current, observer) >= 0)
+            lock (_lifecycleGate)
             {
-                return;
-            }
+                var current = _lifecycleObservers;
+                if (Array.IndexOf(current, observer) >= 0)
+                {
+                    return;
+                }
 
-            var grown = new IRoomLifecycleObserver[current.Length + 1];
-            Array.Copy(current, grown, current.Length);
-            grown[^1] = observer;
-            _lifecycleObservers = grown;
+                // Baseline before publishing the observer into the copy-on-write array. A delayed
+                // notification can snapshot it immediately after publication, so doing this in the
+                // opposite order leaves a window where revision 1 reaches an observer created on 2.
+                observer.InitializeWorldRevision(_worldRevision);
+
+                var grown = new IRoomLifecycleObserver[current.Length + 1];
+                Array.Copy(current, grown, current.Length);
+                grown[^1] = observer;
+                _lifecycleObservers = grown;
+            }
         }
     }
 
@@ -138,12 +169,27 @@ public sealed partial class SimulationRoom
 
     /// <summary>Tells every observer that the world has been replaced.</summary>
     /// <remarks>Call with <c>_lock</c> released, after the new world is installed.</remarks>
-    private void NotifyWorldReset()
+    private void NotifyWorldReset(long revision)
     {
         var observers = _lifecycleObservers;
         for (var i = 0; i < observers.Length; i++)
         {
-            observers[i].OnWorldReset();
+            try
+            {
+                observers[i].OnWorldReset(revision);
+            }
+            catch (Exception ex)
+            {
+                // The world is already committed and cannot be rolled back. One observer is not
+                // allowed to turn that success into an ambiguous request failure or prevent the
+                // remaining observers from releasing state tied to the old population.
+                _logger.LogError(
+                    ex,
+                    "[room {RoomId}] World-reset observer {ObserverType} failed at revision {Revision}.",
+                    Id,
+                    observers[i].GetType().Name,
+                    revision);
+            }
         }
     }
 

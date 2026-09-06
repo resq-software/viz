@@ -23,6 +23,31 @@ export type Result<T, E> =
     | { readonly success: true;  readonly value: T }
     | { readonly success: false; readonly error: E };
 
+/** One field-level validation problem returned by the v2 API. */
+export interface ApiFieldError {
+    readonly field: string;
+    readonly code: string;
+    readonly message: string;
+}
+
+/** Stable, normalized problem body returned by a v2 HTTP endpoint. */
+export interface ApiProblem {
+    /** Taken from the HTTP response; server problem bodies do not repeat it. */
+    readonly status: number;
+    readonly code: string;
+    readonly reasonCode: string | null;
+    readonly title: string;
+    readonly detail: string;
+    readonly traceId: string | null;
+    readonly errors: readonly ApiFieldError[];
+}
+
+/** Transport and authoritative HTTP failures exposed by the typed v2 helpers. */
+export type ApiFailure =
+    | { readonly kind: 'problem'; readonly problem: ApiProblem }
+    | { readonly kind: 'network'; readonly message: string }
+    | { readonly kind: 'timeout'; readonly message: string };
+
 // Runs a zero-arg async fn and normalises the outcome into a `Result`,
 // constructing the discriminated union inline. (`catchError` from
 // `@resq-systems/helpers` can't type a zero-arg call anyway — its generic
@@ -49,6 +74,7 @@ export class ApiHttpError extends Error {
         readonly status: number,
         readonly path:   string,
         message?: string,
+        readonly problem: ApiProblem | null = null,
     ) {
         super(message ?? `${path} returned ${status}`);
         this.name = 'ApiHttpError';
@@ -90,32 +116,209 @@ export interface ApiGetOptions extends ApiOptions {
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-async function _fetchWithTimeout(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-    const ac    = new AbortController();
+function _isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function _isFieldError(value: unknown): value is ApiFieldError {
+    return _isRecord(value)
+        && typeof value.field === 'string'
+        && typeof value.code === 'string'
+        && typeof value.message === 'string';
+}
+
+function _fallbackProblem(response: Response): ApiProblem {
+    return {
+        status: response.status,
+        code: 'http.error',
+        reasonCode: null,
+        title: response.statusText || 'Request failed',
+        detail: 'Request failed',
+        traceId: null,
+        errors: [],
+    };
+}
+
+function _problemFromBody(response: Response, body: unknown): ApiProblem | null {
+    if (!_isRecord(body)
+        || typeof body.code !== 'string'
+        || typeof body.title !== 'string'
+        || typeof body.detail !== 'string') {
+        return null;
+    }
+
+    return {
+        status: response.status,
+        code: body.code,
+        reasonCode: typeof body.reasonCode === 'string' ? body.reasonCode : null,
+        title: body.title,
+        detail: body.detail,
+        traceId: typeof body.traceId === 'string' ? body.traceId : null,
+        errors: Array.isArray(body.errors) ? body.errors.filter(_isFieldError) : [],
+    };
+}
+
+function _isAbortError(error: unknown): boolean {
+    return _isRecord(error) && error.name === 'AbortError';
+}
+
+function _isBodyTransportError(error: unknown): boolean {
+    return _isAbortError(error) || error instanceof TypeError;
+}
+
+async function _readProblem(response: Response): Promise<ApiProblem> {
+    try {
+        const body = await response.json() as unknown;
+        return _problemFromBody(response, body) ?? _fallbackProblem(response);
+    } catch (error) {
+        // Aborts and stream failures remain transport errors. Syntax errors are
+        // an authoritative, but malformed, HTTP body and use the safe fallback.
+        if (_isBodyTransportError(error)) throw error;
+        return _fallbackProblem(response);
+    }
+}
+
+async function _decodeJsonResponse<T>(response: Response): Promise<Result<T, ApiProblem>> {
+    if (!response.ok) {
+        return { success: false, error: await _readProblem(response) };
+    }
+
+    try {
+        return { success: true, value: (await response.json()) as T };
+    } catch (error) {
+        if (_isBodyTransportError(error)) throw error;
+        return { success: false, error: _fallbackProblem(response) };
+    }
+}
+
+async function _fetchAndConsume<T>(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+    consume: (response: Response) => Promise<T>,
+): Promise<T> {
+    const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-        return await fetch(path, { ...init, signal: ac.signal });
+        const response = await fetch(path, { ...init, signal: ac.signal });
+        return await consume(response);
     } finally {
         clearTimeout(timer);
     }
 }
 
-/**
- * Fetch + parse JSON body under a single timeout window. The plain
- * `_fetchWithTimeout` clears the timer as soon as `fetch()` resolves
- * (headers received), which leaves the body stream unguarded — a server
- * that streams forever would hang the caller indefinitely. Keeping the
- * timer armed until after `.json()` closes that gap for GET callers.
- */
-async function _fetchAndParseJson<T>(path: string, init: RequestInit, timeoutMs: number): Promise<T> {
-    const ac    = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
+async function _fetchLegacyResponse(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+): Promise<Response> {
+    return _fetchAndConsume(path, init, timeoutMs, async response => {
+        if (!response.ok) {
+            const problem = await _readProblem(response);
+            throw new ApiHttpError(response.status, path, undefined, problem);
+        }
+        return response;
+    });
+}
+
+async function _fetchLegacyJson<T>(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+): Promise<T> {
+    return _fetchAndConsume(path, init, timeoutMs, async response => {
+        if (!response.ok) {
+            const problem = await _readProblem(response);
+            throw new ApiHttpError(response.status, path, undefined, problem);
+        }
+        return (await response.json()) as T;
+    });
+}
+
+class _ApiProblemError extends Error {
+    constructor(readonly problem: ApiProblem) {
+        super(problem.detail);
+        this.name = 'ApiProblemError';
+    }
+}
+
+async function _fetchTypedJson<T>(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number,
+): Promise<T> {
+    return _fetchAndConsume(path, init, timeoutMs, async response => {
+        const decoded = await _decodeJsonResponse<T>(response);
+        if (!decoded.success) throw new _ApiProblemError(decoded.error);
+        return decoded.value;
+    });
+}
+
+function _postInit(body: unknown): RequestInit {
+    const init: RequestInit = { method: 'POST' };
+    if (body !== undefined) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify(body);
+    }
+    return init;
+}
+
+function _isTerminalGetError(error: unknown): boolean {
+    return error instanceof ApiHttpError
+        || error instanceof _ApiProblemError
+        || error instanceof SyntaxError;
+}
+
+async function _getWithRetries<T>(
+    operation: () => Promise<T>,
+    opts: ApiGetOptions,
+): Promise<T> {
+    const retries = opts.retries ?? 1;
+    const retryDelayMs = opts.retryDelayMs ?? 250;
+    const backoff = opts.retryBackoff ?? 'exponential';
+    const retryJitterMs = opts.retryJitterMs ?? 100;
+    const maxRetryDelayMs = opts.maxRetryDelayMs ?? 10_000;
+
+    let lastError: unknown;
+    let delay = retryDelayMs;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await operation();
+        } catch (error) {
+            if (_isTerminalGetError(error)) throw error;
+            lastError = error;
+            if (attempt < retries) {
+                const jitter = retryJitterMs > 0
+                    ? (Math.random() - 0.5) * retryJitterMs
+                    : 0;
+                const effective = Math.min(Math.max(delay + jitter, 0), maxRetryDelayMs);
+                await new Promise<void>(resolve => setTimeout(resolve, effective));
+                if (backoff === 'exponential') delay *= 2;
+            }
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function _toApiFailure(error: unknown): ApiFailure {
+    if (error instanceof _ApiProblemError) {
+        return { kind: 'problem', problem: error.problem };
+    }
+    if (_isAbortError(error)) {
+        return { kind: 'timeout', message: 'Request timed out' };
+    }
+    return {
+        kind: 'network',
+        message: error instanceof Error ? error.message : String(error),
+    };
+}
+
+async function _typedResult<T>(operation: () => Promise<T>): Promise<Result<T, ApiFailure>> {
     try {
-        const res = await fetch(path, { ...init, signal: ac.signal });
-        if (!res.ok) throw new ApiHttpError(res.status, path);
-        return (await res.json()) as T;
-    } finally {
-        clearTimeout(timer);
+        return { success: true, value: await operation() };
+    } catch (error) {
+        return { success: false, error: _toApiFailure(error) };
     }
 }
 
@@ -133,16 +336,7 @@ async function _fetchAndParseJson<T>(path: string, init: RequestInit, timeoutMs:
  */
 export function apiPost(path: string, body?: unknown, opts: ApiOptions = {}) {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    return _catch(async () => {
-        const init: RequestInit = { method: 'POST' };
-        if (body !== undefined) {
-            init.headers = { 'Content-Type': 'application/json' };
-            init.body    = JSON.stringify(body);
-        }
-        const res = await _fetchWithTimeout(path, init, timeoutMs);
-        if (!res.ok) throw new ApiHttpError(res.status, path);
-        return res;
-    });
+    return _catch(() => _fetchLegacyResponse(path, _postInit(body), timeoutMs));
 }
 
 /**
@@ -152,45 +346,40 @@ export function apiPost(path: string, body?: unknown, opts: ApiOptions = {}) {
  * fetch is the motivating case). HTTP errors (non-2xx with a body) fail fast.
  */
 export function apiGet<T>(path: string, opts: ApiGetOptions = {}) {
-    const timeoutMs       = opts.timeoutMs       ?? DEFAULT_TIMEOUT_MS;
-    const retries         = opts.retries         ?? 1;
-    const retryDelayMs    = opts.retryDelayMs    ?? 250;
-    const backoff         = opts.retryBackoff    ?? 'exponential';
-    const retryJitterMs   = opts.retryJitterMs   ?? 100;
-    const maxRetryDelayMs = opts.maxRetryDelayMs ?? 10_000;
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    return _catch(() => _getWithRetries(
+        () => _fetchLegacyJson<T>(path, {}, timeoutMs),
+        opts,
+    ));
+}
 
-    return _catch(async () => {
-        let lastErr: unknown;
-        let delay = retryDelayMs;
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-                return await _fetchAndParseJson<T>(path, {}, timeoutMs);
-            } catch (err) {
-                // HTTP error → surface immediately; the server spoke.
-                if (err instanceof ApiHttpError) throw err;
-                // JSON parse error → the server returned an authoritative
-                // (but malformed) body. Retrying will just get the same bad
-                // body; surface to the caller with the real error.
-                if (err instanceof SyntaxError) throw err;
-                lastErr = err;
-                if (attempt < retries) {
-                    // Apply uniform jitter in [-j/2, +j/2] to the base delay
-                    // so synchronised clients don't retry in lock-step.
-                    const jitter = retryJitterMs > 0
-                        ? (Math.random() - 0.5) * retryJitterMs
-                        : 0;
-                    const effective = Math.min(Math.max(delay + jitter, 0), maxRetryDelayMs);
-                    await new Promise(r => setTimeout(r, effective));
-                    // Exponential doubles the *pre-jitter* delay for the next
-                    // retry; fixed leaves it at retryDelayMs. The cap is
-                    // applied after jitter, not here, so jitter still spreads
-                    // even at the ceiling.
-                    if (backoff === 'exponential') delay *= 2;
-                }
-            }
-        }
-        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
-    });
+/**
+ * GET and parse JSON with typed v2 failures. Network failures and timeouts
+ * retain the legacy GET retry/backoff policy; an HTTP problem is authoritative
+ * and returns immediately without retrying.
+ */
+export function apiGetJson<T>(
+    path: string,
+    opts: ApiGetOptions = {},
+): Promise<Result<T, ApiFailure>> {
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    return _typedResult(() => _getWithRetries(
+        () => _fetchTypedJson<T>(path, {}, timeoutMs),
+        opts,
+    ));
+}
+
+/**
+ * POST and parse JSON with typed v2 failures. Mutations are never retried:
+ * timing out does not prove the server failed to apply the request.
+ */
+export function apiPostJson<T>(
+    path: string,
+    body?: unknown,
+    opts: ApiOptions = {},
+): Promise<Result<T, ApiFailure>> {
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    return _typedResult(() => _fetchTypedJson<T>(path, _postInit(body), timeoutMs));
 }
 
 /**

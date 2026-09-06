@@ -192,6 +192,7 @@ public sealed partial class DeltaStreamTests
     public async Task Reset_Produces_A_Snapshot_Across_The_Discontinuity()
     {
         var room = CreatePopulatedRoom();
+        room.NotifyScenario("flood-response");
         room.IncrementDeltaSubscribers();
         var broadcaster = new RecordingBroadcaster();
         var manager = CreateManager(broadcaster);
@@ -215,6 +216,7 @@ public sealed partial class DeltaStreamTests
             "a client's separately-cached terrain and weather are stale after a reset");
         restart.Tick.Should().Be(0, "the reset restarted the world clock");
         restart.DescriptorsComplete.Should().BeTrue();
+        restart.Scenario.Should().BeNull("a direct reset clears the active preset");
 
         // The chain still advances across the discontinuity: a keyframe is as much a position in
         // it as a delta is, and the next delta names the keyframe rather than the pre-reset frame.

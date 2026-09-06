@@ -55,6 +55,7 @@ import type {
   DetectionV2State,
   ExternalTrackState,
   HazardV2State,
+  ScenarioSessionState,
   VizSnapshotV2,
 } from './types';
 import type { AssetDomain, DataFreshness, OperationalState } from './types';
@@ -174,6 +175,8 @@ export interface SceneSnapshot {
    * against this and not against `Date.now()`; see the module header.
    */
   readonly simulationNowMs: number | null;
+  /** Active named scenario, explicit null after a clear, or undefined from an older server. */
+  readonly scenario: ScenarioSessionState | null | undefined;
 }
 
 // ── Descriptor cache ────────────────────────────────────────────────────────
@@ -487,6 +490,7 @@ export function projectSnapshot(
     isPartitioned: snapshot.network?.isPartitioned ?? null,
     backhaulAvailable: snapshot.network?.backhaulAvailable ?? null,
     simulationNowMs,
+    scenario: snapshot.scenario,
   };
 }
 

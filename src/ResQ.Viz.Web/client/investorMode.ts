@@ -59,7 +59,11 @@ export class InvestorMode {
     private readonly _pos = new THREE.Vector3();
     private readonly _tgt = new THREE.Vector3();
 
-    constructor(private readonly _camera: UnityCamera) {}
+    constructor(
+        private readonly _camera: UnityCamera,
+        private readonly _closeOpenPanels: () => void = () => {},
+        private readonly _setManagedLayersSuppressed: (suppressed: boolean) => void = () => {},
+    ) {}
 
     get enabled(): boolean { return this._enabled; }
 
@@ -87,6 +91,7 @@ export class InvestorMode {
 
         document.body.classList.add('investor-mode');
         this._closeOpenPanels();
+        this._setManagedLayersSuppressed(true);
         this._mountWordmark();
 
         // Skip the sweeping 90s dolly for reduced-motion users (WCAG 2.3.3):
@@ -100,6 +105,7 @@ export class InvestorMode {
     private _uninstall(): void {
         this._enabled = false;
 
+        this._setManagedLayersSuppressed(false);
         document.body.classList.remove('investor-mode');
         this._unmountWordmark();
 
@@ -158,11 +164,6 @@ export class InvestorMode {
         this._wordmark = null;
     }
 
-    // Close any open modal panels so the recording starts clean.
-    private _closeOpenPanels(): void {
-        document.getElementById('settings-panel')?.setAttribute('aria-hidden', 'true');
-        document.getElementById('shortcuts-panel')?.setAttribute('aria-hidden', 'true');
-    }
 }
 
 function _lerp(a: number, b: number, t: number): number {

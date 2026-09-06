@@ -1,7 +1,7 @@
 // ResQ Viz - Camera view modes (Free / Chase / FPV) — AirSim-style
 // SPDX-License-Identifier: Apache-2.0
 
-import './styles/editor.css';
+import './styles/operator-overlays.css';
 
 export type CameraMode = 'free' | 'chase' | 'fpv';
 

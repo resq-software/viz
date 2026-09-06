@@ -3,6 +3,7 @@
 
 import '../styles/editor.css';
 import { apiPostOrWarn } from '../api';
+import { liveGate, type MutationGate } from '../operator/interactionMode';
 import type { VizFrame } from '../types';
 
 /** Selectable run-speed multipliers, cycled by the speed button. */
@@ -23,31 +24,38 @@ export function nextSpeed(current: number): number {
  *
  * Buttons POST to `/api/sim/{pause,resume,step,speed,reset}` and update
  * optimistically; the authoritative `paused`/`speed` fields on each incoming
- * frame reconcile the displayed state via {@link Transport.update}. Also binds
- * Space (play/pause) and `.` (step). Server-authority note: transport acts on
+ * frame reconcile the displayed state via {@link Transport.update}. Keyboard
+ * transport belongs to the DVR's unified live/replay bar. Server-authority note: transport acts on
  * the whole world, so there's no per-entity conflict like the gizmos will have.
+ *
+ * This bar is compatibility code — the DVR is what a session actually gets — but
+ * it still owns four server mutations, so it takes the same live/replay gate
+ * every other boundary does. Being unreachable today is not a reason to be
+ * ungated tomorrow.
  */
 export class Transport {
     private readonly _root: HTMLElement;
     private readonly _playBtn: HTMLButtonElement;
     private readonly _speedBtn: HTMLButtonElement;
+    private readonly _gate: MutationGate;
     private _paused = false;
     private _speed = 1;
 
-    constructor() {
+    constructor(gate: MutationGate = liveGate) {
         const built = this._build();
         this._root = built.root;
         this._playBtn = built.playBtn;
         this._speedBtn = built.speedBtn;
+        this._gate = gate;
 
         built.playBtn.addEventListener('click', () => this._togglePlay());
         built.stepBtn.addEventListener('click', () => this._step());
         built.speedBtn.addEventListener('click', () => this._cycleSpeed());
         built.resetBtn.addEventListener('click', () => {
+            if (!this._gate('transport.reset').success) return;
             void apiPostOrWarn('/api/sim/reset', undefined, 'reset');
         });
 
-        this._bindKeyboard();
         this._render();
     }
 
@@ -68,6 +76,10 @@ export class Transport {
     }
 
     private _togglePlay(): void {
+        // Checked before the optimistic flip, not after: an optimistic render
+        // for a request that never left would show the operator a paused world
+        // that is still running.
+        if (!this._gate('transport.pause').success) return;
         const next = !this._paused;
         this._paused = next; // optimistic — the next frame reconciles
         this._render();
@@ -75,6 +87,7 @@ export class Transport {
     }
 
     private _step(): void {
+        if (!this._gate('transport.step').success) return;
         // A step implies a paused world; flip optimistically so the icon reads
         // "play" and a held-down key advances frame-by-frame.
         if (!this._paused) {
@@ -86,6 +99,7 @@ export class Transport {
     }
 
     private _cycleSpeed(): void {
+        if (!this._gate('transport.speed').success) return;
         const next = nextSpeed(this._speed);
         this._speed = next; // optimistic
         this._render();
@@ -98,28 +112,6 @@ export class Transport {
         this._playBtn.setAttribute('aria-pressed', String(!this._paused));
         this._speedBtn.textContent = `${this._speed}×`;
         this._speedBtn.setAttribute('aria-label', `Speed ${this._speed}×, click to change`);
-    }
-
-    private _bindKeyboard(): void {
-        document.addEventListener('keydown', (e: KeyboardEvent) => {
-            const t = e.target as Element | null;
-            // BUTTON matters as much as INPUT/SELECT here: Space is the browser's
-            // activation key for a focused button, and preventDefault() below
-            // would swallow it — so a keyboard user on rt-step / rt-speed /
-            // rt-reset would toggle play instead of pressing the control they are
-            // actually on. TEXTAREA and contenteditable get the same exemption.
-            if (t?.tagName === 'INPUT' || t?.tagName === 'SELECT'
-                || t?.tagName === 'BUTTON' || t?.tagName === 'TEXTAREA'
-                || (t as HTMLElement | null)?.isContentEditable) return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            if (e.code === 'Space') {
-                e.preventDefault();
-                this._togglePlay();
-            } else if (e.code === 'Period') {
-                e.preventDefault();
-                this._step();
-            }
-        });
     }
 
     private _build(): {

@@ -226,6 +226,17 @@ public class ScenarioServiceTests
     }
 
     [Fact]
+    public void TryResolveScenarioName_Returns_The_Configured_Canonical_Key()
+    {
+        var svc = CreateScenarioService();
+
+        var found = svc.TryResolveScenarioName("SINGLE", out var canonicalName);
+
+        found.Should().BeTrue();
+        canonicalName.Should().Be("single");
+    }
+
+    [Fact]
     public void TryRun_Single_Drone_Has_Expected_Id()
     {
         var svc = CreateScenarioService();

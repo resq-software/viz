@@ -139,6 +139,9 @@ public static class CommandAuthorityReasons
     /// <summary>The issuer's authority over this asset was taken by an emergency holder.</summary>
     public const string LeasePreempted = "authority.leasePreempted";
 
+    /// <summary>The asset instance resolved during validation was replaced before dispatch.</summary>
+    public const string AssetInstanceChanged = "authority.assetInstanceChanged";
+
     /// <summary>
     /// A lease was granted, but shorter than the caller asked for, because policy caps how long
     /// one may run. Not a refusal: it accompanies a

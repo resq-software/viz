@@ -1,0 +1,205 @@
+/* ResQ Viz - Advanced/Safety workspace (lazy chunk) */
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * Loaded with `operator/advancedSafety.ts` and nowhere else. The entry sheet is
+ * near its CI budget and most sessions never open this disclosure, so none of
+ * these rules ship until one does.
+ *
+ * The visual language is the rail's, one step sterner: the two destructive
+ * levers (preempt, cut) are the only red things here, their confirmations sit
+ * in an inset well so a confirmation never looks like the row above it, and the
+ * whole surface is denser than a card because it is read, not skimmed.
+ */
+
+.advanced-panel {
+  gap: 8px;
+  /* Deliberately flatter than an operator card: this is a stack of tools
+     inside a disclosure, not four competing cards in the rail. */
+  background: var(--surface-1);
+  box-shadow: none;
+}
+
+.advanced-blurb {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.advanced-body {
+  display: grid;
+  gap: 8px;
+}
+
+/* ── Readouts ─────────────────────────────────────────────────────────────── */
+
+.advanced-readout {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.advanced-readout dt {
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.advanced-readout dd {
+  margin: 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* ── Fields ───────────────────────────────────────────────────────────────── */
+
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 6px;
+}
+
+.advanced-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.advanced-field input,
+.advanced-field select {
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: none;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.advanced-field input:focus-visible,
+.advanced-field select:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.advanced-field input:disabled,
+.advanced-field select:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+/* ── Actions and confirmations ────────────────────────────────────────────── */
+
+.advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.advanced-actions .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+/* A confirmation must never read as the row that opened it. Inset well, own
+   border, and the warning above the two buttons rather than beside them. */
+.advanced-confirm {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: var(--inset);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+}
+
+.advanced-confirm[hidden] {
+  display: none;
+}
+
+.advanced-warning {
+  margin: 0;
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* ── Status ───────────────────────────────────────────────────────────────── */
+
+.advanced-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.advanced-status.is-error {
+  color: var(--danger);
+}
+
+.advanced-status[hidden] {
+  display: none;
+}
+
+/* ── Audit trail ──────────────────────────────────────────────────────────── */
+
+.advanced-subhead {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.advanced-trail {
+  display: grid;
+  gap: 3px;
+  max-height: 168px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.advanced-trail:empty::after {
+  color: var(--text-faint);
+  content: "No records in the retained window.";
+  font-family: var(--font-body);
+  font-size: 11px;
+}
+
+.advanced-trail li {
+  padding: 3px 6px;
+  background: var(--inset);
+  border-radius: var(--radius-token);
+  overflow-wrap: anywhere;
+}
+
+.advanced-dropped {
+  margin: 0;
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.advanced-dropped[hidden] {
+  display: none;
+}
