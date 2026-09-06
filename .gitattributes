@@ -18,4 +18,4 @@
 #
 # Correct way to resolve any conflict in these files: re-run `gh aw compile`
 # and commit the regenerated output, never hand-merge.
-.github/workflows/*.lock.yml linguist-generated=true merge=ours
+.github/workflows/*.lock.yml linguist-generated=true
