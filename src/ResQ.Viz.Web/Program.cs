@@ -167,15 +167,34 @@ builder.Services.AddViteServices();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    // Budgets are configuration with the shipped numbers as defaults, so no
+    // deployment changes behaviour unless it says so.
+    //
+    // These windows are GLOBAL, not per-caller: ten destructive calls a minute
+    // across every client this process serves. That is capacity protection for a
+    // single small host — replacing the world is expensive, and the cap bounds
+    // what the box can be asked to do rather than what any one caller may ask
+    // for. The cost is shared fate: one client resetting scenarios in a loop
+    // denies the endpoint to everyone else. Worth revisiting if this ever serves
+    // more than one operator at a time. Partitioning by caller is the usual
+    // answer and a larger change than it looks, because the abuse case is
+    // precisely a caller who can rotate identity.
+    //
+    // The browser suite raises this through configuration rather than through a
+    // code path of its own. Booting three consoles inside one minute needs more
+    // than the budget allows — measured, the first two tests leave exactly one
+    // permit, and the third console's scenario start returns 429, so it shows an
+    // empty room. A test build that took a different branch here would be
+    // verifying a binary no deployment runs.
     options.AddFixedWindowLimiter("destructive", opt =>
     {
-        opt.PermitLimit = 10;
+        opt.PermitLimit = builder.Configuration.GetValue("RateLimits:DestructivePermitsPerMinute", 10);
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });
     options.AddFixedWindowLimiter("general", opt =>
     {
-        opt.PermitLimit = 60;
+        opt.PermitLimit = builder.Configuration.GetValue("RateLimits:GeneralPermitsPerMinute", 60);
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });

@@ -78,6 +78,20 @@ function serverEnvironment(
     // draws and the other does not would have one spec paying a cost the others
     // do not, which is how a suite acquires a slow spec nobody can explain.
     BrowserVerification__SuspendSceneRendering: 'true',
+    // The destructive limiter is a GLOBAL ten-per-minute window, and every spec
+    // in this suite drives the same server process. Booting a console spends
+    // permits on the scenario start and the terrain fetch, so the budget runs
+    // out: measured, the first two specs leave exactly ONE permit, the third
+    // console's scenario start returns 429, and it renders an empty room —
+    // "No active mission", zero rows — while the connection stays up. That
+    // reads as a console bug and is not one.
+    //
+    // Raised through configuration rather than a test-only branch in the
+    // server, so the suite still drives the shipped code path. Production
+    // defaults are untouched. One trusted client doing setup is not the traffic
+    // the cap exists to bound.
+    RateLimits__DestructivePermitsPerMinute: '500',
+    RateLimits__GeneralPermitsPerMinute: '2000',
   };
 }
 
