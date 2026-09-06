@@ -136,13 +136,15 @@ aggregator's own rights, not the rights of everything inside it.
 Whole-tree scanning flagged every UI icon in the repo, which is the fastest way to
 get a gate switched off. Widen the roots, never the ignore list.
 
-**Unverified licences are warnings; the blocking gate runs `--strict`.** An
-entry may carry `verified_on: null` where the licence has not been read against
-its publisher page, and plain runs report that as a warning so local development
+**Unverified licences are warnings; the blocking gate runs `--strict`.** Plain
+runs report the three verification warnings — `unverified-source` (never read),
+`unhashed-licence` (no `licence_text_sha256`) and `stale-verification` (read
+longer ago than `verification_max_age_days`) — as warnings, so local development
 is not blocked. CI runs the gate with `--strict` on every pull request and on
-push to main, which promotes those to errors — so an unread licence cannot reach
-main. The job triggered by `release: published` fires after a release exists and
-can only audit it, never prevent it.
+push to main, which promotes **all three** to errors. So an unread licence, an
+unhashed one, and one nobody has re-read inside the window are equally unable to
+reach main. The job triggered by `release: published` fires after a release
+exists and can only audit it, never prevent it.
 
 ## Not covered by this tool
 

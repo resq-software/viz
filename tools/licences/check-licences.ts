@@ -14,7 +14,7 @@
  * Node 22+: node --experimental-strip-types check-licences.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, lstatSync, realpathSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, extname, resolve, sep } from "node:path";
 
@@ -214,12 +214,21 @@ function pathEscape(relPath: string): string | null {
   }
   if (!existsSync(lexical)) return null;   // reported separately as missing-file
   try {
-    if (lstatSync(lexical).isSymbolicLink()) {
-      const physical = realpathSync(lexical);
-      if (physical !== ROOT && !physical.startsWith(ROOT + sep)) {
-        return `Manifest path is a symlink leaving the scanned root (points at ${physical}). `
-          + `The gate would hash bytes it is not gating.`;
-      }
+    // realpath the WHOLE path, not just lstat the terminal entry. Checking only
+    // the last component misses the case that matters: a regular file below a
+    // SYMLINKED PARENT. lstat on the file says "not a link" and the lexical
+    // path looks contained, while the bytes live somewhere else entirely.
+    // Measured before this: a tile at vendor/tiles/t.tif, where vendor/tiles
+    // links outside, passed the gate with a matching hash of external bytes.
+    //
+    // ROOT is realpathed too — it can itself sit under a link (/tmp on macOS),
+    // and comparing a resolved child against an unresolved root reports every
+    // path as an escape.
+    const physicalRoot = realpathSync(ROOT);
+    const physical = realpathSync(lexical);
+    if (physical !== physicalRoot && !physical.startsWith(physicalRoot + sep)) {
+      return `Manifest path resolves outside the scanned root (physically ${physical}). `
+        + `The gate would hash bytes it is not gating.`;
     }
   } catch (e) {
     return `Manifest path could not be resolved: ${(e as Error).message}`;
@@ -313,12 +322,30 @@ for (const area of manifest.areas ?? []) {
           add("error", "missing-licence-text", where,
             `${entry.name} is notice_kind "full-licence-text" but declares no licence_text_path. `
             + `Its licence requires the verbatim text to ship with the data.`);
-        } else if (pathEscape(p) || !existsSync(resolve(ROOT, p))) {
-          add("error", "missing-licence-text", where,
-            `${entry.name}: licence_text_path "${p}" is not a readable file inside the root.`);
-        } else if (readFileSync(resolve(ROOT, p), "utf8").trim().length === 0) {
-          add("error", "missing-licence-text", where,
-            `${entry.name}: licence_text_path "${p}" is empty.`);
+        } else {
+          // Must be a REGULAR FILE, not merely something that exists. A
+          // directory satisfies existsSync and then readFileSync throws EISDIR,
+          // which crashed the gate instead of reporting the bad path — a
+          // misconfiguration should be a finding, never a stack trace.
+          const abs = resolve(ROOT, p);
+          const bad = pathEscape(p);
+          let text: string | null = null;
+          if (!bad && existsSync(abs)) {
+            try {
+              text = statSync(abs).isFile() ? readFileSync(abs, "utf8") : null;
+            } catch (e) {
+              add("error", "missing-licence-text", where,
+                `${entry.name}: licence_text_path "${p}" could not be read: ${(e as Error).message}`);
+              text = "";   // suppress the generic message below
+            }
+          }
+          if (text === null) {
+            add("error", "missing-licence-text", where,
+              `${entry.name}: licence_text_path "${p}" is not a readable regular file inside the root.`);
+          } else if (text.trim().length === 0) {
+            add("error", "missing-licence-text", where,
+              `${entry.name}: licence_text_path "${p}" is empty.`);
+          }
         }
       }
 
@@ -391,7 +418,10 @@ for (const area of manifest.areas ?? []) {
 
     // Content hash must match, or the provenance record describes different bytes.
     const abs = join(ROOT, norm);
-    if (!existsSync(abs)) {
+    if (escape) {
+      // Do not read it. A hash of bytes outside the root is worse than no hash:
+      // it would MATCH the manifest and read as corroboration.
+    } else if (!existsSync(abs)) {
       add("error", "missing-file", norm, `Manifest references a file that is not on disk.`);
     } else {
       const actual = sha256(abs);

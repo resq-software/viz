@@ -469,6 +469,68 @@ describe("symlinks in a scanned data root", () => {
     });
 });
 
+describe("manifest path below a symlinked parent", () => {
+    // The nastiest of the traversal cases, because every lexical check passes.
+    // The tile is a REGULAR FILE — lstat on it reports no link — but a parent
+    // component is a symlink out of the root, so the bytes live elsewhere.
+    // Measured before the fix: with the parent outside any scan_root, so the
+    // walk never saw the link either, the gate reported "Licence gate passed"
+    // with a hash that MATCHED the external bytes.
+    it("is rejected, and the external bytes are never hashed", () => {
+        const root = mkdtempSync(join(tmpdir(), "licgate-parent-"));
+        const outside = mkdtempSync(join(tmpdir(), "licgate-elsewhere-"));
+        mkdirSync(join(root, "vendor"), { recursive: true });
+        mkdirSync(join(outside, "tiles"), { recursive: true });
+        writeFileSync(join(outside, "tiles", "t.tif"), "x");
+        symlinkSync(join(outside, "tiles"), join(root, "vendor", "tiles"));
+
+        const manifest = {
+            schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1",
+            areas: [{
+                id: "a", name: "A", bbox: [-100, 35, -99, 36],
+                tiles: [{
+                    path: "vendor/tiles/t.tif", sha256: TILE_SHA,
+                    layers: [{ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" }],
+                }],
+            }],
+        };
+        writeFileSync(join(root, "m.json"), JSON.stringify(manifest));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", root,
+                "--registry", REGISTRY, "--manifest", join(root, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"), out.slice(0, 400));
+        ok(out.includes("path-escapes-root"), out.slice(0, 400));
+        // The hash must be skipped entirely: a matching hash of external bytes
+        // would read as corroboration of provenance it cannot support.
+        ok(!out.includes("hash-mismatch"), "external bytes were hashed anyway");
+    });
+});
+
+describe("licence_text_path pointing at a directory", () => {
+    it("is a finding, not a crash", () => {
+        // existsSync is true for a directory, and readFileSync then throws
+        // EISDIR. That took down the whole gate with a stack trace instead of
+        // reporting the misconfiguration.
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["threejs-examples"].licence_text_path = "tools/licences/texts";
+        const dir = mkdtempSync(join(tmpdir(), "licgate-dirpath-"));
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+
+        const repoRoot = join(HERE, "..", "..");
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", repoRoot,
+                "--registry", regPath, "--manifest", join(repoRoot, "data", "manifest.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(out.includes("missing-licence-text"), out.slice(-500));
+        ok(!out.includes("EISDIR"), "threw instead of reporting");
+        strictEqual(p.status, 1, "should exit as a normal gate failure, not a crash");
+    });
+});
+
 describe("strict mode", () => {
     it("passes on the committed tree, so the blocking gate can run strict", () => {
         // The gate job runs --strict. If a source loses its verified_on or its
