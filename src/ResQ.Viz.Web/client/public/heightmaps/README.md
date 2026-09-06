@@ -36,6 +36,11 @@ Example with a deep-valley DEM:
   detail past `TERRAIN_SEGS = 320`.
 - The biome textures (grass/rock/snow/sand) still track the active preset
   (`Shift+1..5`), so a DEM of the Alps will read as "alpine" tiers by default.
-- Backend physics still uses procedural terrain — drones may float or sink by
-  the delta between the DEM and the preset's procedural heightFn. This is a
-  cosmetic viz-only first cut; backend DEM sync is a follow-up.
+- Backend physics **does** consume an uploaded DEM: the client POSTs the decoded
+  grid to `/api/sim/heightmap` and the server installs it as authoritative
+  terrain, so drone contact tracks the DEM rather than the procedural heightFn.
+- That upload is opt-in and best-effort, though, so the two can still diverge.
+  It fires only when the page is opened with `?heightmap=<url>`, the decode
+  succeeds, the session is ready, and the operator mutation gate permits
+  `environment.heightmap`. A failed upload warns and continues — it is not
+  retried — leaving the client on the DEM and the server on procedural terrain.

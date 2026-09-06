@@ -297,26 +297,64 @@ public sealed partial class ScenarioCatalogTests
         }
     }
 
-    /// <summary>Every preset is staged for the terrain a fresh session already has, or says otherwise.</summary>
+    /// <summary>The presets that need the operator to leave the default terrain say so.</summary>
     /// <remarks>
-    /// Two presets are named after terrain presets they are not staged for. <c>alpine-sar</c> is
-    /// staged for alpine and happens to agree; <c>canyon-sar</c> is not staged for canyon, whose
-    /// floor lies below every altitude it names, and it is verified against the default terrain
-    /// like every other preset whose comment names none. Stating that here keeps the pairing an
-    /// asserted fact rather than an inference from a preset's name.
+    /// A preset that silently needed a terrain switch would look like a broken preset instead of
+    /// a missed operator step, so the set is asserted whole rather than per-preset.
     /// </remarks>
     [Fact]
-    public void Only_The_Maritime_Presets_Require_The_Operator_To_Change_Terrain()
+    public void Every_Preset_That_Needs_A_Terrain_Switch_Is_Named()
     {
-        var needsCoastal = CatalogPresets
-            .Where(row => (string)row[1] == CoastalTerrain)
-            .Select(row => (string)row[0]);
+        var needsSwitch = CatalogPresets
+            .Where(row => (string)row[1] != "alpine")
+            .Select(row => $"{(string)row[0]}:{(string)row[1]}");
 
-        needsCoastal.Should().Equal(
-            ["coastal-search", "coastal-transit", "port-incident"],
-            "only a preset that stages hulls needs water above the datum, and each of these says "
-            + "so in its own comment — a preset that silently needed a terrain switch would look "
-            + "like a broken preset instead of a missed operator step");
+        needsSwitch.Should().Equal(
+            [
+                "wildfire-interface:ridgeline",
+                "hurricane-melissa:coastal",
+                "urban-collapse:canyon",
+                "canyon-sar:canyon",
+                "coastal-search:coastal",
+                "coastal-transit:coastal",
+                "port-incident:coastal",
+            ],
+            "every preset here is one the client switches terrain for, and a preset that drops "
+            + "off this list is one the client and the suite have stopped agreeing about");
+    }
+
+    /// <summary>The suite stages every preset on the terrain the client actually ships it on.</summary>
+    /// <remarks>
+    /// The scenario-to-terrain pairing lives twice: in <c>client/scenarioEnvironments.ts</c>,
+    /// which is what an operator gets, and in <see cref="CatalogPresets"/>, which is what this
+    /// suite verifies. Nothing held them equal, and they drifted: <c>urban-collapse</c> and
+    /// <c>canyon-sar</c> shipped on <c>canyon</c> with every aircraft spawned underground while
+    /// this suite verified them on <c>alpine</c> and stayed green. This test is the guard.
+    /// <para>
+    /// It parses the client table rather than duplicating it, because a third copy would drift
+    /// the same way. Presets the client does not pair keep whatever terrain is loaded and are
+    /// verified against the session default.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_Catalog_Is_Staged_Against_The_Terrain_The_Client_Ships()
+    {
+        var client = ClientTerrainPairing();
+
+        client.Should().NotBeEmpty(
+            "the client table was found but parsed to nothing, which would make this test pass "
+            + "by reading no rows rather than by agreeing with them");
+
+        foreach ((string preset, string terrain) in client)
+        {
+            CatalogPresets.Select(row => (string)row[0]).Should().Contain(
+                preset, $"the client ships a terrain for '{preset}', so the suite must know it");
+
+            TerrainFor(preset).Should().Be(
+                terrain,
+                $"the client stages '{preset}' on '{terrain}', so that is the only terrain on "
+                + "which verifying it says anything about what an operator gets");
+        }
     }
 
     // ─── The mixed presets are actually mixed ───────────────────────────────
