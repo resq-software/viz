@@ -1,5 +1,14 @@
 # Terrain texture credits
 
+> **The distributable notice is `/NOTICE.md`, and it is generated** from
+> `data/manifest.json` by `tools/licences/check-licences.ts`. Every file in this
+> directory is listed there with its content hash, and the licence gate fails the
+> build if one is added, changed or removed without its provenance being updated.
+>
+> This page stays as the human-readable note on *why* each tier was chosen and how
+> the maps are encoded. Do not record licence terms in both places — the generated
+> notice is the one that ships.
+
 All textures here are CC0 (public domain) from [ambientCG.com](https://ambientCG.com),
 by Lennart Demes. No attribution is required, but we include it as a courtesy.
 

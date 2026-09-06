@@ -1,0 +1,674 @@
+{
+  "version": 2,
+  "_comment": "Registry v2. Classes and notices verified source-by-source against primary publisher pages (sweep 2026-09-05). v1 classified by licence NAME and was wrong in three places; see restrictions[] for the obligations a name-only reading misses.",
+  "policy": {
+    "allowed_classes": [
+      "public-domain",
+      "attribution"
+    ],
+    "verification_max_age_days": 180,
+    "scan_extensions": [
+      ".tif",
+      ".tiff",
+      ".cog",
+      ".hgt",
+      ".bil",
+      ".asc",
+      ".nc",
+      ".grd",
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".webp",
+      ".ktx2",
+      ".basis",
+      ".terrain",
+      ".mbtiles",
+      ".pmtiles",
+      ".pbf",
+      ".parquet",
+      ".geojson"
+    ],
+    "ignore_paths": [
+      ".git",
+      "node_modules",
+      "dist",
+      "build",
+      "target",
+      "coverage",
+      ".next",
+      ".turbo",
+      "wwwroot"
+    ],
+    "scan_roots": [
+      "data",
+      "assets/geo",
+      "src/ResQ.Viz.Web/client/public/textures",
+      "src/ResQ.Viz.Web/client/public/heightmaps"
+    ],
+    "regions": {
+      "us-territory": [
+        [
+          -124.85,
+          24.35,
+          -66.85,
+          49.4
+        ],
+        [
+          -172.5,
+          51.2,
+          -129.9,
+          71.5
+        ],
+        [
+          -160.3,
+          18.85,
+          -154.75,
+          22.3
+        ],
+        [
+          -67.35,
+          17.6,
+          -64.5,
+          18.6
+        ]
+      ],
+      "alaska": [
+        [
+          -172.5,
+          51.2,
+          -129.9,
+          71.5
+        ]
+      ]
+    }
+  },
+  "sources": {
+    "usgs-3dep": {
+      "name": "USGS 3D Elevation Program",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://www.sciencebase.gov/catalog/item/4f70aa71e4b058caae3f8de1",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "Map services and data available from U.S. Geological Survey, National Geospatial Program.",
+      "coverage": "CONUS, Alaska, Hawaii, US territories",
+      "notes": "Licence text UNVERIFIED - usgs.gov returned 403 to every direct fetch in both passes; wording corroborated only via search extract. The acknowledgement is REQUESTED, not a licence condition. Do not apply the USGS identifier or logo; it is trademarked.",
+      "notice_required": false,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "restrictions": [
+        {
+          "kind": "clip",
+          "region": "us-territory",
+          "reason": "The seamless 1-arc-second grid extends over Canada and the Mexican border under interagency arrangements with NRCan and INEGI; those pixels are not US federal works. Clipping keeps the public-domain basis intact."
+        }
+      ]
+    },
+    "nasadem": {
+      "name": "NASADEM",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://earth.jaxa.jp/en/data/policy/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "NASA JPL. (2020). NASADEM Merged DEM Global 1 arc second V001 [Dataset]. https://doi.org/10.5067/MEASURES/NASADEM/NASADEM_HGT.001",
+      "coverage": "60N to 56S, 1 arc-second",
+      "notes": "CLASS IS CONDITIONAL ON THE MASK. Unmasked this is not public-domain and must not ship. The JAXA policy page is NOT linked from the NASA product page - the classic supplementary-terms trap. Verify the NUM per-pixel source codes at the User Guide before building the mask.",
+      "notice_required": false,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "restrictions": [
+        {
+          "kind": "require-mask",
+          "mask": "prism-cded",
+          "reason": "MERGED product: JAXA ALOS PRISM AW3D30 pixels are baked into the delivered grid. JAXA Terms of Use s2.3 requires the user to notify JAXA in advance before commercial use, and s2.5 makes the terms subject to change without notice. That is an affirmative pre-use duty under a unilaterally variable grant - not attribution, and not public domain."
+        }
+      ]
+    },
+    "srtm-gl1": {
+      "name": "SRTM GL1 v3",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://www.earthdata.nasa.gov/engage/open-data-services-software/data-information-policy",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "NASA JPL. (2013). NASA Shuttle Radar Topography Mission Global 1 arc second [Dataset]. https://doi.org/10.5067/MEASURES/SRTM/SRTMGL1.003",
+      "coverage": "60N to 56S, 1 arc-second",
+      "notes": "Cleaner than nasadem - carries no AW3D30 content, so the JAXA duty genuinely does not reach it. Just not clean enough to ship unmasked.",
+      "notice_required": false,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "restrictions": [
+        {
+          "kind": "require-mask",
+          "mask": "gmted-voidfill",
+          "reason": "The void-filled fraction descends from GMTED2010, whose non-SRTM inputs include SPOT 5 Reference3D, a commercial product. No primary page establishes that those pixels were cleared for third-party commercial redistribution."
+        }
+      ]
+    },
+    "rema": {
+      "name": "Reference Elevation Model of Antarctica",
+      "class": "attribution",
+      "spdx": "CC-BY-4.0",
+      "licence_url": "https://www.pgc.umn.edu/guides/stereo-derived-elevation-models/pgc-dem-products-arcticdem-rema-and-earthdem/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.",
+      "courtesy_credit": null,
+      "coverage": "Antarctic",
+      "notes": "A DIFFERENT acknowledgement string from ArcticDEM. Generating the ArcticDEM string for REMA data is non-compliant. Copernicus pole-hole fill is confined to specific reduced-resolution mosaics.",
+      "notice_required": true,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "restrictions": []
+    },
+    "noaa-cudem": {
+      "name": "NOAA Continuously Updated Digital Elevation Model",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://www.ncei.noaa.gov/products/coastal-relief-model",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "Bathymetric data courtesy of NOAA National Centers for Environmental Information.",
+      "coverage": "US coastal",
+      "notes": "BASIS CORRECTED: public domain on a US-only NO-COPYRIGHT basis (17 U.S.C. 105), NOT a CC0 grant as v1 recorded. Per-tile lineage unresolved. Carries a not-for-navigation statement.",
+      "permitted_layers": [
+        "bathymetry",
+        "elevation"
+      ],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "noaa-crm": {
+      "name": "NOAA Coastal Relief Model",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://www.ncei.noaa.gov/products/coastal-relief-model",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "Bathymetric data courtesy of NOAA National Centers for Environmental Information.",
+      "coverage": "US coastal",
+      "notes": "Bathymetry cells are fine. The open question is whether the 1-arc-second land layer inherits ETOPO's FABDEM exposure.",
+      "permitted_layers": [
+        "bathymetry"
+      ],
+      "restrictions": [
+        {
+          "kind": "require-mask",
+          "mask": "crm-ocean-only",
+          "reason": "LAND LAYER UNVERIFIED. The 2023 CRM User Guide - the one document resolving CRM lineage - could not be read in any pass. The abstract calls the product bare-earth, which is FABDEM's signature, and its metadata carries ICESat-2 boilerplate copy-pasted from ETOPO."
+        }
+      ],
+      "notice_required": false
+    },
+    "noaa-etopo-2022": {
+      "name": "NOAA ETOPO 2022",
+      "class": "non-commercial",
+      "spdx": null,
+      "licence_url": "https://essd.copernicus.org/articles/17/1835/2025/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global, 15 arc-second",
+      "notes": "RECLASSIFIED IN v2 - THE MOST IMPORTANT CHANGE IN THE REGISTER. v1 had this as public-domain on the strength of NOAA's CC0 dedication. But CC0 waives only rights NOAA HOLDS. The dominant land layer is FABDEM (CC BY-NC-SA 4.0): per the peer-reviewed dataset description, FABDEM is available for land elevations between 60 S and 80 N latitudes and is used in ETOPO where available, with Copernicus DEM in the polar regions. NonCommercial AND ShareAlike both survive into a derivative; a downstream CC0 badge cannot launder them. The seamless 15-arcsecond grids CANNOT SHIP. Ocean-only use requires a hard mask verified cell-by-cell against the NCEI source-ID grids. Land cells carry FABDEM's terms, which no notice discharges: its publisher offers a separate paid commercial licence.",
+      "permitted_layers": [],
+      "notice_required": false,
+      "restrictions": []
+    },
+    "gmrt": {
+      "name": "Global Multi-Resolution Topography synthesis",
+      "class": "attribution",
+      "spdx": "CC-BY-4.0",
+      "licence_url": "https://www.gmrt.org/about/terms_of_use.php",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "Global Multi-Resolution Topography Synthesis (GMRT), https://www.gmrt.org. Ryan, W. B. F., et al. (2009), Global Multi-Resolution Topography (GMRT) synthesis data set, Geochem. Geophys. Geosyst., 10, Q03014, doi:10.1029/2008GC002332. Data should not be used for navigation purposes.",
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "GEBCO cells are folded into the low-resolution base, so a GEBCO acknowledgement is owed and GEBCO's non-endorsement condition constrains MARKETING COPY, not just the notice file.",
+      "permitted_layers": [
+        "bathymetry"
+      ],
+      "notice_required": true,
+      "restrictions": [
+        {
+          "kind": "require-mask",
+          "mask": "gmrt-marine-only",
+          "reason": "TERRESTRIAL COMPONENT UNVERIFIED - GMRT's land cells come from the joint NASA-Japanese ASTER global DEM with no version pinned, and the v1/v2-era redistribution bar may touch them. If terrestrial cells ship, the METI/NASA ASTER credit is additionally owed."
+        }
+      ]
+    },
+    "emodnet-bathymetry": {
+      "name": "EMODnet Bathymetry",
+      "class": "attribution",
+      "spdx": "CC-BY-4.0",
+      "licence_url": "https://emodnet.ec.europa.eu/en/bathymetry",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "This data product was created by EMODnet (https://emodnet.ec.europa.eu/en/), and is owned by the EU and licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) license. DO NOT USE FOR NAVIGATION.",
+      "courtesy_credit": null,
+      "coverage": "EU waters only",
+      "notes": "DO NOT USE FOR NAVIGATION is encoded as a formal ISO otherRestrictions USE CONSTRAINT in the DTM's own metadata - a stated condition, not optional colour. Reproduce the DTM DOI (prefix 10.12770).",
+      "permitted_layers": [
+        "bathymetry"
+      ],
+      "notice_required": true,
+      "restrictions": []
+    },
+    "esa-worldcover": {
+      "name": "ESA WorldCover 10m",
+      "class": "attribution",
+      "spdx": "CC-BY-4.0",
+      "licence_url": "https://esa-worldcover.org/en/data-access",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "(c) ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium",
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "Required VERBATIM and varies per vintage baked - v100 reads 2020. Do NOT truncate to the first half: the Copernicus clause is what discharges the upstream obligation.",
+      "permitted_layers": [
+        "landcover"
+      ],
+      "notice_required": true,
+      "restrictions": []
+    },
+    "naip": {
+      "name": "National Agriculture Imagery Program",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://naip-usdaonline.hub.arcgis.com/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "Imagery courtesy of the USDA National Agriculture Imagery Program.",
+      "coverage": "CONUS, Hawaii, Puerto Rico, US Virgin Islands",
+      "notes": "v1 said CONUS-only; USDA's own coverage map lists Hawaii, Puerto Rico and the Virgin Islands. Bake from USGS EarthExplorer, NOT the AWS naip-source bucket - that bucket is Requester Pays.",
+      "permitted_layers": [
+        "imagery"
+      ],
+      "restrictions": [
+        {
+          "kind": "fetched-before",
+          "date": "2025-01-01",
+          "reason": "Scope to acquisitions through 2024. A COTS/EULA licensed-distribution model was proposed and never adopted, but was never affirmatively closed on the record either."
+        }
+      ],
+      "notice_required": false
+    },
+    "landsat": {
+      "name": "Landsat 8/9",
+      "class": "public-domain",
+      "spdx": null,
+      "licence_url": "https://www.usgs.gov/landsat-missions/landsat-data-access",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": "Landsat-8 image courtesy of the U.S. Geological Survey",
+      "coverage": "Global",
+      "notes": "NOTICE DEMOTED IN v2. v1 recorded a required_notice; the credit is REQUESTED, not required. Recording it as required risks the pipeline treating a public-domain source as conditional. String varies to Landsat-9 for L9 scenes.",
+      "notice_required": false,
+      "permitted_layers": [
+        "imagery"
+      ],
+      "restrictions": []
+    },
+    "sentinel2-l2a": {
+      "name": "Sentinel-2 L2A (direct from CDSE)",
+      "class": "attribution",
+      "spdx": null,
+      "licence_url": "https://sentinels.copernicus.eu/documents/247904/690755/Sentinel_Data_Legal_Notice",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "Contains modified Copernicus Sentinel data [YEAR]",
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "The product downloads, resamples and merges, so it is unambiguously in the adapted-or-modified branch. Different instrument and different obligations from copernicus-dem; do not conflate.",
+      "permitted_layers": [
+        "imagery"
+      ],
+      "notice_required": true,
+      "restrictions": [
+        {
+          "kind": "require-collection-allowlist",
+          "allowed": [
+            "SENTINEL-2",
+            "SENTINEL-2-L2A",
+            "sentinel-2-l2a"
+          ],
+          "reason": "BLOCKING, NOT ADVISORY. CDSE serves Landsat, MODIS, ENVISAT MERIS, SMOS, Copernicus Contributing Missions and CLMS/CEMS/CAMS products alongside Sentinel. None is covered by the Sentinel Legal Notice; all fall to CDSE Terms s3, which states the data is intended for non-commercial use and grants no right to resell or redistribute. A STAC query by AREA rather than by explicit collection can silently pull one into a commercial mosaic."
+        }
+      ]
+    },
+    "ms-building-footprints": {
+      "name": "Microsoft Global ML Building Footprints",
+      "class": "attribution",
+      "spdx": "CDLA-Permissive-2.0",
+      "licence_url": "https://github.com/microsoft/GlobalMLBuildingFootprints",
+      "licence_text_sha256": "4531a67d443284d93ffed0803df5b10634aff21c3d77e381f2d48af01d875868",
+      "verified_on": "2026-09-05",
+      "notice": "Building footprints: Microsoft Global ML Building Footprints, licensed by Microsoft under CDLA-Permissive-2.0. Modified (resampled and merged).",
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "NO CREDIT STRING IS REQUIRED and Microsoft specifies none. The sole MANDATED artefact is the licence text - CDLA-Permissive-2.0 s2.1 requires a Data Recipient to make available the text of the agreement with the shared Data. A one-line credit does NOT satisfy s2.1. Taking the same data via Overture applies Overture's ODbL.",
+      "permitted_layers": [
+        "buildings"
+      ],
+      "notice_required": true,
+      "notice_kind": "full-licence-text",
+      "restrictions": [
+        {
+          "kind": "fetched-after",
+          "date": "2026-03-11",
+          "reason": "The relicensing commit is dated 2026-03-11. The dataset was ODbL from launch until then, so ANY snapshot taken before that date was received under ODbL and carries the share-alike access duty. Re-download from source and record the date."
+        }
+      ],
+      "licence_text_path": "tools/licences/texts/CDLA-Permissive-2.0.txt"
+    },
+    "google-open-buildings": {
+      "name": "Google Open Buildings v3",
+      "class": "attribution",
+      "spdx": "CC-BY-4.0",
+      "licence_url": "https://sites.research.google/gr/open-buildings/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "Building footprints: Google Open Buildings (V3), (c) Google LLC, used under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Modified: resampled and merged.",
+      "courtesy_credit": null,
+      "coverage": "Excludes the continental US, Canada and Europe. INCLUDES Mexico, Central America and most of the Caribbean.",
+      "notes": "COVERAGE CORRECTED IN v2. v1's excludes-North-America-and-Europe was wrong in the expensive direction, discarding freely-electable CC BY coverage across Mexico, Central America and the Caribbean including Puerto Rico. No canonical string is published by Google; the notice above is a construction satisfying CC BY 4.0 s3(a).",
+      "permitted_layers": [
+        "buildings"
+      ],
+      "notice_required": true,
+      "restrictions": [
+        {
+          "kind": "require-election",
+          "allowed": [
+            "CC-BY-4.0"
+          ],
+          "reason": "Dual-licensed CC BY 4.0 OR ODbL. Electing CC BY is what keeps this out of the share-alike class, and the election must be recorded at the moment of the bake, not asserted retrospectively."
+        }
+      ]
+    },
+    "_excluded_comment": "Entries below are recorded so the gate names them explicitly instead of failing with a generic 'unknown source'. A named exclusion is a better error message than a missing key.",
+    "copernicus-dem": {
+      "name": "Copernicus DEM / WorldDEM-30",
+      "class": "attribution",
+      "spdx": null,
+      "licence_url": "https://docs.sentinel-hub.com/api/latest/static/files/data/dem/resources/license/License-COPDEM-30.pdf",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "produced using Copernicus WorldDEM-30 (c) DLR e.V. 2010-2014 and (c) Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+      "courtesy_credit": null,
+      "coverage": "Global, access-restricted country list excepted",
+      "notes": "RECLASSIFIED IN v2. v1 excluded this as proprietary; the licence does not support that. Article 4 grants reproduction, distribution, communication to the public and adaptation/modification/combination; Article 5 makes it free; Article 3 makes the rights worldwide and without limitation in time. No non-commercial term, no share-alike. The maintained-until-2026 line is a data-currency commitment contradicted on its face by Article 3, and the July 2026 restriction is scoped to one VIEW service and cured by registration. The modified-form notice applies because we resample.",
+      "permitted_layers": [
+        "elevation"
+      ],
+      "notice_required": true,
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "copernicus-6c-liability",
+          "reason": "Article 6(c) forces this sentence verbatim into the product's own legal notice: 'The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30'."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "copernicus-6e-flowdown",
+          "reason": "Article 6(e) requires a contractual clause binding subsequent users to these same obligations. EULA drafting, not a notice string."
+        }
+      ]
+    },
+    "mapterhorn": {
+      "name": "Mapterhorn",
+      "class": "proprietary",
+      "spdx": null,
+      "licence_url": "https://mapterhorn.com/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED. Its contribution rule screens out share-alike and non-commercial and genuinely works. But it does NOT screen for non-transferable government permissions, and two sources fail: JAPAN, whose recorded licence includes a Survey Act approval number issued by the Director-General of GSI TO MAPTERHORN - a named approval does not flow down; and ISRAEL (isr10), recorded as ASTER GDEM Public Domain, which is Mapterhorn's own unsupported characterisation of a private third-party derivative of a METI/NASA co-owned product. Its global layer IS Copernicus GLO-30 and its recorded producer string for it is a PARAPHRASE satisfying neither Article 6(b) nor 6(c). A curation, not a clearance.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "earthdem": {
+      "name": "EarthDEM (Polar Geospatial Center)",
+      "class": "govt-restricted",
+      "spdx": null,
+      "licence_url": "https://www.pgc.umn.edu/guides/commercial-imagery/eocl-license-pgc-faq/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Mid-latitude",
+      "notes": "EXCLUDED. Majority of products restricted to US Government employees and contractors, federal agency-funded researchers and partner organisations. Eligibility to obtain this data is separate from permission to redistribute it, and the two are easy to conflate because access simply starts working. The characterisation here is PGC's own, on PGC's pages: primary evidence for how PGC distributes, secondary to the underlying licence instrument, which is not public.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "fabdem": {
+      "name": "FABDEM / FathomDEM",
+      "class": "non-commercial",
+      "spdx": "CC-BY-NC-SA-4.0",
+      "licence_url": "https://data.bris.ac.uk/data/dataset/25wfy0f9ukoge2gs7a5mqpq2j7",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED. Non-commercial AND share-alike. The only free global bare-earth terrain model, which makes it a likely accidental inclusion anywhere bare-earth elevation is wanted under vegetation. NOW ALSO EXCLUDED INDIRECTLY wherever it appears inside another product - see noaa-etopo-2022. The publisher offers a separate paid commercial licence; the open download is not it.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "eox-s2cloudless": {
+      "name": "EOX Sentinel-2 cloudless, 2018-2024 editions",
+      "class": "non-commercial",
+      "spdx": "CC-BY-NC-SA-4.0",
+      "licence_url": "https://s2maps.eu/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED. Only the 2016 edition is CC BY 4.0 and commercially usable free; 2018-2024 are CC BY-NC-SA 4.0; NO CC edition is offered for 2026. The commercial licence is non-transferable and does not cure bake-and-ship.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "maxar-open-data": {
+      "name": "Maxar / Vantor Open Data",
+      "class": "non-commercial",
+      "spdx": "CC-BY-NC-4.0",
+      "licence_url": "https://www.maxar.com/open-data",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Event-based",
+      "notes": "EXCLUDED. Non-commercial. Terms unchanged by the Maxar-to-Vantor rebrand.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "esri-world-imagery": {
+      "name": "Esri World Imagery",
+      "class": "proprietary",
+      "spdx": null,
+      "licence_url": "https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED. The keyless tile URL is not a licence. Item metadata cites the Esri Master License Agreement and states the service is not intended for exporting tiles for offline use.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "openstreetmap": {
+      "name": "OpenStreetMap",
+      "class": "share-alike",
+      "spdx": "ODbL-1.0",
+      "licence_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED from the shipped path. Internal development and evaluation are permitted - ODbL 4.5(c), internal organisational use is not Public Use. If ever admitted: 4.5(b) is scoped 'for purposes of Section 4.4' ONLY, so the 4.6 ACCESS duty still attaches, and 4.7(a) forbids technological measures restricting the granted rights - which is the real constraint on a closed offline artefact, not the 4.6 election.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "overture": {
+      "name": "Overture Maps",
+      "class": "share-alike",
+      "spdx": "ODbL-1.0",
+      "licence_url": "https://docs.overturemaps.org/attribution/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED. NOT ONE LICENCE - per theme. Base, Buildings, Divisions and Transportation each read 'License for theme: ODbL', and those are exactly the themes a terrain simulation consumes. Places is genuinely permissive. Addresses is mixed and contains data that is not open at all: Australian G-NAF under a EULA, and three Michigan counties under a non-exclusive, limited, and revocable license. A REVOCABLE upstream licence is structurally incompatible with an offline product shipped in perpetuity - revocation cannot be propagated to units in the field. Overture's own page is also stale: it still cites the Microsoft footprints as ODbL, untrue since 2026-03-11.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "openseamap": {
+      "name": "OpenSeaMap",
+      "class": "share-alike",
+      "spdx": "ODbL-1.0",
+      "licence_url": "https://www.openseamap.org/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Global",
+      "notes": "EXCLUDED. Not an independent licensor - its data lives in the OSM database and inherits ODbL wholesale; rendered chart tiles are CC BY-SA. Its own sources page carries a stale '(license CC-by-SA)' description of the seamark layer, which is OSM's PRE-2012 licence - the exact failure mode under audit.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "opendem": {
+      "name": "OpenDEM",
+      "class": "share-alike",
+      "spdx": "ODbL-1.0",
+      "licence_url": "https://www.opendem.info/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": null,
+      "courtesy_credit": null,
+      "coverage": "Europe",
+      "notes": "EXCLUDED, and it inverts the intuitive reading. SRTM is US federal public domain, but OpenDEM's DTM is computed from SRTM on the basis of OpenStreetMap data - OSM landuse drove the urban and forest corrections - and the publisher licenses the result ODbL. Elevation is not permissive merely because the radar mission was NASA's; THE CORRECTION STEP CARRIES THE LICENCE.",
+      "permitted_layers": [],
+      "restrictions": [],
+      "notice_required": false
+    },
+    "arcticdem-strips": {
+      "name": "ArcticDEM (strips)",
+      "class": "attribution",
+      "spdx": "CC-BY-4.0",
+      "licence_url": "https://www.pgc.umn.edu/guides/stereo-derived-elevation-models/pgc-dem-products-arcticdem-rema-and-earthdem/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-05",
+      "notice": "DEMs provided by the Polar Geospatial Center under NSF-OPP awards 1043681, 1559691, 1542736, 1810976, and 2129685.",
+      "courtesy_credit": null,
+      "coverage": "60N to 90N, 2m",
+      "notes": "STRIPS ONLY - clean CC BY 4.0. Strips DOI CANNOT BE ESTABLISHED: PGC's page prints the Mosaics DOI under both headings. Resolve from dataverse.harvard.edu/dataverse/pgc before generating a notice.",
+      "notice_required": true,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "restrictions": [
+        {
+          "kind": "exclude-region",
+          "region": "alaska",
+          "from": "2022-06-15",
+          "reason": "Alaska data from 15 June 2022 onward is withheld under EOCL/NextView imagery-licence restrictions. Derived DEMs under EOCL are not publicly releasable without prior NGA approval. Use usgs-3dep for Alaska instead."
+        }
+      ]
+    },
+    "arcticdem-mosaics": {
+      "name": "ArcticDEM (v4.1 mosaics)",
+      "spdx": null,
+      "verified_on": "2026-09-05",
+      "licence_url": "https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf",
+      "notice": null,
+      "notice_required": false,
+      "courtesy_credit": null,
+      "permitted_layers": [],
+      "coverage": "60N to 90N, 2m",
+      "notes": "EXCLUDED BY DEFAULT - not because the licence is bad but because it is not the licence the register thought. Every v4.1 mosaic tile is vertically registered to Copernicus GLO-30, and its water bodies are filled with GLO-30 outright, so the Copernicus obligation attaches to LAND IN EVERY TILE and cannot be escaped by tile selection. Promote to copernicus-dem's class and notices if the Article 6 obligations are accepted; otherwise use arcticdem-strips.",
+      "class": "proprietary",
+      "licence_text_sha256": null,
+      "restrictions": []
+    },
+    "glars": {
+      "name": "GLARS",
+      "spdx": null,
+      "verified_on": "2026-09-05",
+      "licence_url": "https://glars.org/data",
+      "notice": null,
+      "notice_required": false,
+      "courtesy_credit": null,
+      "permitted_layers": [],
+      "coverage": "Great Lakes",
+      "notes": "EXCLUDED. NO LICENCE GRANT FOUND - only that data is open and available to the public for viewing and free download, plus a request for acknowledgement, with imagery sourced to the NextView program. Free access is not permission to redistribute inside a shipped commercial product.",
+      "class": "proprietary",
+      "licence_text_sha256": null,
+      "restrictions": []
+    },
+    "ambientcg": {
+      "name": "ambientCG (Lennart Demes)",
+      "spdx": "CC0-1.0",
+      "verified_on": "2026-09-05",
+      "licence_url": "https://ambientcg.com/license",
+      "notice": null,
+      "notice_required": false,
+      "courtesy_credit": "Terrain textures from ambientCG.com by Lennart Demes (CC0).",
+      "permitted_layers": [
+        "texture"
+      ],
+      "coverage": "n/a",
+      "notes": "Read at ambientcg.com/license on 2026-09-05: assets are released under the Creative Commons CC0 1.0 Universal License, and the page states you may copy, modify, distribute and perform them, even for commercial purposes, without asking permission. Registering these makes the hand-maintained textures/terrain/CREDITS.md a GENERATED artefact instead.",
+      "class": "public-domain",
+      "licence_text_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "restrictions": [],
+      "licence_text_path": "tools/licences/texts/CC0-1.0.txt"
+    },
+    "threejs-examples": {
+      "name": "Three.js example assets",
+      "spdx": "MIT",
+      "verified_on": "2026-09-05",
+      "licence_url": "https://github.com/mrdoob/three.js/blob/master/LICENSE",
+      "notice": "Water normal map from the Three.js examples, Copyright (c) 2010-2026 three.js authors, MIT License.",
+      "notice_required": true,
+      "notice_kind": "full-licence-text",
+      "courtesy_credit": null,
+      "permitted_layers": [
+        "texture"
+      ],
+      "coverage": "n/a",
+      "notes": "waternormals.jpg is vendored from the Three.js examples. MIT requires the copyright notice and permission notice in all copies - a vendored binary asset is a copy.",
+      "class": "attribution",
+      "licence_text_sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+      "restrictions": [],
+      "licence_text_path": "tools/licences/texts/threejs-MIT.txt"
+    }
+  }
+}
