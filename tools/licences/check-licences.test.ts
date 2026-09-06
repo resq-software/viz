@@ -526,7 +526,11 @@ describe("licence_text_path pointing at a directory", () => {
             { encoding: "utf8" });
         const out = `${p.stdout}\n${p.stderr}`;
         ok(out.includes("missing-licence-text"), out.slice(-500));
-        ok(!out.includes("EISDIR"), "threw instead of reporting");
+        // EISDIR itself is expected — it is quoted INSIDE the finding, which is
+        // the useful part of the message. What must not appear is a stack
+        // trace, which is what an unhandled throw looks like.
+        ok(!/^\s+at .+:\d+:\d+\)?$/m.test(out), `threw instead of reporting:\n${out.slice(-600)}`);
+        ok(!out.includes("Node.js v"), "process crashed rather than exiting cleanly");
         strictEqual(p.status, 1, "should exit as a normal gate failure, not a crash");
     });
 });

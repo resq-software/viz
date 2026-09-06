@@ -14,7 +14,7 @@
  * Node 22+: node --experimental-strip-types check-licences.ts
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, lstatSync, realpathSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative, extname, resolve, sep } from "node:path";
 
@@ -195,8 +195,32 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const sha256 = (abs: string) =>
-  createHash("sha256").update(readFileSync(abs)).digest("hex");
+/** Content hash, or null when the file cannot be read at all.
+ *  One read rather than exists-then-read: the pre-check is a race, and the
+ *  read's own failure already carries the answer. */
+function sha256OrNull(abs: string): string | null {
+  try {
+    return createHash("sha256").update(readFileSync(abs)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/** Validates a licence text file, returning a reason phrase or null if fine.
+ *  `escaped` is the containment failure from pathEscape, checked first so a path
+ *  outside the root is never read. */
+function readLicenceText(abs: string, escaped: string | null): string | null {
+  if (escaped) return "is not inside the scanned root.";
+  let text: string;
+  try {
+    text = readFileSync(abs, "utf8");
+  } catch (e) {
+    // ENOENT (missing), EISDIR (a directory) and EACCES all land here, which is
+    // exactly the set of ways this can be misconfigured.
+    return `is not a readable regular file: ${(e as Error).message}`;
+  }
+  return text.trim().length === 0 ? "is empty." : null;
+}
 
 /**
  * Returns a reason string when a manifest path reaches outside ROOT, else null.
@@ -323,28 +347,17 @@ for (const area of manifest.areas ?? []) {
             `${entry.name} is notice_kind "full-licence-text" but declares no licence_text_path. `
             + `Its licence requires the verbatim text to ship with the data.`);
         } else {
-          // Must be a REGULAR FILE, not merely something that exists. A
-          // directory satisfies existsSync and then readFileSync throws EISDIR,
-          // which crashed the gate instead of reporting the bad path — a
-          // misconfiguration should be a finding, never a stack trace.
-          const abs = resolve(ROOT, p);
-          const bad = pathEscape(p);
-          let text: string | null = null;
-          if (!bad && existsSync(abs)) {
-            try {
-              text = statSync(abs).isFile() ? readFileSync(abs, "utf8") : null;
-            } catch (e) {
-              add("error", "missing-licence-text", where,
-                `${entry.name}: licence_text_path "${p}" could not be read: ${(e as Error).message}`);
-              text = "";   // suppress the generic message below
-            }
-          }
-          if (text === null) {
+          // Read it and handle failure, rather than checking first and reading
+          // after. An existsSync/statSync pre-check is a time-of-check to
+          // time-of-use race (CodeQL js/file-system-race), and it is also more
+          // code for less: one readFileSync already distinguishes every case we
+          // care about — ENOENT for missing, EISDIR for a directory, EACCES for
+          // unreadable. A directory used to crash the gate here with an
+          // unhandled EISDIR; now it is a finding like any other.
+          const problem = readLicenceText(resolve(ROOT, p), pathEscape(p));
+          if (problem) {
             add("error", "missing-licence-text", where,
-              `${entry.name}: licence_text_path "${p}" is not a readable regular file inside the root.`);
-          } else if (text.trim().length === 0) {
-            add("error", "missing-licence-text", where,
-              `${entry.name}: licence_text_path "${p}" is empty.`);
+              `${entry.name}: licence_text_path "${p}" ${problem}`);
           }
         }
       }
@@ -421,11 +434,14 @@ for (const area of manifest.areas ?? []) {
     if (escape) {
       // Do not read it. A hash of bytes outside the root is worse than no hash:
       // it would MATCH the manifest and read as corroboration.
-    } else if (!existsSync(abs)) {
-      add("error", "missing-file", norm, `Manifest references a file that is not on disk.`);
     } else {
-      const actual = sha256(abs);
-      if (actual !== tile.sha256) {
+      // Same reasoning as the licence text above: hash it and handle the
+      // failure, rather than existsSync-then-read, which is a check-then-use
+      // race and one syscall more than the read already tells us.
+      const actual = sha256OrNull(abs);
+      if (actual === null) {
+        add("error", "missing-file", norm, `Manifest references a file that cannot be read.`);
+      } else if (actual !== tile.sha256) {
         add("error", "hash-mismatch", norm,
           `Content hash ${actual.slice(0, 12)} does not match manifest ${tile.sha256.slice(0, 12)}. Re-bake; do not hand-edit the manifest.`);
       }
