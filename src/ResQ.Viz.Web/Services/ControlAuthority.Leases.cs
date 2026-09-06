@@ -38,7 +38,7 @@ public sealed partial class ControlAuthority
     {
         lock (_gate)
         {
-            Sweep(_clock.GetUtcNow());
+            Maintain(_clock.GetUtcNow());
             return _live.GetValueOrDefault(assetId);
         }
     }
@@ -58,7 +58,7 @@ public sealed partial class ControlAuthority
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            Sweep(now);
+            Maintain(now);
 
             return _live.TryGetValue(assetId, out var lease)
                 && lease.IsHeldBy(holderId, now)
@@ -72,7 +72,7 @@ public sealed partial class ControlAuthority
     {
         lock (_gate)
         {
-            Sweep(_clock.GetUtcNow());
+            Maintain(_clock.GetUtcNow());
             return [.. _live.Values.OrderBy(l => l.AssetId, StringComparer.Ordinal)];
         }
     }
@@ -101,11 +101,11 @@ public sealed partial class ControlAuthority
     {
         lock (_gate)
         {
-            return Sweep(_clock.GetUtcNow());
+            return Maintain(_clock.GetUtcNow());
         }
     }
 
-    /// <summary>Ends any lease over an asset that is being removed.</summary>
+    /// <summary>Ends a lease only when it no longer names the current asset instance.</summary>
     /// <remarks>
     /// Called by the room the instant an asset is removed
     /// (<see cref="SimulationRoom.TryRemoveAsset"/>, through
@@ -113,6 +113,13 @@ public sealed partial class ControlAuthority
     /// does rather than at whatever request next happens to sweep. It is an accuracy
     /// improvement, not the safety net: the sweep every operation runs would drop the lease
     /// regardless, which is why nothing here breaks if a future removal path forgets to call it.
+    /// <para>
+    /// The callback carries an id, not an instance token, and runs outside the room lock. A new
+    /// asset can therefore reuse that id and acquire a lease before an old callback arrives. The
+    /// current instance is compared with the lease here: a matching lease belongs to the
+    /// replacement and the delayed callback is a no-op; a missing or different instance ends the
+    /// old lease as <see cref="ControlLeaseEndReason.AssetRemoved"/>.
+    /// </para>
     /// <para>
     /// Must be called <em>outside</em> the room's lock. It takes this authority's lock and the
     /// probe then takes the room's, so calling it with the room's lock already held would invert
@@ -131,31 +138,33 @@ public sealed partial class ControlAuthority
                 return false;
             }
 
-            // A lease that had already lapsed ended at its expiry. Relabelling that as a removal
-            // would report a cause that did not happen and move the instant it happened at.
-            var stillLive = lease.IsLive(now);
-            End(
-                lease,
-                stillLive ? ControlLeaseEndReason.AssetRemoved : ControlLeaseEndReason.Expired,
-                stillLive ? now : lease.ExpiresAt,
-                now,
-                null,
-                null);
+            if (!lease.IsLive(now))
+            {
+                End(lease, ControlLeaseEndReason.Expired, lease.ExpiresAt, now, null, null);
+                return true;
+            }
+
+            if (StillNamesTheSameInstance(assetId, lease))
+            {
+                return false;
+            }
+
+            End(lease, ControlLeaseEndReason.AssetRemoved, now, now, null, null);
             return true;
         }
     }
 
-    /// <summary>Ends every lease, for a room reset or a shutdown.</summary>
+    /// <summary>Ends every lease for an explicit wholesale authority reset or shutdown.</summary>
     /// <remarks>
-    /// Called by the room after it swaps in a fresh world
-    /// (<see cref="SimulationRoom.Reset"/>, through
-    /// <see cref="IRoomLifecycleObserver.OnWorldReset"/>). The audit trail survives on purpose:
-    /// what a reset discards is authority, not the record of who held it.
+    /// Room world replacement uses <see cref="ReconcileWorldReset"/> instead: its callback arrives
+    /// after the new world is visible, so a lease may already have been issued against a valid new
+    /// instance and must not be discarded with the old population. The audit trail survives either
+    /// operation on purpose: what a reset discards is authority, not the record of who held it.
     /// <para>
-    /// <b>It deliberately does not sweep first.</b> By the time this runs the world it is
-    /// resetting has already been replaced, so the probe reports every asset as gone and a sweep
-    /// would record the whole population as <see cref="ControlLeaseEndReason.AssetRemoved"/> and
-    /// leave nothing for this method to count. A reset is its own cause and says so.
+    /// <b>It deliberately does not sweep first.</b> The caller has declared a wholesale authority
+    /// reset as the cause; probing first could relabel missing instances as
+    /// <see cref="ControlLeaseEndReason.AssetRemoved"/> and leave nothing for this method to count.
+    /// A reset is its own cause and says so.
     /// </para>
     /// <para>
     /// Must be called outside the room's lock, for the same lock-ordering reason as
@@ -191,6 +200,36 @@ public sealed partial class ControlAuthority
         }
     }
 
+    /// <summary>Ends only leases whose asset instance did not survive a room-world replacement.</summary>
+    /// <remarks>
+    /// Unlike <see cref="Reset"/>, this is safe when the room has already committed its replacement
+    /// world and a request acquired a lease before the outside-lock lifecycle callback arrived. A
+    /// lease bound to the instance currently registered under its id belongs to the new world and
+    /// remains live; a missing or different instance belonged to the discarded world and ends as
+    /// <see cref="ControlLeaseEndReason.AuthorityReset"/>. Expiry still wins when both apply.
+    /// <para>
+    /// Called outside the room lock. It takes the authority lock and probes the room, preserving
+    /// the established authority-lock to room-lock order.
+    /// </para>
+    /// </remarks>
+    /// <param name="revision">Committed room-world revision this callback represents.</param>
+    internal void ReconcileWorldReset(long revision)
+    {
+        lock (_gate)
+        {
+            if (revision <= _reconciledWorldRevision)
+            {
+                return;
+            }
+
+            Maintain(_clock.GetUtcNow());
+        }
+    }
+
+    /// <summary>Baselines a lifecycle adapter before the room publishes it to callbacks.</summary>
+    /// <param name="revision">World revision already committed when the adapter was registered.</param>
+    internal void InitializeWorldRevision(long revision) => _reconciledWorldRevision = revision;
+
     /// <summary>Refuses an operation and records the attempt.</summary>
     private ControlLeaseResult Refuse(
         DateTimeOffset now, string assetId, string? leaseId, string? holderId, string? actorId,
@@ -198,7 +237,7 @@ public sealed partial class ControlAuthority
     {
         Record(
             ControlAuditKind.Denied, now, now, assetId, leaseId, holderId, actorId, null,
-            denialCode, null);
+            denialCode, null, null);
         return ControlLeaseResult.Deny(denialCode);
     }
 
@@ -266,7 +305,8 @@ public sealed partial class ControlAuthority
 
         _live[assetId] = lease;
         Record(
-            ControlAuditKind.Acquired, now, now, assetId, leaseId, holderId, holderId, null, null, null);
+            ControlAuditKind.Acquired, now, now, assetId, leaseId, holderId, holderId,
+            null, null, null, assetInstance);
         return ControlLeaseResult.Accept(lease);
     }
 
@@ -277,7 +317,7 @@ public sealed partial class ControlAuthority
         _live[lease.AssetId] = renewed;
         Record(
             ControlAuditKind.Renewed, now, now, lease.AssetId, lease.LeaseId, lease.HolderId,
-            lease.HolderId, null, null, null);
+            lease.HolderId, null, null, null, lease.AssetInstanceId);
         return ControlLeaseResult.Accept(renewed);
     }
 
@@ -297,7 +337,7 @@ public sealed partial class ControlAuthority
         var ended = lease with { EndedAt = at, EndReason = reason };
         Record(
             KindOf(reason), at, observedAt, lease.AssetId, lease.LeaseId, lease.HolderId, actorId,
-            reason, null, justification);
+            reason, null, justification, lease.AssetInstanceId);
         return ended;
     }
 
@@ -355,4 +395,65 @@ public sealed partial class ControlAuthority
 
         return doomed.Count;
     }
+
+    /// <summary>Reconciles unseen room replacements before ordinary removal and expiry.</summary>
+    /// <remarks>
+    /// Must be called with <c>_gate</c> held. Revision is sampled before and after every instance
+    /// pass. A world swap between them discards the observations and retries; nothing is ended
+    /// until one stable revision explains the whole pass, so reset and individual-removal audit
+    /// causes cannot depend on which room lookup happened to win a race.
+    /// </remarks>
+    private int Maintain(DateTimeOffset now)
+    {
+        if (_worldRevision is null)
+        {
+            return Sweep(now);
+        }
+
+        while (true)
+        {
+            var before = _worldRevision();
+            var observations = _live.Values
+                .OrderBy(lease => lease.AssetId, StringComparer.Ordinal)
+                .Select(lease => new LeaseObservation(
+                    lease,
+                    SameInstance: StillNamesTheSameInstance(lease.AssetId, lease)))
+                .ToArray();
+            var after = _worldRevision();
+            if (before != after)
+            {
+                continue;
+            }
+
+            var replacement = after > _reconciledWorldRevision;
+            var ended = 0;
+            foreach (var observation in observations)
+            {
+                var lease = observation.Lease;
+                if (!lease.IsLive(now))
+                {
+                    End(lease, ControlLeaseEndReason.Expired, lease.ExpiresAt, now, null, null);
+                    ended++;
+                }
+                else if (!observation.SameInstance)
+                {
+                    End(
+                        lease,
+                        replacement
+                            ? ControlLeaseEndReason.AuthorityReset
+                            : ControlLeaseEndReason.AssetRemoved,
+                        now,
+                        now,
+                        null,
+                        null);
+                    ended++;
+                }
+            }
+
+            _reconciledWorldRevision = Math.Max(_reconciledWorldRevision, after);
+            return ended;
+        }
+    }
+
+    private readonly record struct LeaseObservation(ControlLease Lease, bool SameInstance);
 }

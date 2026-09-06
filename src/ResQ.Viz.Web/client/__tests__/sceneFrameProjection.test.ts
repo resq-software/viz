@@ -205,6 +205,32 @@ function visibleOnly(drones: readonly DroneState[], ids: readonly string[]): Dro
   return drones.filter((d) => keep.has(d.id));
 }
 
+describe('scenario state remains authoritative through projection', () => {
+  it('copies a present scenario', () => {
+    const scenario = { name: 'flood-response', startedAtSimulationSeconds: 0, revision: 1 };
+
+    const projected = projectSnapshot(
+      snapshot({ scenario }), ABSURD_WALL_MS, new DescriptorCache(),
+    );
+
+    expect(projected.scenario).toBe(scenario);
+  });
+
+  it('preserves unknown from an older payload', () => {
+    const projected = projectSnapshot(snapshot(), ABSURD_WALL_MS, new DescriptorCache());
+
+    expect(projected.scenario).toBeUndefined();
+  });
+
+  it('preserves an explicit clear', () => {
+    const projected = projectSnapshot(
+      snapshot({ scenario: null }), ABSURD_WALL_MS, new DescriptorCache(),
+    );
+
+    expect(projected.scenario).toBeNull();
+  });
+});
+
 // ── C1: identity ────────────────────────────────────────────────────────────
 
 describe('mesh links are resolved by asset id, not by list position', () => {

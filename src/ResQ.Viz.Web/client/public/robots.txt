@@ -1,36 +1,125 @@
 # ResQ Viz — https://viz.resq.software
+#
+# Mirrors the resq.software apex origin policy.
+#
+# `Content-Signal:` lines are the AIPREF / Content Signals mechanism for
+# declaring AI-usage preferences (https://contentsignals.org). They are emitted
+# BARE rather than `#`-commented so Content-Signal-aware crawlers actually
+# detect them; RFC 9309 §2.2.4 requires crawlers to IGNORE unrecognized lines,
+# so they are a safe no-op for bots that don't understand them.
+#
+# Hybrid policy:
+#   default `*`            : search=yes, ai-train=no,  ai-input=no  (conservative)
+#   AI training crawlers   : search=no,  ai-train=no,  ai-input=no  (full opt-out)
+#   AI realtime crawlers   : search=yes, ai-train=no,  ai-input=yes (preserve
+#                            visibility in ChatGPT / Claude / Perplexity fetches)
+#
+# Unlike the apex site, `/assets/` is deliberately NOT disallowed. The viz is a
+# client-rendered WebGL app: blocking its JS/CSS chunks would leave Googlebot
+# rendering a blank canvas. Only non-content surfaces are blocked — the REST
+# API, the SignalR hub, and the Cloudflare edge path.
+#
+# Note: this file is the *origin* policy. If Cloudflare's "Managed robots.txt"
+# toggle is ON for this zone, Cloudflare serves its own robots.txt at the edge
+# and this file is decorative.
+#
+# Canonical user-agent strings:
+#   OpenAI       https://platform.openai.com/docs/bots
+#   Anthropic    https://support.anthropic.com/en/articles/8896518
+#   Google AI    https://blog.google/technology/ai/an-update-on-web-publisher-controls/
+#   Perplexity   https://docs.perplexity.ai/guides/bots
+#   Apple        https://support.apple.com/en-us/119829
+#   Common Crawl https://commoncrawl.org/ccbot
+#   ByteDance    https://www.useragentstring.com/Bytespider.php
+#   Amazon       https://developer.amazon.com/amazonbot
+
 User-agent: *
+Content-Signal: ai-train=no, search=yes, ai-input=no
 Allow: /
 Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
 
-# ── AI training crawlers — opt out (mirrors resq.software policy) ────────────
+# ── AI training crawlers — full opt-out ─────────────────────────────────────
+
 User-agent: GPTBot
-Disallow: /
-
-User-agent: Google-Extended
-Disallow: /
-
-User-agent: CCBot
+Content-Signal: ai-train=no, search=no, ai-input=no
 Disallow: /
 
 User-agent: ClaudeBot
+Content-Signal: ai-train=no, search=no, ai-input=no
+Disallow: /
+
+User-agent: Google-Extended
+Content-Signal: ai-train=no, search=no, ai-input=no
+Disallow: /
+
+User-agent: CCBot
+Content-Signal: ai-train=no, search=no, ai-input=no
 Disallow: /
 
 User-agent: Bytespider
+Content-Signal: ai-train=no, search=no, ai-input=no
 Disallow: /
 
 User-agent: Amazonbot
+Content-Signal: ai-train=no, search=no, ai-input=no
 Disallow: /
 
 User-agent: Applebot-Extended
+Content-Signal: ai-train=no, search=no, ai-input=no
 Disallow: /
 
-# ── AI realtime / search assistants — allowed ───────────────────────────────
+# ── AI realtime / search assistants — allowed, but not for training ─────────
+
 User-agent: ChatGPT-User
+Content-Signal: ai-train=no, search=yes, ai-input=yes
 Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
+
+User-agent: OAI-SearchBot
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
+
+User-agent: Claude-Web
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
+
+User-agent: Claude-User
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
+
+User-agent: Claude-SearchBot
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
 
 User-agent: PerplexityBot
+Content-Signal: ai-train=no, search=yes, ai-input=yes
 Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
+
+User-agent: Perplexity-User
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+Allow: /
+Disallow: /api/
+Disallow: /viz
+Disallow: /cdn-cgi/
 
 Sitemap: https://viz.resq.software/sitemap.xml
 Host: https://viz.resq.software

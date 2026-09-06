@@ -81,6 +81,84 @@ public sealed partial class ScenarioCatalogTests
     /// <summary>Assets of every domain a single session admits, mirroring <c>SimV2Controller</c>'s cap.</summary>
     private const int SessionAssetCap = 200;
 
+    /// <summary>The immutable discovery catalog is derived from every validated configured row.</summary>
+    [Fact]
+    public void Scenario_Summaries_Match_All_Validated_Configured_Presets()
+    {
+        var service = new ScenarioService(AppConfiguration());
+        var expected = new[]
+        {
+            Summary("single", 1, 0, 0, (VehicleClass.Multirotor, 1)),
+            Summary("swarm-5", 5, 0, 0, (VehicleClass.Multirotor, 5)),
+            Summary("swarm-20", 20, 0, 0, (VehicleClass.Multirotor, 20)),
+            Summary("sar", 3, 0, 0, (VehicleClass.Multirotor, 3)),
+            Summary("multi-agency-sar", 12, 0, 0, (VehicleClass.Multirotor, 12)),
+            Summary("wildfire-interface", 5, 0, 0, (VehicleClass.Multirotor, 5)),
+            Summary("hurricane-melissa", 6, 0, 0, (VehicleClass.Multirotor, 6)),
+            Summary("flood-riverine", 5, 0, 0, (VehicleClass.Multirotor, 5)),
+            Summary("urban-collapse", 6, 0, 0, (VehicleClass.Multirotor, 6)),
+            Summary("alpine-sar", 4, 0, 0, (VehicleClass.Multirotor, 4)),
+            Summary("canyon-sar", 4, 0, 0, (VehicleClass.Multirotor, 4)),
+            Summary(
+                "mixed-ground", 3, 3, 0,
+                (VehicleClass.Multirotor, 3), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.DifferentialRover, 1), (VehicleClass.TrackedRover, 1)),
+            Summary(
+                "ground-convoy", 1, 3, 0,
+                (VehicleClass.Multirotor, 1), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.DifferentialRover, 1), (VehicleClass.TrackedRover, 1)),
+            Summary(
+                "coastal-search", 3, 2, 3,
+                (VehicleClass.Multirotor, 3), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.TrackedRover, 1), (VehicleClass.SurfaceVessel, 3)),
+            Summary(
+                "coastal-transit", 1, 0, 3,
+                (VehicleClass.Multirotor, 1), (VehicleClass.SurfaceVessel, 3)),
+            Summary(
+                "flood-response", 3, 3, 2,
+                (VehicleClass.Multirotor, 3), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.DifferentialRover, 1), (VehicleClass.TrackedRover, 1),
+                (VehicleClass.SurfaceVessel, 2)),
+            Summary(
+                "port-incident", 2, 3, 3,
+                (VehicleClass.Multirotor, 2), (VehicleClass.AckermannRover, 2),
+                (VehicleClass.TrackedRover, 1), (VehicleClass.SurfaceVessel, 3)),
+            Summary(
+                "link-loss-divergence", 1, 1, 1,
+                (VehicleClass.Multirotor, 1), (VehicleClass.AckermannRover, 1),
+                (VehicleClass.SurfaceVessel, 1)),
+            Summary(
+                "mixed-load-150", 50, 50, 50,
+                (VehicleClass.Multirotor, 50), (VehicleClass.AckermannRover, 17),
+                (VehicleClass.DifferentialRover, 17), (VehicleClass.TrackedRover, 16),
+                (VehicleClass.SurfaceVessel, 50)),
+        };
+
+        service.ScenarioSummaries.Should().BeEquivalentTo(expected);
+
+        var summaries = service.ScenarioSummaries.Should()
+            .BeAssignableTo<IList<ScenarioSummary>>().Subject;
+        Action clearSummaries = () => summaries.Clear();
+        clearSummaries.Should().Throw<NotSupportedException>();
+
+        var classCounts = service.ScenarioSummaries[0].VehicleClassCounts.Should()
+            .BeAssignableTo<IDictionary<string, int>>().Subject;
+        Action clearClassCounts = () => classCounts.Clear();
+        clearClassCounts.Should().Throw<NotSupportedException>();
+    }
+
+    private static ScenarioSummary Summary(
+        string name,
+        int air,
+        int ground,
+        int surface,
+        params (VehicleClass Class, int Count)[] classes) =>
+        new(
+            Name: name,
+            AssetCount: air + ground + surface,
+            DomainCounts: new ScenarioDomainCounts(air, ground, surface),
+            VehicleClassCounts: classes.ToDictionary(x => x.Class.ToString(), x => x.Count));
+
     // ─── Every preset spawns what it declares ───────────────────────────────
 
     /// <summary>A preset spawns one asset per configured row, in order, in the declared domain.</summary>
@@ -277,12 +355,28 @@ public sealed partial class ScenarioCatalogTests
     /// imply: a rover that stops has a last known position that stays true however stale the
     /// report, and a hull that cannot hold station does not.
     /// </para>
+    /// <para>
+    /// The rover is <b>parked explicitly</b>, and that matters. The ground assertion used to hold
+    /// for free, because nothing in the build ever tasked a ground asset and every rover therefore
+    /// sat at its spawn — so the test read as "a stopped rover" while actually measuring "a rover
+    /// nobody had given anywhere to go". Once <see cref="GroundSurfaceCoordinator"/> began driving
+    /// the ground fleet that premise evaporated and this failed, correctly: a rover under way does
+    /// accumulate position error. Parking it restores the condition the assertion is about rather
+    /// than relaxing the assertion to match whatever the fleet happens to be doing, and it
+    /// exercises the operator-override path on the way past — a parked rover that the coordinator
+    /// then retasked would fail here too.
+    /// </para>
     /// </remarks>
     [Fact]
     public void The_Link_Loss_Preset_Publishes_A_Different_Failure_Behaviour_Per_Domain()
     {
         var room = CreateRoom(TerrainFor("link-loss-divergence"));
         new ScenarioService(AppConfiguration()).TryRun("link-loss-divergence", room).Should().BeTrue();
+
+        var rover = room.CaptureAssetFrame().Descriptors
+            .Should().ContainSingle(d => d.Domain == AssetDomain.Ground).Which;
+        room.SendAssetCommand(new SimulatedAssetCommand(AssetCommandKind.Park, rover.AssetId))
+            .IsAccepted.Should().BeTrue("the assertion below is about a rover that is stopped");
 
         for (int i = 0; i < StepsBeforeJudging; i++)
         {

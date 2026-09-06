@@ -423,8 +423,8 @@ export function saveSelection(
 /** Construction options. Everything is injectable so the control can be driven
  *  headlessly in a test. */
 export interface AssetFilterOptions {
-  /** Element the control appends itself to. Defaults to `document.body`. */
-  readonly mount?: HTMLElement;
+  /** Explicit operator-shell mount. Fleet controls never fall back to body flow. */
+  readonly mount: HTMLElement;
   /** Persistence target, or `null` to keep the selection in memory only. */
   readonly storage?: SelectionStorage | null;
   /** Whether to hide a facet whose values would offer no choice. On by default:
@@ -448,6 +448,19 @@ interface FacetParts {
   readonly chips: Map<string, ChipParts>;
 }
 
+interface DomainTabParts {
+  readonly button: HTMLButtonElement;
+  readonly count: HTMLSpanElement;
+  readonly label: string;
+}
+
+const DOMAIN_TABS = [
+  { key: 'all', label: 'All', token: null },
+  { key: 'air', label: 'Air', token: 'air' },
+  { key: 'ground', label: 'Ground', token: 'ground' },
+  { key: 'surface', label: 'Surface', token: 'surface' },
+] as const;
+
 /**
  * The fleet filter: facet checkboxes with live counts, plus the selection they
  * produce.
@@ -461,6 +474,9 @@ export class AssetFilter {
   private readonly _root: HTMLElement;
   private readonly _tally: HTMLParagraphElement;
   private readonly _clear: HTMLButtonElement;
+  private readonly _domainTabs = new Map<string, DomainTabParts>();
+  private readonly _customDomainTab: HTMLButtonElement;
+  private readonly _expanded: HTMLDetailsElement;
   private readonly _facetHost: HTMLDivElement;
   private readonly _parts = new Map<FacetKey, FacetParts>();
   private readonly _storage: SelectionStorage | null;
@@ -470,7 +486,8 @@ export class AssetFilter {
   private _selection: Record<FacetKey, string[]>;
   private _lastTally = '';
 
-  constructor(options: AssetFilterOptions = {}) {
+  constructor(options: AssetFilterOptions) {
+    if (!options?.mount) throw new Error('AssetFilter requires an explicit mount');
     this._storage = options.storage === undefined ? defaultStorage() : options.storage;
     this._hideSingle = options.hideSingleValueFacets ?? true;
     this._selection = loadSelection(this._storage) as Record<FacetKey, string[]>;
@@ -500,8 +517,34 @@ export class AssetFilter {
     this._facetHost = document.createElement('div');
     this._facetHost.className = 'af-facets';
 
-    this._root.append(head, this._facetHost);
-    (options.mount ?? document.body).appendChild(this._root);
+    const tabs = document.createElement('div');
+    tabs.className = 'af-domain-tabs';
+    tabs.setAttribute('role', 'group');
+    tabs.setAttribute('aria-label', 'Asset domain');
+    for (const tab of DOMAIN_TABS) {
+      const parts = this._createDomainTab(tab.key, tab.label);
+      parts.button.addEventListener('click', () => {
+        const selection = this.selection;
+        this.setSelection({ ...selection, domain: tab.token === null ? [] : [tab.token] });
+      });
+      this._domainTabs.set(tab.key, parts);
+      tabs.appendChild(parts.button);
+    }
+    const custom = this._createDomainTab('custom', 'Custom');
+    this._customDomainTab = custom.button;
+    this._customDomainTab.hidden = true;
+    this._customDomainTab.addEventListener('click', () => { this._expanded.open = true; });
+    tabs.appendChild(this._customDomainTab);
+
+    const expanded = document.createElement('details');
+    this._expanded = expanded;
+    expanded.className = 'af-expanded';
+    const summary = document.createElement('summary');
+    summary.textContent = 'More filters';
+    expanded.append(summary, this._facetHost);
+
+    this._root.append(head, tabs, expanded);
+    options.mount.appendChild(this._root);
   }
 
   /** The control's root element, for a host that wants to place it itself. */
@@ -549,11 +592,12 @@ export class AssetFilter {
   }
 
   /** Reconciles the offered values and counts with the current fleet. */
-  update(assets: readonly FilterableAsset[]): void {
+  update(assets: readonly FilterableAsset[], shownCount?: number): void {
+    this._renderDomainTabs(assets);
     const facets = computeFacets(assets, this._selection);
     for (const facet of facets) this._renderFacet(facet);
 
-    const visible = applyFilter(assets, this._selection).length;
+    const visible = shownCount ?? applyFilter(assets, this._selection).length;
     const tally = visible === assets.length
       ? `${assets.length} shown`
       : `${visible} of ${assets.length} shown`;
@@ -636,6 +680,61 @@ export class AssetFilter {
 
     label.append(input, text, count);
     return { label, input, text, count };
+  }
+
+  private _createDomainTab(key: string, labelText: string): DomainTabParts {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'af-domain-tab';
+    button.dataset['domainTab'] = key;
+    button.setAttribute('aria-pressed', 'false');
+    const label = document.createElement('span');
+    label.textContent = labelText;
+    const count = document.createElement('span');
+    count.className = 'af-domain-tab-count';
+    count.setAttribute('aria-hidden', 'true');
+    button.append(label, count);
+    return { button, count, label: labelText };
+  }
+
+  private _renderDomainTabs(assets: readonly FilterableAsset[]): void {
+    const counts = new Map<string, number>();
+    for (const asset of assets) {
+      const token = enumToken(AssetDomain, asset.domain);
+      counts.set(token, (counts.get(token) ?? 0) + 1);
+    }
+    const domains = this._selection.domain;
+    for (const tab of DOMAIN_TABS) {
+      const parts = this._domainTabs.get(tab.key);
+      if (!parts) continue;
+      const count = tab.token === null ? assets.length : counts.get(tab.token) ?? 0;
+      if (parts.count.textContent !== String(count)) parts.count.textContent = String(count);
+      const ariaLabel = `${parts.label}, ${count} ${count === 1 ? 'asset' : 'assets'}`;
+      if (parts.button.getAttribute('aria-label') !== ariaLabel) {
+        parts.button.setAttribute('aria-label', ariaLabel);
+      }
+      const active = tab.token === null
+        ? domains.length === 0
+        : domains.length === 1 && domains[0] === tab.token;
+      if (parts.button.getAttribute('aria-pressed') !== String(active)) {
+        parts.button.setAttribute('aria-pressed', String(active));
+      }
+    }
+    const standard = domains.length === 1
+      && (domains[0] === 'air' || domains[0] === 'ground' || domains[0] === 'surface');
+    const custom = domains.length > 0 && !standard;
+    let customCount = 0;
+    if (custom) {
+      for (const asset of assets) {
+        if (domains.includes(enumToken(AssetDomain, asset.domain))) customCount += 1;
+      }
+    }
+    this._customDomainTab.hidden = !custom;
+    this._customDomainTab.setAttribute('aria-pressed', String(custom));
+    this._customDomainTab.setAttribute(
+      'aria-label',
+      `Custom domain filter, ${customCount} ${customCount === 1 ? 'asset' : 'assets'}`,
+    );
   }
 
   private _toggle(key: FacetKey, token: string, on: boolean): void {

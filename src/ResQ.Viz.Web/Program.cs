@@ -67,6 +67,18 @@ builder.Services.AddSingleton<ResQ.Viz.Web.Services.SimulationManager>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ResQ.Viz.Web.Services.SimulationManager>());
 builder.Services.AddSingleton<ResQ.Viz.Web.Services.RoomSessionService>();
 
+// The forced-legacy browser-verification seam. Resolved HERE, once, from the host environment
+// rather than per request, because that is what makes it impossible to reach from a request: no
+// query string, header or cookie participates in the decision, and the hub is handed the answer.
+// OFF unless ASPNETCORE_ENVIRONMENT is exactly "BrowserVerification" AND
+// BrowserVerification:RejectV2Subscriptions is true — see BrowserVerificationMode for what the
+// two conditions do and, more usefully, what they do not do. Registered unconditionally, and
+// resolving to the disabled singleton in every other environment, so there is exactly one code
+// path into the hub and no environment-shaped branch in this file to get wrong.
+builder.Services.AddSingleton(
+    ResQ.Viz.Web.Services.BrowserVerificationMode.FromHost(
+        builder.Environment, builder.Configuration));
+
 // Control authority: which operator may command each asset, for how long, and what this process
 // is attached to. Resolved from configuration HERE, at registration time rather than on first
 // request, because the whole value of the mode guard is that a configuration this build has no
@@ -155,15 +167,34 @@ builder.Services.AddViteServices();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    // Budgets are configuration with the shipped numbers as defaults, so no
+    // deployment changes behaviour unless it says so.
+    //
+    // These windows are GLOBAL, not per-caller: ten destructive calls a minute
+    // across every client this process serves. That is capacity protection for a
+    // single small host — replacing the world is expensive, and the cap bounds
+    // what the box can be asked to do rather than what any one caller may ask
+    // for. The cost is shared fate: one client resetting scenarios in a loop
+    // denies the endpoint to everyone else. Worth revisiting if this ever serves
+    // more than one operator at a time. Partitioning by caller is the usual
+    // answer and a larger change than it looks, because the abuse case is
+    // precisely a caller who can rotate identity.
+    //
+    // The browser suite raises this through configuration rather than through a
+    // code path of its own. Booting three consoles inside one minute needs more
+    // than the budget allows — measured, the first two tests leave exactly one
+    // permit, and the third console's scenario start returns 429, so it shows an
+    // empty room. A test build that took a different branch here would be
+    // verifying a binary no deployment runs.
     options.AddFixedWindowLimiter("destructive", opt =>
     {
-        opt.PermitLimit = 10;
+        opt.PermitLimit = builder.Configuration.GetValue("RateLimits:DestructivePermitsPerMinute", 10);
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });
     options.AddFixedWindowLimiter("general", opt =>
     {
-        opt.PermitLimit = 60;
+        opt.PermitLimit = builder.Configuration.GetValue("RateLimits:GeneralPermitsPerMinute", 60);
         opt.Window = TimeSpan.FromMinutes(1);
         opt.QueueLimit = 0;
     });
@@ -307,7 +338,42 @@ app.MapControllers();
 app.MapHub<ResQ.Viz.Web.Hubs.VizHub>("/viz");
 
 if (!app.Environment.IsDevelopment())
-    app.MapFallbackToFile("index.html");  // serves Vite-built wwwroot/index.html in production
+{
+    // The SPA fallback serves the Vite-built wwwroot/index.html. It is served byte for byte in
+    // every environment but one: a server running under BrowserVerification with
+    // BrowserVerification:SuspendSceneRendering set adds a single meta tag, which the client reads
+    // once at startup and answers by skipping the WebGL draw at the end of each animation frame.
+    //
+    // The branch is here, at the fallback, rather than inside a middleware that inspects every
+    // response, because that keeps the reach of the seam legible: exactly one route can serve
+    // marked HTML, and only when this process was started in an environment no deployment sets.
+    // SceneRenderingSuspension carries the measurement that motivated it and — the part worth
+    // reading — the list of what a suite running against such a server no longer covers.
+    var browserVerification =
+        app.Services.GetRequiredService<ResQ.Viz.Web.Services.BrowserVerificationMode>();
+
+    if (browserVerification.SuspendSceneRendering)
+    {
+        var webRoot = app.Environment.WebRootPath
+            ?? Path.Combine(app.Environment.ContentRootPath, "wwwroot");
+        var indexPath = Path.Combine(webRoot, "index.html");
+
+        // Read and marked once. Lazy caches the exception too, so a document this cannot mark
+        // answers 500 on every navigation with the same explanation rather than intermittently.
+        var markedIndex = new Lazy<string>(() =>
+            ResQ.Viz.Web.Services.SceneRenderingSuspension.Mark(File.ReadAllText(indexPath)));
+
+        app.MapFallback(async context =>
+        {
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.WriteAsync(markedIndex.Value);
+        });
+    }
+    else
+    {
+        app.MapFallbackToFile("index.html");
+    }
+}
 
 app.Run();
 

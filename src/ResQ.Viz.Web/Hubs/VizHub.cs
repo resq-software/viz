@@ -66,12 +66,66 @@ public sealed partial class VizHub : Hub
 {
     private readonly RoomSessionService _sessions;
     private readonly ILogger<VizHub> _logger;
+    private readonly BrowserVerificationMode _verification;
 
     /// <summary>Initialises the hub.</summary>
-    public VizHub(RoomSessionService sessions, ILogger<VizHub> logger)
+    /// <remarks>
+    /// <paramref name="verification"/> is optional and defaults to
+    /// <see cref="BrowserVerificationMode.Disabled"/>, which is the whole of the default-off
+    /// guarantee at this layer: a hub built without one — every construction in the test suite,
+    /// and any future call site that forgets — cannot be a hub that refuses v2. The container
+    /// resolves the singleton registered in <c>Program.cs</c>, which is itself
+    /// <see cref="BrowserVerificationMode.Disabled"/> outside the one dedicated environment.
+    /// </remarks>
+    /// <param name="sessions">Resolves the room bound to a connection's session cookie.</param>
+    /// <param name="logger">Logger for connection lifecycle and subscription changes.</param>
+    /// <param name="verification">Forced-legacy seam; omitted means off.</param>
+    public VizHub(
+        RoomSessionService sessions,
+        ILogger<VizHub> logger,
+        BrowserVerificationMode? verification = null)
     {
         _sessions = sessions;
         _logger = logger;
+        _verification = verification ?? BrowserVerificationMode.Disabled;
+    }
+
+    /// <summary>Refuses a positive v2 opt-in while the forced-legacy seam is on.</summary>
+    /// <remarks>
+    /// Called at the very top of both subscription methods, before the room lookup and before any
+    /// group membership, connection item or subscriber count is touched, so a refusal leaves the
+    /// connection exactly where it was — on the v1 room group it joined at handshake, which is
+    /// the stream the seam exists to force it onto.
+    /// <para>
+    /// Only the positive direction is gated. Refusing <c>(false)</c> would strand a connection
+    /// that had already subscribed with no way back to full snapshots.
+    /// </para>
+    /// <para>
+    /// When <see cref="BrowserVerificationMode.RejectV2Subscriptions"/> is false — which is every
+    /// build outside the dedicated verification environment — this method returns without doing
+    /// anything, and the caller runs unchanged.
+    /// </para>
+    /// </remarks>
+    /// <param name="subscribed">The caller's requested direction.</param>
+    /// <param name="method">Hub method being gated, for the exception text.</param>
+    /// <exception cref="HubException">The seam is on and <paramref name="subscribed"/> is true.</exception>
+    private void RejectV2SubscriptionIfForcedLegacy(bool subscribed, string method)
+    {
+        if (!subscribed || !_verification.RejectV2Subscriptions)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "Refusing {Method} from {ConnectionId}: this server runs in the "
+            + "{Environment} environment with {Key} set, which forces every client onto the v1 "
+            + "frame stream so the legacy fallback can be exercised.",
+            method, Context.ConnectionId,
+            BrowserVerificationMode.EnvironmentName, BrowserVerificationMode.RejectV2ConfigurationKey);
+
+        throw new HubException(
+            $"{method} refused: this server is running in forced-legacy browser-verification "
+            + "mode. The v1 frame stream is unaffected.");
     }
 
     /// <summary>Client method that receives the v1 <see cref="VizFrame"/>.</summary>
@@ -187,6 +241,8 @@ public sealed partial class VizHub : Hub
     /// <returns>The schema version this server stamps into <see cref="VizSnapshotV2.SchemaVersion"/>.</returns>
     public async Task<string> SubscribeSnapshots(bool subscribed)
     {
+        RejectV2SubscriptionIfForcedLegacy(subscribed, nameof(SubscribeSnapshots));
+
         if (!Context.Items.TryGetValue(ConnectionRoomKey, out var roomObj) || roomObj is not SimulationRoom room)
         {
             _logger.LogWarning("SubscribeSnapshots from {ConnectionId} with no bound room; ignoring.",

@@ -73,6 +73,52 @@ describe('deferred editor suite wiring', () => {
         ).toBe(false);
     });
 
+    it('records the schema that is actually driving the scene', () => {
+        // A v2 session that kept recording v1 frames would replay an air-only
+        // fleet: every ground asset, surface asset and observed contact would
+        // vanish on scrub, and the timeline would present that as the run.
+        const frameHandler = appSrc.slice(
+            appSrc.indexOf("c.on('ReceiveFrame'"),
+            appSrc.indexOf("c.on('ReceiveSnapshotV2'"),
+        );
+        expect(frameHandler).toContain("dvr?.record({ kind: 'v1', frame })");
+        expect(frameHandler.indexOf('if (_v2Active) return;'))
+            .toBeLessThan(frameHandler.indexOf('dvr?.record('));
+
+        const ingest = appSrc.slice(
+            appSrc.indexOf('function _ingestSnapshot'),
+            appSrc.indexOf('function _resumeHeldSnapshot'),
+        );
+        expect(ingest).toContain("dvr?.record({ kind: 'v2', snapshot: projected })");
+        // Only a reconstructed, projected frame is something a playhead can land
+        // on, and it must be captured before the replay bail-out returns.
+        expect(ingest.indexOf('projectSnapshot')).toBeLessThan(ingest.indexOf('dvr?.record('));
+        expect(ingest.indexOf('dvr?.record('))
+            .toBeLessThan(ingest.indexOf('if (dvr && !dvr.isLive) return;'));
+    });
+
+    it('hands the DVR the live edge rather than the frozen ring on Go Live', () => {
+        const init = initBody();
+        expect(init).toMatch(/getLatestLiveFrame:\s*\(\)\s*=>\s*_latestLiveRecord\(\)/);
+        expect(init).toMatch(/onRefreshLiveResources:[\s\S]*?controlAuthority\?\.refresh\(\)/);
+        // Recording freezes during replay, so the app's own newest held state is
+        // the only live edge there is.
+        const provider = appSrc.slice(
+            appSrc.indexOf('function _latestLiveRecord'),
+            appSrc.indexOf('function _renderV1ReplayFrame'),
+        );
+        expect(provider).toMatch(/_v2Active[\s\S]*?kind: 'v2', snapshot: _lastSnapshot/);
+        expect(provider).toMatch(/kind: 'v1', frame: _lastFrame/);
+        expect(provider).not.toContain('recorder');
+    });
+
+    it('lets the recorder own its retention rather than fixing a v1 window', () => {
+        // The window is per-schema — 3,000 v1 frames or 180 v2 snapshots — and a
+        // caller-supplied 3,000 would apply the legacy window to snapshots that
+        // are three orders of magnitude larger.
+        expect(initBody()).toMatch(/recorder = new m_rec\.FrameRecorder\(\)/);
+    });
+
     it('keeps the suite out of the entry chunk', () => {
         // A static `import { Dvr } from './editor/dvr'` would pull the suite back
         // into the entry chunk and blow the client-budget gate. Type-only imports
@@ -81,6 +127,55 @@ describe('deferred editor suite wiring', () => {
         const staticEditorImport =
             /^import\s+(?!type\b)[^;]*from\s+'\.\/(editor|sensors)\/(?!selection)/m;
         expect(staticEditorImport.test(appSrc)).toBe(false);
-        expect(appSrc).toMatch(/await Promise\.all\(\s*\[\s*import\('\.\/editor\//);
+        expect(appSrc).toMatch(/await Promise\.all\(\s*\[\s*import\('\.\/sensors\//);
+        expect(initBody()).toContain("import('./editor/workspace')");
+    });
+
+    it('keeps the recording surfaces independent of the Editor', () => {
+        // An operator who never opens Editor still watches, scrubs and switches
+        // cameras, so the DVR, the recorder, the camera modes, the FPV OSD and
+        // the onboard PiP are built after paint regardless. Only the authoring
+        // surfaces wait for the toggle.
+        // Scoped to the eager `Promise.all`, which is what "fetched after paint"
+        // means. A dynamic import inside a callback is not an eager load.
+        const init = initBody();
+        const eager = init.slice(init.indexOf('await Promise.all('), init.indexOf(']);'));
+        for (const overlay of [
+            "import('./sensors/onboardPip')", "import('./sensors/fpvOsd')",
+            "import('./cameraMode')", "import('./editor/recorder')", "import('./editor/dvr')",
+        ]) expect(eager, overlay).toContain(overlay);
+        for (const authoring of [
+            "import('./editor/dock')", "import('./editor/outliner')",
+            "import('./editor/inspector')", "import('./editor/gizmo')",
+            "import('./editor/sceneConfig')",
+        ]) expect(eager, authoring).not.toContain(authoring);
+    });
+
+    it('builds every authoring surface through the one workspace owner', () => {
+        // Two owners of "is the Editor showing" is how a control ends up mounted
+        // with nothing able to reveal it. app.ts constructs the workspace and
+        // keeps only the handles its per-frame updates and hotkeys need.
+        const init = initBody();
+        expect(init).toMatch(/editorWorkspace = new m_ws\.EditorWorkspace\(/);
+        expect(init).toMatch(/mount: operatorShell\.mounts\.editor/);
+        expect(init).toMatch(/isOpen: \(\) => operatorShell\.editorOpen/);
+        expect(init).toMatch(/setOpen: open => operatorShell\.setEditorOpen\(open\)/);
+        for (const surface of ['editorDock', 'outliner', 'inspector', 'gizmo']) {
+            expect(
+                new RegExp(`${surface} = surfaces\\.`).test(init),
+                `${surface} is not taken from the workspace's surfaces`,
+            ).toBe(true);
+        }
+        // app.ts never reaches past the workspace to build one itself.
+        expect(init).not.toContain('new m_dock.EditorDock');
+        expect(init).not.toContain('new m_gizmo.TransformGizmo');
+        expect(init).not.toContain('new m_cfg.SceneConfigPanel');
+    });
+
+    it('tears the workspace down with everything else the session subscribed', () => {
+        // The workspace holds a window resize listener and a MutationObserver on
+        // the editor layer. Every other long-lived subscriber in this block is
+        // dropped here; one that is not is a listener nobody can reach to stop.
+        expect(appSrc).toMatch(/beforeunload[\s\S]*?editorWorkspace\?\.dispose\(\)/);
     });
 });

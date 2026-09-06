@@ -69,7 +69,8 @@ public static class VizSnapshotV2Builder
             capture.BackhaulKilled,
             capture.Transport.Paused,
             capture.Transport.Speed,
-            capture.Transport.Tick);
+            capture.Transport.Tick,
+            capture.ScenarioKey);
     }
 
     /// <summary>Builds the v2 frame for a capture, reusing the v1 frame already built from it.</summary>
@@ -127,7 +128,8 @@ public static class VizSnapshotV2Builder
             // published.
             Network: BuildNetworkState(capture),
             EnvironmentRevision: capture.EnvironmentRevision,
-            DescriptorsComplete: true);
+            DescriptorsComplete: true,
+            Scenario: capture.Scenario);
     }
 
     /// <summary>Builds the v2 frame for a capture, building the v1 frame it needs on the way.</summary>

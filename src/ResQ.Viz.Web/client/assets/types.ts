@@ -766,6 +766,14 @@ export interface TransportState {
   tick: number;
 }
 
+/** Named scenario currently active in one room. Its revision remains monotonic across starts
+ *  and direct resets, so presentation effects can run once per authoritative change. */
+export interface ScenarioSessionState {
+  name: string;
+  startedAtSimulationSeconds: number;
+  revision: number;
+}
+
 /** Schema version this client is written against. Compare, do not parse. */
 export const V2_SCHEMA_VERSION = '2.0';
 
@@ -795,6 +803,8 @@ export interface VizSnapshotV2 {
   /** False marks a delta frame carrying only changed descriptors, so a missing descriptor means
    *  "unchanged" and not "asset removed". */
   descriptorsComplete: boolean;
+  /** Missing on an older payload means unknown; explicit null means no active preset. */
+  scenario?: ScenarioSessionState | null;
 }
 
 /** The volatile per-capture core of an asset a delta elided because nothing observable about it
@@ -877,4 +887,8 @@ export interface VizDeltaV2 {
   /** Asset events the room's bounded buffer discarded. Render the hole; never present a truncated
    *  log as continuous. */
   droppedEventCount: number;
+  /** Replacement active scenario. Missing or null means unchanged unless explicitly cleared. */
+  scenario?: ScenarioSessionState | null;
+  /** Explicit clear, since null already represents an elided replacement on a delta. */
+  scenarioCleared?: boolean;
 }

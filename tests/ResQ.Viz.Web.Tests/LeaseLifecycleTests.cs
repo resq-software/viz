@@ -140,6 +140,40 @@ public sealed class LeaseLifecycleTests
             first.AssetInstanceId, "the id came back but the vehicle did not");
     }
 
+    /// <summary>A delayed old-instance removal cannot revoke a lease over the replacement instance.</summary>
+    [Fact]
+    public async Task Delayed_Removal_Notification_Does_Not_Revoke_A_Reused_Ids_New_Lease()
+    {
+        var clock = new ManualClock(T0);
+        var registry = new ControlAuthorityRegistry(
+            clock, new ControlAuthorityOptions(Minute, AuditCapacity: 64));
+        var room = new SimulationRoom(
+            id: "delayed-removal-room", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
+        var barrier = new BlockingRemovalObserver();
+        room.AddLifecycleObserver(barrier);
+        var authority = registry.For(room);
+        AddRover(room, "rover-1");
+        var oldLease = authority.Acquire(
+            "rover-1", "old-console", ControlRole.Operator, Minute).Lease!;
+
+        var removal = Task.Run(() => room.TryRemoveAsset("rover-1", out _));
+        barrier.WaitForRemoval();
+        AddRover(room, "rover-1");
+        var newLease = authority.Acquire(
+            "rover-1", "new-console", ControlRole.Operator, Minute).Lease!;
+
+        barrier.ReleaseRemoval();
+        (await removal.WaitAsync(TimeSpan.FromSeconds(5))).Should().BeTrue();
+
+        authority.FindLiveLease("rover-1").Should().Be(newLease);
+        newLease.AssetInstanceId.Should().NotBe(oldLease.AssetInstanceId);
+        authority.ReadAudit().Should().ContainSingle(record =>
+            record.LeaseId == oldLease.LeaseId
+            && record.EndReason == ControlLeaseEndReason.AssetRemoved);
+        authority.ReadAudit().Should().NotContain(record =>
+            record.LeaseId == newLease.LeaseId && record.EndReason != null);
+    }
+
     /// <summary>The instance check alone catches a recycled id, with nothing having announced it.</summary>
     /// <remarks>
     /// The room does announce removals, and the case above proves it. This one takes that away:
@@ -282,6 +316,38 @@ public sealed class LeaseLifecycleTests
         /// <summary>Moves the clock forward.</summary>
         /// <param name="by">How far to move it.</param>
         public void Advance(TimeSpan by) => _now += by;
+    }
+
+    /// <summary>Pauses the first removal notification after the room has released its lock.</summary>
+    private sealed class BlockingRemovalObserver : IRoomLifecycleObserver
+    {
+        private readonly ManualResetEventSlim _removed = new(false);
+        private readonly ManualResetEventSlim _release = new(false);
+
+        public void InitializeWorldRevision(long revision) { }
+
+        public void OnAssetRemoved(string assetId)
+        {
+            _removed.Set();
+            if (!_release.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("The delayed removal notification was never released.");
+            }
+        }
+
+        public void OnWorldReset(long revision) { }
+
+        public void OnUpkeep() { }
+
+        public void WaitForRemoval()
+        {
+            if (!_removed.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Timed out waiting for the removal notification.");
+            }
+        }
+
+        public void ReleaseRemoval() => _release.Set();
     }
 
     /// <summary>A ground asset that exists, can be removed, and does nothing else.</summary>

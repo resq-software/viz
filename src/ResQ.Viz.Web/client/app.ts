@@ -7,6 +7,7 @@ import '@fontsource-variable/dm-sans';
 import '@fontsource/dm-mono/latin-400.css';
 import '@fontsource/dm-mono/latin-500.css';
 import './styles/main.css';
+import './styles/operator.css';
 import { bootstrapAnalytics } from './analytics';
 import * as THREE from 'three';
 
@@ -27,7 +28,17 @@ import { OverlayManager }  from './overlays';
 import { FireSmoke }        from './smoke';
 import type { SmokeSource } from './smoke';
 import { ControlPanel }    from './controls';
-import { Hud }            from './ui/hud';
+import { OperatorShell }   from './operator/OperatorShell';
+import { RetryScheduler } from './operator/RetryScheduler';
+import { ScenarioRuntime } from './operator/ScenarioRuntime';
+import { StartupCoordinator } from './operator/StartupCoordinator';
+import { assetTelemetryText, Hud, type AssetHudSummary } from './ui/hud';
+import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
+import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
+import { setContextObscured } from './ui/contextObscuring';
+import { setSettingsVisibleState } from './ui/settingsVisibility';
+import { setHintsVisibleState } from './ui/hintsVisibility';
+import { handleOwnedEscape } from './ui/escapeOwnership';
 import { WindCompass }    from './ui/windCompass';
 import type { Cockpit }   from './ui/cockpit';
 import type { DroneState, MeshState, VizFrame } from './types';
@@ -51,7 +62,8 @@ import { MissionChrome } from './missionChrome';
 import { EventLog } from './eventLog';
 import { MiniMap } from './miniMap';
 import { SensorStatsOverlay } from './sensorStatsOverlay';
-import { apiPost, apiGet, apiPostOrWarn } from './api';
+import { apiPost, apiPostJson, apiPostOrWarn } from './api';
+import type { ApiFailure, Result } from './api';
 import { getLogger } from './log';
 // SelectionStore stays static: it is the selection source of truth that legacy
 // HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
@@ -65,8 +77,9 @@ import type { EditorDock } from './editor/dock';
 import type { TransformGizmo } from './editor/gizmo';
 import type { FpvOsd } from './sensors/fpvOsd';
 import type { CameraModeControl } from './cameraMode';
-import type { FrameRecorder } from './editor/recorder';
+import type { FrameRecorder, RecordedFrame } from './editor/recorder';
 import type { Dvr } from './editor/dvr';
+import type { EditorWorkspace } from './editor/workspace';
 // ── Multi-domain asset layer ─────────────────────────────────────────────────
 // `sceneFrame`, `domainRegistration` and `chaseCamera` are small and are needed
 // the moment a v2 snapshot lands, so they ship with the entry chunk. Everything
@@ -87,14 +100,33 @@ import {
 } from './assets/sceneFrame';
 import type { SceneAsset, SceneFrame, SceneSnapshot } from './assets/sceneFrame';
 import { AssetDomain } from './assets/types';
-import type { ExternalTrackState, VizDeltaV2, VizSnapshotV2 } from './assets/types';
+import type {
+    ExternalTrackState,
+    ScenarioSessionState,
+    VizDeltaV2,
+    VizSnapshotV2,
+} from './assets/types';
 // Type-only, so the delta merge stays out of the entry chunk entirely: the
 // module is fetched by `_subscribeDeltas`, and only on a server that offers
 // the stream.
 import type { DeltaTracker } from './assets/deltaApply';
-import type { FleetUi } from './assets/fleetUi';
+import type { FleetUi, FleetUiInput } from './assets/fleetUi';
+import type { ControlAuthorityStore } from './operator/controlAuthorityStore';
 import type { PickedTarget } from './assets/panelCommands';
 import type { TrackMotionSample, TrackOverlay } from './assets/overlays/TrackOverlay';
+import type {
+    ConsoleResources,
+} from './operator/ConsoleResources';
+import type {
+    MissionPanel,
+    MissionTransportView,
+    ScenarioCatalogLauncher,
+} from './operator/MissionPanel';
+import type { AdvancedSafetyWorkspace } from './operator/advancedSafety';
+import type { SpawnAssetDialog } from './operator/SpawnAssetDialog';
+import type { EnvironmentDialog } from './operator/EnvironmentDialog';
+import { InteractionMode } from './operator/interactionMode';
+import { OperatorActions, type HeightmapUpload } from './operator/operatorActions';
 
 const log = getLogger('app');
 
@@ -111,11 +143,31 @@ const log = getLogger('app');
 async function _bootstrapSession(): Promise<boolean> {
     const res = await apiPost('/api/sim/session');
     if (res.success) {
+        _roomId = await _readRoomId(res.value);
         log.info('session bootstrapped — viz_session cookie set');
         return true;
     }
     log.warn('session bootstrap failed', { error: res.error.message });
     return false;
+}
+
+/** Room named by the last successful session bootstrap, or null when the body
+ *  did not say. Read for one purpose — prefixing this console's own holder
+ *  identity, so two consoles in different rooms are never confusable in an
+ *  audit record — and it is not authority: the cookie the server actually
+ *  trusts is HttpOnly and never reaches this code. */
+let _roomId: string | null = null;
+
+async function _readRoomId(response: Response): Promise<string | null> {
+    try {
+        const body = await response.json() as { roomId?: unknown };
+        return typeof body.roomId === 'string' ? body.roomId : null;
+    } catch (err: unknown) {
+        // A body this client could not read is not a failed session: the cookie
+        // is set by the response headers either way.
+        log.warn('session response carried no readable room id', { error: String(err) });
+        return null;
+    }
 }
 
 // Latched promise — held while a bootstrap is in flight or has succeeded.
@@ -157,21 +209,153 @@ const downwashFx   = new DownwashFx(viz.scene);
 const effectsMgr   = new EffectsManager(viz.scene);
 const overlayMgr   = new OverlayManager(viz.scene);
 const fireSmoke    = new FireSmoke(viz.scene);
-const controlPanel = new ControlPanel();
-const hud          = new Hud();
+const operatorShell = new OperatorShell(document);
+const hud          = new Hud(document);
+const scenarioRuntime = new ScenarioRuntime({ onPresent: _presentAuthoritativeScenario });
+let consoleResources: ConsoleResources | null = null;
+let missionPanel: MissionPanel | null = null;
+let scenarioBrowser: ScenarioCatalogLauncher | null = null;
+let spawnDialog: SpawnAssetDialog | null = null;
+let _spawnDialogLoading: Promise<void> | null = null;
+let _spawnDialogGeneration = 0;
+let environmentDialog: EnvironmentDialog | null = null;
+let _environmentDialogLoading: Promise<void> | null = null;
+let _environmentDialogGeneration = 0;
+let _missionUiLoading: Promise<void> | null = null;
+let _rawScenarioSession = { assetCount: 0, tick: 0 };
+let _resetRequestInFlight = false;
+let _missionTransport: MissionTransportView = {
+    paused: false,
+    speed: 1,
+    simulationTimeSeconds: 0,
+};
+
+function _invalidateOperatorModals(): void {
+    scenarioBrowser?.invalidate();
+    _spawnDialogGeneration++;
+    _spawnDialogLoading = null;
+    spawnDialog?.invalidate();
+    _environmentDialogGeneration++;
+    _environmentDialogLoading = null;
+    environmentDialog?.invalidate();
+}
+
+const startupCoordinator = new StartupCoordinator({
+    setMode: mode => {
+        if (mode !== 'v2') _invalidateOperatorModals();
+        if (mode === 'legacy' && _v2Active) _leaveV2();
+        operatorShell.setMode(mode);
+        hud.setMode(mode);
+        missionChrome.setEnabled(mode === 'legacy');
+        if (mode === 'v2') void _ensureMissionUi();
+    },
+    setBootStatus: status => {
+        if (status === 'error') _invalidateOperatorModals();
+        operatorShell.setBootStatus(status);
+        if (operatorShell.mode === 'booting') loadingOverlay.setStartupStatus(status);
+    },
+    startLegacyScenario: async () =>
+        (await apiPost('/api/sim/scenario/single')).success,
+    startV2Scenario: async name => (await import('./operator/consoleApi'))
+        .requestScenarioStart(scenarioRuntime, name, undefined, () => operatorShell.mode === 'v2'),
+    schedule: (callback, ms) => window.setTimeout(callback, ms),
+    cancel: id => window.clearTimeout(id),
+});
+/**
+ * The one live/replay gate, and the one set of actions that consult it.
+ *
+ * Everything that changes the world — the legacy console, the DVR's server
+ * controls, the mission transport, the terrain cards, the heightmap upload, the
+ * backhaul switch, every drone command, the asset panel, the gizmo and the
+ * scene importer — asks this and nothing else. `dvr.onModeChange` is its only
+ * writer, so "am I at the live edge" has exactly one answer at any instant.
+ */
+const interactionMode = new InteractionMode();
+
+/**
+ * The gated actions the handlers below call instead of posting for themselves.
+ *
+ * The effects are the real work; `OperatorActions` is what makes each of them
+ * unreachable away from the live edge. Handlers stay one-liners so a
+ * source-level test (`__tests__/operatorActionWiring.test.ts`) can check that
+ * none of them grew its own POST — `app.ts` cannot be imported under the test
+ * runner, so the source is where that property has to be pinned.
+ */
+const operatorActions = new OperatorActions(interactionMode.guard, {
+    setPaused: paused => { void _postTransportPaused(paused); },
+    step: () => { apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'); },
+    setSpeed: factor => { apiPostOrWarn('/api/sim/speed', { factor }, 'speed'); },
+    reset: () => {
+        // v1 resets the world directly; v2 goes through the scenario runtime so
+        // the mission surface follows the same request lifecycle a start does.
+        if (operatorShell.mode === 'legacy') apiPostOrWarn('/api/sim/reset', undefined, 'reset');
+        else if (operatorShell.mode === 'v2') void _resetMission();
+    },
+    startScenario: () => { scenarioBrowser?.open(); },
+    spawnAsset: () => { void _openSpawnAssetDialog(); },
+    applyTerrain: key => { _markOperatorOverride(); _switchPreset(key as PresetKey); },
+    applyWeather: () => { void _openEnvironmentDialog(); },
+    uploadHeightmap: upload => { void _uploadHeightmap(upload); },
+    setBackhaulKilled: killed => {
+        // The in-flight guard lives with the request, not with the key that
+        // triggers it, so every future caller inherits it.
+        if (_backhaulToggleInFlight) return;
+        _backhaulToggleInFlight = true;
+        void apiPost('/api/sim/mesh/backhaul', { killed })
+            .then(res => {
+                if (!res.success) log.warn('backhaul toggle failed', { error: res.error.message });
+            })
+            .finally(() => { _backhaulToggleInFlight = false; });
+    },
+    commandDrone: (droneId, command) => {
+        apiPostOrWarn(`/api/sim/drone/${droneId}/cmd`, command, command.type);
+    },
+});
+
+const controlPanel = new ControlPanel(
+    document.getElementById('legacy-console')!, interactionMode.guard,
+);
+
+// Mirror the gate onto the surfaces whose enablement nothing else owns, and
+// withdraw the operator modals outright: a form left open over a recording is a
+// form whose Apply button would be refused, and withdrawing it is a clearer
+// answer than refusing it one press later.
+interactionMode.subscribe(value => {
+    const live = value === 'live';
+    controlPanel.setMutationsEnabled(live);
+    if (live) return;
+    _invalidateOperatorModals();
+    // Handles that cannot command anything are worse than no handles; the gizmo
+    // refuses to re-enter move mode on its own, this clears the mode it is in.
+    gizmo?.setMoveMode(false);
+    inspector?.setMoveActive(false);
+    // A/D accumulate a client-side heading before the command is issued, so a
+    // refused press would leave it pointing somewhere the drone never turned.
+    // Dropping the owner makes the next live press reseed from the real facing.
+    _pilotHeadingFor = null;
+});
 const windCompass  = new WindCompass();
 // Selected-drone glass cockpit — flight instruments driven by live telemetry.
 // Lazily constructed on first enable (opt-in overlay, default off) so its module
 // + CSS ship in a separate chunk and stay out of the entry bundle.
 let cockpit: Cockpit | null = null;
 
-// ── Editor suite (deferred) ──────────────────────────────────────────────────
-// The dock, outliner, inspector, gizmo, DVR and onboard sensors pull in the
-// heavy three/addons controls and the whole editor stylesheet. Loading them
-// with the entry chunk delayed first paint for every visitor, so they are
-// fetched after the scene has rendered its first frame instead. Total bytes
-// downloaded are unchanged — the editor is still always initialised — but the
-// terrain and drones appear without waiting on it.
+// ── Deferred surfaces ────────────────────────────────────────────────────────
+// Two tiers, and the difference between them is what an operator can do
+// without them.
+//
+//  * **After paint, always.** The DVR + recorder, the camera modes, the FPV OSD
+//    and the onboard PiP. Watching, scrubbing and switching cameras are not
+//    authoring, so an operator who never opens Editor still gets all of it.
+//    They are fetched once the scene has rendered its first frame rather than
+//    with the entry chunk, so terrain and drones appear without waiting on
+//    them; the bytes are the same, the first paint is not.
+//  * **On the first Editor open, if ever.** The dock, hierarchy, inspector,
+//    transform handles and scene import/export, which pull in the heavy
+//    three/addons controls and the whole authoring stylesheet. `EditorWorkspace`
+//    owns that fetch; the handles below are assigned from what it builds so the
+//    per-frame updates and hotkeys keep talking to those same instances, and
+//    they stay null in a session that never opens the workspace.
 let editorDock = null as EditorDock | null;
 let outliner = null as Outliner | null;
 let inspector = null as Inspector | null;
@@ -180,56 +364,31 @@ let fpvOsd = null as FpvOsd | null;
 let cameraMode = null as CameraModeControl | null;
 let recorder = null as FrameRecorder | null;
 let dvr = null as Dvr | null;
+let editorWorkspace = null as EditorWorkspace | null;
 
 const selection = new SelectionStore();
-let _currentScenario: string | null = null;
+/**
+ * Bumped on every selection change, and handed to surfaces that fetch per
+ * selection so a late response can be matched to the request that is still
+ * wanted. The identifier alone is not enough: A → B → A would let an answer
+ * about the first A repaint the second.
+ */
+let _selectionGeneration = 0;
+selection.subscribe(() => { _selectionGeneration += 1; });
+/** Last locally-started v1 scenario; never used as v2 mission truth. */
+let _legacyScenario: string | null = null;
 
 async function _initEditorSuite(): Promise<void> {
-    const [m_dock, m_outliner, m_inspector, m_gizmo, m_pip, m_osd, m_cam, m_rec, m_dvr, m_cfg] =
+    const [m_pip, m_osd, m_cam, m_rec, m_dvr, m_ws] =
         await Promise.all([
-            import('./editor/dock'),
-            import('./editor/outliner'),
-            import('./editor/inspector'),
-            import('./editor/gizmo'),
             import('./sensors/onboardPip'),
             import('./sensors/fpvOsd'),
             import('./cameraMode'),
             import('./editor/recorder'),
             import('./editor/dvr'),
-            import('./editor/sceneConfig'),
+            import('./editor/workspace'),
         ]);
 
-    // Editor selection layer — SelectionStore is the editor's single source of
-    // truth (Inspector now; outliner / gizmos later). Legacy HUD surfaces publish
-    // to it at their selection chokepoints (`_selectFromAnySurface` / `_deselectAll`).
-    // Editor dock — one managed, collapsible left column hosting the editor panels
-    // (Outliner on top, Inspector below); toggle with the ☰ button or the `\` key.
-    editorDock = new m_dock.EditorDock();
-    outliner = new m_outliner.Outliner(selection, editorDock.host());
-    outliner.onSelect(_selectEntity);
-    inspector = new m_inspector.Inspector(selection, () => _lastFrame, editorDock.host());
-    inspector.onClose(() => _deselectAll());
-    // Transform gizmo — translate handles on the selected drone. Server-authority
-    // safe: it drags a client-owned proxy and sends a goto (with altitude) on
-    // release, then tracks the drone between drags. Reuses the goto endpoint.
-    gizmo = new m_gizmo.TransformGizmo({
-        scene: viz.scene,
-        camera: viz.cameraController.camera,
-        domElement: viz.renderer.domElement,
-        store: selection,
-        setCameraEnabled: (v) => { viz.cameraController.enabled = v; },
-        getDronePosition: () => droneManager.getSelectedPosition(),
-        sendGoto: (target) => {
-            const id = droneManager.selectedId;
-            if (!id) return;
-            apiPostOrWarn(`/api/sim/drone/${id}/cmd`, { type: 'goto', target }, 'Gizmo');
-            viz.showTargetMarker(new THREE.Vector3(target[0], target[1], target[2]), target[1]);
-        },
-        addTick: (fn) => viz.addTickCallback(fn),
-    });
-    // The main camera renders the gizmo's dedicated layer; the FPV PiP camera
-    // (layer 0 only) does not, so the move handles never clutter the onboard window.
-    viz.cameraController.camera.layers.enable(m_gizmo.GIZMO_LAYER);
     // Onboard FPV picture-in-picture — the selected drone's camera, scissor-rendered
     // into a corner of the canvas. Self-wires via the selection store + post-render
     // hook (no retained binding); toggle with `P`.
@@ -275,64 +434,143 @@ async function _initEditorSuite(): Promise<void> {
     // Keep chase/FPV locked to the newly-selected drone (and drop to FREE if cleared).
     const cam = cameraMode;
     selection.subscribe(() => { if (cam.mode !== 'free') cam.reapply(); });
-    // DVR — rolling recorder + scrub timeline over the frame stream. Live frames
-    // always record; scrubbing replays buffered frames via _renderFrame, and live
-    // application is gated on `dvr.isLive` in the ReceiveFrame handler.
-    // 3000 frames ≈ 5 min at 10 Hz (was 60 s, which read as "stuck at 0:59").
-    recorder = new m_rec.FrameRecorder(3000);
+    // DVR — rolling recorder + scrub timeline over the frame stream. Live ticks
+    // always record; scrubbing replays them via `_renderRecordedFrame`, and live
+    // application is gated on `dvr.isLive` in the two stream handlers.
+    // The recorder owns its own retention: 3,000 v1 frames (≈ 5 min at 10 Hz) or
+    // 180 projected v2 snapshots (≈ 18 s), whichever schema is driving.
+    recorder = new m_rec.FrameRecorder();
     // Unified bottom bar: at the live edge the controls drive the server sim; scrub
-    // back and the same controls play back the buffer (snap-applied via _renderFrame).
+    // back and the same controls play back the buffer (snap-applied per schema).
     dvr = new m_dvr.Dvr({
         recorder,
-        onApply: (frame) => _renderFrame(frame, true),
-        onServerPause: (paused) =>
-            void apiPostOrWarn(paused ? '/api/sim/pause' : '/api/sim/resume', undefined, 'transport'),
-        onServerStep: () => void apiPostOrWarn('/api/sim/step', { frames: 1 }, 'step'),
-        onServerSpeed: (factor) => void apiPostOrWarn('/api/sim/speed', { factor }, 'speed'),
-        onServerReset: () => void apiPostOrWarn('/api/sim/reset', undefined, 'reset'),
-    });
-    // Declarative scene config — export/import the terrain + scenario setup as a
-    // shareable JSON descriptor (AirSim settings.json analog). `_currentScenario`
-    // tracks the last explicitly-started scenario (set by the resq:scenario-start
-    // listener below).
-    new m_cfg.SceneConfigPanel({
-        getTerrain: () => _currentPresetKey,
-        getScenario: () => _currentScenario,
-        applyTerrain: (key) => { if (key in PRESETS) _switchPreset(key as PresetKey); },
-        applyScenario: (name) => {
-            if (!name) return;
-            // The name arrives from an imported scene-config file, and
-            // parseSceneConfig only validates structure — it explicitly leaves
-            // "is this a real scenario" to the caller. Interpolated raw, a value
-            // like `../../reset` would resolve to a different same-origin
-            // endpoint, so check it against the scenarios this build actually
-            // offers before building a path, and encode the segment regardless.
-            const known = new Set(
-                Array.from(
-                    document.querySelectorAll<HTMLElement>('.scenario-card[data-scenario]'),
-                    (el) => el.dataset['scenario'] ?? '',
-                ).filter(Boolean),
-            );
-            if (!known.has(name)) {
-                log.warn('ignoring unknown scenario from imported scene config', { name });
-                return;
-            }
-            apiPostOrWarn(`/api/sim/scenario/${encodeURIComponent(name)}`, undefined, `scene:${name}`);
-            document.dispatchEvent(new CustomEvent('resq:scenario-start', { detail: { name } }));
+        onApply: recorded => _renderRecordedFrame(recorded),
+        getLatestLiveFrame: () => _latestLiveRecord(),
+        onServerPause: (paused) => { operatorActions.setPaused(paused); },
+        onServerStep: () => { operatorActions.step(); },
+        onServerSpeed: (factor) => { operatorActions.setSpeed(factor); },
+        onServerReset: () => { operatorActions.reset(); },
+        // The DVR is the only writer of the interaction mode: leaving the live
+        // edge is what closes every mutation, and returning is what reopens
+        // them — after the newest held snapshot is back on screen, so nothing
+        // is commanded against a picture that is still a recording.
+        onModeChange: live => {
+            if (!live) { interactionMode.enterReplay(); return; }
+            interactionMode.goLive();
+            _resumeHeldSnapshot();
         },
+        // A scrub can last minutes, and a lease outlives nothing. The authority
+        // picture is re-read here — after the live edge is back on screen — so
+        // the operator never acts on a lease read for a recording.
+        onRefreshLiveResources: () => { controlAuthority?.refresh(); },
     });
+    // Editor workspace — the one owner of every authoring surface: the panel
+    // column, the hierarchy, the inspector, the transform handles and scene
+    // import/export. None of it is fetched, built or reachable until the
+    // labelled top-bar Editor toggle asks for it; the recording surfaces above
+    // are deliberately not part of it, because watching, scrubbing and camera
+    // switching are not authoring.
+    editorWorkspace = new m_ws.EditorWorkspace(
+        {
+            mount: operatorShell.mounts.editor,
+            toggle: _editorToggle(),
+            rail: _sidebarElement(),
+            context: operatorShell.mounts.context,
+            isOpen: () => operatorShell.editorOpen,
+            setOpen: open => operatorShell.setEditorOpen(open),
+            // The shell writes the rail's `hidden`, so reading it back is
+            // reading the shell rather than a second copy of the answer.
+            isRailOpen: () => !_sidebarElement().hidden,
+            setRailOpen: open => operatorShell.setRailOpen(open),
+            isContextOpen: () => operatorShell.contextOpen,
+            setContextOpen: open => operatorShell.setContextOpen(open),
+            viewportWidth: () => window.innerWidth,
+        },
+        {
+            selection,
+            gate: interactionMode.guard,
+            getFrame: () => _lastFrame,
+            onSelect: _selectEntity,
+            onDeselect: () => _deselectAll(),
+            onCommand: (droneId: string, cmd: string) => {
+                operatorActions.commandDrone(droneId, { type: cmd });
+            },
+            // Transform gizmo — translate handles on the selected drone.
+            // Server-authority safe: it drags a client-owned proxy and sends a
+            // goto (with altitude) on release, then tracks the drone between
+            // drags. Reuses the goto endpoint.
+            gizmo: {
+                scene: viz.scene,
+                camera: viz.cameraController.camera,
+                domElement: viz.renderer.domElement,
+                setCameraEnabled: (v) => { viz.cameraController.enabled = v; },
+                getDronePosition: () => droneManager.getSelectedPosition(),
+                sendGoto: (target) => {
+                    const id = droneManager.selectedId;
+                    if (!id) return;
+                    // The marker is only drawn for a command that was actually
+                    // issued — a target pin over a world nothing was told about
+                    // is a lie the operator would act on.
+                    if (operatorActions.commandDrone(id, { type: 'goto', target }).success) {
+                        viz.showTargetMarker(
+                            new THREE.Vector3(target[0], target[1], target[2]), target[1],
+                        );
+                    }
+                },
+                addTick: (fn) => viz.addTickCallback(fn),
+            },
+            // Declarative scene config — export/import the terrain + scenario
+            // setup as a shareable JSON descriptor (AirSim settings.json
+            // analog). V2 reads only the streamed runtime; legacy retains the
+            // local event-backed compatibility value.
+            sceneConfig: {
+                getTerrain: () => _currentPresetKey,
+                getScenario: () => operatorShell.mode === 'v2'
+                    ? scenarioRuntime.currentName
+                    : _legacyScenario,
+                canApplyTerrain: key => Object.prototype.hasOwnProperty.call(PRESETS, key),
+                applyTerrain: (key) => {
+                    _switchPreset(key as PresetKey);
+                    _markOperatorOverride();
+                },
+                applyScenario: async (name) => name === null
+                    ? { success: true }
+                    : (await import('./editor/sceneConfig')).applyScenarioForMode(name, {
+                        mode: () => operatorShell.mode,
+                        v2ScenarioNames: () => consoleResources?.catalog.status === 'ready'
+                            ? consoleResources.catalog.value.scenarios.map(s => s.name)
+                            : null,
+                        v2Session: () => _rawScenarioSession,
+                        confirmV2Replace: scenario => window.confirm(
+                            `Start ${scenario}? This replaces the current simulation state.`,
+                        ),
+                        runtime: scenarioRuntime,
+                    }),
+            },
+            // The app keeps its handles so the per-frame updates, the click
+            // swallow and the `M` key keep talking to the same instances the
+            // workspace built. They are assigned here, inside the initialiser,
+            // and never re-declared: a shadowing `const` is what once left the
+            // whole gizmo and DVR silently dead.
+            onReady: surfaces => {
+                editorDock = surfaces.dock;
+                outliner = surfaces.outliner;
+                inspector = surfaces.inspector;
+                gizmo = surfaces.gizmo;
+            },
+            onError: error => { log.error('editor workspace failed to load', error); },
+        },
+    );
+}
 
-    // Inspector wiring lives here so the callbacks register with the instance
-    // that was just created — attaching them at module scope would run before
-    // the suite exists and silently never fire.
-    inspector.onCommand(async (droneId: string, cmd: string) => {
-        const res = await apiPost(`/api/sim/drone/${droneId}/cmd`, { type: cmd });
-        if (!res.success) log.warn(`command ${cmd} on ${droneId} failed`, { error: res.error.message });
-    });
-    // "Move" button → toggle the reposition gizmo for the selected drone. The
-    // gizmo owns the on/off truth, so the M key and this button stay in sync.
-    const _insp = inspector, _giz = gizmo;
-    inspector.onMove(() => { _insp.setMoveActive(_giz.toggleMoveMode()); });
+/** The top-bar Editor control. Present because the shell required it at boot. */
+function _editorToggle(): HTMLElement {
+    return document.getElementById('btn-editor-toggle') as HTMLElement;
+}
+
+/** The operator rail. Present because the shell required it at boot. */
+function _sidebarElement(): HTMLElement {
+    return document.getElementById('sidebar') as HTMLElement;
 }
 
 // Kick the editor suite off once the browser has actually painted a frame.
@@ -346,7 +584,17 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
     });
 }));
 
-const investorMode = new InvestorMode(viz.cameraController);
+const investorMode = new InvestorMode(
+    viz.cameraController,
+    () => {
+        _setSettingsVisible(false);
+        _setHintsVisible(false);
+    },
+    (suppressed) => {
+        if (suppressed) _invalidateOperatorModals();
+        operatorShell.setInvestorSuppressed(suppressed);
+    },
+);
 // Self-wires via a `resq:scenario-start` document CustomEvent from controls.ts.
 new ScenarioIntro();
 const cameraPresets = new CameraPresets({
@@ -367,6 +615,278 @@ const loadingOverlay = new LoadingOverlay();
 // Mission chrome — top-center scenario/time/phase strip. Self-wires via the
 // `resq:scenario-start` event; app.ts feeds it sim-time each frame.
 const missionChrome = new MissionChrome();
+// Startup is neither compatibility mode nor an invitation to retain stale v1
+// scenario copy. StartupCoordinator enables this only after legacy is viable.
+missionChrome.setEnabled(false);
+
+/** Lazily installs the mission DOM and its two independently retryable resources. */
+async function _ensureMissionUi(): Promise<void> {
+    if (operatorShell.mode !== 'v2') return;
+    if (missionPanel && consoleResources) {
+        _renderMissionPanel();
+        void consoleResources.loadMissing();
+        return;
+    }
+    if (_missionUiLoading) return _missionUiLoading;
+
+    const loading = Promise.all([
+        import('./operator/ConsoleResources'),
+        import('./operator/MissionPanel'),
+    ]).then(([resourcesModule, panelModule]) => {
+        // A v2 chunk can finish after negotiation fell back. Do not replace the
+        // legacy branch's DOM or start v2-only GETs while it owns the console.
+        if (operatorShell.mode !== 'v2') return;
+
+        const resources = new resourcesModule.ConsoleResources({
+            loadCatalog: async () =>
+                (await import('./operator/consoleApi')).getScenarioCatalog(),
+            loadProfiles: async () =>
+                (await import('./operator/consoleApi')).getAssetProfiles(),
+        });
+        const panel = new panelModule.MissionPanel({
+            mount: operatorShell.mounts.mission,
+            onTogglePause: paused => { operatorActions.setPaused(paused); },
+            onReset: () => { operatorActions.reset(); },
+            onChange: () => { operatorActions.startScenario(); },
+            onRetryCatalog: () => resources.retry('catalog'),
+        });
+        const browser = new panelModule.ScenarioCatalogLauncher({
+            mode: () => operatorShell.mode,
+            catalog: () => resources.catalog.status === 'ready' ? resources.catalog.value : null,
+            mount: operatorShell.mounts.modal,
+            trigger: panel.changeTrigger,
+            fallbackFocus: document.getElementById('fleet-heading')!,
+            runtime: scenarioRuntime,
+            getSession: () => ({ ..._rawScenarioSession, activeName: scenarioRuntime.currentName }),
+            onFailure: message => panel.setScenarioBrowserFailure(message),
+        });
+
+        consoleResources = resources;
+        missionPanel = panel;
+        scenarioBrowser = browser;
+        scenarioRuntime.subscribe(() => _renderMissionPanel());
+        resources.subscribe(() => {
+            _renderMissionPanel();
+            // Profile availability owns whether Spawn is offered at all.
+            spawnDialog?.refresh();
+        });
+        void resources.loadMissing();
+    }).catch((error: unknown) => {
+        if (operatorShell.mode !== 'v2') return;
+        log.error('mission console failed to load', error);
+        _renderMissionLoadFailure();
+    }).finally(() => {
+        if (_missionUiLoading === loading) _missionUiLoading = null;
+    });
+
+    _missionUiLoading = loading;
+    return loading;
+}
+
+function _renderMissionPanel(): void {
+    if (!missionPanel || !consoleResources) return;
+    missionPanel.render({
+        mission: scenarioRuntime.view,
+        transport: _missionTransport,
+        catalog: consoleResources.catalog,
+    });
+}
+
+function _renderMissionLoadFailure(): void {
+    const mount = operatorShell.mounts.mission;
+    const kicker = document.createElement('span');
+    kicker.className = 'operator-section-kicker';
+    kicker.textContent = 'Mission';
+    const title = document.createElement('strong');
+    title.textContent = 'Mission controls unavailable';
+    const detail = document.createElement('p');
+    detail.className = 'operator-resource-error';
+    detail.setAttribute('role', 'alert');
+    detail.textContent = 'The mission surface could not load.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn';
+    retry.textContent = 'Retry mission controls';
+    retry.addEventListener('click', () => { void _ensureMissionUi(); });
+    mount.replaceChildren(kicker, title, detail, retry);
+}
+
+function _retryMissionResources(source: 'reconnect' | 'visibility' = 'reconnect'): void {
+    if (operatorShell.mode !== 'v2') return;
+    // Who holds the selected asset is exactly the kind of fact that changes
+    // while this console is not watching, and both of these are the moments it
+    // stopped watching.
+    controlAuthority?.refresh();
+    if (!consoleResources) {
+        void _ensureMissionUi();
+        return;
+    }
+    void (source === 'visibility'
+        ? consoleResources.onVisibilityReturn()
+        : consoleResources.onReconnect());
+}
+
+/**
+ * Opens the multi-domain spawn form, importing it on first use.
+ *
+ * The form, its stylesheet and the typed spawn route are all behind this
+ * `import()`: a session that only watches a scenario run never fetches any of
+ * it. The legacy `Spawn Drone` control stays inside `ControlPanel` and is not
+ * reached from here — it posts to the v1 route and knows only about drones.
+ *
+ * Acceptance is not arrival. The dialog reports the created id and nothing
+ * writes it into the roster; the next v2 snapshot does that.
+ *
+ * Replay is handled by *withdrawal*, not by refusing the submit: this opener is
+ * only reached through `operatorActions.spawnAsset`, and leaving the live edge
+ * runs `_invalidateOperatorModals`, which closes the form and restores its busy
+ * state. A dialog that cannot be opened and is torn down on transition never
+ * offers a Spawn button whose request would be refused — which is a stricter
+ * reading of "advertised equals accepted" than showing the refusal would be,
+ * and it keeps the dialog's typed `ApiFailure` contract honest, since a replay
+ * refusal is not a server response and must not be dressed up as one.
+ */
+async function _openSpawnAssetDialog(): Promise<void> {
+    if (operatorShell.mode !== 'v2') return;
+    if (spawnDialog) {
+        spawnDialog.open();
+        return;
+    }
+    if (_spawnDialogLoading) return _spawnDialogLoading;
+
+    const generation = ++_spawnDialogGeneration;
+    const loading = Promise.all([
+        import('./operator/SpawnAssetDialog'),
+        import('./operator/consoleApi'),
+    ]).then(([dialogModule, api]) => {
+        // A chunk can land after negotiation fell back or the shell was retired.
+        if (generation !== _spawnDialogGeneration || operatorShell.mode !== 'v2') return;
+        const dialog = new dialogModule.SpawnAssetDialog({
+            mount: operatorShell.mounts.modal,
+            trigger: document.getElementById('btn-spawn-asset') as HTMLButtonElement,
+            fallbackFocus: document.getElementById('fleet-heading')!,
+            // Discovery is the only source of spawnable classes; an absent
+            // resource leaves the trigger disabled rather than guessing a list.
+            profiles: () => consoleResources?.profiles ?? { status: 'idle' },
+            spawn: request => api.spawnAsset(request),
+            onRetryProfiles: () => {
+                if (consoleResources) void consoleResources.retry('profiles');
+                else void _ensureMissionUi();
+            },
+            onAccepted: assetId => log.info('asset spawn accepted', { assetId }),
+        });
+        spawnDialog = dialog;
+        dialog.open();
+    }).catch((error: unknown) => {
+        log.error('spawn asset dialog failed to load', error);
+    }).finally(() => {
+        if (_spawnDialogLoading === loading) _spawnDialogLoading = null;
+    });
+
+    _spawnDialogLoading = loading;
+    return loading;
+}
+
+document.getElementById('btn-spawn-asset')!.addEventListener('click', () => {
+    operatorActions.spawnAsset();
+});
+
+// The shell owns the disclosure's open state and fires this exactly once; the
+// retry re-arms it after a failed chunk fetch without a page reload.
+operatorShell.onAdvancedSafetyExpand(() => { _ensureAdvancedSafety(); });
+document.getElementById('btn-advanced-retry')?.addEventListener('click', () => {
+    operatorShell.retryAdvancedSafety();
+});
+
+/**
+ * The world's pause/resume, for every surface that offers one.
+ *
+ * The mission panel and the DVR's live transport used to post this separately;
+ * they now share it through `operatorActions.setPaused`, so the two cannot
+ * disagree about which endpoint, which body, or which gate applies.
+ */
+async function _postTransportPaused(paused: boolean): Promise<void> {
+    const result = await apiPost(paused ? '/api/sim/pause' : '/api/sim/resume');
+    if (!result.success) log.warn('mission transport request failed', { error: result.error.message });
+}
+
+async function _resetMission(): Promise<void> {
+    if (operatorShell.mode !== 'v2'
+        || _resetRequestInFlight
+        || scenarioRuntime.requestInFlight) return;
+    _resetRequestInFlight = true;
+    const request = scenarioRuntime.requested(null);
+    try {
+        const result = await apiPost('/api/sim/reset');
+        if (result.success) scenarioRuntime.requestAccepted(request);
+        else {
+            scenarioRuntime.requestFailed(request);
+            log.warn('mission reset failed', { error: result.error.message });
+        }
+    } catch (error: unknown) {
+        scenarioRuntime.requestFailed(request);
+        log.error('mission reset failed unexpectedly', error);
+    } finally {
+        _resetRequestInFlight = false;
+    }
+}
+
+/**
+ * Opens the operator environment form, importing it on first use.
+ *
+ * The form and its stylesheet ride the same lazy chunk boundary the spawn
+ * dialog uses; a session that never touches the environment fetches neither.
+ * Legacy Weather stays inside `ControlPanel` on the v1 route and the legacy
+ * terrain cards keep their optimistic `_switchPreset` path — the operator
+ * callbacks below are the only ones that await the host before the scene
+ * moves, and the only ones that mark the manual override.
+ *
+ * Gated the same way the spawn form is: reached only through
+ * `operatorActions.applyWeather`, and withdrawn by `_invalidateOperatorModals`
+ * when the DVR leaves the live edge. See `_openSpawnAssetDialog` for why
+ * withdrawal rather than a refused Apply.
+ */
+async function _openEnvironmentDialog(): Promise<void> {
+    if (operatorShell.mode !== 'v2') return;
+    if (environmentDialog) {
+        environmentDialog.open();
+        return;
+    }
+    if (_environmentDialogLoading) return _environmentDialogLoading;
+
+    const generation = ++_environmentDialogGeneration;
+    const loading = import('./operator/EnvironmentDialog').then(dialogModule => {
+        // A chunk can land after negotiation fell back or the shell was retired.
+        if (generation !== _environmentDialogGeneration || operatorShell.mode !== 'v2') return;
+        const dialog = new dialogModule.EnvironmentDialog({
+            mount: operatorShell.mounts.modal,
+            trigger: document.getElementById('btn-environment') as HTMLButtonElement,
+            fallbackFocus: document.getElementById('fleet-heading')!,
+            applyTerrain: key => _switchPresetFromOperator(key),
+            applyWeather: command => _applyOperatorWeather(command),
+            currentTerrain: () => _currentPresetKey,
+            viewportWidth: () => window.innerWidth,
+        });
+        environmentDialog = dialog;
+        dialog.open();
+    }).catch((error: unknown) => {
+        log.error('environment dialog failed to load', error);
+    }).finally(() => {
+        if (_environmentDialogLoading === loading) _environmentDialogLoading = null;
+    });
+
+    _environmentDialogLoading = loading;
+    return loading;
+}
+
+document.getElementById('btn-environment')!.addEventListener('click', () => {
+    operatorActions.applyWeather();
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    _retryMissionResources('visibility');
+});
 
 // Event log — left-edge SIGINT-style ticker. Self-wires scenario-starts;
 // app.ts pushes partition transitions explicitly since it owns that state.
@@ -419,11 +939,12 @@ const settingsClose  = document.getElementById('settings-close');
 const settingsReset  = document.getElementById('settings-reset');
 
 function _setSettingsVisible(v: boolean): void {
-    settingsPanel?.classList.toggle('open', v);
-    // Mirror visual state into AT-visible attributes so screen readers don't
-    // see the panel as permanently hidden (it ships with aria-hidden="true").
-    settingsPanel?.setAttribute('aria-hidden', String(!v));
-    settingsToggle?.setAttribute('aria-expanded', String(v));
+    setSettingsVisibleState(settingsPanel, settingsToggle, v);
+    setContextObscured(
+        document.querySelector<HTMLElement>('.asset-panel'),
+        v,
+        settingsClose ?? settingsToggle,
+    );
     // The overlapped widgets are hidden purely in CSS via
     // `body:has(#settings-panel.open)` in main.css — no body-class needed.
 }
@@ -649,7 +1170,8 @@ let _operatorOverride = false;
 /** Marks operator intent. Called from the sidebar controls, never from scenario load. */
 function _markOperatorOverride(): void { _operatorOverride = true; }
 
-function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
+/** Rebuilds the scene for `key`. Local only — the backend is told separately. */
+function _applyPresetLocally(key: PresetKey, waterLevelOverride?: number): void {
     _currentPresetKey = key;
     // Drop any previous preset's eroded DEM so the new preset builds from its
     // own procedural shape; the eroded version swaps back in asynchronously.
@@ -664,9 +1186,60 @@ function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
         el.classList.toggle('active', active);
         el.setAttribute('aria-pressed', String(active));
     });
-    // Notify backend so drone physics clamp to the correct terrain
-    apiPostOrWarn(`/api/sim/preset/${key}`, undefined, `preset ${key}`);
     if (_erosionEnabled) void _applyErosion(key);
+}
+
+/** Tells the backend so drone physics clamp to the terrain the viz is drawing. */
+async function _postPreset(key: PresetKey): Promise<Result<unknown, ApiFailure>> {
+    const result = await apiPostJson<unknown>(`/api/sim/preset/${key}`);
+    if (!result.success) log.warn(`preset ${key} failed`, { error: _failureMessage(result.error) });
+    return result;
+}
+
+function _switchPreset(key: PresetKey, waterLevelOverride?: number): void {
+    _applyPresetLocally(key, waterLevelOverride);
+    // Scenario and legacy paths stay optimistic: the scene leads, the POST
+    // follows unwatched. Only the operator path inverts that.
+    void _postPreset(key);
+}
+
+/**
+ * Operator terrain change: the host decides first, then the scene follows.
+ *
+ * The optimistic order above is fine for a scenario load (the server is about
+ * to be told the same thing anyway) but wrong for a deliberate operator
+ * action — a refused preset would leave the browser rendering terrain the
+ * physics engine never adopted. Marking the override is this callback's job,
+ * not the dialog's, so the flag cannot be set for a change that never landed.
+ */
+async function _switchPresetFromOperator(key: PresetKey): Promise<Result<unknown, ApiFailure>> {
+    const result = await _postPreset(key);
+    if (!result.success) return result;
+    _applyPresetLocally(key);
+    _markOperatorOverride();
+    return result;
+}
+
+/**
+ * Operator weather change over the exact wire keys `SimController.SetWeather`
+ * binds. Manual weather outranks later automatic presentation for this page
+ * session, so acceptance marks the same single override flag terrain uses.
+ */
+async function _applyOperatorWeather(
+    command: { readonly mode: string; readonly windSpeed: number; readonly windDirection: number },
+): Promise<Result<unknown, ApiFailure>> {
+    const result = await apiPostJson<unknown>('/api/sim/weather', {
+        mode: command.mode,
+        windSpeed: command.windSpeed,
+        windDirection: command.windDirection,
+    });
+    if (result.success) _markOperatorOverride();
+    else log.warn('operator weather request failed', { error: _failureMessage(result.error) });
+    return result;
+}
+
+function _failureMessage(failure: ApiFailure): string {
+    return failure.kind === 'problem' ? failure.problem.detail : failure.message;
 }
 
 /** Rebuild the terrain mesh for the current preset against the active heightmap
@@ -725,31 +1298,42 @@ void (async () => {
     // would be off, which is corrected once the user reconnects.
     if (!await _ensureSessionReady()) return;
 
-    // Ship the decoded grid to the backend so drone physics clamp to the
-    // same DEM the viz renders. Payload is large (1024² ≈ 4 MB JSON) but
-    // fires exactly once per page load; timeout bumped so the send has
-    // room on slow connections. Silent warn on failure — the viz is
-    // already rendering correctly; only drone-ground contact is affected.
-    const uploadRes = await apiPost('/api/sim/heightmap', {
+    // Ship the decoded grid to the backend so drone physics clamp to the same
+    // DEM the viz renders. Routed through the gate like every other write: a
+    // page opened with `?heightmap=` whose decode lands after the operator has
+    // already scrubbed back must not reshape the running world underneath them.
+    operatorActions.uploadHeightmap({
         rows:   sampler.height,
         cols:   sampler.width,
         width:  sampler.worldSize,
         depth:  sampler.worldSize,
         cells:  Array.from(sampler.cells),
-    }, { timeoutMs: 30_000 });
+    });
+})();
+
+/**
+ * POSTs a decoded DEM to the backend.
+ *
+ * Payload is large (1024² ≈ 4 MB JSON) but fires at most once per page load;
+ * the timeout is bumped so the send has room on slow connections. A failure is
+ * warned and left — the viz is already rendering the DEM correctly, and only
+ * drone-ground contact is affected.
+ */
+async function _uploadHeightmap(upload: HeightmapUpload): Promise<void> {
+    const uploadRes = await apiPost('/api/sim/heightmap', upload, { timeoutMs: 30_000 });
     if (uploadRes.success) {
-        log.info(`heightmap uploaded to backend — drone physics now track DEM`);
+        log.info('heightmap uploaded to backend — drone physics now track DEM');
     } else {
         log.warn('heightmap backend upload failed — drones will follow procedural terrain', {
             error: uploadRes.error.message,
         });
     }
-})();
+}
 
 document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
     el.addEventListener('click', () => {
         const key = el.dataset['preset'] as PresetKey | undefined;
-        if (key && key in PRESETS) { _markOperatorOverride(); _switchPreset(key); }
+        if (key && key in PRESETS) operatorActions.applyTerrain(key);
     });
 });
 
@@ -787,6 +1371,87 @@ viz.addTickCallback((dt) => { if (!prefersReducedMotion()) tickTerrainClouds(dt)
 // Fire smoke plumes rise + drift every frame (idles cheaply when no fires).
 viz.addTickCallback((dt) => fireSmoke.tick(dt));
 
+// ─── Point-sprite projection ───────────────────────────────────────────────
+//
+// `gl_PointSize` is in framebuffer pixels, so a sprite sized in world metres
+// needs the drawing buffer's height and the camera's fov to convert. Both
+// particle systems used to hardcode a constant for that — smoke 620,
+// precipitation 900 — so they disagreed about one camera, both were wrong, and
+// a sprite's apparent WORLD size changed whenever the window was resized or the
+// page moved to a display with a different pixel ratio. One source now, applied
+// at construction and again on every resize.
+function _applyPointSizeScale(): void {
+    const scale = viz.pointSizeScale();
+    fireSmoke.setPointSizeScale(scale);
+    precipitation?.setPointSizeScale(scale);
+}
+
+
+// ─── Falling weather ───────────────────────────────────────────────────────
+//
+// Rain, snow and wildfire ash, declared per scenario in `scenarioEnvironments`.
+// The module that draws it is fetched on the first scenario that asks for it and
+// never otherwise, so a clear-sky session pays nothing — the entry bundle is
+// measured in CI and three.js already accounts for most of it.
+
+/** Active precipitation volume, or null when the sky is clear. */
+let precipitation: import('./precipitation').Precipitation | null = null;
+/** What is currently falling, so re-applying the same weather does not rebuild it. */
+let _precipKind: string | null = null;
+/** Guards against two scenario switches racing the same dynamic import. */
+let _precipLoad = 0;
+
+/**
+ * Starts, swaps or stops the falling weather for a scenario.
+ *
+ * @param spec What should be falling, or null for a clear sky.
+ */
+function _applyPrecipitation(
+    spec: { kind: import('./precipitation').PrecipitationKind; intensity: number } | null,
+): void {
+    const wanted = spec ? `${spec.kind}:${spec.intensity}` : null;
+    if (wanted === _precipKind) return;
+    _precipKind = wanted;
+
+    // Every path tears the old volume down first, including the null one: a
+    // scenario switch that went clear used to be the case that leaked, because
+    // nothing else ever removes it.
+    precipitation?.dispose();
+    precipitation = null;
+    const token = ++_precipLoad;
+    if (!spec) return;
+
+    // Reduced motion gets the sky it asked for. A screenful of falling
+    // particles is exactly the kind of large-field motion WCAG 2.3.3 is about,
+    // and the scenario still reads through its sky, fog and hazards.
+    if (prefersReducedMotion()) return;
+
+    void import('./precipitation')
+        .then(({ Precipitation }) => {
+            // A later scenario switch won while this was in flight; its own call
+            // has already run and this one must not resurrect the old weather.
+            if (token !== _precipLoad) return;
+            precipitation = new Precipitation(viz.scene, spec.kind, spec.intensity);
+            // Built after the resize hook was registered, so it has to be told
+            // the current factor rather than waiting for the next resize.
+            precipitation.setPointSizeScale(viz.pointSizeScale());
+        })
+        .catch((err) => {
+            log.error('precipitation failed to load; scenario runs with a clear sky', err);
+        });
+}
+
+viz.addTickCallback((dt) => {
+    precipitation?.update(dt, viz.cameraController.camera.position);
+});
+
+// Registered here, below `precipitation`, and not beside the function above:
+// `_applyPointSizeScale` reads that binding, and a top-level `let` sits in its
+// temporal dead zone until its own declaration is evaluated — so calling this
+// any earlier is a ReferenceError at load that the type checker cannot see.
+_applyPointSizeScale();
+viz.addResizeCallback(_applyPointSizeScale);
+
 // ─── Keyboard hints — toggleable, persistent ───────────────────────────────
 
 const keyHints      = document.getElementById('key-hints');
@@ -801,9 +1466,7 @@ let hintsVisible = localStorage.getItem(HINTS_KEY) === 'true';  // default: hidd
 function _setHintsVisible(v: boolean): void {
     hintsVisible = v;
     localStorage.setItem(HINTS_KEY, String(v));
-    keyHints?.classList.toggle('hidden', !v);
-    hintsToggle?.classList.toggle('active', v);
-    hintsToggle?.setAttribute('aria-pressed', String(v));
+    setHintsVisibleState(keyHints, hintsToggle, v);
     // body.hints-open hides surfaces that share the top-right column with
     // the hints panel (telemetry strip) so they don't render on top of
     // the help text. The strip's z-index is higher than #key-hints, and
@@ -910,12 +1573,10 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
                     : null;
                 if (terrainHit && selectedId) {
                     const alt = droneManager.getSelectedAltitude() ?? 15;
-                    apiPostOrWarn(
-                        `/api/sim/drone/${selectedId}/cmd`,
-                        { type: 'goto', target: [terrainHit.x, alt, terrainHit.z] },
-                        'GoTo',
-                    );
-                    viz.showTargetMarker(terrainHit, alt);
+                    const issued = operatorActions.commandDrone(selectedId, {
+                        type: 'goto', target: [terrainHit.x, alt, terrainHit.z],
+                    });
+                    if (issued.success) viz.showTargetMarker(terrainHit, alt);
                 }
             } else {
                 _selectFromAnySurface(droneId);
@@ -926,12 +1587,10 @@ viz.renderer.domElement.addEventListener('click', (e: MouseEvent) => {
             const terrainHit = viz.getTerrainIntersection(e.clientX, e.clientY, terrain.getGroundMesh());
             if (terrainHit) {
                 const alt = droneManager.getSelectedAltitude() ?? 15;
-                apiPostOrWarn(
-                    `/api/sim/drone/${selectedId}/cmd`,
-                    { type: 'goto', target: [terrainHit.x, alt, terrainHit.z] },
-                    'GoTo',
-                );
-                viz.showTargetMarker(terrainHit, alt);
+                const issued = operatorActions.commandDrone(selectedId, {
+                    type: 'goto', target: [terrainHit.x, alt, terrainHit.z],
+                });
+                if (issued.success) viz.showTargetMarker(terrainHit, alt);
             }
         } else {
             _deselectAll();
@@ -952,20 +1611,26 @@ let _pilotHeadingFor: string | null = null;
 // Unified selection: any surface (scene click, telemetry strip, minimap, bracket
 // cycle) routes here so the Inspector, selection ring, and HUD update identically.
 //
-// The selection *kind* follows the stream, not the asset. On v2 an aircraft is
-// an `asset` and resolves out of the snapshot's asset list; on v1 the same
-// aircraft is a `drone` and resolves out of `VizFrame.drones`. Publishing the
-// wrong kind would leave the Inspector resolving against a list the id is not
-// in, and it would silently render nothing.
+// The selection *kind* follows the schema currently displayed, not the live
+// stream owner. On v2 an aircraft is an `asset` and resolves out of the
+// snapshot's asset list; on v1 the same aircraft is a `drone` and resolves out
+// of `VizFrame.drones`. Publishing the wrong kind would leave the Inspector
+// resolving against a list the id is not in, and it would silently render
+// nothing. This distinction matters while a
+// v2 session is displaying a legacy DVR frame: `_v2Active` remains true while
+// `_displayedSnapshot` is deliberately null.
 function _selectFromAnySurface(assetId: string): void {
     // A destination the operator was aiming for the *previous* subject must not
     // be delivered to the new one. Cancelling also drops the crosshair, so the
     // canvas stops swallowing clicks as target placements.
     _cancelPick();
     droneManager.setSelected(assetId);
-    hud.setSelectedDrone(assetId);
     miniMap.setSelected(assetId);
-    selection.set(_v2Active ? 'asset' : 'drone', assetId);
+    const displaysV2 = _displayedSnapshot !== null;
+    displaysV2 ? hud.selectAsset(assetId) : hud.setSelectedDrone(assetId);
+    selection.set(displaysV2 ? 'asset' : 'drone', assetId);
+    if (displaysV2) operatorShell.setContextOpen(true);
+    _syncFleetSelection();
     _pilotHeadingFor = null; // re-seed piloted heading from the new asset's facing
 }
 // Selecting an observed contact. Deliberately separate from the asset path: a
@@ -979,13 +1644,15 @@ function _selectTrack(trackId: string): void {
     miniMap.setSelected(null);
     _stopDomainChase();
     selection.set('track', trackId);
+    operatorShell.setContextOpen(true);
+    _syncFleetSelection();
     _pilotHeadingFor = null;
 }
 // Symmetric deselect — clears every legacy selection surface plus the editor
 // SelectionStore, so the Inspector hides in lockstep with the selection ring.
 function _deselectAll(): void {
     // The pick has to die with the selection. `onPanelClose` routes here, and the
-    // panel is mounted on `document.body` — its close click never reaches the
+    // panel is mounted outside the canvas — its close click never reaches the
     // canvas listener that would otherwise settle the pick. Leaving `_pendingPick`
     // set would strand the app in aiming mode: the mousemove handler forces the
     // crosshair and suppresses hover, and the next click is consumed as a target,
@@ -997,8 +1664,27 @@ function _deselectAll(): void {
     selection.clear();
     _stopDomainChase();
     fleetUi?.renderSubject(null);
+    operatorShell.setContextOpen(false);
+    _syncFleetSelection();
     _pilotHeadingFor = null;
 }
+/**
+ * `M` — the reposition handles. They live in the Editor workspace now, so a
+ * press with the workspace closed opens it rather than doing nothing: a
+ * shortcut whose surface is withdrawn has to bring the surface back, not
+ * swallow the press. Below the desktop threshold the shell refuses the open,
+ * which is the same answer the labelled toggle gives.
+ */
+function _toggleMoveMode(): void {
+    if (!editorWorkspace) return;
+    if (!operatorShell.editorOpen) {
+        editorWorkspace.open();
+        return;
+    }
+    const surfaces = editorWorkspace.surfaces;
+    if (surfaces) surfaces.inspector.setMoveActive(surfaces.gizmo.toggleMoveMode());
+}
+
 // Select any entity kind from the editor layer (outliner rows). Drones and
 // assets light up the legacy HUD surfaces; hazards, detections and tracks drive
 // only the editor store + Inspector and clear any stale asset selection so the
@@ -1017,6 +1703,9 @@ function _selectEntity(kind: SelectionKind, id: string): void {
     hud.setSelectedDrone(null);
     miniMap.setSelected(null);
     selection.set(kind, id);
+    fleetUi?.renderSubject(null);
+    operatorShell.setContextOpen(false);
+    _syncFleetSelection();
 }
 miniMap.onSelect(_selectFromAnySurface);
 
@@ -1053,6 +1742,8 @@ const _descriptorCache = new DescriptorCache();
 const _simulationClock = new SimulationClock();
 /** The most recent projected snapshot, or null while on v1. */
 let _lastSnapshot: SceneSnapshot | null = null;
+/** The complete v2 projection currently painted, distinct from held Live state during replay. */
+let _displayedSnapshot: SceneSnapshot | null = null;
 
 // ─── v2 delta stream ───────────────────────────────────────────────────────
 //
@@ -1081,6 +1772,13 @@ const GAP_GIVE_UP_FRAMES = 100;
 /** Fleet panel + filter. Null until the first v2 snapshot pulls in its chunk. */
 let fleetUi: FleetUi | null = null;
 let _fleetUiLoading = false;
+/** Who may command the selected asset. Created with the fleet surface, in the
+ *  same chunk: a session that never sees a v2 snapshot never asks about leases.
+ *  Numeric timer handles because the host schedules through `window`. */
+let controlAuthority: ControlAuthorityStore<number> | null = null;
+let _authoritySelection: (() => void) | null = null;
+/** Page-session roster search. It never participates in scene visibility. */
+let _fleetQuery = '';
 /** External-contact overlay. Null until a snapshot actually carries contacts. */
 let trackOverlay: TrackOverlay | null = null;
 let _trackOverlayLoading = false;
@@ -1106,33 +1804,6 @@ let _visibleAssetIds: string[] = [];
 function _selectableIds(): string[] {
     if (!_v2Active) return (_lastFrame?.drones ?? []).map(d => d.id);
     return _visibleAssetIds;
-}
-
-/**
- * The filter's subset, with the selected asset added back if it hid it.
- *
- * The selected asset is exempt from filtering. `AssetManager.update` evicts
- * anything absent from the list it is handed and clears its own `_selectedId`,
- * and nothing tells the editor `SelectionStore`, the HUD chip or the detail
- * panel that it did — so a filter change could leave three stores each believing
- * something different about what is selected. Exempting the selection keeps them
- * in agreement, and is also the less surprising of the two behaviours: an
- * operator narrowing the facets is asking to see less of the fleet, not to have
- * the thing they are inspecting yanked out from under them.
- *
- * Publication order is preserved by re-walking `all`, so the exempt asset lands
- * where it belongs in the cycling order rather than being appended.
- */
-function _withSelectedAsset(
-    all: readonly SceneAsset[],
-    filtered: readonly SceneAsset[],
-): SceneAsset[] {
-    const id = droneManager.selectedId;
-    if (id === null) return [...filtered];
-    if (filtered.some((a) => a.view.id === id)) return [...filtered];
-    if (!all.some((a) => a.view.id === id)) return [...filtered];
-    const kept = new Set(filtered.map((a) => a.view.id));
-    return all.filter((a) => kept.has(a.view.id) || a.view.id === id);
 }
 
 /** The selected asset's domain, or null when nothing (or a track) is selected. */
@@ -1213,20 +1884,252 @@ function _startDomainChase(profile: ChaseProfileName): void {
 function _ensureFleetUi(): void {
     if (fleetUi || _fleetUiLoading) return;
     _fleetUiLoading = true;
-    void import('./assets/fleetUi')
-        .then((m) => {
+    // `gatedCommandIssuer` rides the same chunk the fleet surface does, so the
+    // gate reaches the asset panel without pulling `panelCommands` — and the
+    // whole capability layer with it — into the entry bundle.
+    void Promise.all([
+        import('./assets/fleetUi'),
+        import('./assets/panelCommands'),
+        import('./operator/controlAuthorityStore'),
+        import('./operator/consoleApi'),
+    ])
+        .then(([m, commands, authority, api]) => {
+            _fleetUiLoading = false;
+            if (!_v2Active) return;
+            // Command authority belongs to the fleet surface, not to whichever
+            // panel happens to display it. The command issuer needs the holder
+            // and the lease to fill in every envelope, so the store's lifetime
+            // is tied to the surface that issues commands rather than to a
+            // disclosure that could be collapsed out from under it.
+            controlAuthority = new authority.ControlAuthorityStore<number>({
+                holderId: authority.createConsoleIdentity(_roomId ?? 'console'),
+                loadMode: () => api.getControlMode(),
+                loadHolder: (assetId) => api.getControlHolder(assetId),
+                schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+                cancel: (timer) => { window.clearTimeout(timer); },
+            });
+            controlAuthority.loadControlMode();
+            // One writer for the store's selected asset: the shared selection,
+            // which fires immediately, so a fleet surface that loaded after the
+            // operator had already picked something is not left blind to it. A
+            // drone, hazard or contact selects nothing here — leases are v2
+            // asset-scoped, and a track has no command surface to authorise.
+            _authoritySelection = selection.subscribe(current => {
+                controlAuthority?.select(current?.kind === 'asset' ? current.id : null);
+            });
             fleetUi = new m.FleetUi({
+                panelMount: operatorShell.mounts.context,
+                filterMount: operatorShell.mounts.filter,
+                rosterMount: operatorShell.mounts.roster,
+                selectAsset: _selectFromAnySurface,
+                selectTrack: _selectTrack,
+                onQueryChange: query => {
+                    _fleetQuery = query;
+                    _refreshFleetRoster();
+                },
+                onFocusFallback: () => { operatorShell.focusFleetHeading(); },
                 pickTarget: _pickSceneTarget,
+                issueCommand: commands.gatedCommandIssuer(interactionMode.guard),
+                // Two gates, one panel: replay closes every command, and the
+                // lease decides this asset's. Both are shown as reasons on the
+                // control rather than by withdrawing it — an operator has to be
+                // able to tell "this asset cannot" from "you may not".
+                authority: controlAuthority,
+                mutationGate: interactionMode.guard,
                 onPanelClose: () => _deselectAll(),
                 // A filter change is an operator decision, so the picture is
                 // refreshed immediately rather than at the next 10 Hz frame.
-                onFilterChange: () => { if (_lastSnapshot) _renderSnapshot(_lastSnapshot, true); },
+                onFilterChange: _refreshFleetAfterFilter,
             });
+            setContextObscured(
+                fleetUi.panel.element,
+                settingsPanel?.classList.contains('open') === true,
+                settingsClose ?? settingsToggle,
+            );
+            // An operator who opened the disclosure before the first v2 snapshot
+            // was told to wait for this store. It exists now.
+            if (operatorShell.advancedSafetyExpanded) _ensureAdvancedSafety();
+            if (_displayedSnapshot) {
+                if (dvr && !dvr.isLive) _refreshFleetRoster();
+                else _renderSnapshot(_displayedSnapshot, true);
+            }
         })
         .catch((err: unknown) => {
             _fleetUiLoading = false;
             log.error('fleet panel/filter failed to load; assets still render and select', err);
         });
+}
+
+// ─── Advanced / Safety (deferred) ──────────────────────────────────────────
+//
+// Four safety-relevant panels behind one collapsed disclosure: control leases,
+// the link drill, simulation-only external reports, and the session's authority
+// trail. Most sessions never open it, so neither its code nor its stylesheet is
+// fetched until one does — the disclosure's trigger is static markup in
+// `index.html` precisely because it has to exist before the module it loads.
+//
+// It is a *view* over `ControlAuthorityStore` rather than an owner of authority
+// state, which is why it depends on the fleet surface having created that store:
+// collapsing this section must not remove facts the command issuer needs.
+
+/** The workspace, once its chunk has landed. */
+let advancedSafety: AdvancedSafetyWorkspace | null = null;
+let _advancedSafetyLoading = false;
+
+/** Writes the disclosure's own status line and offers a retry beside it. A
+ *  failed optional chunk leaves the rest of the console untouched, so this is
+ *  the only place it is reported. */
+function _setAdvancedStatus(message: string | null, retryable = false): void {
+    const note = operatorShell.mounts.advancedSafety
+        .querySelector<HTMLElement>('[data-advanced-status]');
+    if (note) {
+        note.hidden = message === null;
+        note.textContent = message ?? '';
+    }
+    const retry = document.getElementById('btn-advanced-retry');
+    if (retry) retry.hidden = !retryable;
+}
+
+/**
+ * Loads the Advanced/Safety workspace on first expansion.
+ *
+ * Guarded on the fleet surface's authority store rather than creating a second
+ * one: two stores would answer "who holds this asset" separately, and the one
+ * the command path did not consult would be the one on screen. Until it exists
+ * the disclosure says so and stays retryable, rather than mounting panels whose
+ * every control would be blocked for a reason the operator cannot act on.
+ */
+function _ensureAdvancedSafety(): void {
+    if (advancedSafety || _advancedSafetyLoading) return;
+    if (operatorShell.mode !== 'v2') {
+        _setAdvancedStatus(
+            'Advanced / Safety is part of the multi-domain console and is unavailable in '
+            + 'legacy mode.',
+        );
+        return;
+    }
+    const authority = controlAuthority;
+    if (authority === null) {
+        _setAdvancedStatus('Waiting for the fleet surface before reading control authority…');
+        return;
+    }
+    _advancedSafetyLoading = true;
+    _setAdvancedStatus('Loading Advanced / Safety…');
+    void Promise.all([
+        import('./operator/advancedSafety'),
+        import('./operator/consoleApi'),
+    ])
+        .then(([m, api]) => {
+            _advancedSafetyLoading = false;
+            // A store replaced while the chunk was in flight would leave these
+            // panels reading an authority nothing else consults. Declining still
+            // has to leave the disclosure somewhere an operator can act from: a
+            // surface abandoned on "Loading…" is one nothing can bring back.
+            if (advancedSafety !== null) return;
+            if (controlAuthority !== authority) {
+                _setAdvancedStatus(
+                    'Advanced / Safety was not mounted because control authority was replaced '
+                    + 'while it loaded.',
+                    true,
+                );
+                return;
+            }
+            advancedSafety = m.mountAdvancedSafety({
+                mount: operatorShell.mounts.advancedSafety,
+                authority,
+                interaction: interactionMode,
+                api: {
+                    acquire: (assetId, request) => api.acquireControl(assetId, request),
+                    renew: (assetId, request) => api.renewControl(assetId, request),
+                    release: (assetId, request) => api.releaseControl(assetId, request),
+                    preempt: (assetId, request) => api.preemptControl(assetId, request),
+                    getLink: assetId => api.getAssetLink(assetId),
+                    setLink: (assetId, request) => api.setAssetLink(assetId, request),
+                    reportTrack: request => api.reportTrack(request),
+                    getAudit: () => api.getCommandAudit(),
+                },
+            });
+            _setAdvancedStatus(null);
+            _updateAdvancedSafety();
+        })
+        .catch((err: unknown) => {
+            _advancedSafetyLoading = false;
+            log.error('Advanced / Safety failed to load; the rest of the console is unaffected', err);
+            _setAdvancedStatus(
+                'Advanced / Safety could not load. Nothing else on the console is affected.',
+                true,
+            );
+        });
+}
+
+/**
+ * Pushes the selected asset, its published state and the simulation clock into
+ * the workspace.
+ *
+ * Called from every v2 render and again the instant selection changes, so a
+ * previous asset's link state is never on screen for a frame interval. The
+ * selection generation travels with it: the workspace matches every asset-scoped
+ * response against it, and an answer for an asset the operator has left is
+ * dropped rather than painted over the new one.
+ */
+function _updateAdvancedSafety(): void {
+    if (!advancedSafety) return;
+    const current = selection.current;
+    const selectedId = current?.kind === 'asset' ? current.id : null;
+    const asset = selectedId === null
+        ? null
+        : assetById(_displayedSnapshot?.assets, selectedId);
+    advancedSafety.updateFrame({
+        selectedId,
+        selectionGeneration: _selectionGeneration,
+        selectedState: asset?.state ?? null,
+        // The frame's own clock. A track report stamped from a wall clock would
+        // be wrong by every pause and by the speed multiplier.
+        simulationTimeSeconds: _displayedSnapshot?.frame.time ?? 0,
+    });
+}
+
+function _rosterSelection(): FleetUiInput['selected'] {
+    const current = selection.current;
+    return current?.kind === 'asset' || current?.kind === 'track'
+        ? { kind: current.kind, id: current.id }
+        : null;
+}
+
+function _fleetUiInput(projected: SceneSnapshot): FleetUiInput {
+    return {
+        assets: projected.assets,
+        contacts: projected.tracks,
+        selected: _rosterSelection(),
+        query: _fleetQuery,
+    };
+}
+
+/** Applies selection to roster and context immediately, without repainting scene consumers. */
+function _syncFleetSelection(): void {
+    if (!_v2Active || !fleetUi || !_displayedSnapshot) return;
+    const visible = fleetUi.update(_fleetUiInput(_displayedSnapshot));
+    _renderFleetSubject(
+        visible,
+        _displayedSnapshot.tracks,
+        _displayedSnapshot.simulationNowMs,
+    );
+    _updateAdvancedSafety();
+}
+
+/** Search is roster-only: refresh chrome from the displayed frame without repainting the scene. */
+function _refreshFleetRoster(): void {
+    if (!fleetUi || !_displayedSnapshot) return;
+    fleetUi.update(_fleetUiInput(_displayedSnapshot));
+}
+
+function _refreshFleetAfterFilter(): void {
+    if (!_displayedSnapshot) return;
+    if (dvr && !dvr.isLive) {
+        _refreshFleetRoster();
+        return;
+    }
+    _renderSnapshot(_displayedSnapshot, true);
 }
 
 /** Load the external-contact overlay the first time a snapshot carries one. A
@@ -1295,23 +2198,23 @@ function _cancelPick(): void {
 const _a11yTelemetryEl = document.getElementById('a11y-telemetry');
 const TELEMETRY_ANNOUNCE_MS = 8000;
 let _lastTelemetryAnnounceAt = 0;
-let _lastTelemetryCount = -1;
+let _lastTelemetrySignature: string | number | null = null;
 
 /**
  * Shared throttle for the live region.
  *
- * `count` is the change signal: a fleet gaining or losing a member is worth
- * interrupting for, a battery ticking down a percent is not. Returns whether the
- * announcement was made, which is only of interest to callers that want to skip
- * the work of composing one.
+ * `signature` is the change signal: a fleet gaining, losing, or changing the
+ * domain distribution of its members is worth interrupting for; a battery
+ * ticking down a percent is not. The text callback stays lazy so an ordinary
+ * 10 Hz frame does not compose a sentence the throttle will discard.
  */
-function _announceTelemetry(count: number, text: () => string): void {
+function _announceTelemetry(signature: string | number, text: () => string): void {
     if (!_a11yTelemetryEl) return;
     const now = performance.now();
-    const countChanged = count !== _lastTelemetryCount;
-    if (!countChanged && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
+    const changed = signature !== _lastTelemetrySignature;
+    if (!changed && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
     _lastTelemetryAnnounceAt = now;
-    _lastTelemetryCount = count;
+    _lastTelemetrySignature = signature;
     _a11yTelemetryEl.textContent = text();
 }
 
@@ -1329,25 +2232,10 @@ function _updateA11yTelemetry(drones: { battery?: number; status?: string }[], s
     });
 }
 
-/**
- * Mixed-fleet wording, from the same counts the filter is showing.
- *
- * Domains are named because that is precisely the fact a screen-reader user
- * cannot get from the scene — silhouette carries it for everyone else. The
- * sentence itself is composed by `fleetSummaryText`, which lives with the filter
- * so the spoken counts and the visible tally can never disagree.
- *
- * Until the fleet chunk lands there is no filter and no summary, so this falls
- * back to a plain count rather than announcing nothing: a fleet the operator
- * cannot see and is not told about is the worst of the three states.
- */
-function _announceFleet(assetCount: number, simTime: number): void {
-    _announceTelemetry(assetCount, () => {
-        if (fleetUi) return fleetUi.summaryText();
-        if (assetCount === 0) return 'No assets in view.';
-        return `${assetCount} asset${assetCount === 1 ? '' : 's'} in view, `
-            + `sim time ${simTime.toFixed(0)} seconds.`;
-    });
+/** Announces the complete displayed v2 inventory, independent of view filters. */
+function _announceFleet(summary: AssetHudSummary, simTime: number): void {
+    const signature = `v2:${summary.total}:${summary.air}:${summary.ground}:${summary.surface}`;
+    _announceTelemetry(signature, () => assetTelemetryText(summary, simTime));
 }
 // Client-side mirror of the server backhaul state. Optimistically updated on
 // K-press, then reconciled by each incoming frame. The in-flight flag prevents
@@ -1404,13 +2292,24 @@ followBtn?.addEventListener('click', () => {
 // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
 window.addEventListener('keydown', (e: KeyboardEvent) => {
-    const target = e.target as Element | null;
-    if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT') return;
+    // Modal Escape ownership precedes the native-control shortcut guard, but
+    // respects a prior owner and command modifiers. Pending targeting wins over
+    // hints because it changes what the next scene click means.
+    if (handleOwnedEscape(
+        e,
+        _pendingPick !== null,
+        hintsVisible,
+        () => fleetUi?.contextVisible ?? false,
+        _cancelPick,
+        () => _setHintsVisible(false),
+        _deselectAll,
+    )) return;
 
     // Ctrl+Shift+R — investor-mode cinematic preset for screen recording.
     // Modifier combo is checked before the switch so the raw `KeyR`
     // slot stays free for future bindings.
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyR') {
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyR'
+        && !shouldIgnoreGlobalShortcut(e, { allowCtrl: true })) {
         e.preventDefault();
         investorMode.toggle(() => {
             const ready = (_lastFrame?.drones ?? []).filter(d => isDroneReady(d));
@@ -1421,6 +2320,8 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         });
         return;
     }
+
+    if (shouldIgnoreGlobalShortcut(e)) return;
 
     // Shift+1..8 — named camera presets for demo framing (see cameraPresets.ts).
     // Shift is checked first so the unshifted `Digit1..4` in controls.ts
@@ -1444,19 +2345,13 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         }
     }
 
-    // K — toggle the simulated backhaul link. POSTs to the sim controller,
-    // which flips the server-side state; the banner follows the next frame.
-    // Uses the in-flight guard + local state so rapid presses don't POST the
-    // same value twice before the first request's frame arrives.
+    // K — toggle the simulated backhaul link. The action owns the request and
+    // its in-flight guard (so rapid presses don't POST the same value twice
+    // before the first request's frame arrives); the banner follows the next
+    // frame, and `_backhaulKilled` is the local mirror this reads to decide
+    // which way to flip.
     if (e.code === 'KeyK' && !e.ctrlKey && !e.metaKey) {
-        if (_backhaulToggleInFlight) return;
-        _backhaulToggleInFlight = true;
-        const nextKilled = !_backhaulKilled;
-        void apiPost('/api/sim/mesh/backhaul', { killed: nextKilled })
-            .then(res => {
-                if (!res.success) log.warn('backhaul toggle failed', { error: res.error.message });
-            })
-            .finally(() => { _backhaulToggleInFlight = false; });
+        operatorActions.setBackhaulKilled(!_backhaulKilled);
         return;
     }
 
@@ -1465,16 +2360,16 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         case 'KeyH': overlayMgr.showHalos     = !overlayMgr.showHalos;     break;
         case 'KeyG': overlayMgr.showFormation = !overlayMgr.showFormation;  break;
         case 'KeyC': _stopDomainChase(); cameraMode?.cycle(); break; // FREE → CHASE → FPV
-        case 'KeyI': void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false)); break; // flight-instrument cockpit
+        case GLOBAL_SHORTCUTS.cockpit:
+            void _setCockpitEnabled(!(cockpit?.isEnabled() ?? false));
+            break; // flight-instrument cockpit
         case 'KeyM': {
             // Toggle the reposition gizmo ("move mode") — opt-in, so a plain
             // selection no longer obscures the scene with handles. Gated to the
             // v1 drone kind: the gizmo releases by POSTing a v1 `goto`, which is
             // an air-only endpoint, so offering handles on a rover would end in
             // a drag that silently does nothing.
-            if (selection.current?.kind === 'drone') {
-                if (inspector && gizmo) inspector.setMoveActive(gizmo.toggleMoveMode());
-            }
+            if (selection.current?.kind === 'drone') _toggleMoveMode();
             break;
         }
         case 'KeyF': {
@@ -1524,11 +2419,11 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
         // camera is NOT in free-fly mode. A/D yaw (rotate in place), W/S fly
         // forward/back along the drone's heading, Q/E climb/descend.
         //
-        // Air only, and checked rather than assumed. These keys post to the v1
-        // `/api/sim/drone/{id}/cmd` endpoint, which is an air-domain adapter: a
-        // rover selected on the v2 stream has an id that endpoint will refuse, so
-        // pressing W would fire a request that fails somewhere the operator never
-        // sees. A key that does nothing is better than one that appears to work.
+        // Air only, and checked rather than assumed. These keys go through the v1
+        // drone command action, which is an air-domain adapter: a rover selected
+        // on the v2 stream has an id that endpoint will refuse, so pressing W
+        // would fire a request that fails somewhere the operator never sees. A
+        // key that does nothing is better than one that appears to work.
         // Ground and surface assets are commanded from the asset panel, whose
         // buttons come from the asset's own declared capabilities.
         case 'KeyW': case 'KeyS': case 'KeyA': case 'KeyD':
@@ -1559,12 +2454,16 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
 
                     if (e.code === 'KeyA' || e.code === 'KeyD') {
                         // Rotate in place: hold position, face the new heading.
-                        apiPostOrWarn(`/api/sim/drone/${nudgeId}/cmd`,
-                            { type: 'hover', yaw: _pilotHeading }, 'Rotate');
+                        operatorActions.commandDrone(nudgeId, {
+                            type: 'hover', yaw: _pilotHeading,
+                        });
                     } else {
-                        apiPostOrWarn(`/api/sim/drone/${nudgeId}/cmd`,
-                            { type: 'goto', target: [pos.x, pos.y, pos.z], yaw: _pilotHeading }, 'Nudge');
-                        viz.showTargetMarker(pos, pos.y);
+                        const issued = operatorActions.commandDrone(nudgeId, {
+                            type: 'goto',
+                            target: [pos.x, pos.y, pos.z],
+                            yaw: _pilotHeading,
+                        });
+                        if (issued.success) viz.showTargetMarker(pos, pos.y);
                     }
                 }
             }
@@ -1573,12 +2472,6 @@ window.addEventListener('keydown', (e: KeyboardEvent) => {
     }
     // '?' key (Shift+/) — toggle hints panel
     if (e.key === '?') _setHintsVisible(!hintsVisible);
-    // Esc — abandon a destination pick first (it is the modal state), then close
-    // the hints. Leaving a pick armed with no way out would strand every click.
-    if (e.key === 'Escape') {
-        if (_pendingPick) _cancelPick();
-        else if (hintsVisible) _setHintsVisible(false);
-    }
 });
 
 // ─── SignalR ───────────────────────────────────────────────────────────────
@@ -1600,8 +2493,22 @@ const _seenHazardIds    = new Map<string, string>();   // id → type
 // the first `det-1` of scenario B; same for hazards. Without this the
 // event log stays silent for the first few seconds after a preset change
 // if the two scenarios happen to share ids.
+function _presentAuthoritativeScenario(scenario: ScenarioSessionState): void {
+    // A scenario replacement commits population and identity in one captured
+    // frame. Clear old interaction state before rendering that matching fleet,
+    // then re-arm the ordinary fit at the end of `_ingestSnapshot`.
+    _deselectAll();
+    recorder?.clear();
+    _fittedToSwarm = false;
+    document.dispatchEvent(new CustomEvent('resq:scenario-start', {
+        detail: { name: scenario.name },
+    }));
+}
+
 document.addEventListener('resq:scenario-start', (e) => {
-    _currentScenario = (e as CustomEvent<{ name?: string }>).detail?.name ?? _currentScenario;
+    if (operatorShell.mode === 'legacy') {
+        _legacyScenario = (e as CustomEvent<{ name?: string }>).detail?.name ?? _legacyScenario;
+    }
     _seenDetectionIds.clear();
     _seenHazardIds.clear();
 
@@ -1615,6 +2522,7 @@ document.addEventListener('resq:scenario-start', (e) => {
         applyScene: (env) => {
             viz.applyEnvironment(env);
             viz.setSkyProfile(skyProfileFor(env));
+            _applyPrecipitation(env.precipitation ?? null);
         },
         switchPreset: (key, waterLevel) => _switchPreset(key, waterLevel),
         setCamera: (preset: CameraPresetKey, env) => {
@@ -1700,13 +2608,10 @@ function _reindexMeshLinks(
  * decides what "the drones in this frame" means — on v2 that is the projection
  * filtered to what the fleet filter is showing.
  *
- * `fleetDrones` is that same projection *before* filtering, and exists for the
- * HUD alone: see the note at its call site.
  */
 function _applyFrameConsumers(
     frame: SceneFrame,
     drones: DroneState[],
-    fleetDrones: readonly DroneState[] = drones,
 ): void {
     missionChrome.update(frame.time ?? 0);
     // FPV OSD + cockpit read the selected asset's telemetry through the v1
@@ -1724,21 +2629,6 @@ function _applyFrameConsumers(
     fireSmoke.setSources(fires);
     overlayMgr.update(drones);
     controlPanel.updateDroneList(drones);
-    // The HUD readout is labelled DRN / "Active drones", so it is fed the *drone*
-    // count and not the asset manager's, which on the v2 stream counts rovers and
-    // vessels too. A number that quietly changes meaning under a label that did
-    // not is worse than a narrower number.
-    //
-    // For the same reason it is fed the *unfiltered* drones. The fleet filter is
-    // a view control, not a change to the fleet: a drone the operator has hidden
-    // is still an active drone, and reporting the narrowed number under this
-    // label — with nothing on the HUD to say anything is hidden — would make DRN
-    // silently mean "drones you happen to be looking at". The battery average
-    // comes off the same list so the two readouts describe one fleet. What *is*
-    // hidden is reported where it can be labelled as such: the fleet filter's own
-    // tally and the spoken summary, both of which name the hidden count.
-    // (Identical on v1, and on v2 with no filtering: same list either way.)
-    hud.updateDrones(fleetDrones.length, frame.time ?? 0, [...fleetDrones]);
     inspector?.update(frame);
     outliner?.update(frame);
     windCompass.updateFromWeatherSliders();
@@ -1753,8 +2643,50 @@ function _renderFrame(frame: VizFrame, snap = false): void {
     const drones = frame.drones ?? [];
     droneManager.update(drones, frame.detections, snap);
     miniMap.update(drones, frame.hazards);
+    hud.updateDrones(drones.length, frame.time ?? 0, drones);
     _applyFrameConsumers(frame, drones);
     _updateA11yTelemetry(drones, frame.time ?? 0);
+}
+
+/**
+ * Apply one recorded tick through the render path its schema was captured on.
+ *
+ * The tag is the whole point: a v2 recording carries the projected snapshot, so
+ * scrubbing keeps every ground asset, surface asset and observed contact on
+ * screen. Both arms are pure rendering with `snap` — no scenario presentation,
+ * no environment application, no intro. Those run only when a LIVE frame
+ * advances the authoritative revision, or a recording would restage a scenario
+ * every time the playhead crossed its first frame.
+ */
+function _renderRecordedFrame(recorded: RecordedFrame): void {
+    if (recorded.kind === 'v2') { _renderSnapshot(recorded.snapshot, true); return; }
+    _renderV1ReplayFrame(recorded.frame);
+}
+
+/**
+ * The newest tick this client is HOLDING, which the frozen ring is not.
+ *
+ * Recording stops the moment replay starts, so the ring's last slot ages with
+ * the scrub while `_lastSnapshot` and `_lastFrame` keep advancing underneath it.
+ * The DVR reads this on Go Live so the live edge — not the end of the clip — is
+ * what comes back on screen.
+ */
+function _latestLiveRecord(): RecordedFrame | null {
+    if (_v2Active) {
+        return _lastSnapshot === null ? null : { kind: 'v2', snapshot: _lastSnapshot };
+    }
+    return _lastFrame === null ? null : { kind: 'v1', frame: _lastFrame };
+}
+
+/** Retires v2 roster truth while the current DVR still applies a legacy frame. */
+function _renderV1ReplayFrame(frame: VizFrame): void {
+    _displayedSnapshot = null;
+    _visibleAssetIds = (frame.drones ?? []).map(drone => drone.id);
+    fleetUi?.update({ assets: [], contacts: [], selected: null, query: _fleetQuery });
+    fleetUi?.renderSubject(null);
+    operatorShell.setContextOpen(false);
+    trackOverlay?.update([], null, null);
+    _renderFrame(frame, true);
 }
 
 /**
@@ -1770,10 +2702,17 @@ function _renderFrame(frame: VizFrame, snap = false): void {
  * surfaces each re-deriving "is this one visible?" is six chances to disagree.
  */
 function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
-    _lastSnapshot = projected;
+    _displayedSnapshot = projected;
+    const hudSummary = hud.updateAssets(projected.assets);
+    hud.updateTime(projected.frame.time ?? 0);
+    _reconcileV2Selection(projected);
 
-    const filtered = fleetUi ? fleetUi.update(projected.assets) : [...projected.assets];
-    const visible = _withSelectedAsset(projected.assets, filtered);
+    const visible = fleetUi ? fleetUi.update({
+        assets: projected.assets,
+        contacts: projected.tracks,
+        selected: _rosterSelection(),
+        query: _fleetQuery,
+    }) : [...projected.assets];
     const visibleIds = new Set(visible.map((a) => a.view.id));
     _visibleAssetIds = visible.map((a) => a.view.id);
     const fleetDrones = projected.frame.drones ?? [];
@@ -1791,13 +2730,39 @@ function _renderSnapshot(projected: SceneSnapshot, snap = false): void {
 
     droneManager.assets.update(visible.map((a) => a.view), projected.detections, snap);
     miniMap.update([], frame.hazards ?? [], projected.markers.filter((m) => visibleIds.has(m.id)));
-    _applyFrameConsumers(frame, drones, fleetDrones);
+    _applyFrameConsumers(frame, drones);
     _renderFleetSubject(visible, projected.tracks, projected.simulationNowMs);
+    _updateAdvancedSafety();
     _renderTracks(projected);
-    // The filter's own count, not the drawn one: this is the change signal for a
-    // sentence `FleetUi` composes from that same set, and an exempt selection
-    // would make the two disagree by one.
-    _announceFleet(filtered.length, frame.time ?? 0);
+    _announceFleet(hudSummary, frame.time ?? 0);
+}
+
+/** Reconciles only against the complete projection currently being displayed. */
+function _reconcileV2Selection(projected: SceneSnapshot): void {
+    const current = selection.current;
+    if (!current) return;
+
+    if (current.kind === 'drone') {
+        const present = projected.assets.some(asset => asset.view.id === current.id);
+        if (present) {
+            selection.set('asset', current.id);
+            hud.selectAsset(current.id);
+            operatorShell.setContextOpen(true);
+            return;
+        }
+        _deselectAll();
+        operatorShell.focusFleetHeading();
+        return;
+    }
+
+    const vanished = current.kind === 'asset'
+        ? !projected.assets.some(asset => asset.view.id === current.id)
+        : current.kind === 'track'
+            ? !projected.tracks.some(track => track.trackId === current.id)
+            : false;
+    if (!vanished) return;
+    _deselectAll();
+    operatorShell.focusFleetHeading();
 }
 
 /**
@@ -2106,20 +3071,23 @@ function _fitOnce(positions: THREE.Vector3[], count: number): void {
 
 function _wireConnection(c: HubConnection): void {
     c.on('ReceiveFrame', (frame: VizFrame) => {
+        const drones = frame.drones ?? [];
+        startupCoordinator.onV1Frame(drones.length);
         loadingOverlay.onFrame();
-        dvr?.record(frame);
         // Both streams describe the same tick. Once v2 is driving, the v1 frame
-        // is recorded for the DVR and nothing else — applying both would
-        // reconcile every air asset twice per tick against two projections, and
-        // the v1 one carries no rovers to reconcile the rest against.
+        // is dropped entirely — applying both would reconcile every air asset
+        // twice per tick against two projections, and RECORDING it would give
+        // the DVR a rolling window of air-only frames for a mixed-domain run,
+        // which replays as a fleet that loses every rover and vessel on scrub.
+        // `_ingestSnapshot` records the projected snapshot instead.
         if (_v2Active) return;
+        dvr?.record({ kind: 'v1', frame });
         // While scrubbing/replaying, buffered frames drive the scene; live
         // frames keep recording (above) but must not overwrite the view.
         if (dvr && !dvr.isLive) return;   // no DVR yet ⇒ always live
         _renderFrame(frame);
         dvr?.updateServer(frame);
 
-        const drones = frame.drones ?? [];
         // v1 carries one mesh flag and the server sets it from the backhaul kill
         // switch (`VizFrameBuilder.Build`), so it is read as the backhaul here —
         // which is what the banner it raises has always said. Connectivity is
@@ -2138,6 +3106,7 @@ function _wireConnection(c: HubConnection): void {
         // it agreed to before the change; falling back to v1 is always available
         // and is strictly better than reading fields that may have moved.
         if (!isSupportedSchema(snapshot.schemaVersion)) {
+            startupCoordinator.onV2Rejected();
             if (_v2Active) {
                 log.warn('v2 snapshot schema is not one this client reads; falling back to v1', {
                     schemaVersion: snapshot.schemaVersion,
@@ -2193,6 +3162,7 @@ function _wireConnection(c: HubConnection): void {
     c.onreconnecting(() => {
         hud.setStatus('reconnecting');
         loadingOverlay.onReconnecting();
+        startupCoordinator.onConnectionFailed();
         // Group membership dies with the connection, and the room may have been
         // reset while we were away, so the held frame is no longer a base this
         // client can vouch for. Dropping it costs nothing on screen: the last
@@ -2202,6 +3172,8 @@ function _wireConnection(c: HubConnection): void {
     c.onreconnected(()  => {
         hud.setStatus('connected');
         loadingOverlay.onReconnected();
+        startupCoordinator.startNegotiation();
+        _retryMissionResources();
         // Snapshot subscription is connection-scoped: the server drops it with
         // the connection, and a reconnect is not always preceded by a disconnect
         // the server saw. Re-asking is idempotent on both sides — and asking for
@@ -2209,7 +3181,12 @@ function _wireConnection(c: HubConnection): void {
         // subscription with a keyframe.
         void _subscribeSnapshots().then(_subscribeDeltas);
     });
-    c.onclose(()        => { hud.setStatus('disconnected'); loadingOverlay.onDisconnected(); });
+    c.onclose(()        => {
+        hud.setStatus('disconnected');
+        loadingOverlay.onDisconnected();
+        startupCoordinator.onConnectionFailed();
+        connectionRetry.request();
+    });
 }
 
 /**
@@ -2225,6 +3202,13 @@ function _wireConnection(c: HubConnection): void {
  * scene rather than freezing it.
  */
 function _ingestSnapshot(snapshot: VizSnapshotV2): void {
+    // Confirmation is a destructive safety gate and therefore uses raw wire
+    // inventory, before projection can omit an unresolved descriptor or pose.
+    _rawScenarioSession = { assetCount: snapshot.assets.length, tick: snapshot.tick };
+    void startupCoordinator.onV2Snapshot({
+        assetCount: snapshot.assets.length,
+        scenario: snapshot.scenario,
+    });
     loadingOverlay.onFrame();
     if (!_v2Active) {
         _v2Active = true;
@@ -2234,10 +3218,10 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
         });
     }
 
-    // The DVR buffers v1 frames only, so a scrub replays the air assets and
-    // nothing else. Live snapshots are still projected while scrubbing —
-    // cheap, and it keeps the descriptor cache current so going live does
-    // not arrive on a frame whose descriptors were pruned in the meantime.
+    // Live snapshots are still projected while scrubbing — cheap, and it keeps
+    // the descriptor cache current so going live does not arrive on a frame
+    // whose descriptors were pruned in the meantime. It is also what makes the
+    // held live edge below a complete picture rather than a stale one.
     // The wall clock is the projection's documented last resort and reaches
     // an age only when no frame this session has carried a dateable report —
     // in which case nothing is dateable against it either.
@@ -2249,9 +3233,47 @@ function _ingestSnapshot(snapshot: VizSnapshotV2): void {
     const projected = projectSnapshot(
         snapshot, Date.now(), _descriptorCache, _simulationClock,
     );
-    if (dvr && !dvr.isLive) { _lastSnapshot = projected; return; }
+    _lastSnapshot = projected;
+    // Read from the shared store rather than re-deriving it from the DVR: one
+    // fact, one owner. `dvr.onModeChange` is what keeps the store current.
+    const streamMode = interactionMode.value;
+    if (streamMode === 'live') {
+        _missionTransport = {
+            paused: projected.frame.paused ?? false,
+            speed: projected.frame.speed ?? 1,
+            simulationTimeSeconds: projected.frame.time ?? 0,
+        };
+    }
+    scenarioRuntime.apply(projected.scenario, snapshot.assets.length, streamMode);
+    // Recorded AFTER reconstruction: a delta is a patch, and only the merged
+    // projection is a frame a playhead can land on. Recorded after the runtime
+    // too, so a scenario that has just been presented has already cleared the
+    // ring and this is the first frame of the new run rather than the last of
+    // the old one. `Dvr.record` is a no-op away from the live edge.
+    dvr?.record({ kind: 'v2', snapshot: projected });
+    if (dvr && !dvr.isLive) return;
 
-    _renderSnapshot(projected);
+    _applyLiveSnapshot(projected);
+}
+
+/** Restores the newest held v2 picture synchronously when DVR returns Live. */
+function _resumeHeldSnapshot(): void {
+    const latest = _lastSnapshot;
+    if (!_v2Active || latest === null) return;
+    _missionTransport = {
+        paused: latest.frame.paused ?? false,
+        speed: latest.frame.speed ?? 1,
+        simulationTimeSeconds: latest.frame.time ?? 0,
+    };
+    scenarioRuntime.resumeLive();
+    if (_rosterSelection()) operatorShell.setContextOpen(true);
+    _applyLiveSnapshot(latest, true);
+}
+
+/** Renders one authoritative Live projection and its live-only side effects. */
+function _applyLiveSnapshot(projected: SceneSnapshot, snap = false): void {
+    _renderMissionPanel();
+    _renderSnapshot(projected, snap);
     dvr?.updateServer(projected.frame);
     // Roster and event announcements run over EVERY asset, not the visible
     // subset. The filter narrows what is drawn, not what happened: a vessel
@@ -2376,8 +3398,11 @@ async function _abandonDeltas(): Promise<void> {
  * only resolves against a v2 snapshot.
  */
 function _leaveV2(): void {
+    _invalidateOperatorModals();
+    _rawScenarioSession = { assetCount: 0, tick: 0 };
     _v2Active = false;
     _lastSnapshot = null;
+    _displayedSnapshot = null;
     _descriptorCache.clear();
     // Deltas are a layer on top of a schema this client has just decided it
     // cannot read, so the chain goes with it — and the unsubscribe puts the
@@ -2408,9 +3433,9 @@ function _leaveV2(): void {
     } else {
         fleetUi?.renderSubject(null);
     }
-    // The live region throttles on a changed count; the wording changes here
-    // even when the number does not, so let the next frame speak.
-    _lastTelemetryCount = -1;
+    // The live region throttles on a signature; the wording changes here even
+    // when the number does not, so let the next frame speak.
+    _lastTelemetrySignature = null;
 }
 
 /**
@@ -2438,7 +3463,9 @@ async function _subscribeSnapshots(): Promise<void> {
         log.warn('server speaks a v2 schema this client does not read; staying on v1', {
             schemaVersion: version,
         });
-        _leaveV2();
+        startupCoordinator.onV2Rejected();
+        if (_v2Active) _leaveV2();
+        else void _abandonDeltas();
         // Unsubscribing is best-effort. Failing to get out of the group is not
         // worth surfacing: every snapshot that arrives is refused by the
         // per-frame schema check above.
@@ -2447,36 +3474,42 @@ async function _subscribeSnapshots(): Promise<void> {
         // The overwhelmingly likely cause is a server that predates the v2
         // stream, which is a supported configuration and not an error.
         log.info('no v2 snapshot stream on this server; using the v1 frame', { err });
-        _leaveV2();
+        startupCoordinator.onV2Rejected();
+        if (_v2Active) _leaveV2();
+        else void _abandonDeltas();
     }
 }
 
+const connectionRetry = new RetryScheduler({
+    retry: () => { void start(); },
+    schedule: (callback, ms) => window.setTimeout(callback, ms),
+    cancel: id => window.clearTimeout(id),
+});
+
 const _fpsTick = setInterval(() => hud.updateFps(viz.fps), 500);
-window.addEventListener('beforeunload', () => clearInterval(_fpsTick));
+window.addEventListener('beforeunload', () => {
+    clearInterval(_fpsTick);
+    scenarioBrowser?.dispose();
+    startupCoordinator.dispose();
+    connectionRetry.dispose();
+    _authoritySelection?.();
+    advancedSafety?.dispose();
+    controlAuthority?.dispose();
+    editorWorkspace?.dispose();
+});
 
 let _starting = false;
 
-async function _autoSpawnIfEmpty(): Promise<void> {
-    const state = await apiGet<unknown[]>('/api/sim/state');
-    if (!state.success) {
-        log.warn('auto-spawn skipped — /api/sim/state unreachable', { error: state.error.message });
-        return;
-    }
-    if (state.value.length === 0) {
-        const spawn = await apiPost('/api/sim/scenario/single');
-        if (!spawn.success) {
-            log.warn('auto-spawn scenario/single failed', { error: spawn.error.message });
-        }
-    }
-}
-
 async function start(): Promise<void> {
     if (_starting) return;
+    connectionRetry.cancel();
     _starting = true;
     try {
         if (!await _ensureSessionReady()) {
             hud.setStatus('disconnected');
-            setTimeout(() => { _starting = false; void start(); }, 5000);
+            startupCoordinator.onConnectionFailed();
+            _starting = false;
+            connectionRetry.request();
             return;
         }
         if (!connection) {
@@ -2492,22 +3525,26 @@ async function start(): Promise<void> {
             _wireConnection(connection);
         }
         await connection.start();
+        loadingOverlay.onReconnected();
         hud.setStatus('connected');
-        // Ask for the multi-domain stream. Awaited rather than fired off so a
-        // server that has it is driving assets before the first auto-spawn lands;
-        // a server that does not simply falls through to the v1 frame.
+        // Start the accepted-but-silent window before awaiting the subscription
+        // invoke: v1 frames can prove fallback viability while that call is slow.
+        startupCoordinator.startNegotiation();
+        // Ask for the multi-domain stream. A server that does not have it proves
+        // rejection immediately; one that accepts but sends nothing gets the
+        // five-second viable-v1 fallback above.
         await _subscribeSnapshots();
-        // Layered on the above and awaited for the same reason: a server that
-        // has the stream is sending deltas before the first auto-spawn lands.
-        // A server that does not falls through to full snapshots.
+        // Deltas are optional; full snapshots remain the v2 recovery path.
         await _subscribeDeltas();
-        await _autoSpawnIfEmpty();
     } catch {
         hud.setStatus('disconnected');
-        setTimeout(() => { _starting = false; void start(); }, 5000);
+        startupCoordinator.onConnectionFailed();
+        _starting = false;
+        connectionRetry.request();
         return;
     }
     _starting = false;
+    connectionRetry.cancel();
 }
 void start();
 

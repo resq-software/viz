@@ -319,7 +319,7 @@ public sealed partial class ScenarioService
     /// </remarks>
     /// <param name="value">Value about to be logged.</param>
     /// <returns>A single-line, bounded rendering of <paramref name="value"/>.</returns>
-    private static string LogSafe(string? value)
+    internal static string LogSafe(string? value)
     {
         if (string.IsNullOrEmpty(value))
         {

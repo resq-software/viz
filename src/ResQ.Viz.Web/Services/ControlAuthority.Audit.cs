@@ -87,6 +87,7 @@ public sealed partial class ControlAuthority
     /// <param name="endReason">Why the lease ended, on a record that ended one.</param>
     /// <param name="denialCode">Stable refusal code, on a denial.</param>
     /// <param name="justification">Operator-supplied reason, required for a preemption.</param>
+    /// <param name="assetInstanceId">Opaque identity of the asset instance involved.</param>
     private void Record(
         ControlAuditKind kind,
         DateTimeOffset at,
@@ -97,11 +98,12 @@ public sealed partial class ControlAuthority
         string? actorId,
         ControlLeaseEndReason? endReason,
         string? denialCode,
-        string? justification)
+        string? justification,
+        string? assetInstanceId)
     {
         _audit.Enqueue(new ControlAuditRecord(
             ++_auditSequence, kind, at, observedAt, assetId, leaseId, holderId, actorId,
-            endReason, denialCode, justification));
+            endReason, denialCode, justification, assetInstanceId));
 
         while (_audit.Count > AuditCapacity)
         {

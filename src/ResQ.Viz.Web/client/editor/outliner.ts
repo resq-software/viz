@@ -36,14 +36,27 @@ const NO_STATUS = '—';
  * carries those lists**, which is what makes the v1 stream's hierarchy
  * byte-identical to what it was: a v1 frame has no `assets` array, so it yields
  * the same three groups it always did rather than two permanently empty
- * headings. On the v2 stream the drone group is the one that empties, because
- * v2 assets arrive as assets — including the air ones.
+ * headings.
+ *
+ * On the v2 stream the drone group empties, and it has to be **made** to: a v2
+ * frame carries both lists at once. `assets/sceneFrame` projects every air
+ * asset back down into `drones` so the fourteen v1 consumers in `app.ts` keep
+ * working unchanged, so the air fleet is genuinely present twice in one frame —
+ * once as an asset and once as its own v1 shadow. Emitting both groups whole
+ * put every drone on screen under two headings simultaneously, which reads as
+ * duplicate entities rather than as one entity described twice. The drone group
+ * is therefore filtered against the asset ids; a drone with no asset of the same
+ * id still gets its row, so a genuinely v1-only entity cannot silently vanish.
  */
 export function buildHierarchy(frame: SceneFrame | null): OutlineGroup[] {
     const drones = frame?.drones ?? [];
     const hazards = frame?.hazards ?? [];
     const detections = frame?.detections ?? [];
     const groups: OutlineGroup[] = [];
+
+    // Empty on a v1 frame, which makes the filter below a no-op there by
+    // construction rather than by a second branch that could drift from it.
+    const assetIds = new Set((frame?.assets ?? []).map(a => a.view.id));
 
     if (frame?.assets !== undefined) {
         groups.push({
@@ -63,7 +76,9 @@ export function buildHierarchy(frame: SceneFrame | null): OutlineGroup[] {
         {
             kind: 'drone',
             title: kindLabel('drone'),
-            items: drones.map(d => ({ id: d.id, sub: d.status ?? NO_STATUS })),
+            items: drones
+                .filter(d => !assetIds.has(d.id))
+                .map(d => ({ id: d.id, sub: d.status ?? NO_STATUS })),
         },
         {
             kind: 'hazard',

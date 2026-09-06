@@ -319,7 +319,8 @@ public sealed partial class SnapshotDifferTests
         IReadOnlyList<HazardSeed>? hazards = null,
         NetworkState? network = null,
         string environmentRevision = "env-1",
-        TransportState? transport = null)
+        TransportState? transport = null,
+        ScenarioSessionState? scenario = null)
     {
         var at = TimeOf(tick);
 
@@ -336,7 +337,8 @@ public sealed partial class SnapshotDifferTests
             Detections: [.. (detections ?? Array.Empty<DetectionSeed>()).Select(d => Detection(d))],
             Hazards: [.. (hazards ?? Array.Empty<HazardSeed>()).Select(h => Hazard(h))],
             Network: network,
-            EnvironmentRevision: environmentRevision);
+            EnvironmentRevision: environmentRevision,
+            Scenario: scenario);
     }
 
     /// <summary>Counts the transition shapes a generated run actually produced.</summary>

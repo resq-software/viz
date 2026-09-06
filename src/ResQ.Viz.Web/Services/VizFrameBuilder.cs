@@ -45,6 +45,9 @@ public sealed class VizFrameBuilder
 
     private readonly IReadOnlyList<SurvivorTarget> _survivors;
     private readonly IReadOnlyList<HazardZoneConfig> _hazards;
+
+    /// <summary>Hazard sets belonging to individual scenarios, keyed by scenario id.</summary>
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<HazardZoneConfig>> _scenarioHazards;
     private readonly float _detectionRange;
 
     // ── Constructors ───────────────────────────────────────────────────────────
@@ -68,6 +71,20 @@ public sealed class VizFrameBuilder
             .GetSection("Simulation:HazardZones")
             .Get<List<HazardZoneConfig>>() ?? [];
 
+        // Per-preset hazard sets, keyed by scenario. One deployment-wide list republished on
+        // every frame meant a flood ran with the same standing fire as a wildfire — the marker
+        // burning in open water — while a scenario named for its disaster showed nothing of it.
+        // A preset with no entry here falls back to the deployment-wide list, so a deployment
+        // that never configures this behaves exactly as it did before the section existed.
+        _scenarioHazards = configuration
+            .GetSection("Simulation:ScenarioHazards")
+            .GetChildren()
+            .ToDictionary(
+                section => section.Key,
+                section => (IReadOnlyList<HazardZoneConfig>)(
+                    section.Get<List<HazardZoneConfig>>() ?? []),
+                StringComparer.OrdinalIgnoreCase);
+
         _detectionRange = configuration.GetValue<float>("Simulation:DetectionRangeMeters", 35f);
     }
 
@@ -78,6 +95,8 @@ public sealed class VizFrameBuilder
     {
         _survivors = [];
         _hazards = [];
+        _scenarioHazards = new Dictionary<string, IReadOnlyList<HazardZoneConfig>>(
+            StringComparer.OrdinalIgnoreCase);
         _detectionRange = 35f;
     }
 
@@ -100,6 +119,10 @@ public sealed class VizFrameBuilder
     /// Monotonic simulation tick counter. Lets the client tell a genuinely new
     /// frame from a repeat of the same one while paused or stepping.
     /// </param>
+    /// <param name="scenarioKey">
+    /// Preset this room is running, used to select its hazard set. Empty — the default, and what
+    /// a room that has started no scenario reports — falls back to the deployment-wide hazards.
+    /// </param>
     /// <returns>A <see cref="VizFrame"/> ready for broadcast.</returns>
     public VizFrame Build(
         IReadOnlyList<DroneSnapshot> drones,
@@ -107,7 +130,8 @@ public sealed class VizFrameBuilder
         bool partitioned = false,
         bool paused = false,
         int speed = 1,
-        long tick = 0)
+        long tick = 0,
+        string scenarioKey = "")
     {
         var droneStates = drones
             .Select(d => new DroneVizState(d.Id, d.Position, d.Rotation, d.Velocity, d.Battery, d.Status, d.Armed, d.Vendor))
@@ -119,7 +143,7 @@ public sealed class VizFrameBuilder
             Time: simTime,
             Drones: droneStates,
             Detections: BuildDetections(drones),
-            Hazards: BuildHazards(),
+            Hazards: BuildHazards(scenarioKey),
             Mesh: mesh,
             Paused: paused,
             Speed: speed,
@@ -152,8 +176,19 @@ public sealed class VizFrameBuilder
         return detections;
     }
 
-    private IReadOnlyList<HazardVizState> BuildHazards() =>
-        _hazards.Select(h => new HazardVizState(
+    /// <summary>The hazards belonging to a scenario, or the deployment-wide set.</summary>
+    /// <remarks>
+    /// An unknown or empty key resolves to the deployment-wide list rather than to nothing: a
+    /// session that has not started a preset still has whatever standing hazards the deployment
+    /// declares, and publishing an empty list there would quietly delete them.
+    /// </remarks>
+    /// <param name="scenarioKey">Active scenario, or empty when none has been started.</param>
+    /// <returns>The hazard states to publish on this frame.</returns>
+    private IReadOnlyList<HazardVizState> BuildHazards(string scenarioKey) =>
+        (scenarioKey.Length > 0 && _scenarioHazards.TryGetValue(scenarioKey, out var scoped)
+            ? scoped
+            : _hazards)
+        .Select(h => new HazardVizState(
             Id: h.Id,
             Type: h.Type,
             Center: h.Center.Length == 3 ? [h.Center[0], h.Center[1], h.Center[2]] : [0f, 0f, 0f],

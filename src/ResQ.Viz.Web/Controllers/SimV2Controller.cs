@@ -89,6 +89,7 @@ public sealed partial class SimV2Controller : ControllerBase
     private readonly VizFrameBuilder _frames;
     private readonly IReadOnlyList<IAssetFactory> _factories;
     private readonly ControlAuthorityRegistry _authority;
+    private readonly ScenarioService? _scenarios;
     private readonly ILogger<SimV2Controller> _logger;
 
     /// <summary>Initialises the controller with the frame builder and any registered asset factories.</summary>
@@ -117,15 +118,22 @@ public sealed partial class SimV2Controller : ControllerBase
     /// default registry is used then, keyed by room exactly as the injected one is, so a lease
     /// taken through it survives between requests instead of silently evaporating.
     /// </param>
+    /// <param name="scenarios">
+    /// Validated scenario catalog and loader. Optional so direct controller constructions that do
+    /// not use scenario actions remain compatible; those actions return a typed unsupported
+    /// response when it is absent.
+    /// </param>
     public SimV2Controller(
         VizFrameBuilder frames,
         IEnumerable<IAssetFactory> factories,
         ILogger<SimV2Controller> logger,
-        ControlAuthorityRegistry? authority = null)
+        ControlAuthorityRegistry? authority = null,
+        ScenarioService? scenarios = null)
     {
         _frames = frames;
         _factories = factories.ToArray();
         _authority = authority ?? ControlAuthorityRegistry.Shared;
+        _scenarios = scenarios;
         _logger = logger;
     }
 
@@ -179,17 +187,17 @@ public sealed partial class SimV2Controller : ControllerBase
         }
 
         var location = CommandLocation(envelope.CommandId);
-        var log = room.Commands;
+        var logSession = room.Commands.OpenSession();
 
-        var classified = log.Idempotency.Classify(envelope, now);
-        if (ReplayDuplicate(log, classified, now) is { } replay)
+        var classified = logSession.Classify(envelope, now);
+        if (ReplayDuplicate(logSession, classified, now) is { } replay)
         {
             return replay;
         }
 
-        var frame = room.CaptureAssetFrame();
-        var descriptor = frame.Descriptors.FirstOrDefault(d => d.AssetId == envelope.AssetId);
-        var state = frame.Assets.FirstOrDefault(s => s.AssetId == envelope.AssetId);
+        var candidate = room.CaptureCommandCandidate(envelope.AssetId);
+        var descriptor = candidate?.Descriptor;
+        var state = candidate?.State;
 
         // Pure and side-effect free, so it is safe to run before the authority gate and read the
         // parts of its verdict that the documented order settles first.
@@ -222,27 +230,68 @@ public sealed partial class SimV2Controller : ControllerBase
             return unreachable;
         }
 
-        // Claim only now, and re-check: two identical requests can both classify as new before
-        // either claims, and the ledger's own lock is what breaks the tie.
-        var claimed = log.Idempotency.Claim(envelope, now);
-        if (ReplayDuplicate(log, claimed, now) is { } racedReplay)
-        {
-            return racedReplay;
-        }
-
         if (!AssetCommandTranslator.TryTranslate(
                 validation.Intent, out var command, out var reasonCode, out var message))
         {
             var refused = CommandResult.Rejected(envelope.CommandId, reasonCode, message);
-            log.Record(refused);
-            log.Idempotency.Update(envelope.IdempotencyKey, CommandState.Rejected, now);
+            logSession.Complete(
+                refused, envelope.IdempotencyKey, CommandState.Rejected, now);
             RecordCommandDecision(room, envelope, CommandDecision.Rejected, now, reasonCode, message);
             return Failure(
                 StatusCodes.Status409Conflict, reasonCode, message,
                 envelope.AssetId, envelope.CommandId);
         }
 
-        var outcome = room.SendAssetCommand(in command);
+        var dispatch = _authority.For(room).DispatchCommand(
+            envelope.AssetId,
+            envelope.IssuerId,
+            envelope.ControlLeaseId,
+            () => candidate is null
+                ? new RoomCommandDispatchResult(false, default, null)
+                : room.DispatchCommand(candidate, logSession, envelope, now, in command));
+        if (!dispatch.IsAuthorized)
+        {
+            var reason = dispatch.ReasonCode ?? CommandAuthorityReasons.AssetInstanceChanged;
+            var detail = reason switch
+            {
+                CommandAuthorityReasons.AssetInstanceChanged =>
+                    $"Asset '{Sanitize(envelope.AssetId)}' was replaced after command validation; the command was not dispatched.",
+                CommandAuthorityReasons.LeasePreempted =>
+                    $"Control of asset '{Sanitize(envelope.AssetId)}' was taken from "
+                    + $"'{Sanitize(envelope.IssuerId)}' on emergency authority before dispatch.",
+                _ => $"Control authority for asset '{Sanitize(envelope.AssetId)}' changed before dispatch ({reason}).",
+            };
+            RecordCommandDecision(
+                room,
+                envelope,
+                reason == CommandAuthorityReasons.LeasePreempted
+                    ? CommandDecision.Preempted
+                    : CommandDecision.Rejected,
+                now,
+                reason,
+                detail);
+            return Failure(
+                StatusCodes.Status409Conflict, reason, detail,
+                envelope.AssetId, envelope.CommandId);
+        }
+
+        if (dispatch.RoomResult.RefusalReason == AssetLinkReasons.Unreachable)
+        {
+            return LinkRefusal(room, envelope, now);
+        }
+
+        var claimed = dispatch.RoomResult.ClaimDecision!.Value;
+        if (claimed.Outcome != CommandIdempotencyOutcome.New)
+        {
+            if (ReplayDuplicate(logSession, claimed, now) is { } racedReplay)
+            {
+                return racedReplay;
+            }
+
+            return CommandWorldChangedBeforeDispatch(room, envelope, now);
+        }
+
+        var outcome = dispatch.RoomResult.Outcome;
         if (!outcome.IsAccepted)
         {
             var refusalReason = outcome.Reason ?? AssetProblems.CommandNotExecutable;
@@ -250,8 +299,11 @@ public sealed partial class SimV2Controller : ControllerBase
                 $"Asset '{Sanitize(envelope.AssetId)}' refused command '{Sanitize(envelope.Kind)}': {refusalReason}.";
             var refused = CommandResult.Rejected(
                 envelope.CommandId, refusalReason, detail);
-            log.Record(refused);
-            log.Idempotency.Update(envelope.IdempotencyKey, CommandState.Rejected, now);
+            if (!logSession.Complete(
+                    refused, envelope.IdempotencyKey, CommandState.Rejected, now))
+            {
+                return CommandResultBecameStale(room, envelope, now, CommandDecision.Rejected);
+            }
             RecordCommandDecision(
                 room, envelope, CommandDecision.Rejected, now, refusalReason, detail);
             _logger.LogWarning(
@@ -264,8 +316,11 @@ public sealed partial class SimV2Controller : ControllerBase
         }
 
         var accepted = validation.ToCommandResult(now);
-        log.Record(accepted);
-        log.Idempotency.Update(envelope.IdempotencyKey, CommandState.Accepted, now);
+        if (!logSession.Complete(
+                accepted, envelope.IdempotencyKey, CommandState.Accepted, now))
+        {
+            return CommandResultBecameStale(room, envelope, now, CommandDecision.Accepted);
+        }
         RecordCommandDecision(room, envelope, CommandDecision.Accepted, now, null, null);
 
         _logger.LogInformation(

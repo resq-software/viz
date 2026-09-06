@@ -66,9 +66,10 @@ public sealed record ControlAuthorityOptions(
 /// most one entry per currently existing asset — a spawn-and-remove loop cannot make it grow.
 /// That bound is structural, and it does not depend on anybody calling anything. What the room
 /// wiring adds on top is <i>timeliness</i>: <see cref="RevokeForAsset"/> runs when an asset is
-/// removed, <see cref="Reset"/> when a room resets, and <see cref="Sweep()"/> on the room's own
-/// upkeep pass, so a lapsed lease becomes a record at the instant it lapses instead of whenever
-/// somebody next happens to ask. See <c>SimulationRoom.Lifecycle.cs</c> for the call path.
+/// removed, <see cref="ReconcileWorldReset"/> when a room replaces its world, and
+/// <see cref="Sweep()"/> on the room's own upkeep pass, so a lapsed lease becomes a record at the
+/// instant it lapses instead of whenever somebody next happens to ask. See
+/// <c>SimulationRoom.Lifecycle.cs</c> for the call path.
 /// </para>
 /// <para>
 /// <b>Time comes only from the injected clock.</b> Nothing here reads
@@ -90,12 +91,14 @@ public sealed partial class ControlAuthority
     private readonly object _gate = new();
     private readonly TimeProvider _clock;
     private readonly AssetInstanceProbe _assetInstance;
+    private readonly Func<long>? _worldRevision;
     private readonly Dictionary<string, ControlLease> _live = new(StringComparer.Ordinal);
     private readonly Queue<ControlAuditRecord> _audit = new();
 
     private long _auditSequence;
     private long _droppedAuditCount;
     private long _leaseSequence;
+    private long _reconciledWorldRevision;
 
     /// <summary>Creates an authority over the asset instances a probe identifies.</summary>
     /// <param name="clock">Source of every instant this type stamps or compares.</param>
@@ -124,15 +127,26 @@ public sealed partial class ControlAuthority
         AuditCapacity = settings.AuditCapacity;
     }
 
+    /// <summary>Creates an authority that can reconcile a room replacement before its callback arrives.</summary>
+    internal ControlAuthority(
+        TimeProvider clock,
+        AssetInstanceProbe assetInstance,
+        Func<long> worldRevision,
+        ControlAuthorityOptions? options = null)
+        : this(clock, assetInstance, options)
+    {
+        ArgumentNullException.ThrowIfNull(worldRevision);
+        _worldRevision = worldRevision;
+    }
+
     /// <summary>Creates an authority over a population that can only answer "does this id exist".</summary>
     /// <remarks>
     /// For a caller whose population has no notion of instances — a fixed set of ids, a replayed
     /// fixture. <b>Every asset reports the same instance token</b>, so this form cannot tell a
     /// recycled id from an asset that never went away, and a lease taken through it would carry
     /// over to a replacement asset of the same id. Anything that can remove and re-create assets
-    /// — a live room, in particular — must use
-    /// <see cref="ControlAuthority(TimeProvider, AssetInstanceProbe, ControlAuthorityOptions)"/>
-    /// instead, which is what <see cref="ControlAuthorityRegistry"/> does.
+    /// — a live room, in particular — must use an instance-aware probe and reconcile its world
+    /// revision, which is what <see cref="ControlAuthorityRegistry"/> does.
     /// </remarks>
     /// <param name="clock">Source of every instant this type stamps or compares.</param>
     /// <param name="assetExists">Returns whether an asset id currently exists.</param>
@@ -182,7 +196,7 @@ public sealed partial class ControlAuthority
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            Sweep(now);
+            Maintain(now);
 
             if (string.IsNullOrWhiteSpace(holderId))
             {
@@ -236,7 +250,7 @@ public sealed partial class ControlAuthority
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            Sweep(now);
+            Maintain(now);
 
             if (duration <= TimeSpan.Zero)
             {
@@ -262,7 +276,7 @@ public sealed partial class ControlAuthority
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            Sweep(now);
+            Maintain(now);
 
             if (!TryResolveHeld(assetId, leaseId, holderId, now, out var lease, out var refusal))
             {
@@ -295,7 +309,7 @@ public sealed partial class ControlAuthority
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            Sweep(now);
+            Maintain(now);
 
             if (string.IsNullOrWhiteSpace(holderId))
             {

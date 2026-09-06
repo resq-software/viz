@@ -1,0 +1,125 @@
+# Bake-time licence gate. See tools/licences/README.md.
+#
+# Action refs are pinned to SHAs to match the repo's blanket policy (zizmor:
+# unpinned-uses). The version comment is the tag that SHA corresponds to.
+
+name: licence-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Don't leave a credentialed `.git/config` on disk (zizmor: artipacked).
+          # The staleness step below uses `git status`, which needs no credentials.
+          persist-credentials: false
+          # Baked tiles may be in LFS; the gate hashes real bytes, and a pointer
+          # file would hash to something the manifest never recorded.
+          lfs: true
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 22
+          # This job runs no `npm install` — it only needs the Node runtime for
+          # `--experimental-strip-types`. Leaving the dependency cache off avoids
+          # restoring a cache into a build that publishes artifacts
+          # (zizmor: cache-poisoning).
+          package-manager-cache: false
+
+      # Runs BEFORE the gate. A gate whose own rules are inert reports success on
+      # data it should have rejected, and that failure mode is invisible from the
+      # gate's own output — the suite is the only thing that can see it.
+      - name: Gate self-test
+        run: node --experimental-strip-types --test tools/licences/check-licences.test.ts
+
+      - name: Validate manifest against schema
+        run: |
+          npx --yes ajv-cli@5.0.0 validate \
+            -s tools/licences/manifest.schema.json \
+            -d data/manifest.json \
+            --spec=draft2020 --strict=false
+
+      # --strict here, not just on release. This runs on every pull_request and
+      # on push to main, so it is the check that actually PREVENTS an unverified
+      # source reaching a release — a job triggered by `release: published` fires
+      # after the release exists and can only audit it.
+      #
+      # Strict was advisory when this landed because the register recorded
+      # `verified_on: null` for sources nobody had read. Those licences have now
+      # been read at their publisher pages and their texts vendored and hashed,
+      # so strict passes with 0 warnings and there is no longer a reason to let
+      # it fail quietly.
+      - name: Licence gate (strict)
+        run: |
+          node --experimental-strip-types tools/licences/check-licences.ts \
+            --root . --registry tools/licences/licences.json \
+            --manifest data/manifest.json --emit-notice NOTICE.md --strict
+
+      - name: Fail if NOTICE is stale
+        # `git diff --quiet` exits 0 for an UNTRACKED file, so on the first run —
+        # or on any branch where NOTICE.md was never committed — the generated
+        # notice was silently accepted and never compared to anything. Verified:
+        # with NOTICE.md untracked, `git diff --quiet -- NOTICE.md` returns 0.
+        # `git status --porcelain` reports `?? NOTICE.md`, and stays empty when the
+        # regenerated file is byte-identical, so it catches the missing case
+        # without false-positives on a clean run.
+        run: |
+          status="$(git status --porcelain -- NOTICE.md)"
+          if [ -n "$status" ]; then
+            echo "::error::NOTICE.md is missing or out of date. Re-run the gate locally and commit the result."
+            echo "git status: $status"
+            git --no-pager diff -- NOTICE.md || true
+            exit 1
+          fi
+
+  # Post-publication audit. `release: types: [published]` fires AFTER the
+  # release exists, so this job cannot PREVENT anything — the check that blocks
+  # is the strict gate in the `gate` job above, which runs on every
+  # pull_request and on push to main. This one re-runs it against the published
+  # ref so a release is on record as having been checked, and it is no longer
+  # advisory: the licences are read, vendored and hashed, so a failure here
+  # means something drifted after merge and is worth waking someone up for.
+  #
+  # To gate the act of publication itself, the check has to live in whatever
+  # creates the release. Nothing in this repository currently does — releases
+  # are cut outside CI — so there is no earlier step to hook into today.
+  gate-strict:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          lfs: true
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Licence gate (strict — post-publication audit)
+        run: |
+          node --experimental-strip-types tools/licences/check-licences.ts \
+            --root . --registry tools/licences/licences.json \
+            --manifest data/manifest.json --strict

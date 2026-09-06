@@ -102,16 +102,6 @@ public sealed partial class SimulationRoom
         _logger.LogInformation("[room {RoomId}] Heightmap cleared.", Id);
     }
 
-    /// <summary>Notifies the swarm controller of the active scenario.</summary>
-    public void NotifyScenario(string name)
-    {
-        lock (_lock)
-        {
-            _swarm.SetScenario(name, _assets.Drones.ToList());
-        }
-        Touch();
-    }
-
     /// <summary>Builds a world over this room's terrain and weather, at the current sea level.</summary>
     /// <remarks>
     /// The epoch is the room's creation time, so every reported source time is that plus the

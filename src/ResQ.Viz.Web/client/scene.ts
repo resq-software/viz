@@ -8,6 +8,7 @@ import { DeferredPostFx } from './postfxDeferred';
 import { UnityCamera } from './cameraControl';
 import { updateWaterSunDirection } from './water';
 import { getLogger } from './log';
+import { sceneRenderingSuspended } from './sceneRendering';
 import {
     DEFAULT_SUN_AZIMUTH_DEG,
     DEFAULT_SUN_ELEVATION_DEG,
@@ -126,6 +127,7 @@ export class Scene {
     // directly onto the canvas (e.g. the onboard-camera picture-in-picture,
     // which scissor-renders the scene from a second camera into a corner).
     private readonly _postRenderCallbacks: Array<() => void> = [];
+    private readonly _resizeCallbacks: Array<() => void> = [];
     // Post-processing is loaded on demand — see postfxDeferred.ts for why
     // that is safe despite being the render path. Until it resolves this
     // renders the scene directly through the renderer.
@@ -445,6 +447,25 @@ export class Scene {
     private _startRenderLoop(): void {
         this._lastTime = performance.now();
 
+        // Read once, outside the loop: the served document cannot change its
+        // mind, and this is a question about the page rather than about a frame.
+        //
+        // When it is true the loop still runs and still does everything below
+        // except the draw — every tick callback, the camera, the shadow frustum.
+        // Only `_postFx.render()` and the post-render callbacks (the onboard PiP
+        // paints through the same renderer) are skipped, because on a runner with
+        // no GPU that draw is software rasterised, saturates the main thread, and
+        // starves the in-page work Playwright's own waits and DOM snapshotter
+        // depend on. See ./sceneRendering for what a page in that state stops
+        // proving — chiefly, anything whose symptom is a wrong pixel.
+        const suspended = sceneRenderingSuspended();
+        if (suspended) {
+            log.warn(
+                'scene rendering suspended by the served document — this page draws nothing; '
+                + 'simulation, layout and interaction are unaffected',
+            );
+        }
+
         const loop = (now: number): void => {
             requestAnimationFrame(loop);
             const dt = Math.min((now - this._lastTime) / 1000, 0.1); // cap at 100 ms
@@ -461,6 +482,7 @@ export class Scene {
             // frustum follows the view.
 
             this._updateShadowFrustum();
+            if (suspended) return;
             this._postFx.render();
             for (const cb of this._postRenderCallbacks) cb();
         };
@@ -481,6 +503,38 @@ export class Scene {
         this._postRenderCallbacks.push(fn);
     }
 
+    /**
+     * Register a callback that runs after the viewport has been resized.
+     *
+     * Anything derived from the drawing buffer's size or the camera's projection
+     * has to be recomputed here rather than sampled once at construction — see
+     * {@link pointSizeScale}.
+     */
+    addResizeCallback(fn: () => void): void {
+        this._resizeCallbacks.push(fn);
+    }
+
+    /**
+     * World-metres to framebuffer-pixels factor for a point sprite one metre
+     * across at one metre from the camera.
+     *
+     * `gl_PointSize` is in FRAMEBUFFER PIXELS, so a shader that wants a sprite
+     * sized in world metres needs `size * pointSizeScale() / -viewZ`. The factor
+     * is `drawingBufferHeight / (2 * tan(fov/2))`, and both terms move: the
+     * buffer changes on resize and with devicePixelRatio, and the fov changes
+     * when FPV widens it.
+     *
+     * Both particle systems previously hardcoded a constant here — smoke 620,
+     * precipitation 900 — so they disagreed about one camera, both were wrong
+     * (about 960 at a 1000px-tall buffer with this 55 degree fov), and every
+     * particle's apparent WORLD size silently changed whenever the window was
+     * resized or the page moved to a display with a different pixel ratio.
+     */
+    pointSizeScale(): number {
+        const height = this.renderer.getDrawingBufferSize(new THREE.Vector2()).y;
+        return height / (2 * Math.tan(THREE.MathUtils.degToRad(this._camera.fov) / 2));
+    }
+
     getIntersections(clientX: number, clientY: number, objects: THREE.Object3D[]): THREE.Intersection[] {
         if (objects.length === 0) return [];
         const rect = this.renderer.domElement.getBoundingClientRect();
@@ -498,6 +552,7 @@ export class Scene {
         this._camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this._postFx.setSize(window.innerWidth, window.innerHeight);
+        for (const fn of this._resizeCallbacks) fn();
     }
 
     get fps(): number { return this._fps; }

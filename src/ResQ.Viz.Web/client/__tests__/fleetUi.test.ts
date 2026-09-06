@@ -15,9 +15,10 @@
 //     different actions from someone who cannot see the scene;
 //   * a contact renders with no command affordance at all.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FleetUi } from '../assets/fleetUi';
+import type { FleetUiInput, FleetUiOptions } from '../assets/fleetUi';
 import type { SceneAsset } from '../assets/sceneFrame';
 import type { AssetDescriptor, AssetState, ExternalTrackState } from '../assets/types';
 import {
@@ -168,8 +169,24 @@ const track: ExternalTrackState = {
 /** A fleet UI with no server and no persistence behind it: capabilities resolve
  *  to null, which the panel renders as "no commands offered" rather than guessing
  *  a set, and the facet selection starts unconstrained every time. */
-function makeUi(): FleetUi {
-  return new FleetUi({ loadCapabilities: async () => null, filterStorage: null });
+function makeUi(over: Partial<FleetUiOptions> = {}): FleetUi {
+  const panelMount = document.createElement('div');
+  const filterMount = document.createElement('div');
+  const rosterMount = document.createElement('div');
+  document.body.append(panelMount, filterMount, rosterMount);
+  return new FleetUi({
+    panelMount,
+    filterMount,
+    rosterMount,
+    selectAsset: vi.fn(),
+    selectTrack: vi.fn(),
+    onQueryChange: vi.fn(),
+    loadCapabilities: async () => null,
+    filterStorage: null,
+    rosterScheduleFrame: callback => { callback(); return 0; },
+    rosterCancelFrame: vi.fn(),
+    ...over,
+  });
 }
 
 const FLEET = [
@@ -177,6 +194,13 @@ const FLEET = [
   sceneAsset('rover-1', AssetDomain.Ground),
   sceneAsset('usv-1', AssetDomain.Surface),
 ];
+
+function fleetInput(
+  assets: readonly SceneAsset[] = FLEET,
+  over: Partial<FleetUiInput> = {},
+): FleetUiInput {
+  return { assets, contacts: [track], selected: null, query: '', ...over };
+}
 
 describe('FleetUi', () => {
   beforeEach(() => {
@@ -187,15 +211,15 @@ describe('FleetUi', () => {
 
   it('returns every asset when nothing is filtered', () => {
     const ui = makeUi();
-    expect(ui.update(FLEET).map((a) => a.view.id)).toEqual(['air-1', 'rover-1', 'usv-1']);
+    expect(ui.update(fleetInput()).map((a) => a.view.id)).toEqual(['air-1', 'rover-1', 'usv-1']);
     ui.dispose();
   });
 
   it('narrows the fleet to the selected domains, in publication order', () => {
     const ui = makeUi();
-    ui.update(FLEET);
+    ui.update(fleetInput());
     ui.filter.setSelection({ domain: ['ground', 'surface'] });
-    const visible = ui.update(FLEET);
+    const visible = ui.update(fleetInput());
 
     expect(visible.map((a) => a.view.id)).toEqual(['rover-1', 'usv-1']);
     expect(ui.isVisible('air-1')).toBe(false);
@@ -205,9 +229,9 @@ describe('FleetUi', () => {
 
   it('walks only the visible assets, so cycling cannot reach what is hidden', () => {
     const ui = makeUi();
-    ui.update(FLEET);
+    ui.update(fleetInput());
     ui.filter.setSelection({ domain: ['air'] });
-    ui.update(FLEET);
+    ui.update(fleetInput());
 
     expect(ui.visibleIds()).toEqual(['air-1']);
     ui.dispose();
@@ -215,7 +239,7 @@ describe('FleetUi', () => {
 
   it('names every domain present in the spoken summary', () => {
     const ui = makeUi();
-    ui.update(FLEET);
+    ui.update(fleetInput());
     const text = ui.summaryText();
 
     expect(text).toContain('3 assets');
@@ -227,9 +251,9 @@ describe('FleetUi', () => {
 
   it('says how many the filter is holding back, not merely how many are shown', () => {
     const ui = makeUi();
-    ui.update(FLEET);
+    ui.update(fleetInput());
     ui.filter.setSelection({ domain: ['air'] });
-    ui.update(FLEET);
+    ui.update(fleetInput());
 
     expect(ui.summaryText()).toContain('2 hidden by the fleet filter');
     ui.dispose();
@@ -237,24 +261,24 @@ describe('FleetUi', () => {
 
   it('distinguishes an empty fleet from a fully filtered one', () => {
     const ui = makeUi();
-    ui.update([]);
+    ui.update(fleetInput([]));
     expect(ui.summaryText()).toBe('No assets in view.');
 
-    ui.update(FLEET);
+    ui.update(fleetInput());
     ui.filter.setSelection({ domain: ['fixed'] });
-    ui.update(FLEET);
+    ui.update(fleetInput());
     expect(ui.summaryText()).toContain('3 hidden by the fleet filter');
     ui.dispose();
   });
 
   it('counts assets needing attention', () => {
     const ui = makeUi();
-    ui.update([
+    ui.update(fleetInput([
       sceneAsset('air-1', AssetDomain.Air),
       sceneAsset('rover-1', AssetDomain.Ground, {
         operationalState: OperationalState.Emergency,
       }),
-    ]);
+    ]));
     expect(ui.summaryText()).toContain('1 needing attention');
     ui.dispose();
   });
@@ -276,6 +300,101 @@ describe('FleetUi', () => {
     ui.renderSubject(null);
     expect(ui.subjectId).toBeNull();
     expect(ui.panel.element.hidden).toBe(true);
+    ui.dispose();
+  });
+
+  it('requires and uses explicit filter, roster, and context mounts', () => {
+    expect(() => new FleetUi({
+      panelMount: document.createElement('div'),
+      filterMount: document.createElement('div'),
+    } as never)).toThrow(/rosterMount/i);
+
+    const panelMount = document.createElement('div');
+    const filterMount = document.createElement('div');
+    const rosterMount = document.createElement('div');
+    const ui = makeUi({ panelMount, filterMount, rosterMount });
+    expect(ui.panel.element.parentElement).toBe(panelMount);
+    expect(ui.filter.element.parentElement).toBe(filterMount);
+    expect(ui.roster.element.parentElement).toBe(rosterMount);
+    ui.dispose();
+  });
+
+  it('keeps search roster-only while contacts remain complete and facets affect scene assets', () => {
+    const onQueryChange = vi.fn();
+    const ui = makeUi({ onQueryChange });
+    ui.update(fleetInput());
+    ui.filter.setSelection({ domain: ['ground'] });
+    const visible = ui.update(fleetInput(FLEET, { query: 'agency-that-matches-nothing' }));
+
+    expect(visible.map(asset => asset.view.id)).toEqual(['rover-1']);
+    expect(ui.visibleIds()).toEqual(['rover-1']);
+    expect(ui.roster.counts.contactsMatching).toBe(0);
+    const search = ui.roster.element.querySelector<HTMLInputElement>('input[type="search"]')!;
+    search.value = 'next';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(onQueryChange).toHaveBeenCalledWith('next');
+    expect(ui.visibleIds()).toEqual(['rover-1']);
+    ui.dispose();
+  });
+
+  it('adds one selected asset facet exemption without exempting a same-id track', () => {
+    const ui = makeUi();
+    ui.filter.setSelection({ domain: ['air'] });
+    const selectedAsset = ui.update(fleetInput(FLEET, {
+      selected: { kind: 'asset', id: 'rover-1' },
+    }));
+    expect(selectedAsset.map(asset => asset.view.id)).toEqual(['air-1', 'rover-1']);
+    expect(ui.visibleIds()).toEqual(['air-1', 'rover-1']);
+    expect(ui.filter.element.querySelector('.af-tally')?.textContent).toBe('2 of 3 shown');
+    expect(ui.summaryText()).toContain('1 hidden by the fleet filter');
+
+    const selectedTrack = ui.update(fleetInput(FLEET, {
+      contacts: [{ ...track, trackId: 'rover-1' }],
+      selected: { kind: 'track', id: 'rover-1' },
+    }));
+    expect(selectedTrack.map(asset => asset.view.id)).toEqual(['air-1']);
+    ui.dispose();
+  });
+
+  it('returns focus to the connected origin row, otherwise invokes the fallback', () => {
+    const onPanelClose = vi.fn();
+    const onFocusFallback = vi.fn();
+    const ui = makeUi({ onPanelClose, onFocusFallback });
+    ui.update(fleetInput());
+    const row = ui.roster.rowFor('track', 'trk-1')!;
+    row.click();
+    ui.renderSubject({ kind: 'track', track }, Date.parse(T0));
+    ui.panel.element.querySelector<HTMLButtonElement>('.ap-close')!.click();
+    expect(onPanelClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(row);
+    expect(onFocusFallback).not.toHaveBeenCalled();
+
+    row.click();
+    ui.renderSubject({ kind: 'track', track }, Date.parse(T0));
+    row.parentElement!.hidden = true;
+    ui.panel.element.querySelector<HTMLButtonElement>('.ap-close')!.click();
+    expect(onFocusFallback).toHaveBeenCalledOnce();
+    ui.dispose();
+  });
+
+  it('falls back instead of focusing a row visible only through the selected exemption', () => {
+    const onPanelClose = vi.fn();
+    const onFocusFallback = vi.fn();
+    const ui = makeUi({ onPanelClose, onFocusFallback });
+    ui.filter.setSelection({ domain: ['air'] });
+    const rover = FLEET[1]!;
+    ui.update(fleetInput(FLEET, { selected: { kind: 'asset', id: rover.view.id } }));
+    const row = ui.roster.rowFor('asset', rover.view.id)!;
+    expect(row.textContent).toContain('Outside filters');
+    row.click();
+    ui.renderSubject({
+      kind: 'asset', view: rover.view, descriptor: rover.descriptor, state: rover.state,
+    });
+
+    ui.panel.element.querySelector<HTMLButtonElement>('.ap-close')!.click();
+    expect(onPanelClose).toHaveBeenCalledOnce();
+    expect(onFocusFallback).toHaveBeenCalledOnce();
+    expect(document.activeElement).not.toBe(row);
     ui.dispose();
   });
 });

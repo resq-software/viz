@@ -69,7 +69,15 @@ public sealed partial class SimulationRoom
     private readonly ILogger _logger;
     private readonly UpdatableWeatherSystem _weather;
     private readonly TerrainNoiseService _terrain;
-    private readonly SwarmCoordinator _swarm;
+    private SwarmCoordinator _swarm;
+
+    // The air fleet's counterpart for the two surface-bound domains. Separate from `_swarm`
+    // because the two drive different things down different paths: the swarm holds flight
+    // commands against `SimulatedDrone` directly, while this one issues ordinary asset commands
+    // through this room's own dispatch, so a rover it tasks clears every gate an operator's click
+    // would have to.
+    private readonly GroundSurfaceCoordinator _groundSurface = new();
+
     private readonly AssetCommandLog _commands = new();
 
     // The world owns the tick count and simulation time (both long/derived, so neither drifts
@@ -77,6 +85,16 @@ public sealed partial class SimulationRoom
     // dictionary here now travel on each air asset's descriptor — one population, one source.
     private AssetWorld _assets;
     private int _swarmTick;
+
+    /// <summary>
+    /// Preset this room is running, or empty when it has never been given one.
+    /// </summary>
+    /// <remarks>
+    /// Guarded by <c>_lock</c> like the rest of the room's mutable state, and published on every
+    /// <see cref="RoomAssetFrame"/> so a frame can carry the hazards belonging to its scenario
+    /// rather than one fixed deployment-wide set.
+    /// </remarks>
+    private string _scenarioKey = "";
     // Terrain preset currently installed, remembered so a reset can restore the matching sea
     // level. Without it a reset silently reverts the water surface to the default while the
     // terrain keeps its preset, and a vessel ends up floating over dry land.
@@ -275,6 +293,7 @@ public sealed partial class SimulationRoom
     /// <summary>Resets the simulation by discarding all drones and restarting the world clock.</summary>
     public void Reset()
     {
+        long worldRevision;
         lock (_lock)
         {
             // A fresh world rather than a cleared one: it drops the registry, the counters and
@@ -282,6 +301,11 @@ public sealed partial class SimulationRoom
             _assets = CreateWorld();
             _swarmTick = 0;
             _swarm.ResetState();
+            ClearScenario();
+            // Routes are fitted around positions in the world that was just replaced, so they
+            // have to go with it — a surviving ring would send a rover to a waypoint chosen on
+            // terrain the reset may have changed underneath it.
+            _groundSurface.ResetState();
             ClearAssetEventBuffer();
             // Simulated time restarts with the world, so the observed contacts have to go with
             // it: a store that survived would measure every later report against a high-water
@@ -294,12 +318,13 @@ public sealed partial class SimulationRoom
             _speed = 1;
             _pendingSteps = 0;
             _broadcastTick = 0;
+            worldRevision = ++_worldRevision;
         }
 
         // Outside the lock, and after the swap: every asset the old world held is gone, so
         // anything holding authority over one has to hear about it now rather than at whatever
         // request next happens to look. See IRoomLifecycleObserver.
-        NotifyWorldReset();
+        NotifyWorldReset(worldRevision);
         Touch();
         _logger.LogInformation("[room {RoomId}] Simulation reset.", Id);
     }
@@ -375,11 +400,34 @@ public sealed partial class SimulationRoom
                 for (var d = 0; d < detached.Count; d++)
                 {
                     _swarm.DetachManual(detached[d]);
+
+                    // Both coordinators hear it, because the detachment carries no domain and
+                    // either could be the one holding that asset. Telling only the swarm left a
+                    // rover whose failsafe had just fired being retasked half a simulated second
+                    // later by the coordinator that had not been told.
+                    _groundSurface.DetachManual(detached[d]);
                 }
 
                 _swarmTick++;
                 if (_swarmTick % 30 == 0)
+                {
                     _swarm.Tick(_assets.SimulationTimeSeconds, _assets.Drones);
+
+                    // Same phase, same cadence, different fleet. Commands go through
+                    // `_assets.SendCommand` — the executor the operator path also lands on, and
+                    // therefore every capability, state and domain gate an operator's click meets
+                    // — rather than being written onto the navigators directly.
+                    //
+                    // Deliberately NOT `SendAssetCommand`, the room-level operator entry point:
+                    // that one detaches the commanded asset from autonomous control, which is
+                    // right for a human and would have this coordinator detach every asset it
+                    // tasked on its own first pass and then never task one again.
+                    _groundSurface.Tick(
+                        _assets.SimulationTimeSeconds,
+                        _assets.Assets,
+                        _assets.Environment,
+                        command => _assets.SendCommand(in command));
+                }
             }
 
             // Sweep whatever the assets raised into this room's bounded buffer, every tick and

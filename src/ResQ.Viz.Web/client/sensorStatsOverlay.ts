@@ -2,7 +2,7 @@
 //
 // SensorStatsOverlay — small floating panel that surfaces the WebGPU
 // sensor-stack telemetry added in PRs #78 / #79. Hidden by default;
-// toggled with the 'i' (instruments) key. Reads `getSensorContext()`
+// toggled with F2. Reads `getSensorContext()`
 // at update time, so it transparently lights up once `bootSensors()`
 // finishes and goes dark again if the context never came up (no-WebGPU
 // browser, init failure).
@@ -19,6 +19,8 @@
 // behind a `hidden` short-circuit when the panel is closed.
 
 import { getLogger } from './log';
+import { GLOBAL_SHORTCUTS } from './ui/globalShortcuts';
+import { shouldIgnoreGlobalShortcut } from './ui/hotkeys';
 import { getSensorContext } from './webgpu/registry';
 
 const log = getLogger('sensor-stats');
@@ -62,28 +64,14 @@ export class SensorStatsOverlay {
         this._status = status;
 
         document.addEventListener('keydown', (e: KeyboardEvent) => {
-            // Bail when typing in form controls so a stray 'i' inside an
-            // input / select / textarea doesn't toggle the dev panel
-            // from underneath the user (SELECT also fires keydown when
-            // the operator types to jump-search options).
-            const t = e.target as HTMLElement | null;
-            if (t && (
-                t.tagName === 'INPUT' ||
-                t.tagName === 'TEXTAREA' ||
-                t.tagName === 'SELECT' ||
-                t.isContentEditable
-            )) {
-                return;
-            }
-            // No modifiers — capital 'I' (Shift+I) shouldn't trigger
-            // because it's commonly produced when typing prose elsewhere.
-            if (e.code === 'KeyI' &&
-                !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+            if (shouldIgnoreGlobalShortcut(e)) return;
+            if (e.code === GLOBAL_SHORTCUTS.sensorStats && !e.shiftKey) {
+                e.preventDefault();
                 this.toggle();
             }
         });
 
-        log.info('SensorStatsOverlay ready', { hint: 'press "i" to toggle' });
+        log.info('SensorStatsOverlay ready', { hint: 'press "F2" to toggle' });
     }
 
     /**

@@ -243,12 +243,137 @@ public sealed class AssetCommandLog
     private readonly Queue<Guid> _insertionOrder = new();
 
     private CommandIdempotencyLedger _ledger = new(IdempotencyRetention);
+    private long _generation;
+
+    /// <summary>Opens a generation-bound view for one command request.</summary>
+    internal AssetCommandLogSession OpenSession()
+    {
+        lock (_gate)
+        {
+            return new AssetCommandLogSession(this, _generation);
+        }
+    }
+
+    internal bool IsCurrent(long generation)
+    {
+        lock (_gate)
+        {
+            return generation == _generation;
+        }
+    }
+
+    internal AssetCommandReplayResolution ResolveReplay(
+        long generation,
+        CommandIdempotencyDecision decision,
+        DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (generation != _generation)
+            {
+                return new AssetCommandReplayResolution(false, null);
+            }
+
+            var priorId = decision.Existing?.CommandId ?? Guid.Empty;
+            var replayed = _results.TryGetValue(priorId, out var stored)
+                ? stored
+                : new CommandResult(
+                    priorId,
+                    decision.Existing?.State ?? CommandState.Accepted,
+                    now,
+                    0,
+                    "Duplicate of an earlier command with the same idempotency key.");
+            return new AssetCommandReplayResolution(true, replayed);
+        }
+    }
+
+    internal CommandIdempotencyDecision Classify(
+        long generation,
+        AssetCommandEnvelope envelope,
+        DateTimeOffset now) =>
+        WithGeneration(
+            generation,
+            ledger => ledger.Classify(envelope, now),
+            new CommandIdempotencyDecision(CommandIdempotencyOutcome.New, string.Empty, null));
+
+    internal CommandIdempotencyDecision Claim(
+        long generation,
+        AssetCommandEnvelope envelope,
+        DateTimeOffset now) =>
+        WithGeneration(
+            generation,
+            ledger => ledger.Claim(envelope, now),
+            new CommandIdempotencyDecision(CommandIdempotencyOutcome.New, string.Empty, null));
+
+    internal bool Update(
+        long generation,
+        string idempotencyKey,
+        CommandState state,
+        DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (generation != _generation)
+            {
+                return false;
+            }
+
+            _ledger.Update(idempotencyKey, state, now);
+            return true;
+        }
+    }
+
+    internal bool Record(long generation, CommandResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        lock (_gate)
+        {
+            if (generation != _generation)
+            {
+                return false;
+            }
+
+            RecordCore(result);
+            return true;
+        }
+    }
+
+    internal bool Complete(
+        long generation,
+        CommandResult result,
+        string idempotencyKey,
+        CommandState state,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        lock (_gate)
+        {
+            if (generation != _generation)
+            {
+                return false;
+            }
+
+            RecordCore(result);
+            _ledger.Update(idempotencyKey, state, now);
+            return true;
+        }
+    }
+
+    private T WithGeneration<T>(
+        long generation,
+        Func<CommandIdempotencyLedger, T> action,
+        T stale)
+    {
+        lock (_gate)
+        {
+            return generation == _generation ? action(_ledger) : stale;
+        }
+    }
 
     /// <summary>Ledger deciding whether an incoming command is new, a retry or a key conflict.</summary>
     /// <remarks>
-    /// Exposed rather than wrapped: the ledger is already internally synchronised, and its
-    /// classify/claim/update split is the contract callers need. Wrapping it here would only
-    /// duplicate three methods and hide which of them mutates.
+    /// Retained for direct lifecycle integrations. Request dispatch uses a generation-bound
+    /// session so a retained reference to an earlier ledger cannot affect a replacement world.
     /// </remarks>
     public CommandIdempotencyLedger Idempotency
     {
@@ -264,17 +389,22 @@ public sealed class AssetCommandLog
 
         lock (_gate)
         {
-            if (!_results.ContainsKey(result.CommandId))
-            {
-                _insertionOrder.Enqueue(result.CommandId);
-            }
+            RecordCore(result);
+        }
+    }
 
-            _results[result.CommandId] = result;
+    private void RecordCore(CommandResult result)
+    {
+        if (!_results.ContainsKey(result.CommandId))
+        {
+            _insertionOrder.Enqueue(result.CommandId);
+        }
 
-            while (_insertionOrder.Count > MaxTrackedResults)
-            {
-                _results.Remove(_insertionOrder.Dequeue());
-            }
+        _results[result.CommandId] = result;
+
+        while (_insertionOrder.Count > MaxTrackedResults)
+        {
+            _results.Remove(_insertionOrder.Dequeue());
         }
     }
 
@@ -403,6 +533,41 @@ public sealed class AssetCommandLog
             _results.Clear();
             _insertionOrder.Clear();
             _ledger = new CommandIdempotencyLedger(IdempotencyRetention);
+            _generation++;
         }
     }
 }
+
+/// <summary>A command-log handle valid only for the world generation that opened it.</summary>
+internal sealed class AssetCommandLogSession(AssetCommandLog owner, long generation)
+{
+    internal bool IsCurrent => owner.IsCurrent(generation);
+
+    internal CommandIdempotencyDecision Classify(AssetCommandEnvelope envelope, DateTimeOffset now) =>
+        owner.Classify(generation, envelope, now);
+
+    internal CommandIdempotencyDecision Claim(AssetCommandEnvelope envelope, DateTimeOffset now) =>
+        owner.Claim(generation, envelope, now);
+
+    internal AssetCommandReplayResolution ResolveReplay(
+        CommandIdempotencyDecision decision,
+        DateTimeOffset now) =>
+        owner.ResolveReplay(generation, decision, now);
+
+    internal bool Update(string key, CommandState state, DateTimeOffset now) =>
+        owner.Update(generation, key, state, now);
+
+    internal bool Record(CommandResult result) => owner.Record(generation, result);
+
+    internal bool Complete(
+        CommandResult result,
+        string key,
+        CommandState state,
+        DateTimeOffset now) =>
+        owner.Complete(generation, result, key, state, now);
+}
+
+/// <summary>A replay lookup paired with its command-log generation validity.</summary>
+internal readonly record struct AssetCommandReplayResolution(
+    bool IsCurrent,
+    CommandResult? Result);

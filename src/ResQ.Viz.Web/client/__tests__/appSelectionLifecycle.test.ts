@@ -24,10 +24,9 @@
 //     disposing it leaks GPU resources and strands contacts that have stopped
 //     being true.
 //
-//  4. **The HUD's "Active drones" means active drones.** Feeding it the filtered
-//     count made DRN silently mean "drones you happen to be looking at", under a
-//     label and a title attribute that say otherwise, with nothing on the HUD to
-//     indicate anything was hidden.
+//  4. **The HUD reports the displayed schema's complete inventory.** V2 counts
+//     every projected asset before filtering and names each supported domain;
+//     v1 retains the existing drone-only fallback.
 //
 // `app.ts` cannot be imported here — it boots the renderer, opens a SignalR
 // connection and touches WebGL at module scope — so these assert at the source
@@ -91,99 +90,137 @@ describe('a pending target pick is cancelled with the selection', () => {
         // The original call sites must survive; cancelling on deselect is an
         // addition to them, not a replacement.
         expect(appSrc).toMatch(/_settlePick\(\{ position: \[/);
-        expect(appSrc).toMatch(/if \(_pendingPick\) _cancelPick\(\);/);
+        expect(appSrc).toMatch(/if \(_pendingPick\)\s*\{[\s\S]*?_cancelPick\(\);[\s\S]*?return;[\s\S]*?\}/);
     });
 });
 
-// ─── 2. The filter cannot hide the selection ───────────────────────────────
+// ─── 2. Fleet selection, roster input, and reconciliation ───────────────────
 
-interface FakeAsset {
-    readonly view: { readonly id: string };
-}
-
-/** The shape `_withSelectedAsset` has once its one free binding is injected. */
-type LiftedExemption = (
-    droneManager: { readonly selectedId: string | null },
-    all: FakeAsset[],
-    filtered: FakeAsset[],
-) => FakeAsset[];
-
-/**
- * `_withSelectedAsset` lifted out of the source and made callable.
- *
- * Its body is deliberately free of type annotations, so it runs as-is with the
- * one binding it closes over (`droneManager`) injected. That makes this a test
- * of the exemption's actual behaviour rather than of the presence of a call: get
- * the ordering or the "already visible" case wrong and these fail.
- */
-function liftExemption(): LiftedExemption {
-    const body = bodyOf('_withSelectedAsset');
-    try {
-        return new Function('droneManager', 'all', 'filtered', body) as unknown as LiftedExemption;
-    } catch (err: unknown) {
-        throw new Error(
-            '_withSelectedAsset no longer parses as plain JS — this test lifts its '
-                + 'body out and runs it, so the helper must stay free of type '
-                + `annotations. Underlying error: ${String(err)}`,
-        );
-    }
-}
-
-function selectionExemption(
-    selectedId: string | null,
-): (all: FakeAsset[], filtered: FakeAsset[]) => FakeAsset[] {
-    const fn = liftExemption();
-    return (all, filtered) => fn({ selectedId }, all, filtered);
-}
-
-const asset = (id: string): FakeAsset => ({ view: { id } });
-const ids = (list: readonly FakeAsset[]): string[] => list.map((a) => a.view.id);
-
-describe('the fleet filter cannot hide the selected asset', () => {
-    const all = [asset('air-1'), asset('rover-1'), asset('vessel-1')];
-
-    it('adds the selected asset back when the filter drops it', () => {
-        const exempt = selectionExemption('rover-1');
-        expect(ids(exempt(all, [all[0]!, all[2]!]))).toEqual(['air-1', 'rover-1', 'vessel-1']);
+describe('the fleet render has one selected-asset exemption and complete contacts', () => {
+    it('synchronizes roster and context immediately at every v2 selection chokepoint', () => {
+        expect(bodyOf('_selectFromAnySurface')).toMatch(/_syncFleetSelection\(\)/);
+        expect(bodyOf('_selectTrack')).toMatch(/_syncFleetSelection\(\)/);
+        expect(bodyOf('_deselectAll')).toMatch(/_syncFleetSelection\(\)/);
+        const sync = bodyOf('_syncFleetSelection');
+        expect(sync).toContain('_displayedSnapshot');
+        expect(sync).toMatch(/fleetUi\.update\(_fleetUiInput\(_displayedSnapshot\)\)/);
+        expect(sync).toMatch(/_renderFleetSubject\(\s*visible,\s*_displayedSnapshot\.tracks/);
+        expect(sync).not.toMatch(/_renderSnapshot|droneManager\.assets\.update|miniMap\.update|_renderTracks/);
     });
 
-    it('keeps publication order rather than appending the exempt asset', () => {
-        const exempt = selectionExemption('air-1');
-        expect(ids(exempt(all, [all[1]!]))).toEqual(['air-1', 'rover-1']);
-    });
-
-    it('leaves the subset alone when the selection survives the filter', () => {
-        const exempt = selectionExemption('rover-1');
-        expect(ids(exempt(all, [all[1]!]))).toEqual(['rover-1']);
-    });
-
-    it('leaves the subset alone when nothing is selected', () => {
-        const exempt = selectionExemption(null);
-        expect(ids(exempt(all, [all[0]!]))).toEqual(['air-1']);
-    });
-
-    it('does not resurrect a selection the frame no longer carries', () => {
-        // An asset that has left the snapshot is gone, not filtered. Re-adding it
-        // would put an id in the drawn list that has no state behind it.
-        const exempt = selectionExemption('rover-9');
-        expect(ids(exempt(all, [all[0]!]))).toEqual(['air-1']);
-    });
-
-    it('drives every downstream surface from the exempt list, not the raw filter output', () => {
+    it('passes complete inventory, kind-qualified selection, and query into FleetUi', () => {
         const body = bodyOf('_renderSnapshot');
-        expect(body).toMatch(/const visible = _withSelectedAsset\(projected\.assets, filtered\)/);
-        // Scene, mini-map, panel and cycling all read `visible`; if any of them
-        // went back to the filter's own subset the three stores could disagree
-        // again.
+        expect(body).toMatch(/fleetUi\.update\(\{[\s\S]*?assets:\s*projected\.assets/);
+        expect(body).toMatch(/contacts:\s*projected\.tracks/);
+        expect(body).toMatch(/selected:\s*_rosterSelection\(\)/);
+        expect(body).toMatch(/query:\s*_fleetQuery/);
+    });
+
+    it('uses FleetUi output directly for every scene consumer without a second exemption', () => {
+        const body = bodyOf('_renderSnapshot');
+        expect(appSrc).not.toContain('function _withSelectedAsset(');
+        expect(body).toMatch(/const visible = fleetUi \? fleetUi\.update/);
         expect(body).toMatch(/droneManager\.assets\.update\(visible\./);
         expect(body).toMatch(/_visibleAssetIds = visible\./);
         expect(body).toMatch(/_renderFleetSubject\(visible,/);
+        expect(bodyOf('_selectableIds')).toMatch(/return _visibleAssetIds;/);
     });
 
-    it('cycles selection through what was drawn', () => {
-        // `[` / `]` walked `fleetUi.visibleIds()`, which does not know about the
-        // exemption, so cycling off an exempt selection jumped to the first id.
-        expect(bodyOf('_selectableIds')).toMatch(/return _visibleAssetIds;/);
+    it('keeps roster search on a fleet-only displayed-snapshot refresh', () => {
+        const body = bodyOf('_refreshFleetRoster');
+        expect(body).toContain('_displayedSnapshot');
+        expect(body).toMatch(/fleetUi\.update/);
+        expect(body).not.toMatch(/_renderSnapshot|droneManager|miniMap|_renderTracks/);
+        expect(bodyOf('_ensureFleetUi')).toMatch(/onQueryChange:[\s\S]*?_fleetQuery = query[\s\S]*?_refreshFleetRoster\(\)/);
+    });
+
+    it('keeps held Live truth separate from the displayed projection during replay', () => {
+        const render = bodyOf('_renderSnapshot');
+        const ingest = bodyOf('_ingestSnapshot');
+        expect(render).toContain('_displayedSnapshot = projected');
+        expect(render).not.toContain('_lastSnapshot = projected');
+        expect(ingest).toContain('_lastSnapshot = projected');
+        expect(ingest.indexOf('_lastSnapshot = projected'))
+            .toBeLessThan(ingest.indexOf('if (dvr && !dvr.isLive)'));
+        const filter = bodyOf('_refreshFleetAfterFilter');
+        expect(filter).toMatch(/dvr && !dvr\.isLive[\s\S]*?_refreshFleetRoster\(\)[\s\S]*?return/);
+        expect(filter).toMatch(/_renderSnapshot\(_displayedSnapshot, true\)/);
+        const load = bodyOf('_ensureFleetUi');
+        expect(load).toMatch(/dvr && !dvr\.isLive[\s\S]*?_refreshFleetRoster\(\)/);
+        expect(load).toMatch(/_renderSnapshot\(_displayedSnapshot, true\)/);
+        // The DVR now applies a MODE-TAGGED record, so the dispatch — not the
+        // v1 renderer — is what onApply names. Each arm must still be reachable:
+        // a v2 record narrowed to the v1 path would drop every rover, vessel and
+        // contact from a scrub while looking like a working replay.
+        expect(appSrc).toMatch(/onApply:\s*recorded\s*=>\s*_renderRecordedFrame\(recorded\)/);
+        const dispatch = bodyOf('_renderRecordedFrame');
+        expect(dispatch).toMatch(/recorded\.kind === 'v2'[\s\S]*?_renderSnapshot\(recorded\.snapshot, true\)/);
+        expect(dispatch).toMatch(/_renderV1ReplayFrame\(recorded\.frame\)/);
+        const replay = bodyOf('_renderV1ReplayFrame');
+        expect(replay.indexOf('_displayedSnapshot = null'))
+            .toBeLessThan(replay.indexOf('_renderFrame(frame, true)'));
+        expect(replay).toMatch(/fleetUi\?\.update\(\{[\s\S]*?assets:\s*\[\][\s\S]*?contacts:\s*\[\]/);
+        expect(replay).toMatch(/fleetUi\?\.renderSubject\(null\)/);
+        expect(replay).toMatch(/operatorShell\.setContextOpen\(false\)/);
+        expect(replay).toMatch(/trackOverlay\?\.update\(\[\], null, null\)/);
+        expect(replay.indexOf('trackOverlay?.update([], null, null)'))
+            .toBeLessThan(replay.indexOf('_renderFrame(frame, true)'));
+        expect(replay).not.toContain('_lastSnapshot = null');
+        const resume = bodyOf('_resumeHeldSnapshot');
+        expect(resume).toMatch(/_rosterSelection\(\)[\s\S]*?operatorShell\.setContextOpen\(true\)/);
+        expect(resume.indexOf('operatorShell.setContextOpen(true)'))
+            .toBeLessThan(resume.indexOf('_applyLiveSnapshot(latest, true)'));
+        expect(resume).toContain('_applyLiveSnapshot(latest, true)');
+        expect(bodyOf('_renderSnapshot')).toContain('_renderTracks(projected)');
+    });
+
+    it('never narrows TrackOverlay to roster matches', () => {
+        expect(bodyOf('_renderSnapshot')).toMatch(/_renderTracks\(projected\)/);
+        expect(bodyOf('_renderTracks')).toMatch(/trackOverlay\.update\(\s*projected\.tracks/);
+    });
+});
+
+describe('complete displayed snapshots reconcile shared selection', () => {
+    it('uses the displayed schema rather than stream ownership when selecting a replay drone', () => {
+        const body = bodyOf('_selectFromAnySurface');
+        expect(body).toMatch(/const displaysV2 = _displayedSnapshot !== null/);
+        expect(body).toMatch(/selection\.set\(displaysV2 \? 'asset' : 'drone', assetId\)/);
+        expect(body).toMatch(/if \(displaysV2\) operatorShell\.setContextOpen\(true\)/);
+        expect(body).not.toMatch(/selection\.set\(_v2Active|if \(_v2Active\) operatorShell\.setContextOpen/);
+
+        const replay = bodyOf('_renderV1ReplayFrame');
+        expect(replay).toMatch(/_displayedSnapshot = null[\s\S]*?operatorShell\.setContextOpen\(false\)/);
+        const resume = bodyOf('_resumeHeldSnapshot');
+        expect(resume).toContain('_applyLiveSnapshot(latest, true)');
+        expect(bodyOf('_reconcileV2Selection')).toMatch(
+            /current\.kind === 'drone'[\s\S]*?selection\.set\('asset', current\.id\)[\s\S]*?operatorShell\.setContextOpen\(true\)/,
+        );
+    });
+
+    it('runs reconciliation before the asset manager can silently evict selection', () => {
+        const body = bodyOf('_renderSnapshot');
+        expect(body.indexOf('_reconcileV2Selection(projected)'))
+            .toBeLessThan(body.indexOf('droneManager.assets.update'));
+    });
+
+    it('checks assets and tracks only against their complete projected collections', () => {
+        const body = bodyOf('_reconcileV2Selection');
+        expect(body).toMatch(/current\.kind === 'asset'[\s\S]*?projected\.assets\.some/);
+        expect(body).toMatch(/current\.kind === 'track'[\s\S]*?projected\.tracks\.some/);
+        expect(body).toMatch(/_deselectAll\(\)[\s\S]*?operatorShell\.focusFleetHeading\(\)/);
+        expect(body).not.toMatch(/filter|query|visibleIds/);
+    });
+
+    it('converts a retained v1 drone selection to v2 asset selection when present', () => {
+        const body = bodyOf('_reconcileV2Selection');
+        expect(body).toMatch(/current\.kind === 'drone'[\s\S]*?projected\.assets\.some/);
+        expect(body).toMatch(/selection\.set\('asset', current\.id\)/);
+    });
+
+    it('does not reopen context on every frame for an existing v2 selection', () => {
+        const body = bodyOf('_reconcileV2Selection');
+        expect(body.match(/operatorShell\.setContextOpen\(true\)/g)).toHaveLength(1);
+        expect(body).not.toMatch(/if \(!vanished\)[\s\S]*?setContextOpen\(true\)/);
     });
 });
 
@@ -231,42 +268,69 @@ describe('_leaveV2 releases everything the v2 path owns', () => {
     });
 
     it('lets the live region speak again after the wording changes', () => {
-        // The announcement throttles on a changed count; v1 and v2 can report the
-        // same number with different wording, which would be swallowed.
-        expect(bodyOf('_leaveV2')).toMatch(/_lastTelemetryCount = -1/);
+        // The announcement throttles on a signature; mode and domain distribution
+        // can change while total inventory stays equal.
+        expect(bodyOf('_leaveV2')).toMatch(/_lastTelemetrySignature = null/);
     });
 });
 
 // ─── 4. The HUD reports the fleet, not the view ────────────────────────────
 
-describe('the HUD drone count means what its label says', () => {
-    it('is fed the unfiltered fleet', () => {
-        const body = bodyOf('_applyFrameConsumers');
-        expect(
-            /hud\.updateDrones\(fleetDrones\.length,/.test(body),
-            'the HUD is fed the filtered count under an "Active drones" label, with '
-                + 'nothing on the HUD to say anything is hidden',
-        ).toBe(true);
-        expect(body).not.toMatch(/hud\.updateDrones\(drones\.length,/);
+describe('the HUD reports the displayed schema without inheriting fleet filters', () => {
+    it('starts in boot mode and follows the negotiated shell mode', () => {
+        expect(appSrc).toContain('const hud          = new Hud(document)');
+        expect(appSrc.indexOf('const hud          = new Hud(document)'))
+            .toBeLessThan(appSrc.indexOf('const startupCoordinator = new StartupCoordinator'));
+        expect(appSrc).toMatch(/setMode:\s*mode\s*=>\s*\{[\s\S]*?hud\.setMode\(mode\)/);
     });
 
-    it('averages the battery over that same fleet', () => {
-        // Two readouts side by side must describe one set of drones.
-        expect(bodyOf('_applyFrameConsumers'))
-            .toMatch(/hud\.updateDrones\(fleetDrones\.length, frame\.time \?\? 0, \[\.\.\.fleetDrones\]\)/);
-    });
-
-    it('hands the v2 path the projection before filtering', () => {
+    it('feeds complete projected assets before roster or filter narrowing', () => {
         const body = bodyOf('_renderSnapshot');
-        expect(body).toMatch(/const fleetDrones = projected\.frame\.drones \?\? \[\]/);
-        expect(body).toMatch(/const drones = fleetDrones\.filter\(/);
-        expect(body).toMatch(/_applyFrameConsumers\(frame, drones, fleetDrones\)/);
+        const hudAt = body.indexOf('hud.updateAssets(projected.assets)');
+        const fleetAt = body.indexOf('fleetUi ? fleetUi.update');
+        expect(hudAt).toBeGreaterThanOrEqual(0);
+        expect(hudAt).toBeLessThan(fleetAt);
+        expect(body).not.toMatch(/hud\.updateAssets\((?:visible|filtered)/);
+        expect(body).toMatch(/const hudSummary = hud\.updateAssets\(projected\.assets\)/);
+        expect(body).toMatch(/_announceFleet\(hudSummary, frame\.time \?\? 0\)/);
+    });
+
+    it('updates v2 HUD state only when a projected snapshot is displayed', () => {
+        expect(bodyOf('_ingestSnapshot')).not.toContain('hud.updateAssets');
+        expect(bodyOf('_renderSnapshot')).toContain('hud.updateAssets(projected.assets)');
+        expect(bodyOf('_renderV1ReplayFrame')).toMatch(/_renderFrame\(frame, true\)/);
+        expect(bodyOf('_resumeHeldSnapshot')).toMatch(/_applyLiveSnapshot\(latest, true\)/);
     });
 
     it('keeps the v1 path reporting the frame it was given', () => {
-        // One argument, so the default makes the filtered and unfiltered lists the
-        // same list — v1 has no filter to disagree with.
-        expect(bodyOf('_renderFrame')).toMatch(/_applyFrameConsumers\(frame, drones\)/);
+        expect(bodyOf('_renderFrame')).toMatch(
+            /hud\.updateDrones\(drones\.length, frame\.time \?\? 0, drones\)/,
+        );
+        expect(bodyOf('_applyFrameConsumers')).not.toContain('hud.updateDrones');
+    });
+
+    it('routes selected copy by the schema being displayed', () => {
+        const select = bodyOf('_selectFromAnySurface');
+        expect(select).toMatch(/const displaysV2 = _displayedSnapshot !== null/);
+        expect(select).toMatch(/displaysV2\s*\?\s*hud\.selectAsset\(assetId\)\s*:\s*hud\.setSelectedDrone\(assetId\)/);
+        expect(bodyOf('_reconcileV2Selection')).toMatch(
+            /selection\.set\('asset', current\.id\)[\s\S]*?hud\.selectAsset\(current\.id\)/,
+        );
+    });
+
+    it('announces complete domain counts without reaching into the lazy fleet chunk', () => {
+        const body = bodyOf('_announceFleet');
+        expect(body).toContain('summary.total');
+        expect(body).toContain('summary.air');
+        expect(body).toContain('summary.ground');
+        expect(body).toContain('summary.surface');
+        expect(body).toContain('assetTelemetryText(summary, simTime)');
+        expect(body).not.toMatch(/fleetUi|visible|filter/i);
+    });
+
+    it('uses a composite signature so equal-total domain changes announce immediately', () => {
+        const body = bodyOf('_announceFleet');
+        expect(body).toContain('`v2:${summary.total}:${summary.air}:${summary.ground}:${summary.surface}`');
     });
 });
 

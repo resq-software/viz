@@ -22,8 +22,11 @@
 // catalog filtered through this asset's mask, and a second copy of a gate is a
 // gate that drifts.
 
-import { apiGet, apiPost } from '../api';
+import { apiGet, apiPostJson } from '../api';
+import type { ApiFailure } from '../api';
 import { getLogger } from '../log';
+import type { InteractionRefusal, MutationGate } from '../operator/interactionMode';
+import type { CommandResult } from '../operator/types';
 import { formatAge } from './assetView';
 import type { AssetView } from './assetView';
 import { humanise, operationalStateLabel } from './AssetFilter';
@@ -102,12 +105,6 @@ export function permitsState(policy: string, state: number): boolean {
   }
 }
 
-/** Parameter keys this client can collect and range-check. A required key outside
- *  this set disables the command *and says so*, instead of sending a request the
- *  validator refuses for a missing parameter. */
-export const SUPPORTED_PARAMETERS: ReadonlySet<string> =
-  new Set(['speed', 'altitude', 'course', 'radius']);
-
 /** Commands that reduce energy in the system, styled as destructive. */
 export const DESTRUCTIVE_COMMANDS: ReadonlySet<string> = new Set(['emergencyStop', 'stop']);
 
@@ -174,7 +171,7 @@ export function evaluateCommand(
   }
 
   for (const key of parameters) {
-    if (!SUPPORTED_PARAMETERS.has(key)) {
+    if (parameterSpec(key) === null) {
       return deny(`this client cannot supply the "${key}" parameter`);
     }
   }
@@ -300,9 +297,10 @@ function currentHeadingRad(view: AssetView): number | null {
 }
 
 /** The parameters this client can collect, keyed by the wire name in
- *  `CommandParameters`. */
-export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
-  speed: {
+ *  `CommandParameters`. A Map has no prototype names for hostile wire keys to
+ *  inherit, and all consumers go through {@link parameterSpec}. */
+const PARAMETER_SPECS: ReadonlyMap<string, ParameterSpec> = new Map([
+  ['speed', {
     label: 'Speed',
     unit: 'm/s',
     step: 0.5,
@@ -310,8 +308,8 @@ export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
     toWire: (v) => v,
     initial: (view, m) =>
       clamp(Math.abs(currentSpeedMps(view) ?? m.maxSpeedMps / 2), m.minSpeedMps, m.maxSpeedMps),
-  },
-  altitude: {
+  }],
+  ['altitude', {
     label: 'Altitude',
     unit: 'm',
     step: 1,
@@ -325,8 +323,8 @@ export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
       const d = view.domainState;
       return isAirDomainState(d) ? Math.round(d.altitudeAboveGroundM) : 40;
     },
-  },
-  course: {
+  }],
+  ['course', {
     label: 'Course',
     unit: '° true',
     step: 1,
@@ -337,16 +335,21 @@ export const PARAMETER_SPECS: Readonly<Record<string, ParameterSpec>> = {
       const heading = currentHeadingRad(view);
       return heading === null ? 0 : Math.round(normaliseDeg((heading * 180) / Math.PI));
     },
-  },
-  radius: {
+  }],
+  ['radius', {
     label: 'Radius',
     unit: 'm',
     step: 5,
     bounds: () => ({ min: 1, max: 5_000 }),
     toWire: (v) => v,
     initial: () => 50,
-  },
-};
+  }],
+]);
+
+/** Supported parameter metadata, or null for every unknown/prototype-like key. */
+export function parameterSpec(key: string): ParameterSpec | null {
+  return PARAMETER_SPECS.get(key) ?? null;
+}
 
 // ── Targets ─────────────────────────────────────────────────────────────────
 
@@ -462,15 +465,49 @@ export interface AssetCommandRequestBody {
    *  say "this is the same request", and the safe-looking default — execute both —
    *  is the wrong one for anything that moves. */
   readonly idempotencyKey: string;
+  /** Who is asking. Absent only where no authority has been wired in — a v1
+   *  session, or a panel driven headlessly — because an issuer id invented here
+   *  would be a claim about a console that does not exist. */
+  readonly issuerId?: string;
+  /** The lease this console holds over the asset, or null when nobody holds it.
+   *  An uncontrolled asset is commandable without one; that is the server's gate,
+   *  not a shortcut taken here. */
+  readonly controlLeaseId?: string | null;
   readonly target?: unknown;
   readonly parameters?: Readonly<Record<string, string>>;
 }
 
-/** What became of one issued command as far as the transport can say. Transport
- *  acknowledgement is not physical completion, and the wording keeps them apart. */
-export interface CommandOutcome {
-  readonly accepted: boolean;
-  readonly message: string;
+/**
+ * What became of one issued command.
+ *
+ * Three arms, because there are three genuinely different outcomes and a
+ * `boolean` conflates them:
+ *
+ *   * accepted — the server took it, and says so in a {@link CommandResult}.
+ *     Transport acceptance is not physical completion: the state carried here is
+ *     the command's, and the asset's motion still comes from the stream;
+ *   * refused — a server saw it and said no, and the {@link ApiFailure} it
+ *     answered with is retained whole. Something can be done about it, and what
+ *     to do depends on the stable code inside;
+ *   * declined — nothing was sent, because the console is away from the live
+ *     edge. There is no server response to carry, and manufacturing one would
+ *     put a fictional refusal in front of the operator.
+ */
+export type CommandOutcome =
+  | { readonly accepted: true; readonly message: string; readonly result: CommandResult }
+  | { readonly accepted: false; readonly message: string; readonly failure: ApiFailure }
+  | { readonly accepted: false; readonly message: string; readonly refusal: InteractionRefusal };
+
+/** The stable code a refusal should be acted on by, or null when no server
+ *  answered. `reasonCode` is the specific token and `code` the class it belongs
+ *  to, so the specific one wins. A network or timeout failure has neither, and
+ *  deliberately never enters prefix matching: nothing was decided about the
+ *  world, so nothing may be concluded from it. */
+export function commandFailureCode(outcome: CommandOutcome): string | null {
+  if (outcome.accepted || !('failure' in outcome)) return null;
+  const failure = outcome.failure;
+  if (failure.kind !== 'problem') return null;
+  return failure.problem.reasonCode ?? failure.problem.code;
 }
 
 /** Issues one command. Injectable so a host can route through its own client. */
@@ -487,16 +524,67 @@ export function newIdempotencyKey(): string {
   return `viz-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Default issuer: `POST /api/v2/sim/assets/{id}/commands`. */
+/** Default issuer: `POST /api/v2/sim/assets/{id}/commands`.
+ *
+ *  Typed, so a refusal arrives as the problem body the server actually sent
+ *  rather than as a sentence. The stable code decides behaviour and the detail
+ *  is shown; the prose is never parsed. */
 export const postAssetCommand: CommandIssuer = async (assetId, request) => {
   const path = `/api/v2/sim/assets/${encodeURIComponent(assetId)}/commands`;
-  const res = await apiPost(path, request);
+  const res = await apiPostJson<CommandResult>(path, request);
   if (res.success) {
-    return { accepted: true, message: `${humanise(request.kind)} accepted.` };
+    return {
+      accepted: true,
+      message: `${humanise(request.kind)} accepted.`,
+      result: res.value,
+    };
   }
-  log.warn('command refused', { assetId, kind: request.kind, error: res.error.message });
-  return { accepted: false, message: `${humanise(request.kind)} refused: ${res.error.message}` };
+  const failure = res.error;
+  log.warn('command refused', {
+    assetId,
+    kind: request.kind,
+    failure: failure.kind,
+    code: failure.kind === 'problem' ? failure.problem.code : null,
+  });
+  return { accepted: false, message: refusalText(request.kind, failure), failure };
 };
+
+/** The sentence beside a refused control: what was refused, the stable code it
+ *  was refused by, and the server's own explanation. */
+function refusalText(kind: string, failure: ApiFailure): string {
+  if (failure.kind !== 'problem') {
+    return `${humanise(kind)} failed to send: ${failure.message}`;
+  }
+  const problem = failure.problem;
+  const code = problem.reasonCode ?? problem.code;
+  return `${humanise(kind)} refused (${code}): ${problem.detail}`;
+}
+
+/**
+ * Wraps an issuer so no command leaves the client away from the live edge.
+ *
+ * The panel's own gates answer "would this asset accept the command"; this one
+ * answers "is the console commanding anything at all right now", which is a
+ * different question with a different owner — the shared
+ * {@link MutationGate} — and so is asked here rather than re-derived inside
+ * `evaluateCommand`. The refusal is reported as a declined outcome, because a
+ * press that produced silence would read as a command in flight.
+ */
+export function gatedCommandIssuer(
+  gate: MutationGate,
+  issuer: CommandIssuer = postAssetCommand,
+): CommandIssuer {
+  return async (assetId, request) => {
+    const allowed = gate('asset.command');
+    if (allowed.success) return issuer(assetId, request);
+    log.info('asset command refused away from the live edge', { assetId, kind: request.kind });
+    return {
+      accepted: false,
+      message: `${humanise(request.kind)} unavailable during replay — return to Live to command.`,
+      refusal: allowed.error,
+    };
+  };
+}
 
 /** Default report source: `GET /api/v2/sim/assets/{id}/capabilities`. Resolves to
  *  null when the report cannot be read, which the panel treats as a *failure* —

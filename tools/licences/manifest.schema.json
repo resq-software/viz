@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resq.software/schemas/terrain-provenance-manifest-1.json",
+  "title": "Terrain provenance manifest",
+  "description": "Emitted by the bake pipeline. Records, per baked tile and per layer, which upstream source the data actually came from. Provenance is recorded per layer rather than per tile because licence obligations scope per feature type, so a tile can legitimately mix a public-domain elevation layer with an attribution-class land cover layer.",
+  "type": "object",
+  "required": ["schema", "generated_at", "generator", "areas"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "generator": { "type": "string" },
+    "eula_clauses": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Clause ids the product's own legal notice or EULA is asserted to carry, e.g. 'copernicus-6c-liability'. Some licences oblige the product to pass a liability sentence or a flow-down term to its own users; that obligation lives in the EULA, not in a notice file, and nothing else in the build can see it. Declaring it here lets the gate refuse a source whose EULA obligation has not been discharged."
+    },
+    "areas": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/area" } }
+  },
+  "$defs": {
+    "area": {
+      "type": "object",
+      "required": ["id", "name", "bbox", "tiles"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "name": { "type": "string" },
+        "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+        "notes": { "type": "string" },
+        "tiles": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/tile" } }
+      }
+    },
+    "tile": {
+      "type": "object",
+      "required": ["path", "sha256", "layers"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "layers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/layer" } }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "required": ["layer", "source", "fetched_at"],
+      "additionalProperties": false,
+      "properties": {
+        "layer": {
+          "type": "string",
+          "enum": ["elevation", "bathymetry", "landcover", "imagery", "buildings", "hydrology", "texture"],
+          "description": "Checked against the source's permitted_layers. A bathymetry layer declared from a land-cover source is a provenance error that would generate a notice crediting the wrong producer."
+        },
+        "source": { "type": "string", "description": "Key into licences.json sources. Unknown keys fail the build." },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When these bytes were obtained. Load-bearing: fetched-after and fetched-before restrictions turn on it, because a licence that changed on a date means data taken before it came under different terms."
+        },
+        "upstream_url": { "type": "string" },
+        "upstream_licence_header": {
+          "type": "string",
+          "description": "The licence or imagery-source header the upstream service returned. Cross-checked against the declared source: if it names a producer the declared source is not, the bytes fetched are not the bytes this manifest describes."
+        },
+        "election": {
+          "type": "string",
+          "description": "For a dual-licensed source, the limb elected, recorded in writing at the moment of the bake, e.g. 'CC-BY-4.0'. Required where the source declares a require-election restriction."
+        },
+        "masks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Mask ids applied at bake time, e.g. 'prism-cded'. Several sources are licensed only once a subset of pixels is removed; the mask is what makes the recorded class true, so it is declared per layer rather than assumed."
+        },
+        "collection": {
+          "type": "string",
+          "description": "The upstream collection actually queried, e.g. 'SENTINEL-2-L2A'. Where a host serves several missions under different terms, a query by area rather than by explicit collection can silently pull in one that is not licensed for commercial redistribution."
+        }
+      }
+    }
+  }
+}

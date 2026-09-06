@@ -109,6 +109,7 @@ public static partial class VizSnapshotDiffer
             previous.Hazards, next.Hazards, h => h.HazardId, HazardEquals);
 
         var networkChanged = !NetworkEquals(previous.Network, next.Network);
+        var scenarioChanged = !Equals(previous.Scenario, next.Scenario);
 
         return new VizDeltaV2(
             SchemaVersion: VizSnapshotV2.CurrentSchemaVersion,
@@ -139,7 +140,9 @@ public static partial class VizSnapshotDiffer
             EnvironmentRevision: string.Equals(
                 previous.EnvironmentRevision, next.EnvironmentRevision, StringComparison.Ordinal)
                     ? null
-                    : next.EnvironmentRevision);
+                    : next.EnvironmentRevision,
+            Scenario: scenarioChanged ? next.Scenario : null,
+            ScenarioCleared: scenarioChanged && next.Scenario is null);
     }
 
     /// <summary>Reconstructs the frame a delta encodes, given the frame it applies to.</summary>
@@ -199,7 +202,8 @@ public static partial class VizSnapshotDiffer
             Hazards: MergeById(baseline.Hazards, delta.Hazards, delta.RemovedHazardIds, h => h.HazardId),
             Network: delta.NetworkCleared ? null : (delta.Network ?? baseline.Network),
             EnvironmentRevision: delta.EnvironmentRevision ?? baseline.EnvironmentRevision,
-            DescriptorsComplete: true);
+            DescriptorsComplete: true,
+            Scenario: delta.ScenarioCleared ? null : (delta.Scenario ?? baseline.Scenario));
     }
 
     /// <summary>

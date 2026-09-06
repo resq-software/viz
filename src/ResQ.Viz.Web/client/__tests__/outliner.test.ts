@@ -135,3 +135,58 @@ describe('buildHierarchy over a v2 frame', () => {
         expect(buildHierarchy(v1).map(g => g.kind)).toEqual(['drone', 'hazard', 'detection']);
     });
 });
+
+describe('buildHierarchy when a v2 frame carries its own v1 shadow', () => {
+    // The shape a LIVE v2 frame actually has, which the suite above does not
+    // reproduce: `assets/sceneFrame` projects every air asset back down into
+    // `drones` so the fourteen v1 consumers in `app.ts` keep working, so the air
+    // fleet arrives twice in one frame. The fixture above sets `drones: []`,
+    // which is why emitting both groups whole looked correct in this file while
+    // putting every aircraft on screen under two headings in the running app.
+    function asset(id: string, domain: number, operationalState: number) {
+        return { view: { id, displayName: id, domain, operationalState } } as unknown as
+            NonNullable<SceneFrame['assets']>[number];
+    }
+    function drone(id: string, status: string) {
+        return { id, status } as unknown as NonNullable<SceneFrame['drones']>[number];
+    }
+
+    const frame: SceneFrame = {
+        // The same two ids as the air assets below. This is the shadow of that
+        // fleet, not a second one.
+        drones: [drone('mapper-n', 'flying'), drone('mapper-c', 'flying')],
+        hazards: [],
+        detections: [],
+        assets: [
+            asset('mapper-n', AssetDomain.Air, OperationalState.Active),
+            asset('mapper-c', AssetDomain.Air, OperationalState.Active),
+            asset('rover-1', AssetDomain.Ground, OperationalState.Ready),
+        ],
+    };
+
+    it('lists each aircraft exactly once, as an asset', () => {
+        const groups = buildHierarchy(frame);
+        const ids = groups.flatMap(g => g.items.map(i => i.id));
+        expect(ids.filter(id => id === 'mapper-n')).toHaveLength(1);
+        expect(ids.filter(id => id === 'mapper-c')).toHaveLength(1);
+        expect(groups[0]!.kind).toBe('asset');
+        expect(groups[0]!.items.map(i => i.id)).toEqual(['mapper-n', 'mapper-c', 'rover-1']);
+    });
+
+    it('empties the drone group rather than repeating the asset rows', () => {
+        const drones = buildHierarchy(frame).find(g => g.kind === 'drone')!;
+        expect(drones.items).toEqual([]);
+    });
+
+    it('still lists a drone that has no asset of the same id', () => {
+        // The filter must not degrade into "drop the drone group whenever assets
+        // exist": a genuinely v1-only entity has no asset row to fall back on,
+        // so hiding it would lose it from the hierarchy altogether.
+        const mixed: SceneFrame = {
+            ...frame,
+            drones: [...(frame.drones ?? []), drone('legacy-1', 'hover')],
+        };
+        const drones = buildHierarchy(mixed).find(g => g.kind === 'drone')!;
+        expect(drones.items).toEqual([{ id: 'legacy-1', sub: 'hover' }]);
+    });
+});

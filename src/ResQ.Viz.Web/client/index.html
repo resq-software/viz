@@ -53,8 +53,8 @@
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:site" content="@ResQSoftware">
-    <meta name="twitter:creator" content="@ResQSoftware">
+    <meta name="twitter:site" content="@resqsystems_inc">
+    <meta name="twitter:creator" content="@resqsystems_inc">
     <meta name="twitter:title" content="ResQ Viz">
     <meta name="twitter:description" content="Real-time 3D coordination for autonomous drone swarms. Mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.">
     <meta name="twitter:image" content="https://viz.resq.software/og-banner.png">
@@ -63,7 +63,10 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-    <link rel="mask-icon" href="/favicon.svg" color="#35E0F0">
+    <!-- Safari pinned tab: must be a single-colour SVG on transparency, so it
+         points at the monochrome mark rather than the full-colour favicon
+         (which would flatten to a solid plate). Colour is the brand red. -->
+    <link rel="mask-icon" href="/favicon-mono.svg" color="#D43E3F">
     <link rel="manifest" href="/site.webmanifest">
 
     <!-- Structured data — Organization + WebSite mirror resq.software; the
@@ -81,8 +84,8 @@
           "logo": "https://resq.software/logo.png",
           "email": "contact@resq.software",
           "sameAs": [
-            "https://x.com/ResQSoftware",
-            "https://www.linkedin.com/company/resq-software",
+            "https://x.com/resqsystems_inc",
+            "https://www.linkedin.com/company/resq-systems-inc",
             "https://github.com/resq-software"
           ]
         },
@@ -123,11 +126,11 @@
         <h1 class="sr-only">ResQ Viz drone simulation viewer</h1>
         <!-- Aria-live telemetry summary for screen readers (updated by app.ts) -->
         <div id="a11y-telemetry" class="sr-only" aria-live="polite" aria-atomic="true"></div>
-        <!-- Empty world hint — shown when no drones exist -->
+        <!-- Empty world hint — shown when no assets exist -->
         <div id="empty-state" aria-live="polite">
             <div class="es-icon">&#x2B21;</div>
-            <div class="es-title">No active drones</div>
-            <div class="es-sub">Click a scenario in the sidebar to begin, or spawn a drone manually.</div>
+            <div class="es-title">No active assets</div>
+            <div class="es-sub">Choose a scenario in the operator rail, or spawn an asset manually.</div>
         </div>
     </main>
 
@@ -143,9 +146,23 @@
 
         <div class="hud-zone hud-zone-center">
             <div id="hud-stats">
-                <div class="hud-stat" title="Active drones">
+                <div id="hud-count-v1" class="hud-stat hud-count-branch" data-hud-mode="legacy" title="Active drones" hidden aria-hidden="true">
                     <span class="hud-stat-label">DRN</span>
                     <span class="hud-stat-value" id="drone-count">0</span>
+                </div>
+                <div id="hud-count-v2" class="hud-stat hud-count-branch hud-stat-assets" data-hud-mode="v2" role="group" aria-label="Asset counts" hidden aria-hidden="true">
+                    <span class="sr-only">Total assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">ALL</span>
+                    <span class="hud-stat-value" id="asset-count">0</span>
+                    <span class="sr-only">Air assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">AIR</span>
+                    <span class="hud-stat-value" id="air-count">0</span>
+                    <span class="sr-only">Ground assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">GND</span>
+                    <span class="hud-stat-value" id="ground-count">0</span>
+                    <span class="sr-only">Surface assets:</span>
+                    <span class="hud-stat-label" aria-hidden="true">SFC</span>
+                    <span class="hud-stat-value" id="surface-count">0</span>
                 </div>
                 <div class="hud-stat" title="Render rate">
                     <span class="hud-stat-label">FPS</span>
@@ -155,7 +172,7 @@
                     <span class="hud-stat-label">T+</span>
                     <span class="hud-stat-value" id="sim-time">0.0s</span>
                 </div>
-                <div class="hud-stat hud-stat-bat" title="Fleet battery average">
+                <div id="hud-battery-stat" class="hud-stat hud-stat-bat" title="Fleet battery average">
                     <span class="hud-stat-label">BAT</span>
                     <div id="battery-track"><div id="battery-fill"></div></div>
                     <span class="hud-stat-value" id="battery-pct">--%</span>
@@ -171,7 +188,7 @@
         </div>
 
         <div class="hud-zone hud-zone-right">
-            <div id="hud-selected-drone" class="hud-selected hidden" title="Selected drone — WASD/QE to nudge, click terrain to move"></div>
+            <div id="hud-selected-drone" class="hud-selected hidden" title=""><span id="hud-selected-asset"></span></div>
             <div class="hud-toggle-group" role="group" aria-label="Layer visibility">
                 <button id="hud-vel-toggle"    class="hud-toggle"        type="button" aria-label="Velocity vectors" aria-pressed="false" title="Velocity vectors (V)"><span aria-hidden="true">&#x21D2;</span></button>
                 <button id="hud-halo-toggle"   class="hud-toggle active" type="button" aria-label="Altitude halos"   aria-pressed="true"  title="Altitude halos (H)"><span aria-hidden="true">&#x25CB;</span></button>
@@ -179,7 +196,9 @@
                 <button id="hud-follow-toggle" class="hud-toggle"        type="button" aria-label="Follow selected"  aria-pressed="false" title="Follow selected (F)"><span aria-hidden="true">&#x25CE;</span></button>
             </div>
             <div class="hud-action-group">
-                <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel"   title="Toggle panel [Tab]"><span aria-hidden="true">☰</span></button>
+                <button id="btn-editor-toggle" class="hud-action hud-action-text" type="button" aria-expanded="false" aria-controls="operator-editor-layer">Editor</button>
+                <span id="editor-unavailable-note" class="sr-only">Desktop workspace required</span>
+                <button id="btn-sidebar-toggle"  class="hud-action" type="button" aria-label="Toggle sidebar panel" aria-expanded="true" aria-controls="sidebar" title="Toggle panel"><span aria-hidden="true">☰</span></button>
                 <button id="hud-cockpit-toggle"  class="hud-action" type="button" aria-label="Flight instruments"    aria-pressed="false" title="Flight instruments (I)"><span aria-hidden="true">◔</span></button>
                 <button id="hud-hints-toggle"    class="hud-action" type="button" aria-label="Keyboard shortcuts"    aria-pressed="false" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
                 <button id="hud-settings-toggle" class="hud-action" type="button" aria-label="Settings"              aria-expanded="false" aria-controls="settings-panel" title="Settings"><span aria-hidden="true">⚙</span></button>
@@ -190,6 +209,47 @@
     <!-- Left sidebar -->
     <aside id="sidebar">
 
+        <section id="operator-boot" class="operator-branch operator-boot" data-state="connecting" aria-hidden="false">
+            <span class="operator-boot-kicker">Operator console</span>
+            <div id="operator-boot-status" class="operator-boot-status" data-state="connecting" role="status" aria-live="polite" aria-atomic="true">
+                <strong id="operator-boot-title">Establishing simulation link…</strong>
+                <p id="operator-boot-detail" class="operator-boot-detail">Negotiating live simulation streams.</p>
+            </div>
+        </section>
+
+        <section id="operator-v2-console" class="operator-branch operator-v2-console" hidden inert aria-hidden="true">
+            <section id="operator-mission" class="operator-card" aria-label="Active mission">
+                <span class="operator-section-kicker">Mission</span>
+                <strong>Waiting for authoritative scenario state</strong>
+            </section>
+
+            <div class="operator-primary-actions">
+                <button id="btn-spawn-asset" class="btn btn-primary" type="button">Spawn asset</button>
+                <button id="btn-environment" class="btn" type="button">Environment</button>
+            </div>
+
+            <section class="operator-fleet" aria-labelledby="fleet-heading">
+                <h2 id="fleet-heading" class="section-title" tabindex="-1">Fleet</h2>
+                <div id="fleet-filter" class="operator-mount"></div>
+                <div id="fleet-roster" class="operator-mount"></div>
+            </section>
+
+            <!-- The disclosure is static markup on purpose: its trigger has to exist
+                 before the module it loads does. OperatorShell owns whether it is open
+                 and fires app.ts's first-expansion loader exactly once; the panels are
+                 appended here by that module. -->
+            <details id="advanced-safety" class="operator-card operator-advanced">
+                <summary>Advanced / Safety</summary>
+                <p data-advanced-status>Control authority, link drills, simulation-only external
+                    reports, and the session audit trail load when this section is opened.</p>
+                <button id="btn-advanced-retry" class="btn" type="button" hidden>Retry Advanced / Safety</button>
+            </details>
+        </section>
+
+        <section id="legacy-console" class="operator-branch legacy-console" hidden inert aria-hidden="true">
+
+        <p id="legacy-mode-notice" class="legacy-mode-notice" role="status">Legacy mode: v2 unavailable</p>
+
         <div class="panel-section panel-sim">
             <h2 class="section-title">Simulation</h2>
             <div class="btn-row">
@@ -199,27 +259,62 @@
             </div>
         </div>
 
-        <div class="panel-section">
-            <h2 class="section-title">Scenarios</h2>
-            <div class="scenario-grid">
-                <button class="scenario-card" type="button" data-scenario="single">
-                    <span class="sc-name">Single</span>
-                    <span class="sc-desc">1 drone</span>
+        <!-- Scenarios: filter chips over a bounded, uniform-row catalog list.
+             Nineteen presets as two-column cards was 634px of a 948px rail, which
+             pushed Terrain, Commands, Spawn, Weather and Faults below the fold.
+             These four rows stay hand-written so the rail is fully labelled on
+             first paint, before /api/sim/scenarios resolves — and they are the
+             only rows that exist at all if that fetch fails. Their text is
+             byte-identical to `scenarioCatalog.ts`, which a unit test pins, so
+             there is one source of truth and no relabelling flash. -->
+        <section class="panel-section panel-scenarios" aria-labelledby="sec-scenarios">
+            <h2 class="section-title" id="sec-scenarios">Scenarios</h2>
+
+            <div class="scn-filters" role="group" aria-label="Filter scenarios">
+                <button class="scn-chip" type="button" data-filter="all"      data-name="All"          aria-pressed="true">All<span class="chip-n">4</span></button>
+                <button class="scn-chip" type="button" data-filter="disaster" data-name="Disaster"     aria-pressed="false">Disaster<span class="chip-n">0</span></button>
+                <button class="scn-chip" type="button" data-filter="multi"    data-name="Multi-domain" aria-pressed="false">Multi<span class="chip-n">0</span></button>
+                <button class="scn-chip" type="button" data-filter="dev"      data-name="Dev and load" aria-pressed="false">Dev<span class="chip-n">4</span></button>
+            </div>
+
+            <div class="scenario-grid" data-filter="all">
+                <h3 class="scn-head" data-group="dev">Dev &amp; load</h3>
+                <button class="scenario-card" type="button" data-scenario="single" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="1"
+                        aria-label="Single, 1 asset, air"
+                        title="SINGLE — One drone, the smallest live world">
+                    <span class="sc-name">SINGLE</span><span class="sc-count">1</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">1</kbd>
                 </button>
-                <button class="scenario-card" type="button" data-scenario="swarm-5">
-                    <span class="sc-name">Swarm 5</span>
-                    <span class="sc-desc">5 drones</span>
+                <button class="scenario-card" type="button" data-scenario="swarm-5" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="2"
+                        aria-label="Swarm 5, 5 assets, air"
+                        title="SWARM 5 — Five-drone formation and mesh drill">
+                    <span class="sc-name">SWARM 5</span><span class="sc-count">5</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">2</kbd>
                 </button>
-                <button class="scenario-card" type="button" data-scenario="swarm-20">
-                    <span class="sc-name">Swarm 20</span>
-                    <span class="sc-desc">20 drones</span>
+                <button class="scenario-card" type="button" data-scenario="swarm-20" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="3"
+                        aria-label="Swarm 20, 20 assets, air"
+                        title="SWARM 20 — Twenty-drone saturation trial">
+                    <span class="sc-name">SWARM 20</span><span class="sc-count">20</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">3</kbd>
                 </button>
-                <button class="scenario-card" type="button" data-scenario="sar">
-                    <span class="sc-name">SAR</span>
-                    <span class="sc-desc">Search &amp; rescue</span>
+                <button class="scenario-card" type="button" data-scenario="sar" data-group="dev" data-dom="A"
+                        aria-pressed="false" aria-keyshortcuts="4"
+                        aria-label="Sar sweep, 3 assets, air"
+                        title="SAR SWEEP — Lead, scout and relay in a search box">
+                    <span class="sc-name">SAR SWEEP</span><span class="sc-count">3</span>
+                    <span class="sc-dom" aria-hidden="true"><span class="sc-d">AIR</span></span>
+                    <kbd class="sc-key">4</kbd>
                 </button>
             </div>
-        </div>
+
+            <p id="scn-status" class="sr-only" role="status"></p>
+        </section>
 
         <div class="panel-section">
             <h2 class="section-title">Terrain</h2>
@@ -315,38 +410,14 @@
             </div>
         </details>
 
+        </section>
+
     </aside>
 
-    <!-- Drone detail panel (hidden until a drone is clicked) -->
-    <div id="drone-panel" class="hidden">
-        <button id="dp-close" aria-label="Close panel">×</button>
-        <div id="dp-info">
-            <div id="dp-id">—</div>
-            <div id="dp-status-row">
-                <span id="dp-badge" class="badge">—</span>
-            </div>
-            <div class="dp-bat-block">
-                <div class="dp-metric-label">Battery</div>
-                <div id="dp-bat-track"><div id="dp-bat-fill"></div></div>
-                <div class="dp-metric-value" id="dp-bat-pct">--%</div>
-            </div>
-        </div>
-        <div id="dp-metrics">
-            <div class="dp-metric">
-                <span class="dp-metric-label">Position · X Y Z</span>
-                <span class="dp-metric-value" id="dp-pos">— · — · —</span>
-            </div>
-            <div class="dp-metric">
-                <span class="dp-metric-label">Velocity · X Y Z · m/s</span>
-                <span class="dp-metric-value" id="dp-vel">— · — · —</span>
-            </div>
-        </div>
-        <div id="dp-cmds">
-            <button class="btn btn-primary dp-cmd-btn" data-cmd="hover">Hover</button>
-            <button class="btn dp-cmd-btn" data-cmd="rtl">RTL</button>
-            <button class="btn dp-cmd-btn" data-cmd="land">Land</button>
-        </div>
-    </div>
+    <!-- Body-level operator layers must not inherit the rail's transform. -->
+    <div id="operator-context-layer" class="operator-layer operator-context-layer"></div>
+    <div id="operator-modal-layer" class="operator-layer operator-modal-layer"></div>
+    <div id="operator-editor-layer" class="operator-layer operator-editor-layer" hidden inert aria-hidden="true"></div>
 
     <!-- Wind compass -->
     <div id="wind-compass">
@@ -355,7 +426,7 @@
     </div>
 
     <!-- Keyboard shortcuts panel — toggleable via ? button or ? key -->
-    <div id="key-hints" class="key-hints hidden">
+    <div id="key-hints" class="key-hints hidden" hidden inert aria-hidden="true">
       <div class="key-hints-header">
         <span class="key-hints-title">Keyboard Shortcuts</span>
         <button id="key-hints-close" class="key-hints-close" type="button" aria-label="Close keyboard shortcuts" title="Close (?)"><span aria-hidden="true">✕</span></button>
@@ -375,10 +446,10 @@
         <span><kbd>H</kbd> Altitude halos</span>
         <span><kbd>G</kbd> Formation lines</span>
         <span><kbd>I</kbd> Flight instruments</span>
+        <span><kbd>F2</kbd> Sensor diagnostics</span>
         <span><kbd>Space</kbd> Stop sim</span>
         <span><kbd>R</kbd> Reset sim</span>
-        <span><kbd>Tab</kbd> Sidebar</span>
-        <span><kbd>1&#x2013;4</kbd> Scenarios</span>
+        <span><kbd>1&#x2013;5</kbd> Scenarios</span>
         <span><kbd>Click drone</kbd> Select</span>
         <span><kbd>Click ground</kbd> Send drone here</span>
         <span><kbd>[</kbd> / <kbd>]</kbd> Prev / next drone</span>
@@ -387,7 +458,7 @@
     </div>
 
     <!-- ── Settings Panel ─────────────────────────────────────────────────────── -->
-    <div id="settings-panel" class="settings-panel" aria-hidden="true">
+    <div id="settings-panel" class="settings-panel" aria-hidden="true" inert>
       <div class="settings-header">
         <span class="settings-title">Settings</span>
         <button id="settings-close" class="settings-close" aria-label="Close settings">✕</button>
@@ -492,7 +563,7 @@
 
     <script type="module" src="./app.ts"></script>
 <noscript>
-  <style>#scene-container,#sidebar,header,#wind-compass,#drone-panel,#key-hints,#settings-panel { display: none; }</style>
+  <style>#scene-container,#sidebar,header,#wind-compass,#key-hints,#settings-panel { display: none; }</style>
   <div style="font-family:sans-serif;padding:2rem;color:#fff;background:#0d1117;text-align:center;max-width:640px;margin:0 auto">
     <h1>ResQ Viz — Real-Time Drone Simulation Visualizer</h1>
     <p>Monitor autonomous drone swarms in 3D. Run search-and-rescue scenarios, issue flight commands, inject faults, and observe real-time telemetry — all from your browser.</p>

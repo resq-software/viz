@@ -88,8 +88,10 @@ describe('the detail panel can actually be dismissed', () => {
     for (const selector of [
       '.asset-panel[hidden]',
       '.asset-filter[hidden]',
+      '.asset-roster[hidden]',
       '.asset-panel [hidden]',
       '.asset-filter [hidden]',
+      '.asset-roster [hidden]',
     ]) {
       expect(guarded).toContain(selector);
     }
@@ -104,8 +106,16 @@ describe('the detail panel can actually be dismissed', () => {
       .flatMap(([selectors]) => selectors.split(',').map((s) => s.trim()))
       .filter((s) => !s.startsWith('@') && !s.includes('%'))
       // Anything scoped to the panel or the filter is already covered.
-      .filter((s) => !/(^|\s|\.)(asset-panel|asset-filter|ap-|af-)/.test(s));
+      .filter((s) => !/(^|\s|\.)(asset-panel|asset-filter|asset-roster|ap-|af-|ar-)/.test(s));
 
     expect(topLevelWithDisplay).toEqual([]);
+  });
+
+  it('bounds the roster and gives its compact native controls full-size targets', () => {
+    expect(assetsCss).toMatch(/\.ar-scroll\s*\{[\s\S]*?overflow-y:\s*auto/);
+    expect(assetsCss).toMatch(
+      /@media\s*\(max-width:\s*759px\)[\s\S]*?\.af-domain-tab[\s\S]*?\.ar-row[\s\S]*?\.ar-search[\s\S]*?min-height:\s*44px/,
+    );
+    expect(assetsCss).not.toMatch(/\.(?:asset-roster|ar-[^{\s,]+)[^{]*\{[^}]*z-index\s*:/);
   });
 });

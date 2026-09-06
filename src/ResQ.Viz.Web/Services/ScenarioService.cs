@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -104,6 +106,7 @@ public sealed partial class ScenarioService
     ];
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<Entry>> _scenarios;
+    private readonly IReadOnlyList<ScenarioSummary> _scenarioSummaries;
     private readonly IReadOnlyList<IAssetFactory> _assetFactories;
     private readonly ILogger _logger;
 
@@ -168,10 +171,17 @@ public sealed partial class ScenarioService
         }
 
         _scenarios = dict;
+        _scenarioSummaries = dict
+            .Select(pair => BuildSummary(pair.Key, pair.Value))
+            .ToList()
+            .AsReadOnly();
     }
 
     /// <summary>Names of all available scenario presets.</summary>
     public IEnumerable<string> ScenarioNames => _scenarios.Keys;
+
+    /// <summary>Immutable discovery summaries derived from the validated scenario entries.</summary>
+    public IReadOnlyList<ScenarioSummary> ScenarioSummaries => _scenarioSummaries;
 
     /// <summary>Motion models this loader may spawn a non-air entry through.</summary>
     /// <remarks>
@@ -185,6 +195,112 @@ public sealed partial class ScenarioService
 
     /// <summary>Returns true if the named scenario exists.</summary>
     public bool HasScenario(string name) => _scenarios.ContainsKey(name);
+
+    /// <summary>Resolves a case-insensitive request to the configured scenario key.</summary>
+    /// <param name="name">Requested scenario name.</param>
+    /// <param name="canonicalName">
+    /// Configured key when found; otherwise an empty string. Callers publish this value so every
+    /// client sees one stable name regardless of route casing.
+    /// </param>
+    /// <returns><see langword="true"/> when the requested scenario exists.</returns>
+    public bool TryResolveScenarioName(string name, out string canonicalName)
+    {
+        canonicalName = string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        foreach (var configuredName in _scenarios.Keys)
+        {
+            if (string.Equals(configuredName, name, StringComparison.OrdinalIgnoreCase))
+            {
+                canonicalName = configuredName;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Stages and atomically replaces a room with one validated scenario.</summary>
+    /// <param name="name">Canonical configured scenario name.</param>
+    /// <param name="room">Room whose population and scenario state are replaced.</param>
+    /// <param name="committed">Exact scenario state committed with the new population.</param>
+    /// <returns>
+    /// <see langword="true"/> when the scenario existed and its complete population was committed;
+    /// otherwise <see langword="false"/> with the previous room left unchanged.
+    /// </returns>
+    public bool TryReplace(
+        string name,
+        SimulationRoom room,
+        [NotNullWhen(true)] out ScenarioSessionState? committed) =>
+        TryReplace(name, room, out committed, out _);
+
+    /// <summary>Atomically replaces a room population and reports a bounded failure category.</summary>
+    /// <param name="name">Canonical configured scenario name.</param>
+    /// <param name="room">Room whose population and scenario state are replaced.</param>
+    /// <param name="committed">Exact scenario state committed with the new population.</param>
+    /// <param name="failure">Stable failure category plus the internal exception, on failure.</param>
+    /// <returns>
+    /// <see langword="true"/> when the scenario existed and its complete population was committed;
+    /// otherwise <see langword="false"/> with the previous room left unchanged.
+    /// </returns>
+    internal bool TryReplace(
+        string name,
+        SimulationRoom room,
+        [NotNullWhen(true)] out ScenarioSessionState? committed,
+        [NotNullWhen(false)] out ScenarioReplacementFailure? failure)
+    {
+        ArgumentNullException.ThrowIfNull(room);
+        if (!_scenarios.TryGetValue(name, out var entries))
+        {
+            committed = null;
+            failure = new ScenarioReplacementFailure(
+                "catalog.resolve", new InvalidOperationException("Scenario was not present in the catalog."));
+            return false;
+        }
+
+        return room.TryReplaceScenario(
+            name,
+            candidate =>
+            {
+                foreach (var entry in entries)
+                {
+                    if (entry.Domain == AssetDomain.Air)
+                    {
+                        candidate.AddDrone(entry.Id, entry.Pos, entry.Vendor);
+                    }
+                    else
+                    {
+                        StageNonAir(candidate, entry);
+                    }
+                }
+            },
+            out committed,
+            out failure);
+    }
+
+    /// <summary>Builds one immutable discovery summary from validated entries.</summary>
+    /// <param name="name">Canonical configured scenario name.</param>
+    /// <param name="entries">Validated entries in configured order.</param>
+    /// <returns>The scenario summary.</returns>
+    private static ScenarioSummary BuildSummary(string name, IReadOnlyList<Entry> entries)
+    {
+        var vehicleClassCounts = new ReadOnlyDictionary<string, int>(
+            entries
+                .GroupBy(entry => entry.VehicleClass)
+                .ToDictionary(group => group.Key.ToString(), group => group.Count(), StringComparer.Ordinal));
+
+        return new ScenarioSummary(
+            Name: name,
+            AssetCount: entries.Count,
+            DomainCounts: new ScenarioDomainCounts(
+                Air: entries.Count(entry => entry.Domain == AssetDomain.Air),
+                Ground: entries.Count(entry => entry.Domain == AssetDomain.Ground),
+                Surface: entries.Count(entry => entry.Domain == AssetDomain.Surface)),
+            VehicleClassCounts: vehicleClassCounts);
+    }
 
     /// <summary>
     /// Runs a named scenario by spawning its assets into the simulation room.
@@ -285,5 +401,23 @@ public sealed partial class ScenarioService
                 "Asset '{AssetId}' skipped: the room refused it ({ReasonCode}).",
                 LogSafe(assetId), reasonCode);
         }
+    }
+
+    /// <summary>Builds one non-air entry into an unpublished candidate world.</summary>
+    private void StageNonAir(ScenarioPopulationBuilder candidate, in Entry entry)
+    {
+        var vehicleClass = entry.VehicleClass;
+        var assetId = entry.Id;
+        var factory = _assetFactories.FirstOrDefault(f => f.CanCreate(vehicleClass))
+            ?? throw new InvalidOperationException(
+                $"No motion model is registered for vehicle class '{vehicleClass}'.");
+        var plan = new AssetSpawnPlan(
+            assetId,
+            vehicleClass,
+            AssetProfiles.Create(assetId, vehicleClass, vendor: entry.Vendor),
+            entry.Pos,
+            entry.HeadingRad);
+
+        candidate.AddAsset(assetId, _ => factory.Create(plan));
     }
 }

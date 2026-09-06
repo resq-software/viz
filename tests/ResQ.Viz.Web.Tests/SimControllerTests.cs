@@ -83,6 +83,11 @@ public class SimControllerTests
                 ["Scenarios:sar:2:pos:0"] = "-30",
                 ["Scenarios:sar:2:pos:1"] = "18",
                 ["Scenarios:sar:2:pos:2"] = "-30",
+
+                ["Scenarios:flood-response:0:id"] = "flood-lead",
+                ["Scenarios:flood-response:0:pos:0"] = "0",
+                ["Scenarios:flood-response:0:pos:1"] = "20",
+                ["Scenarios:flood-response:0:pos:2"] = "0",
             })
             .Build();
         return new ScenarioService(config);
@@ -376,7 +381,7 @@ public class SimControllerTests
         var result = ctrl.GetScenarios() as OkObjectResult;
         result.Should().NotBeNull();
         var names = result!.Value as System.Collections.Generic.IEnumerable<string>;
-        names.Should().BeEquivalentTo(["single", "swarm-5", "swarm-20", "sar"]);
+        names.Should().BeEquivalentTo(["single", "swarm-5", "swarm-20", "sar", "flood-response"]);
     }
 
     [Fact]
@@ -386,6 +391,17 @@ public class SimControllerTests
         var result = ctrl.RunScenario("single") as OkObjectResult;
         result.Should().NotBeNull();
         room.GetSnapshot().Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void RunScenario_MixedCase_Publishes_The_Configured_Canonical_Name()
+    {
+        var (ctrl, room) = CreateController();
+
+        var result = ctrl.RunScenario("FLOOD-RESPONSE").Should().BeOfType<OkObjectResult>().Which;
+
+        result.Value.Should().BeEquivalentTo(new { scenario = "flood-response", status = "started" });
+        room.CaptureAssetFrame().Scenario!.Name.Should().Be("flood-response");
     }
 
     [Fact]
