@@ -7,9 +7,11 @@
 // active preset's procedural heightFn so real-world DEM tiles (Tangram
 // Heightmapper, USGS 3DEP, etc.) render without regenerating the engine.
 //
-// The backend physics still uses its own procedural terrain; drones may float
-// above or sink into the heightmap ground by the delta between the two. That
-// cosmetic mismatch is the cost of keeping this a viz-only, zero-backend PR.
+// The backend no longer ignores this: app.ts POSTs the decoded grid to
+// /api/sim/heightmap and the server installs it as authoritative terrain. The
+// upload is opt-in and best-effort (query param, ready session, operator gate,
+// no retry), so a failure still leaves client and server on different ground —
+// but the default is now agreement, not a known cosmetic mismatch.
 
 import { getLogger } from './log';
 

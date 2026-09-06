@@ -61,10 +61,20 @@ jobs:
       # after the release exists and can only audit it.
       #
       # Strict was advisory when this landed because the register recorded
-      # `verified_on: null` for sources nobody had read. Those licences have now
-      # been read at their publisher pages and their texts vendored and hashed,
-      # so strict passes with 0 warnings and there is no longer a reason to let
-      # it fail quietly.
+      # `verified_on: null` for sources nobody had read.
+      #
+      # Strict passes with 0 warnings TODAY only because data/manifest.json
+      # references exactly two sources, and both happen to be among the three
+      # whose licence text is vendored under tools/licences/texts/ and hashed
+      # into `licence_text_sha256`. 30 of the 33 registry entries are still
+      # unhashed, and the unhashed-licence check runs per manifest layer rather
+      # than per registry entry — so they are invisible until something uses
+      # them. The FIRST geospatial tile referencing one of those 30 turns a warn
+      # into a failed build here.
+      #
+      # That is intended, not a bug to route around: vendoring and hashing the
+      # licence text for each source a bake touches is a prerequisite of the
+      # bake, not a follow-up.
       - name: Licence gate (strict)
         run: |
           node --experimental-strip-types tools/licences/check-licences.ts \

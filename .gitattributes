@@ -7,6 +7,26 @@
 *.hdr   filter=lfs diff=lfs merge=lfs -text
 *.exr   filter=lfs diff=lfs merge=lfs -text
 
+# Baked geospatial rasters. Scoped to the bake output roots on purpose: the repo
+# already tracks 19 small rasters (favicons, terrain textures) that belong in the
+# tree, and a blanket `*.png` rule would force migrating those for no benefit.
+#
+# A 2048x2048 16-bit elevation tile is ~4 MiB and every re-bake writes a NEW
+# incompressible blob. Re-bakes are expected to be routine, so this has to be in
+# place BEFORE the first one — history cannot be un-fattened afterwards.
+assets/geo/**/*.png      filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.tif      filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.tiff     filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.webp     filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.hgt      filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.bil      filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.nc       filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.mbtiles  filter=lfs diff=lfs merge=lfs -text
+assets/geo/**/*.pmtiles  filter=lfs diff=lfs merge=lfs -text
+data/**/*.png            filter=lfs diff=lfs merge=lfs -text
+data/**/*.tif            filter=lfs diff=lfs merge=lfs -text
+data/**/*.tiff           filter=lfs diff=lfs merge=lfs -text
+
 # Compiled gh-aw workflows. This line is written and re-asserted by
 # `gh aw compile` — edits to it do not survive a recompile.
 #
