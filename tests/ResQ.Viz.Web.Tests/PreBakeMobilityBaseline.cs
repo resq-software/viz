@@ -143,7 +143,20 @@ public sealed class PreBakeMobilityBaseline
                         break;
 
                     case SurfaceDomainState surface when !surface.IsInsideWaterMask:
-                        faults.Add($"{preset}/{terrain}: '{state.AssetId}' is aground");
+                        faults.Add($"{preset}/{terrain}: '{state.AssetId}' is on dry land");
+                        break;
+
+                    // Inside the water mask and still on the bed. Distinct from the case above and
+                    // the one this file most needs to catch: bathymetry is what a DEM changes, and
+                    // a hull keeps reporting itself afloat while drawing more than the water under
+                    // it. The tightest margin in the current baseline is 4.95 m, which is exactly
+                    // the kind of number real depth data moves.
+                    case SurfaceDomainState surface when surface.UnderKeelClearanceM <= 0:
+                        faults.Add(
+                            $"{preset}/{terrain}: '{state.AssetId}' is on the bed — "
+                            + $"{surface.WaterDepthM:F2} m of water under a "
+                            + $"{surface.DraftM:F2} m draft "
+                            + $"(clearance {surface.UnderKeelClearanceM:F2} m)");
                         break;
                 }
             }
