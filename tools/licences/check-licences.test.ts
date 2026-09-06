@@ -28,6 +28,7 @@ import {
     contains, evaluateRestrictions, intersects, KNOWN_KINDS, parseIso,
     type EvalContext, type Restriction,
 } from "./restrictions.ts";
+import { ancestorsOf, resolveLineage } from "./lineage.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATE = join(HERE, "check-licences.ts");
@@ -532,6 +533,110 @@ describe("licence_text_path pointing at a directory", () => {
         ok(!/^\s+at .+:\d+:\d+\)?$/m.test(out), `threw instead of reporting:\n${out.slice(-600)}`);
         ok(!out.includes("Node.js v"), "process crashed rather than exiting cleanly");
         strictEqual(p.status, 1, "should exit as a normal gate failure, not a crash");
+    });
+});
+
+describe("lineage graph", () => {
+    const ALLOWED = new Set(["public-domain", "attribution", "flow-down"]);
+    const reg = (o: Record<string, { class: string; derived_from?: string[] }>) =>
+        new Map(Object.entries(o));
+
+    it("clears a source with no upstreams", () => {
+        const m = reg({ a: { class: "attribution" } });
+        deepStrictEqual(resolveLineage("a", m, ALLOWED), []);
+    });
+
+    it("catches an excluded direct upstream and names the path", () => {
+        const m = reg({ etopo: { class: "public-domain", derived_from: ["fabdem"] },
+                        fabdem: { class: "non-commercial" } });
+        const p = resolveLineage("etopo", m, ALLOWED);
+        strictEqual(p.length, 1);
+        strictEqual(p[0]!.code, "derived-from-excluded");
+        deepStrictEqual(p[0]!.path, ["etopo", "fabdem"]);
+    });
+
+    it("catches an excluded upstream TWO levels up", () => {
+        // The case prose review keeps missing: the product looks clean, its
+        // input looks clean, and the input's input is not.
+        const m = reg({ a: { class: "attribution", derived_from: ["b"] },
+                        b: { class: "attribution", derived_from: ["c"] },
+                        c: { class: "share-alike" } });
+        const p = resolveLineage("a", m, ALLOWED);
+        strictEqual(p.length, 1);
+        deepStrictEqual(p[0]!.path, ["a", "b", "c"]);
+    });
+
+    it("treats an unresolvable upstream as a problem, not a clean walk", () => {
+        const m = reg({ a: { class: "attribution", derived_from: ["ghost"] } });
+        strictEqual(resolveLineage("a", m, ALLOWED)[0]!.code, "derived-from-unknown");
+    });
+
+    it("reports a cycle instead of looping forever", () => {
+        const m = reg({ a: { class: "attribution", derived_from: ["b"] },
+                        b: { class: "attribution", derived_from: ["a"] } });
+        const p = resolveLineage("a", m, ALLOWED);
+        ok(p.some((x) => x.code === "derived-from-cycle"), JSON.stringify(p));
+    });
+
+    it("reports a diamond once, not twice", () => {
+        const m = reg({ a: { class: "attribution", derived_from: ["b", "c"] },
+                        b: { class: "attribution", derived_from: ["bad"] },
+                        c: { class: "attribution", derived_from: ["bad"] },
+                        bad: { class: "non-commercial" } });
+        const excluded = resolveLineage("a", m, ALLOWED).filter((x) => x.code === "derived-from-excluded");
+        strictEqual(excluded.length, 1, "a shared ancestor should be named once");
+    });
+
+    it("lists transitive ancestors", () => {
+        const m = reg({ a: { class: "attribution", derived_from: ["b"] },
+                        b: { class: "attribution", derived_from: ["c"] },
+                        c: { class: "attribution" } });
+        deepStrictEqual(ancestorsOf("a", m), ["b", "c"]);
+    });
+});
+
+describe("the registry's own lineage", () => {
+    async function registry() {
+        return (await import(`file://${REGISTRY}`, { with: { type: "json" } })).default;
+    }
+
+    it("declares no upstream that is missing from the registry", async () => {
+        const reg = await registry();
+        const keys = new Set(Object.keys(reg.sources).filter((k) => !k.startsWith("_")));
+        const dangling: string[] = [];
+        for (const [k, e] of Object.entries<any>(reg.sources)) {
+            if (k.startsWith("_")) continue;
+            for (const parent of e.derived_from ?? []) {
+                if (!keys.has(parent)) dangling.push(`${k} -> ${parent}`);
+            }
+        }
+        deepStrictEqual(dangling, []);
+    });
+
+    it("gives every flow-down source a contractual clause to discharge", async () => {
+        const reg = await registry();
+        const bad: string[] = [];
+        for (const [k, e] of Object.entries<any>(reg.sources)) {
+            if (k.startsWith("_") || e.class !== "flow-down") continue;
+            if (!(e.restrictions ?? []).some((r: any) => r.kind === "require-eula-clause")) bad.push(k);
+        }
+        deepStrictEqual(bad, [],
+            "flow-down exists because the licence obliges a contract; without a named clause "
+            + "the class asserts an obligation nothing checks");
+    });
+
+    it("catches an excluded input even when the product's own class is wrong", () => {
+        // The regression that matters. An earlier revision classified this
+        // source public-domain on the strength of its publisher's dedication.
+        // The class check alone would pass it; the graph must not.
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["noaa-etopo-2022"].class = "public-domain";
+        const sources = new Map<string, any>(
+            Object.entries<any>(reg.sources).filter(([k]) => !k.startsWith("_")));
+        const p = resolveLineage("noaa-etopo-2022", sources,
+            new Set(reg.policy.allowed_classes));
+        ok(p.some((x) => x.code === "derived-from-excluded"),
+            "reclassifying the product must not launder its inputs");
     });
 });
 

@@ -16,6 +16,7 @@ tools/licences/
   check-licences.ts       the gate
   check-licences.test.ts  its tests
   manifest.schema.json    schema for the provenance manifest
+  lineage.ts              transitive derived_from graph
   texts/                  verbatim licence texts that must ship with the data
 data/manifest.json        emitted by the bake pipeline
 NOTICE.md                 generated — never hand-edited
@@ -99,6 +100,10 @@ the two.
 | `layer-source-mismatch` | error | This source does not supply that layer kind. |
 | `upstream-header-mismatch` | error | The captured header names a producer the declared source is not. |
 | `unknown-restriction-kind` | error | The registry declares a rule this build cannot evaluate. |
+| `derived-from-excluded` | error | A transitive upstream is not admissible. Names the path. |
+| `derived-from-unknown` | error | A declared upstream is not in the registry, so the lineage cannot be cleared. |
+| `derived-from-cycle` | error | The registry describes a product derived from itself. |
+| `flow-down-without-clause` | error | A `flow-down` source declares no contractual clause to discharge. |
 | `symlink-in-data-root` | error | A link inside a scanned root. Data roots hold bytes we redistribute; those must be real files. |
 | `invalid-verification-date` | error | `verified_on` is not a valid past ISO date. |
 | `missing-licence-text` | error | A `full-licence-text` source has no readable `licence_text_path`. |
@@ -126,11 +131,32 @@ from ODbL to CDLA-Permissive-2.0, and third-party catalogues still describe it
 by its old licence, so anything fetched before that date came under the old
 terms. That is what `fetched-after` encodes.
 
-**Trace the lineage, not the badge.** The costliest errors in this register came
-from aggregates: a permissively-badged global relief model whose land layer is a
-non-commercial dataset, and a CC BY elevation mosaic vertically registered against
-a source carrying its own notice obligations. A licence badge describes the
-aggregator's own rights, not the rights of everything inside it.
+**Trace the lineage, not the badge — in data, not prose.** The costliest errors
+in this register came from aggregates: a permissively-badged global relief model
+whose land layer is non-commercial, an elevation mosaic vertically registered
+against a licensed source, and a surface model that acquired an obligation at a
+version bump. A licence badge describes the aggregator's own rights, not the
+rights of everything inside it.
+
+All three were once recorded in `notes` fields, where nothing evaluated them.
+They are now edges: `derived_from` names a source's upstream registry keys, and
+the gate walks that graph transitively, so a source is admissible only if it AND
+every ancestor is. Reclassifying a product does not launder its inputs — there
+is a test asserting exactly that, because it is the mistake that was actually
+made.
+
+**Pin the version, because version determines licence.** `example@3.2` and
+`example@4.0` are separate registry keys with different edges. This register has
+a live case: a global surface model whose 2023 release is produced using another
+licensed DEM, where the release incorporated into a downstream product predates
+that. The obligation is acquired by upgrading, so the control is a pin — cheap
+and auditable — not a per-pixel mask.
+
+**`flow-down` is its own class.** A licence can be fully permissive and still
+oblige *you* to bind your own customers by contract. Creative Commons never does
+that; it licenses downstream automatically. Filing the two together would let a
+flow-down source through on a notice string, so the class is separate and the
+gate refuses one that names no contractual clause.
 
 **Scope the scan.** `scan_roots` limits the asset walk to data directories.
 Whole-tree scanning flagged every UI icon in the repo, which is the fastest way to
