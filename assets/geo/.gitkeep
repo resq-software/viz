@@ -1,0 +1,6 @@
+# Baked geospatial tiles land here.
+#
+# This directory is a declared licence-gate scan root (tools/licences/licences.json,
+# policy.scan_roots). It is kept in git even while empty because the gate now treats a
+# missing scan root as an error: a root that does not exist is a root that silently
+# checks nothing, which is how unmanifested data ships.

@@ -275,6 +275,19 @@ function pathEscape(relPath: string): string | null {
 
 const manifestPaths = new Map<string, { area: Area; tile: Tile }>();
 const usedSources = new Set<string>();
+
+/**
+ * Ancestors of a used source whose own licence still demands a credit.
+ *
+ * A derived product does not absorb its inputs' attribution — it inherits it. NASADEM is public
+ * domain and carries no notice of its own, but it is built from AW3D30, whose licence requires
+ * the JAXA credit. Crediting only NASA JPL there is a licence breach that no test could see,
+ * because lineage was wired to admissibility and never to the notice.
+ */
+const noticeAncestors = new Set<string>();
+
+/** Whether an entry's licence requires its credit to appear in the notice. */
+const needsNotice = (s: SourceEntry) => s.notice_required ?? (s.class === "attribution");
 /** Layer kinds actually present, so the notice asserts only what ships. */
 const usedLayers = new Set<string>();
 const declaredEula = new Set<string>(manifest.eula_clauses ?? []);
@@ -343,6 +356,14 @@ for (const area of manifest.areas ?? []) {
       }
       usedSources.add(layer.source);
       usedLayers.add(layer.layer);
+
+      // Attribution flows down the lineage the same way admissibility does.
+      for (const ancestor of ancestorsOf(layer.source, sources)) {
+        const parent = sources.get(ancestor);
+        if (parent && needsNotice(parent) && parent.notice) {
+          noticeAncestors.add(ancestor);
+        }
+      }
 
       // Lineage. The class check above clears this source; this clears what it
       // is MADE OF. Three findings in this register were merged products
@@ -492,7 +513,15 @@ const scanRoots = registry.policy.scan_roots?.length
 const scanned: string[] = [];
 for (const root of scanRoots) {
   const abs = resolve(ROOT, root);
-  if (!existsSync(abs)) continue;
+  if (!existsSync(abs)) {
+    // Failing open here is the one outcome this gate must never have: a bake that
+    // writes tiles into a root nobody scans passes with zero unmanifested-asset
+    // coverage, and the build stays green while the data goes unchecked.
+    add("error", "missing-scan-root", root,
+      `Declared scan root "${root}" does not exist, so nothing in it is checked. Create it (an `
+      + `empty directory with .gitkeep is enough) or remove it from policy.scan_roots.`);
+    continue;
+  }
   walk(abs, scanned);
 }
 for (const rel of symlinksFound) {
@@ -511,11 +540,10 @@ for (const rel of scanned) {
 // ---------------------------------------------------------------- notice
 
 function buildNotice(): string {
-  const used = [...usedSources]
+  const used = [...new Set([...usedSources, ...noticeAncestors])]
     .map((k) => [k, sources.get(k)!] as const)
     .sort((a, b) => a[1].name.localeCompare(b[1].name));
 
-  const needsNotice = (s: SourceEntry) => s.notice_required ?? (s.class === "attribution");
   const pd = used.filter(([, s]) => !needsNotice(s));
   const attr = used.filter(([, s]) => needsNotice(s));
   const fullText = attr.filter(([, s]) => s.notice_kind === "full-licence-text");
