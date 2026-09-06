@@ -1,0 +1,163 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-05T00:00:00Z",
+  "generator": "credits-import/0.1.0",
+  "areas": [
+    {
+      "id": "render-assets",
+      "name": "Renderer textures",
+      "bbox": [
+        -180,
+        -90,
+        180,
+        90
+      ],
+      "notes": "Non-geospatial render assets. Provenance imported from the hand-written textures/terrain/CREDITS.md so the notice becomes generated rather than maintained by hand. Geospatial areas are appended here by the bake pipeline.",
+      "tiles": [
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/grass/albedo.jpg",
+          "sha256": "d92bec8a35b9cb16ec79b421ca0f572a7400286eae109beafa266629ef49a6cf",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/grass/normal.jpg",
+          "sha256": "ea59dbdcfa5bf2f28bdd4aa896d4e5f96c4cce5939100dcc6db4bbbcdebfe38d",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/grass/roughness.jpg",
+          "sha256": "3786b088e981aae562f06b6477972d379cffd09a5cc542ab42f9ffd94f9bcb0e",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/rock/albedo.jpg",
+          "sha256": "1dca8a336518ce0adca4b5cbe2ab30819c8769388f1c15278082a99f022c615a",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/rock/normal.jpg",
+          "sha256": "8fd1d22eb6c7b6e4a374196c0de791f724538b8b86eb9c7a946fec1f5834cb94",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/rock/roughness.jpg",
+          "sha256": "f37850f72994458994716d084683d80611528d1685264bde3071569e8ca53489",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/sand/albedo.jpg",
+          "sha256": "77c0b5ac13eead1420887c608b2c28209a1ae5ba70761bf29953aa23cf3dc31b",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/sand/normal.jpg",
+          "sha256": "473474b0e0570cfa757e35c13f073e7ee49389fb3e35dad4d5f06e5ce9a59234",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/sand/roughness.jpg",
+          "sha256": "e19b6c7d4ee3d8a6b6ea4ecc525a1a4e32681be969af134a2ee5c6071b9dcec9",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/snow/albedo.jpg",
+          "sha256": "bf29965ab1e05abf3fdc7f103a2338a1ad454ac49d8ba2b766023bd1b91a64ec",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/snow/normal.jpg",
+          "sha256": "6fe9ba49ce22b243a9c26d1aa7efe73455c782a75a18cdf2cc1be435a505b018",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/terrain/snow/roughness.jpg",
+          "sha256": "dc51a768a2fe83f4c52aed680edc79000bcd51c847e3c887d2a64354013388a4",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "ambientcg",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "path": "src/ResQ.Viz.Web/client/public/textures/waternormals.jpg",
+          "sha256": "add9912b158a4fe9c12421745babe68c44c8af75631ac4837236cb2a03bc373f",
+          "layers": [
+            {
+              "layer": "texture",
+              "source": "threejs-examples",
+              "fetched_at": "2026-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

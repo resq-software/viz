@@ -1,0 +1,16 @@
+# ResQ Systems, Inc. — security contact (RFC 9116)
+# Report a vulnerability privately to the address below; please do not open a
+# public issue. Renew `Expires` before it lapses (keep it < 1 year out) — keep
+# it in step with the apex copy so both roll over together.
+#
+# Unsigned by design: the apex record at
+# https://resq.software/.well-known/security.txt is the PGP-signed canonical
+# copy. Both URLs are listed under `Canonical` so a scanner that fetches either
+# one can confirm it is at an intended location, and `Encryption` points at the
+# same signing key.
+Contact: mailto:security@resq.software
+Expires: 2027-06-19T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://resq.software/.well-known/security.txt
+Canonical: https://viz.resq.software/.well-known/security.txt
+Encryption: https://resq.software/.well-known/pgp-key.txt

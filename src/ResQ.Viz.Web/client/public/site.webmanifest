@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "ResQ Viz",
   "short_name": "ResQ Viz",
   "description": "Real-time 3D coordination for autonomous drone swarms — mesh topology, hazard fusion, and decentralized consensus when infrastructure fails.",
@@ -7,15 +8,56 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["minimal-ui", "browser"],
+  "display_override": [
+    "window-controls-overlay",
+    "fullscreen",
+    "minimal-ui",
+    "browser"
+  ],
   "orientation": "landscape",
-  "theme_color": "#0A0E1A",
-  "background_color": "#0A0E1A",
-  "categories": ["productivity", "utilities", "security", "government"],
+  "theme_color": "#111319",
+  "background_color": "#111319",
+  "categories": [
+    "productivity",
+    "utilities",
+    "security",
+    "government"
+  ],
+  "launch_handler": {
+    "client_mode": "auto",
+    "navigate_existing_client": "always"
+  },
+  "prefer_related_applications": false,
   "icons": [
-    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
-    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" },
-    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" },
-    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+    {
+      "src": "/icon-maskable-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "type": "image/png",
+      "sizes": "180x180",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon-32.png",
+      "type": "image/png",
+      "sizes": "32x32",
+      "purpose": "any"
+    }
   ]
 }
