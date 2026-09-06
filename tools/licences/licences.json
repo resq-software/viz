@@ -1,10 +1,11 @@
 {
-  "version": 2,
+  "version": 3,
   "_comment": "Registry v2. Classes and notices verified source-by-source against primary publisher pages (sweep 2026-09-05). v1 classified by licence NAME and was wrong in three places; see restrictions[] for the obligations a name-only reading misses.",
   "policy": {
     "allowed_classes": [
       "public-domain",
-      "attribution"
+      "attribution",
+      "flow-down"
     ],
     "verification_max_age_days": 180,
     "scan_extensions": [
@@ -81,7 +82,8 @@
           71.5
         ]
       ]
-    }
+    },
+    "_classes": "public-domain: no obligation. attribution: a notice discharges it. flow-down: permissive, but obliges US to bind our own downstream users by contract - a Creative Commons licence never does that, it licenses downstream automatically. share-alike / non-commercial / govt-restricted / proprietary: excluded."
   },
   "sources": {
     "usgs-3dep": {
@@ -117,17 +119,15 @@
       "notice": null,
       "courtesy_credit": "NASA JPL. (2020). NASADEM Merged DEM Global 1 arc second V001 [Dataset]. https://doi.org/10.5067/MEASURES/NASADEM/NASADEM_HGT.001",
       "coverage": "60N to 56S, 1 arc-second",
-      "notes": "CLASS IS CONDITIONAL ON THE MASK. Unmasked this is not public-domain and must not ship. The JAXA policy page is NOT linked from the NASA product page - the classic supplementary-terms trap. Verify the NUM per-pixel source codes at the User Guide before building the mask.",
+      "notes": "Merged. Void fill draws on AW3D30 and SRTM. NASADEM shipped 2020 and AW3D30 v4.0 landed April 2023, so the AW3D30 content here PREDATES that product's incorporation of Copernicus - which is why derived_from pins aw3d30@3.2. Upgrading the pin to aw3d30@4.0 pulls the Copernicus obligation in through the graph, which is the point. An earlier revision prescribed a per-pixel mask here; that was the wrong remedy for an obligation acquired by version.",
       "notice_required": false,
       "permitted_layers": [
         "elevation"
       ],
-      "restrictions": [
-        {
-          "kind": "require-mask",
-          "mask": "prism-cded",
-          "reason": "MERGED product: JAXA ALOS PRISM AW3D30 pixels are baked into the delivered grid. JAXA Terms of Use s2.3 requires the user to notify JAXA in advance before commercial use, and s2.5 makes the terms subject to change without notice. That is an affirmative pre-use duty under a unilaterally variable grant - not attribution, and not public domain."
-        }
+      "restrictions": [],
+      "derived_from": [
+        "aw3d30@3.2",
+        "srtm-gl1"
       ]
     },
     "srtm-gl1": {
@@ -224,7 +224,11 @@
       "notes": "RECLASSIFIED IN v2 - THE MOST IMPORTANT CHANGE IN THE REGISTER. v1 had this as public-domain on the strength of NOAA's CC0 dedication. But CC0 waives only rights NOAA HOLDS. The dominant land layer is FABDEM (CC BY-NC-SA 4.0): per the peer-reviewed dataset description, FABDEM is available for land elevations between 60 S and 80 N latitudes and is used in ETOPO where available, with Copernicus DEM in the polar regions. NonCommercial AND ShareAlike both survive into a derivative; a downstream CC0 badge cannot launder them. The seamless 15-arcsecond grids CANNOT SHIP. Ocean-only use requires a hard mask verified cell-by-cell against the NCEI source-ID grids. Land cells carry FABDEM's terms, which no notice discharges: its publisher offers a separate paid commercial licence.",
       "permitted_layers": [],
       "notice_required": false,
-      "restrictions": []
+      "restrictions": [],
+      "derived_from": [
+        "fabdem",
+        "copernicus-dem"
+      ]
     },
     "gmrt": {
       "name": "Global Multi-Resolution Topography synthesis",
@@ -403,7 +407,7 @@
     "_excluded_comment": "Entries below are recorded so the gate names them explicitly instead of failing with a generic 'unknown source'. A named exclusion is a better error message than a missing key.",
     "copernicus-dem": {
       "name": "Copernicus DEM / WorldDEM-30",
-      "class": "attribution",
+      "class": "flow-down",
       "spdx": null,
       "licence_url": "https://docs.sentinel-hub.com/api/latest/static/files/data/dem/resources/license/License-COPDEM-30.pdf",
       "licence_text_sha256": null,
@@ -411,7 +415,7 @@
       "notice": "produced using Copernicus WorldDEM-30 (c) DLR e.V. 2010-2014 and (c) Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
       "courtesy_credit": null,
       "coverage": "Global, access-restricted country list excepted",
-      "notes": "RECLASSIFIED IN v2. v1 excluded this as proprietary; the licence does not support that. Article 4 grants reproduction, distribution, communication to the public and adaptation/modification/combination; Article 5 makes it free; Article 3 makes the rights worldwide and without limitation in time. No non-commercial term, no share-alike. The maintained-until-2026 line is a data-currency commitment contradicted on its face by Article 3, and the July 2026 restriction is scoped to one VIEW service and cured by registration. The modified-form notice applies because we resample.",
+      "notes": "RECLASSIFIED IN v3. Permissive - Article 3's grant is worldwide and unlimited in time, Article 4 covers adaptation, modification and combination, Article 5 makes it free, and there is no non-commercial term and no share-alike anywhere. But Article 6(e) obliges us to bind subsequent users by CONTRACT and 6(c) to carry a liability sentence in our own legal notice. Filing that under 'attribution' beside CC BY would let a Copernicus-derived source through on a notice string alone, so it has its own class and the gate requires the clauses.",
       "permitted_layers": [
         "elevation"
       ],
@@ -472,7 +476,8 @@
       "notes": "EXCLUDED. Non-commercial AND share-alike. The only free global bare-earth terrain model, which makes it a likely accidental inclusion anywhere bare-earth elevation is wanted under vegetation. NOW ALSO EXCLUDED INDIRECTLY wherever it appears inside another product - see noaa-etopo-2022. The publisher offers a separate paid commercial licence; the open download is not it.",
       "permitted_layers": [],
       "restrictions": [],
-      "notice_required": false
+      "notice_required": false,
+      "derived_from": []
     },
     "eox-s2cloudless": {
       "name": "EOX Sentinel-2 cloudless, 2018-2024 editions",
@@ -616,7 +621,10 @@
       "notes": "EXCLUDED BY DEFAULT - not because the licence is bad but because it is not the licence the register thought. Every v4.1 mosaic tile is vertically registered to Copernicus GLO-30, and its water bodies are filled with GLO-30 outright, so the Copernicus obligation attaches to LAND IN EVERY TILE and cannot be escaped by tile selection. Promote to copernicus-dem's class and notices if the Article 6 obligations are accepted; otherwise use arcticdem-strips.",
       "class": "proprietary",
       "licence_text_sha256": null,
-      "restrictions": []
+      "restrictions": [],
+      "derived_from": [
+        "copernicus-dem"
+      ]
     },
     "glars": {
       "name": "GLARS",
@@ -669,6 +677,55 @@
       "licence_text_sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
       "restrictions": [],
       "licence_text_path": "tools/licences/texts/threejs-MIT.txt"
+    },
+    "aw3d30@3.2": {
+      "name": "ALOS World 3D 30m (AW3D30)",
+      "class": "attribution",
+      "spdx": null,
+      "licence_url": "https://www.eorc.jaxa.jp/ALOS/en/dataset/aw3d30/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-06",
+      "notice": "The original data is provided by JAXA. (c) JAXA ALOS World 3D - 30m",
+      "notice_required": true,
+      "courtesy_credit": null,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "coverage": "Global",
+      "restrictions": [],
+      "derived_from": [],
+      "notes": "Pre-v4. The dataset's own section 5 terms permit commercial and non-commercial use free of charge, requiring that JAXA be shown as the provider of the original data when products are supplied to third parties. Carries NO Copernicus content - that arrives at v4.0. NOTE: a separate, general JAXA research-data policy carries an advance-notification duty and a terms-may-change clause. Which of the two instruments governs this dataset is unresolved; the narrower dataset-specific terms are recorded here, and an earlier revision of this registry wrongly treated the broader policy as settled."
+    },
+    "aw3d30@4.0": {
+      "name": "ALOS World 3D 30m (AW3D30)",
+      "class": "flow-down",
+      "spdx": null,
+      "licence_url": "https://www.eorc.jaxa.jp/ALOS/en/dataset/aw3d30/",
+      "licence_text_sha256": null,
+      "verified_on": "2026-09-06",
+      "notice": "The original data is provided by JAXA. (c) JAXA ALOS World 3D - 30m",
+      "notice_required": true,
+      "courtesy_credit": null,
+      "permitted_layers": [
+        "elevation"
+      ],
+      "coverage": "Global",
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "copernicus-6c-liability",
+          "reason": "Inherited via Copernicus GLO-30-F. Article 6(c) forces a liability sentence verbatim into the product's own legal notice."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "copernicus-6e-flowdown",
+          "reason": "Inherited via Copernicus GLO-30-F. Article 6(e) requires a contractual clause binding subsequent users."
+        }
+      ],
+      "derived_from": [
+        "copernicus-dem"
+      ],
+      "notes": "EXCLUDED BY DEFAULT relative to @3.2, and the reason is the whole argument for version pinning: v4.0 is produced using Copernicus GLO-30-F and reproduces its attribution and liability text. The obligation is acquired by UPGRADING, not spread through the pixels, so the control is a pin rather than a mask. Admissible only if the Copernicus clauses are accepted."
     }
   }
 }
