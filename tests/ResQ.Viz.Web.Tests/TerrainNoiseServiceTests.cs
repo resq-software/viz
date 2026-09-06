@@ -5,6 +5,7 @@ using FluentAssertions;
 using ResQ.Simulation.Engine.Environment;
 using System.Reflection;
 using System.Text.Json;
+using ResQ.Viz.Web.Controllers;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 using Xunit;
@@ -264,5 +265,32 @@ public sealed class TerrainNoiseServiceTests
 
         var act = () => JsonSerializer.Deserialize<float[]>("[0,\"nope\",2]", options);
         act.Should().Throw<JsonException>();
+    }
+
+    /// <summary>The cap is reached through the payload, with default options — as binding does it.</summary>
+    /// <remarks>
+    /// The converter having a correct Read() proves nothing on its own. What matters is whether
+    /// the attribute on HeightmapPayload.Cells actually attaches it, because model binding uses
+    /// the framework's own options and never sees a converter someone registered in a test.
+    /// </remarks>
+    [Fact]
+    public void The_Cap_Applies_To_The_Payload_Under_Default_Options()
+    {
+        string Body(int n) =>
+            "{\"rows\":1,\"cols\":" + n + ",\"width\":1,\"depth\":1,\"cells\":["
+            + string.Join(",", Enumerable.Repeat("0", n)) + "]}";
+
+        // Web defaults: camelCase, case-insensitive - what MVC binds with. Crucially NO
+        // converter is registered here, so the only thing that can apply the cap is the
+        // attribute on the payload member.
+        var web = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        var ok = JsonSerializer.Deserialize<SimController.HeightmapPayload>(Body(16), web);
+        ok!.Cells.Should().HaveCount(16);
+
+        var act = () => JsonSerializer.Deserialize<SimController.HeightmapPayload>(
+            Body(HeightmapCellsConverter.MaxCells + 1), web);
+        act.Should().Throw<JsonException>(
+            "the attribute must attach the converter, or the cap only exists in the test");
     }
 }
