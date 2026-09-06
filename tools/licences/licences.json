@@ -92,11 +92,11 @@
       "spdx": null,
       "licence_url": "https://www.sciencebase.gov/catalog/item/4f70aa71e4b058caae3f8de1",
       "licence_text_sha256": null,
-      "verified_on": "2026-09-05",
+      "verified_on": null,
       "notice": null,
       "courtesy_credit": "Map services and data available from U.S. Geological Survey, National Geospatial Program.",
       "coverage": "CONUS, Alaska, Hawaii, US territories",
-      "notes": "Licence text UNVERIFIED - usgs.gov returned 403 to every direct fetch in both passes; wording corroborated only via search extract. The acknowledgement is REQUESTED, not a licence condition. Do not apply the USGS identifier or logo; it is trademarked.",
+      "notes": "Licence text UNVERIFIED - usgs.gov returned 403 to every direct fetch in both passes; wording corroborated only via search extract. verified_on is therefore null: that field means a human read the text at the publisher page, and nobody has. It is deliberately NOT backfilled - --strict blocks the first 3DEP tile until someone does, which is the correct time to find out. The acknowledgement is REQUESTED, not a licence condition. Do not apply the USGS identifier or logo; it is trademarked.",
       "notice_required": false,
       "permitted_layers": [
         "elevation"
