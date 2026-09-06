@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -39,15 +40,20 @@ public sealed partial class ScenarioCatalogTests
     /// </summary>
     /// <remarks>
     /// A scenario places assets and never touches the environment, so the terrain is the
-    /// operator's separate step and each preset states its own in a <c>_comment</c>. Naming that
-    /// pairing here is what makes "this preset works" a checkable claim rather than a hope: run a
-    /// maritime preset on the default alpine terrain and every hull reports itself aground, which
-    /// is a true report of a meaningless demo.
+    /// operator's separate step. Naming that pairing here is what makes "this preset works" a
+    /// checkable claim rather than a hope: run a maritime preset on the default alpine terrain
+    /// and every hull reports itself aground, which is a true report of a meaningless demo.
     /// <para>
-    /// The default is <c>alpine</c> because that is what a fresh session starts on, and it is
-    /// what every preset whose comment names no terrain is therefore staged against. Two presets
-    /// carry terrain names that are <em>not</em> the terrain they are staged for — see
-    /// <c>Every_Preset_Is_Staged_Against_The_Terrain_A_Fresh_Session_Starts_On</c>.
+    /// This table must name the terrain the <em>client actually switches to</em> for each preset
+    /// (<c>client/scenarioEnvironments.ts</c>), not a terrain chosen to make the assertion pass.
+    /// <c>The_Catalog_Is_Staged_Against_The_Terrain_The_Client_Ships</c> holds the two in step.
+    /// </para>
+    /// <para>
+    /// This was previously wrong and hid two shipped bugs. <c>urban-collapse</c> and
+    /// <c>canyon-sar</c> were verified against <c>alpine</c> while the client ran them on
+    /// <c>canyon</c>, where every one of their aircraft spawned tens of metres underground
+    /// (AGL −44.8 m to −16.3 m). The suite was green throughout, because it was staging them
+    /// somewhere the product never puts them.
     /// </para>
     /// </remarks>
     public static TheoryData<string, string> CatalogPresets => new()
@@ -57,12 +63,12 @@ public sealed partial class ScenarioCatalogTests
         { "swarm-20", DefaultTerrain },
         { "sar", DefaultTerrain },
         { "multi-agency-sar", DefaultTerrain },
-        { "wildfire-interface", DefaultTerrain },
-        { "hurricane-melissa", DefaultTerrain },
+        { "wildfire-interface", RidgelineTerrain },
+        { "hurricane-melissa", CoastalTerrain },
         { "flood-riverine", DefaultTerrain },
-        { "urban-collapse", DefaultTerrain },
+        { "urban-collapse", CanyonTerrain },
         { "alpine-sar", DefaultTerrain },
-        { "canyon-sar", DefaultTerrain },
+        { "canyon-sar", CanyonTerrain },
         { "mixed-ground", DefaultTerrain },
         { "ground-convoy", DefaultTerrain },
         { "coastal-search", CoastalTerrain },
@@ -160,6 +166,12 @@ public sealed partial class ScenarioCatalogTests
     /// <summary>Terrain a fresh session starts on, and the one an unqualified preset is staged for.</summary>
     private const string DefaultTerrain = "alpine";
 
+    /// <summary>Ridgeline terrain, for the preset framed against a burning ridge.</summary>
+    private const string RidgelineTerrain = "ridgeline";
+
+    /// <summary>Canyon terrain, whose floor sits ~90 m above the alpine datum.</summary>
+    private const string CanyonTerrain = "canyon";
+
     /// <summary>The only shipped terrain whose water surface is above the datum.</summary>
     private const string CoastalTerrain = "coastal";
 
@@ -179,6 +191,57 @@ public sealed partial class ScenarioCatalogTests
 
         room.SetTerrainPreset(terrain);
         return room;
+    }
+
+    /// <summary>The scenario-to-terrain pairing the client ships, read from its source.</summary>
+    /// <remarks>
+    /// Parsed rather than duplicated: a copy here would drift from the client exactly the way
+    /// <see cref="CatalogPresets"/> already did. The shape matched is the one the file uses —
+    /// a quoted preset key opening an object, then a <c>terrainPreset</c> line inside it.
+    /// </remarks>
+    /// <returns>Preset name to terrain preset key, in file order.</returns>
+    private static IReadOnlyList<(string Preset, string Terrain)> ClientTerrainPairing()
+    {
+        string path = ClientScenarioEnvironmentsPath();
+        string source = File.ReadAllText(path);
+
+        var pairs = new List<(string, string)>();
+        var entry = new Regex(
+            @"'(?<key>[a-z0-9-]+)':\s*\{(?<body>[^}]*?)terrainPreset:\s*'(?<terrain>[a-z]+)'",
+            RegexOptions.Singleline);
+
+        foreach (Match m in entry.Matches(source))
+        {
+            pairs.Add((m.Groups["key"].Value, m.Groups["terrain"].Value));
+        }
+
+        return pairs;
+    }
+
+    /// <summary>Locates the client's scenario-environment source from the test output directory.</summary>
+    /// <remarks>
+    /// Walks up to the repository root rather than depending on a copied build artefact, so the
+    /// guard reads the file a developer edits. Throws rather than skipping: a guard that quietly
+    /// finds nothing to check is the failure it exists to prevent.
+    /// </remarks>
+    /// <returns>Absolute path to <c>scenarioEnvironments.ts</c>.</returns>
+    private static string ClientScenarioEnvironmentsPath()
+    {
+        const string Relative = "src/ResQ.Viz.Web/client/scenarioEnvironments.ts";
+
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, Relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException(
+            $"Could not find '{Relative}' walking up from '{AppContext.BaseDirectory}'. The "
+            + "client/suite terrain-pairing guard cannot run, and must fail rather than pass "
+            + "silently — if the file moved, update this path.");
     }
 
     /// <summary>The terrain preset a named scenario is staged against.</summary>
