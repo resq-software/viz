@@ -78,6 +78,27 @@ public sealed partial class SimulationRoom
     // would have to.
     private readonly GroundSurfaceCoordinator _groundSurface = new();
 
+    /// <summary>
+    /// Ground and surface assets holding under autonomy because no drivable route could be fitted.
+    /// </summary>
+    /// <remarks>
+    /// Surfaced off the coordinator so something outside this room can see it. An asset that gets
+    /// no route is skipped silently and simply never moves, which on smooth procedural terrain is
+    /// rare and on measured elevation will not be — and a fleet sitting still is indistinguishable
+    /// from a working scenario unless it is reported. Snapshotted under the room's own lock, for
+    /// the same reason every other read here is.
+    /// </remarks>
+    public IReadOnlyList<string> UnroutedAssetIds
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _groundSurface.UnroutedAssetIds];
+            }
+        }
+    }
+
     private readonly AssetCommandLog _commands = new();
 
     // The world owns the tick count and simulation time (both long/derived, so neither drifts
