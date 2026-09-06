@@ -19,12 +19,18 @@ import { createHash } from "node:crypto";
 import { join, relative, extname, resolve, sep } from "node:path";
 
 import { evaluateRestrictions, KNOWN_KINDS, parseIso, type BBox, type Restriction } from "./restrictions.ts";
+import { ancestorsOf, resolveLineage } from "./lineage.ts";
 
 // ---------------------------------------------------------------- types
 
 type LicenceClass =
   | "public-domain"
   | "attribution"
+  /** Permissive, but obliges US to bind our own downstream users by contract.
+   *  A Creative Commons licence never does that — it licenses downstream
+   *  automatically — so filing the two together would let a flow-down source
+   *  through on a notice string alone. */
+  | "flow-down"
   | "share-alike"
   | "non-commercial"
   | "govt-restricted"
@@ -57,6 +63,11 @@ interface SourceEntry {
   permitted_layers?: string[];
   /** v2: obligations that scope a source rather than admitting or barring it. */
   restrictions?: Restriction[];
+  /** v3: registry keys this source is built from. Walked transitively, because
+   *  a merged product carries its inputs' licences and a licence badge
+   *  describes only the aggregator's own rights. Version-pinned, since a
+   *  product can acquire an ancestor at a version bump. */
+  derived_from?: string[];
 }
 
 interface Registry {
@@ -279,6 +290,18 @@ for (const [key, entry] of sources) {
         + `It is NOT being enforced. Upgrade the gate or remove the rule.`);
     }
   }
+
+  // A flow-down source obliges us to bind our own customers by contract. That
+  // obligation belongs to the CLASS, not to whether someone remembered to
+  // attach a restriction — otherwise the next source of this kind sails
+  // through on a notice string.
+  if (entry.class === "flow-down"
+    && !(entry.restrictions ?? []).some((r) => r.kind === "require-eula-clause")) {
+    add("error", "flow-down-without-clause", `registry:${key}`,
+      `is class "flow-down" but declares no require-eula-clause restriction. This class exists `
+      + `because the licence obliges US to bind downstream users contractually; without a named `
+      + `clause the gate cannot tell whether that was done.`);
+  }
 }
 
 for (const area of manifest.areas ?? []) {
@@ -320,6 +343,14 @@ for (const area of manifest.areas ?? []) {
       }
       usedSources.add(layer.source);
       usedLayers.add(layer.layer);
+
+      // Lineage. The class check above clears this source; this clears what it
+      // is MADE OF. Three findings in this register were merged products
+      // importing an excluded input, each recorded in prose while the gate
+      // waved the product through on its own class.
+      for (const p of resolveLineage(layer.source, sources, allowed)) {
+        add("error", p.code, where, `${entry.name} ${p.message}`);
+      }
 
       if (!allowed.has(entry.class)) {
         add("error", "excluded-class", where,
