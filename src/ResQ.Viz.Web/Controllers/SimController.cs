@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using ResQ.Simulation.Engine.Physics;
 using ResQ.Viz.Web.Filters;
+using System.Text.Json.Serialization;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 
@@ -435,5 +436,8 @@ public sealed class SimController : ControllerBase
         int Cols,
         double Width,
         double Depth,
-        float[] Cells);
+        // Bounded AS IT DESERIALISES. [FromBody] binding completes before the first statement of
+        // the action runs, so the rows/cols check below cannot prevent the allocation it is
+        // checking - only the converter reading the tokens can.
+        [property: JsonConverter(typeof(HeightmapCellsConverter))] float[] Cells);
 }

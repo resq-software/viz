@@ -16,20 +16,31 @@ namespace ResQ.Viz.Web.Services;
 /// </remarks>
 public sealed class TerrainNoiseService : ITerrain
 {
-    private string _preset = "alpine";
+    /// <summary>The terrain in force: a DEM override if one is installed, else a preset.</summary>
+    /// <param name="Dem">Client-uploaded heightmap, or null to use <paramref name="Preset"/>.</param>
+    /// <param name="Preset">Procedural preset key, used only when <paramref name="Dem"/> is null.</param>
+    private sealed record TerrainState(HeightmapTerrain? Dem, string Preset);
 
-    // Heightmap override — when installed (via SetHeightmap), replaces the
-    // procedural preset with a client-uploaded DEM. Drone altitude clamping
-    // then tracks the imported terrain, matching what the viz renders.
+    // ONE FIELD, DELIBERATELY — and this is the second time that argument has had to be made
+    // here, one level further out than the first.
     //
-    // ONE FIELD, DELIBERATELY. The footprint a DEM covers is carried by the DEM itself
-    // (HeightmapTerrain.Width and .Depth), never beside it, so installing one is a single
-    // reference store and a reader either sees the whole override or none of it. Holding the
-    // width and depth in their own fields published the grid before its dimensions: a reader
-    // landing between those stores got the new DEM addressed with the previous footprint — or,
-    // on the first upload, with zero — and sampled it at entirely the wrong place. Nothing about
-    // that was visible in a single-threaded read, which is exactly why it must be structural.
-    private HeightmapTerrain? _heightmap;
+    // The footprint a DEM covers is carried by the DEM itself (HeightmapTerrain.Width and
+    // .Depth), never beside it. Holding width and depth in their own fields published the grid
+    // before its dimensions: a reader landing between those stores got the new DEM addressed with
+    // the previous upload's footprint — or, on a first upload, with zero — and sampled it
+    // somewhere else entirely.
+    //
+    // The preset stood in exactly the same relationship to the DEM and was still in its own
+    // field, so the pair could tear. GetSurfaceType takes FOUR elevation probes to estimate a
+    // slope; with two fields, an upload landing mid-estimate let those probes span two different
+    // worlds and yield a gradient — and so a surface type — describing neither. Collapsing both
+    // into one immutable record makes installing terrain a single reference store again, so a
+    // reader sees the whole world or none of it.
+    //
+    // A concurrent SetPreset and SetHeightmap can still lose one update, because the writers
+    // read-modify-write. That is a different and acceptable hazard: a lost update leaves a
+    // coherent world and these are operator control-plane calls. A torn read does not.
+    private volatile TerrainState _state = new(null, "alpine");
 
     /// <inheritdoc/>
     public double Width => 4000;
@@ -41,7 +52,7 @@ public sealed class TerrainNoiseService : ITerrain
     /// Switches the active terrain preset.  Valid keys: alpine, ridgeline, coastal, canyon, dunes.
     /// </summary>
     public void SetPreset(string key) =>
-        _preset = key.ToLowerInvariant();
+        _state = _state with { Preset = key.ToLowerInvariant() };
 
     /// <summary>
     /// Installs a heightmap override.  Subsequent <see cref="GetElevation"/>
@@ -52,22 +63,27 @@ public sealed class TerrainNoiseService : ITerrain
     /// <param name="width">World width the grid covers, in metres.</param>
     /// <param name="depth">World depth the grid covers, in metres.</param>
     public void SetHeightmap(float[,] heights, double width, double depth) =>
-        _heightmap = new HeightmapTerrain(heights, width, depth);
+        _state = _state with { Dem = new HeightmapTerrain(heights, width, depth) };
 
     /// <summary>
     /// Clears the heightmap override.  <see cref="GetElevation"/> resumes
     /// sampling the procedural preset.
     /// </summary>
     public void ClearHeightmap() =>
-        _heightmap = null;
+        _state = _state with { Dem = null };
 
     /// <inheritdoc/>
-    public double GetElevation(double x, double z)
+    public double GetElevation(double x, double z) => Sample(_state, x, z);
+
+    /// <summary>Elevation from one already-captured terrain state.</summary>
+    /// <remarks>
+    /// Takes the state as an argument rather than reading the field, so a caller needing several
+    /// samples of the SAME world — <see cref="GetSurfaceType"/> needs four — can capture once and
+    /// pass it in. Reading the field per sample is what let a slope estimate straddle an upload.
+    /// </remarks>
+    private static double Sample(TerrainState state, double x, double z)
     {
-        // Read once into a local: re-reading the field would let an upload land between the
-        // null check and the sample, and the whole point of publishing the DEM and its footprint
-        // together is that one read yields a consistent pair.
-        if (_heightmap is { } dem)
+        if (state.Dem is { } dem)
         {
             // Client world-space is centred on origin; HeightmapTerrain expects
             // origin-bottom-left indexing.  Shift by half-width/depth — read off the DEM, so the
@@ -75,7 +91,7 @@ public sealed class TerrainNoiseService : ITerrain
             return dem.GetElevation(x + dem.Width * 0.5, z + dem.Depth * 0.5);
         }
 
-        return _preset switch
+        return state.Preset switch
         {
             "ridgeline" => RidgelineHeight(x, z),
             "coastal" => CoastalHeight(x, z),
@@ -128,16 +144,26 @@ public sealed class TerrainNoiseService : ITerrain
     /// </remarks>
     public SurfaceType GetSurfaceType(double x, double z)
     {
-        if (string.Equals(_preset, "dunes", StringComparison.Ordinal))
+        // ONE capture, then four probes from it. Re-reading the field per probe let an upload
+        // land mid-estimate, so dx and dz could come from different worlds and the gradient
+        // describe neither.
+        TerrainState state = _state;
+
+        // The dune shortcut is a fact about the PROCEDURAL preset, so it may only be consulted
+        // when the preset is what is in force. Testing it before the DEM inverted the precedence
+        // Sample() applies: a heightmap uploaded while "dunes" was selected drove elevation from
+        // the DEM while this returned bare ground everywhere, whatever the imported terrain
+        // actually looked like.
+        if (state.Dem is null && string.Equals(state.Preset, "dunes", StringComparison.Ordinal))
         {
             return SurfaceType.BareGround;
         }
 
         // Central differences over the same height field the contact solver samples, so the
         // classification and the grade a vehicle is assessed on come from one source.
-        double dx = (GetElevation(x + SurfaceSlopeProbeM, z) - GetElevation(x - SurfaceSlopeProbeM, z))
+        double dx = (Sample(state, x + SurfaceSlopeProbeM, z) - Sample(state, x - SurfaceSlopeProbeM, z))
             / (2 * SurfaceSlopeProbeM);
-        double dz = (GetElevation(x, z + SurfaceSlopeProbeM) - GetElevation(x, z - SurfaceSlopeProbeM))
+        double dz = (Sample(state, x, z + SurfaceSlopeProbeM) - Sample(state, x, z - SurfaceSlopeProbeM))
             / (2 * SurfaceSlopeProbeM);
         double gradient = Math.Sqrt((dx * dx) + (dz * dz));
 
