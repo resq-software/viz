@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using ResQ.Simulation.Engine.Physics;
 using ResQ.Viz.Web.Filters;
+using System.Text.Json.Serialization;
 using ResQ.Viz.Web.Models;
 using ResQ.Viz.Web.Services;
 
@@ -38,6 +39,22 @@ public sealed class SimController : ControllerBase
 {
     private const int MaxDroneCount = 50;
     private const int MaxHeightmapDimension = 4096;
+
+    /// <summary>Largest heightmap request body accepted, in bytes.</summary>
+    /// <remarks>
+    /// 48 MB, which comfortably admits a 2048-square grid: the client posts cells as a JSON array
+    /// of numbers, so each costs roughly eight bytes of text and a 2048-square grid is about
+    /// 34 MB. It is deliberately a stated bound rather than the framework default, which produced
+    /// a parse failure at an undocumented threshold instead of an answer.
+    /// <para>
+    /// Note this does NOT reach <see cref="MaxHeightmapDimension"/>. A full 4096-square grid is
+    /// on the order of 134 MB of JSON, so that dimension cap is unreachable through this endpoint
+    /// and the body limit is the real ceiling. The two are left disagreeing on purpose: raising
+    /// the body limit to match would accept a request no browser should be building, and the
+    /// honest fix is a compact binary encoding rather than a bigger allowance for JSON numbers.
+    /// </para>
+    /// </remarks>
+    private const int MaxHeightmapBodyBytes = 48 * 1024 * 1024;
 
     private readonly ScenarioService _scenarios;
     private readonly ILogger<SimController> _logger;
@@ -282,7 +299,19 @@ public sealed class SimController : ControllerBase
     }
 
     /// <summary>Installs a client-uploaded heightmap as the authoritative terrain.</summary>
+    /// <remarks>
+    /// Rate-limited and size-capped like every other destructive action, which this had been
+    /// missing while being the largest body the API accepts by a wide margin: the client posts a
+    /// grid as a JSON array of numbers, so a 1024-square heightmap is on the order of ten
+    /// megabytes of text. Without a declared cap the effective ceiling was Kestrel's default body
+    /// limit, which silently bounded the real maximum well below
+    /// <see cref="MaxHeightmapDimension"/> and did so as a parse failure rather than as an answer.
+    /// The explicit limit makes the boundary a stated one; the limiter makes replacing the world
+    /// cost the same as every other destructive call.
+    /// </remarks>
     [HttpPost("heightmap")]
+    [EnableRateLimiting("destructive")]
+    [RequestSizeLimit(MaxHeightmapBodyBytes)]
     public IActionResult SetHeightmap([FromBody] HeightmapPayload payload)
     {
         if (payload.Cells is null || payload.Cells.Length == 0)
@@ -407,5 +436,8 @@ public sealed class SimController : ControllerBase
         int Cols,
         double Width,
         double Depth,
-        float[] Cells);
+        // Bounded AS IT DESERIALISES. [FromBody] binding completes before the first statement of
+        // the action runs, so the rows/cols check below cannot prevent the allocation it is
+        // checking - only the converter reading the tokens can.
+        [property: JsonConverter(typeof(HeightmapCellsConverter))] float[] Cells);
 }
