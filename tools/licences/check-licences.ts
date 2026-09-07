@@ -108,6 +108,15 @@ interface Layer {
 }
 interface Tile { path: string; sha256: string; layers: Layer[]; }
 interface Area { id: string; name: string; bbox: number[]; notes?: string; tiles: Tile[]; }
+/** A statement a licence obliges the product itself to carry. */
+interface Clause {
+  origin?: string;
+  mandated_verbatim?: boolean;
+  needs_drafting?: boolean;
+  text?: string | null;
+  notes?: string;
+}
+
 interface Manifest {
   schema: number;
   generated_at: string;
@@ -301,6 +310,9 @@ function pathEscape(relPath: string): string | null {
 const manifestPaths = new Map<string, { area: Area; tile: Tile }>();
 const usedSources = new Set<string>();
 
+/** Clause ids some used source actually obliged the product to carry. */
+const requiredClauses = new Set<string>();
+
 /**
  * Ancestors of a used source whose own licence still demands a credit.
  *
@@ -315,7 +327,32 @@ const noticeAncestors = new Set<string>();
 const needsNotice = (s: SourceEntry) => s.notice_required ?? (s.class === "attribution");
 /** Layer kinds actually present, so the notice asserts only what ships. */
 const usedLayers = new Set<string>();
-const declaredEula = new Set<string>(manifest.eula_clauses ?? []);
+const clauses: Map<string, Clause> = new Map(
+  Object.entries((registry as { clauses?: Record<string, Clause> }).clauses ?? [])
+    .filter(([k]) => !k.startsWith("_")));
+
+// A clause counts as DECLARED only if the register can back it. Membership of the manifest's
+// own list used to be the whole test, so `eula_clauses: ["copernicus-6e-flowdown"]` discharged
+// an obligation nobody had written a word of — a gate satisfied by typing its own answer.
+const declaredEula = new Set<string>();
+for (const id of manifest.eula_clauses ?? []) {
+  const clause = clauses.get(id);
+  if (!clause) {
+    add("error", "unknown-eula-clause", "manifest",
+      `the manifest declares EULA clause "${id}", which is not in the register. An obligation `
+      + `with no recorded text is not discharged by naming it.`);
+    continue;
+  }
+  if (clause.needs_drafting || !clause.text?.trim()) {
+    add("error", "undrafted-eula-clause", "manifest",
+      `the manifest declares EULA clause "${id}", but the register carries no text for it`
+      + `${clause.needs_drafting ? " and marks it as still needing drafting" : ""}. `
+      + `${clause.origin ? `Origin: ${clause.origin}. ` : ""}`
+      + `Until the wording exists this obligation cannot be met, and declaring it must not pass.`);
+    continue;
+  }
+  declaredEula.add(id);
+}
 
 // The registry may declare a rule this build cannot evaluate. That is a gate
 // defect, not a data defect, and it must be loud: an unenforced rule reads as a
@@ -473,6 +510,12 @@ for (const area of manifest.areas ?? []) {
       // ran against the entry the manifest NAMED rather than the bytes it GOT.
       //
       // Same contract as the upstream licence header: emit what was served, never assert it.
+      for (const r of entry.restrictions ?? []) {
+        if (r.kind === "require-eula-clause" && r.clause) {
+          requiredClauses.add(r.clause);
+        }
+      }
+
       const pin = versionPin(layer.source);
       if (pin) {
         const served = layer.served_versions;
@@ -668,6 +711,26 @@ function buildNotice(): string {
     "",
   ];
 
+  const carried = [...requiredClauses]
+    .map((id) => [id, clauses.get(id)] as const)
+    .filter((pair): pair is [string, Clause] => Boolean(pair[1]?.text?.trim()))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  if (carried.length) {
+    lines.push("## Statements this product is required to carry", "",
+      "These are obligations on the product itself, not credits. Each is here because a source",
+      "baked into it requires it; the gate refuses to generate this file if a required clause has",
+      "no recorded text.",
+      "");
+    for (const [id, c] of carried) {
+      lines.push(`### ${id}`, "");
+      if (c.origin) {
+        lines.push(`*${c.origin}${c.mandated_verbatim ? " — required verbatim" : ""}*`, "");
+      }
+      lines.push(c.text!.trim(), "");
+    }
+  }
+
   if (attr.length) {
     lines.push("## Attribution required", "");
     for (const [, s] of attr) {
@@ -744,7 +807,13 @@ if (EMIT_NOTICE) {
   if (errors.length) {
     console.log(`Not writing ${EMIT_NOTICE}: notices are only generated from a clean manifest.`);
   } else {
-    writeFileSync(resolve(ROOT, EMIT_NOTICE), buildNotice(), "utf8");
+    // No separate "did the notice really carry it" check here on purpose. buildNotice emits
+    // exactly the clauses this run collected, so a verifier over the same set cannot disagree
+    // with it — it would read as a guarantee while being unreachable, which is the defect this
+    // whole change is about. The real guarantee is the test that regenerates the notice and
+    // greps it for the required sentence.
+    const notice = buildNotice();
+    writeFileSync(resolve(ROOT, EMIT_NOTICE), notice, "utf8");
     console.log(`Wrote ${EMIT_NOTICE}.`);
   }
 }

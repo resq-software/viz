@@ -85,6 +85,30 @@
     },
     "_classes": "public-domain: no obligation. attribution: a notice discharges it. flow-down: permissive, but obliges US to bind our own downstream users by contract - a Creative Commons licence never does that, it licenses downstream automatically. share-alike / non-commercial / govt-restricted / proprietary: excluded."
   },
+  "clauses": {
+    "_comment": "Statements a licence obliges the PRODUCT itself to carry, as opposed to a credit in NOTICE.md. A clause is satisfied only when it has verbatim text here AND that text appears in the generated notice. Declaring the id in a manifest is not enough - that was the whole defect this block fixes: the gate used to accept any string. needs_drafting marks a clause whose wording nobody has written yet; it can never be satisfied, which is the correct state for an obligation awaiting counsel.",
+    "copernicus-6c-liability": {
+      "origin": "Copernicus DEM licence, Article 6(c)",
+      "mandated_verbatim": true,
+      "needs_drafting": false,
+      "text": "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.",
+      "notes": "Article 6(c) forces this sentence verbatim into the product's own legal notice. Transcribed, not drafted - the wording is fixed by the licence."
+    },
+    "copernicus-6e-flowdown": {
+      "origin": "Copernicus DEM licence, Article 6(e)",
+      "mandated_verbatim": false,
+      "needs_drafting": true,
+      "text": null,
+      "notes": "Article 6(e) requires a CONTRACTUAL clause binding subsequent users to these same obligations. Unlike 6(c) the wording is ours to write, which makes it drafting and not transcription - counsel work. Deliberately left without text so it cannot be satisfied: an obligation nobody has discharged must not pass because its id was typed into a list."
+    },
+    "not-for-navigation": {
+      "origin": "NOAA NCEI (CRM, CUDEM), GMRT and EMODnet bathymetry terms",
+      "mandated_verbatim": false,
+      "needs_drafting": false,
+      "text": "The bathymetric and topographic data in this product are not suitable for navigation and must not be used for it. For navigation, consult the official nautical chart series of the relevant hydrographic office.",
+      "notes": "Every bathymetry source admitted here carries this obligation, and it sat only in prose notes with no restriction enforcing it - a product-safety statement nothing checked. The wording is ours; the duty to carry one is not."
+    }
+  },
   "sources": {
     "usgs-3dep": {
       "name": "USGS 3D Elevation Program",
@@ -186,7 +210,13 @@
         "bathymetry",
         "elevation"
       ],
-      "restrictions": [],
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "not-for-navigation",
+          "reason": "NCEI publishes CUDEM with an explicit not-for-navigation constraint. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
+        }
+      ],
       "notice_required": false
     },
     "noaa-crm": {
@@ -208,6 +238,11 @@
           "kind": "require-mask",
           "mask": "crm-ocean-only",
           "reason": "LAND LAYER UNVERIFIED. The 2023 CRM User Guide - the one document resolving CRM lineage - could not be read in any pass. The abstract calls the product bare-earth, which is FABDEM's signature, and its metadata carries ICESat-2 boilerplate copy-pasted from ETOPO."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "not-for-navigation",
+          "reason": "NCEI's CRM record states the model is not suitable for navigation. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
         }
       ],
       "notice_required": false
@@ -251,6 +286,11 @@
           "kind": "require-mask",
           "mask": "gmrt-marine-only",
           "reason": "TERRESTRIAL COMPONENT UNVERIFIED - GMRT's land cells come from the joint NASA-Japanese ASTER global DEM with no version pinned, and the v1/v2-era redistribution bar may touch them. If terrestrial cells ship, the METI/NASA ASTER credit is additionally owed."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "not-for-navigation",
+          "reason": "GMRT's terms state the data should not be used for navigation. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
         }
       ]
     },
@@ -269,7 +309,13 @@
         "bathymetry"
       ],
       "notice_required": true,
-      "restrictions": []
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "not-for-navigation",
+          "reason": "EMODnet's terms state the DTM must not be used for navigation. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
+        }
+      ]
     },
     "esa-worldcover": {
       "name": "ESA WorldCover 10m",

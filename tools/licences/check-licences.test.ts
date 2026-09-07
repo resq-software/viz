@@ -379,12 +379,18 @@ describe("gate, end to end", () => {
         ok(r.codes.includes("tile-without-layers"), r.codes.join(","));
     });
 
-    it("accepts a fully-discharged Copernicus layer", () => {
+    it("cannot discharge Copernicus while 6(e) is still unwritten", () => {
+        // This case used to assert the opposite — that declaring both clause ids passed. It did
+        // pass, and that was the defect: `declaredEulaClauses.has(id)` was the whole test, so the
+        // manifest discharged an obligation by naming it. 6(e) requires a contractual clause
+        // binding subsequent users; nobody has drafted one, so it is not dischargeable yet and
+        // the honest expectation is a failure.
         const r = runGate(manifestWith(
             { layer: "elevation", source: "copernicus-dem", fetched_at: at }, [0, 0, 1, 1],
             { eula_clauses: ["copernicus-6c-liability", "copernicus-6e-flowdown"] },
         ));
-        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+        ok(!r.passed, "an undrafted contractual obligation must not pass");
+        ok(r.codes.includes("undrafted-eula-clause"), r.codes.join(","));
     });
 
     it("accepts 3DEP inside US territory", () => {
@@ -934,6 +940,69 @@ describe("a version pin is a claim about the bytes served", () => {
             [-100, 35, -99, 36]));
         ok(!r.warns.includes("unverified-version-pin"),
             "only a pinned key makes a claim about versions");
+    });
+});
+
+describe("an EULA clause is discharged by its text, not by its name", () => {
+    // The defect: `declaredEulaClauses.has(id)` was the entire test, so writing the id into the
+    // manifest satisfied the obligation. A gate answering its own question.
+    const copernicus = (eula: string[]) => manifestWith(
+        { layer: "elevation", source: "copernicus-dem", fetched_at: "2026-08-01T00:00:00Z",
+            election: "attribution" },
+        [8.0, 46.0, 9.0, 47.0], { eula_clauses: eula });
+
+    it("refuses a clause the register has no text for, however loudly declared", () => {
+        // 6(e) is contract drafting nobody has done. Naming it must not discharge it — this is
+        // the case the whole clause register exists for.
+        const r = runGate(copernicus(["copernicus-6c-liability", "copernicus-6e-flowdown"]));
+        ok(!r.passed, "an undrafted obligation must not pass because its id was typed");
+        ok(r.codes.includes("undrafted-eula-clause"), r.codes.join(","));
+        // ...and the underlying requirement is still reported unmet, not swallowed.
+        ok(r.codes.includes("missing-eula-clause"), r.codes.join(","));
+    });
+
+    it("refuses a clause id that is not in the register at all", () => {
+        const r = runGate(copernicus(["copernicus-6c-liability", "we-promise-honestly"]));
+        ok(!r.passed, "an unknown clause id must not pass");
+        ok(r.codes.includes("unknown-eula-clause"), r.codes.join(","));
+    });
+
+    it("still refuses when no clause is declared", () => {
+        const r = runGate(copernicus([]));
+        ok(!r.passed, "flow-down without its clauses must not pass");
+        ok(r.codes.includes("missing-eula-clause"), r.codes.join(","));
+    });
+
+    it("carries a satisfied clause's verbatim text into the generated notice", () => {
+        // not-for-navigation: text recorded, so the obligation is dischargeable — and the proof
+        // is that the sentence reaches the product's own notice.
+        const dir = mkdtempSync(join(tmpdir(), "licgate-clause-"));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(manifestWith(
+            { layer: "bathymetry", source: "noaa-cudem", fetched_at: "2026-08-01T00:00:00Z" },
+            [-76.2, 37.8, -75.8, 38.2], { eula_clauses: ["not-for-navigation"] })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", REGISTRY, "--manifest", join(dir, "m.json"),
+                "--emit-notice", "NOTICE.md"],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(out.includes("Licence gate passed"), out);
+
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const text = reg.clauses["not-for-navigation"].text as string;
+        const notice = readFileSync(join(dir, "NOTICE.md"), "utf8");
+        ok(notice.includes(text),
+            `the product's notice must carry the statement it is obliged to make:\n${notice}`);
+    });
+
+    it("does not carry a clause no baked source asked for", () => {
+        const r = runGate(manifestWith(
+            { layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+            [-100, 35, -99, 36]));
+        ok(r.passed, r.codes.join(","));
     });
 });
 
