@@ -96,7 +96,7 @@
       "notice": null,
       "courtesy_credit": "Map services and data available from U.S. Geological Survey, National Geospatial Program.",
       "coverage": "CONUS, Alaska, Hawaii, US territories",
-      "notes": "Licence text UNVERIFIED - usgs.gov returned 403 to every direct fetch in both passes; wording corroborated only via search extract. verified_on is therefore null: that field means a human read the text at the publisher page, and nobody has. It is deliberately NOT backfilled - --strict blocks the first 3DEP tile until someone does, which is the correct time to find out. The acknowledgement is REQUESTED, not a licence condition. Do not apply the USGS identifier or logo; it is trademarked.",
+      "notes": "Licence text UNVERIFIED, and verified_on is null because of it - but NOT for the reason previously recorded here. The old note claimed 'usgs.gov returned 403 to every direct fetch'; that conflates two hosts. www.usgs.gov does 403, www.sciencebase.gov (the recorded licence_url) returns 200 and is the right product. What is missing is not access but any rights statement on that page: it has no rights or useconst field at all. Verbatim terms DO exist one hop away in the per-tile FGDC metadata beside the GeoTIFFs (accconst/useconst/distliab), but those are tile-scoped and vary by tile and vintage, so a human must ratify which document is canonical before it is vendored. The acknowledgement is REQUESTED, not a licence condition - but the useconst clause also carries modification-disclosure and no-misrepresentation terms this entry does not yet capture. Do not apply the USGS identifier or logo; it is trademarked.",
       "notice_required": false,
       "permitted_layers": [
         "elevation"
@@ -112,14 +112,14 @@
     "nasadem": {
       "name": "NASADEM",
       "class": "public-domain",
-      "spdx": null,
-      "licence_url": "https://earth.jaxa.jp/en/data/policy/",
-      "licence_text_sha256": null,
+      "spdx": "CC0-1.0",
+      "licence_url": "https://www.earthdata.nasa.gov/engage/open-data-services-software-policies/data-use-guidance",
+      "licence_text_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
       "verified_on": "2026-09-05",
       "notice": null,
       "courtesy_credit": "NASA JPL. (2020). NASADEM Merged DEM Global 1 arc second V001 [Dataset]. https://doi.org/10.5067/MEASURES/NASADEM/NASADEM_HGT.001",
       "coverage": "60N to 56S, 1 arc-second",
-      "notes": "Merged. Void fill draws on AW3D30 and SRTM. NASADEM shipped 2020 and AW3D30 v4.0 landed April 2023, so the AW3D30 content here PREDATES that product's incorporation of Copernicus - which is why derived_from pins aw3d30@3.2. Upgrading the pin to aw3d30@4.0 pulls the Copernicus obligation in through the graph, which is the point. An earlier revision prescribed a per-pixel mask here; that was the wrong remedy for an obligation acquired by version.",
+      "notes": "Public domain. licence_url previously pointed at JAXA's Terms of Use of Research Data - the instrument that governs its AW3D30 ANCESTOR, not NASADEM itself; the two entries had it swapped. NASA Earthdata releases under CC0-1.0, whose canonical text is already vendored here. Note the ancestry still matters for the NOTICE: derived_from aw3d30@3.2 carries a JAXA credit that attribution flow-down now propagates.",
       "notice_required": false,
       "permitted_layers": [
         "elevation"
@@ -128,7 +128,8 @@
       "derived_from": [
         "aw3d30@3.2",
         "srtm-gl1"
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/CC0-1.0.txt"
     },
     "srtm-gl1": {
       "name": "SRTM GL1 v3",
@@ -174,13 +175,13 @@
       "name": "NOAA Continuously Updated Digital Elevation Model",
       "class": "public-domain",
       "spdx": null,
-      "licence_url": "https://www.ncei.noaa.gov/products/coastal-relief-model",
+      "licence_url": "https://www.ncei.noaa.gov/metadata/geoportal/rest/metadata/item/gov.noaa.ngdc.mgg.dem:199919/html",
       "licence_text_sha256": null,
       "verified_on": "2026-09-05",
       "notice": null,
       "courtesy_credit": "Bathymetric data courtesy of NOAA National Centers for Environmental Information.",
       "coverage": "US coastal",
-      "notes": "BASIS CORRECTED: public domain on a US-only NO-COPYRIGHT basis (17 U.S.C. 105), NOT a CC0 grant as v1 recorded. Per-tile lineage unresolved. Carries a not-for-navigation statement.",
+      "notes": "BASIS CORRECTED: public domain on a US-only NO-COPYRIGHT basis (17 U.S.C. 105), NOT a CC0 grant as v1 recorded. Per-tile lineage unresolved. Carries a not-for-navigation statement. LICENCE_URL CORRECTED: it previously pointed at the Coastal Relief Model product page - byte-identical to the noaa-crm entry's URL - so this entry cited terms for a different NOAA product. CUDEM and CRM are distinct. Now points at the CUDEM ISO 19115-2 record, whose constraint blocks are the hashable verbatim terms.",
       "permitted_layers": [
         "bathymetry",
         "elevation"
@@ -293,11 +294,11 @@
       "spdx": null,
       "licence_url": "https://naip-usdaonline.hub.arcgis.com/",
       "licence_text_sha256": null,
-      "verified_on": "2026-09-05",
+      "verified_on": null,
       "notice": null,
       "courtesy_credit": "Imagery courtesy of the USDA National Agriculture Imagery Program.",
       "coverage": "CONUS, Hawaii, Puerto Rico, US Virgin Islands",
-      "notes": "v1 said CONUS-only; USDA's own coverage map lists Hawaii, Puerto Rico and the Virgin Islands. Bake from USGS EarthExplorer, NOT the AWS naip-source bucket - that bucket is Requester Pays.",
+      "notes": "v1 said CONUS-only; USDA's own coverage map lists Hawaii, Puerto Rico and the Virgin Islands. Bake from USGS EarthExplorer, NOT the AWS naip-source bucket - that bucket is Requester Pays. VERIFIED_ON RESET TO NULL: licence_url is an ArcGIS Hub portal that serves a 0.1KB JS shell and exposes no terms by any route (its own DCAT feed returns an empty dataset list); every USDA/APFO alternative probed returned a placeholder, a TLS failure, or a 403. There is no licence text there for anyone to have read, so claiming verification was false. --strict now blocks the first NAIP tile until someone establishes the terms.",
       "permitted_layers": [
         "imagery"
       ],
