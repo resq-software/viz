@@ -121,6 +121,9 @@ function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: s
     return {
         passed: out.includes("Licence gate passed"),
         codes: [...out.matchAll(/^ERROR {2}([a-z-]+)/gm)].map((m) => m[1]!),
+        // Warnings too: a test that asserts a WARNING is absent cannot do it by reading errors,
+        // and one that claims to is a test whose name is broader than its assertion.
+        warns: [...out.matchAll(/^WARN {3}([a-z-]+)/gm)].map((m) => m[1]!),
     };
 }
 
@@ -813,11 +816,50 @@ describe("the recorded licence-text hash", () => {
 
     it("accepts a source whose vendored text matches, with no unhashed warning", () => {
         // NASADEM: public domain, CC0-1.0, text already vendored. Proves the happy path is
-        // reachable rather than only proving the failures are.
+        // reachable rather than only proving the failures are — and asserts the warning is
+        // actually absent, which the first version of this test claimed in its name and never
+        // checked, because runGate only surfaced errors.
         const r = runGate(manifestWith(
             { layer: "elevation", source: "nasadem", fetched_at: "2026-08-01T00:00:00Z" },
             [-100, 35, -99, 36]));
         ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+        ok(!r.warns.includes("unhashed-licence"),
+            `a source with a matching vendored text must not warn unhashed: ${r.warns.join(",")}`);
+        ok(!r.warns.includes("unverified-source"),
+            `nasadem records a verified_on, so it must not warn unverified: ${r.warns.join(",")}`);
+    });
+
+    it("treats a present-but-malformed digest as an error, not an absent one", () => {
+        // Empty string is falsy, so it used to slip past every check and land on the "unhashed"
+        // warning — which passes outside --strict. A half-filled field must not read as an
+        // empty one, and the file it names must not go unread in silence.
+        for (const bad of ["", "   ", "abc", "Z".repeat(64), "a".repeat(63)]) {
+            const dir = mkdtempSync(join(tmpdir(), "licgate-shape-"));
+            const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+            reg.sources["usgs-3dep"].licence_text_path = "tools/licences/texts/CC0-1.0.txt";
+            reg.sources["usgs-3dep"].licence_text_sha256 = bad;
+            const regPath = join(dir, "licences.json");
+            writeFileSync(regPath, JSON.stringify(reg));
+            makeFixtureRoot(dir);
+            mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+            writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+            writeFileSync(join(dir, "m.json"), JSON.stringify(
+                manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                    [-100, 35, -99, 36])));
+            const p = spawnSync(process.execPath,
+                ["--experimental-strip-types", GATE, "--root", dir,
+                    "--registry", regPath, "--manifest", join(dir, "m.json")],
+                { encoding: "utf8" });
+            const out = `${p.stdout}\n${p.stderr}`;
+            ok(!out.includes("Licence gate passed"),
+                `${JSON.stringify(bad)} must fail WITHOUT --strict, not merely warn`);
+            ok(out.includes("malformed-licence-hash"), `${JSON.stringify(bad)}: ${out}`);
+            // ...and reported as malformed ONLY. A garbled digest is not an absent one, so
+            // emitting "unhashed" alongside would name the wrong problem and send the reader
+            // to vendor a text that is already vendored.
+            ok(!out.includes("unhashed-licence"),
+                `${JSON.stringify(bad)} is malformed, not unhashed — reporting both misnames it: ${out}`);
+        }
     });
 });
 
