@@ -123,7 +123,7 @@ function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: s
         codes: [...out.matchAll(/^ERROR {2}([a-z-]+)/gm)].map((m) => m[1]!),
         // Warnings too: a test that asserts a WARNING is absent cannot do it by reading errors,
         // and one that claims to is a test whose name is broader than its assertion.
-        warns: [...out.matchAll(/^WARN {3}([a-z-]+)/gm)].map((m) => m[1]!),
+        warns: [...out.matchAll(/^WARN {2}([a-z-]+)/gm)].map((m) => m[1]!),
     };
 }
 
@@ -860,6 +860,80 @@ describe("the recorded licence-text hash", () => {
             ok(!out.includes("unhashed-licence"),
                 `${JSON.stringify(bad)} is malformed, not unhashed — reporting both misnames it: ${out}`);
         }
+    });
+});
+
+describe("a version pin is a claim about the bytes served", () => {
+    // JAXA does not ship AW3D30 v3.1/v4.0/v4.1 as separate products but as tile update layers
+    // over one archive of 23,993 tiles, published with a per-tile version list. A single bbox
+    // returns a mosaic of mixed versions, and version is what determines the obligation here.
+    const layer = (extra: Record<string, unknown>) => manifestWith(
+        { layer: "elevation", source: "aw3d30@3.2", fetched_at: "2026-08-01T00:00:00Z", ...extra },
+        [138.0, 37.0, 141.5, 39.0]);
+
+    it("fails when a different version arrived than the one declared", () => {
+        // The harm is not that @4.0 is barred — flow-down is an ALLOWED class. It is that every
+        // check ran against @3.2, which carries no EULA restrictions, while @4.0 carries two
+        // require-eula-clause rules. Declaring the older pin skips the clause requirement whole.
+        const r = runGate(layer({ served_versions: ["4.0"] }));
+        ok(!r.passed, "a version that was not declared must not pass on the declared one's terms");
+        ok(r.codes.includes("served-version-mismatch"), r.codes.join(","));
+        ok(!r.codes.includes("missing-eula-clause"),
+            "and the clause check demonstrably did NOT run for the served version — which is "
+            + "exactly why the mismatch has to be caught here");
+    });
+
+    it("fails when the served version has no registry entry at all", () => {
+        // v3.1 is what JAXA serves over Japan, and it is not in the register. Unknown terms must
+        // not be admitted on the strength of a neighbouring version's key.
+        const r = runGate(layer({ served_versions: ["3.1"] }));
+        ok(!r.passed, "an unregistered version has unknown terms and must not pass");
+        ok(r.codes.includes("unregistered-served-version"), r.codes.join(","));
+    });
+
+    it("fails when the served version's class is excluded outright", () => {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-ver-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["aw3d30@4.0"].class = "non-commercial";
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(layer({ served_versions: ["4.0"] })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("excluded-served-version"), out);
+    });
+
+    it("fails on a mixed-version mosaic, which one pinned key cannot describe", () => {
+        const r = runGate(layer({ served_versions: ["3.2", "4.0"] }));
+        ok(!r.passed, "a mosaic spanning versions cannot be described by one pinned key");
+        ok(r.codes.includes("served-version-mismatch"), r.codes.join(","));
+    });
+
+    it("warns when a pinned layer records nothing about what was served", () => {
+        // The state every manifest written before this check is in: pin declared, unenforced.
+        const r = runGate(layer({}));
+        ok(r.warns.includes("unverified-version-pin"), r.warns.join(","));
+    });
+
+    it("passes when the served version is the pinned one", () => {
+        const r = runGate(layer({ served_versions: ["3.2"] }));
+        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+        ok(!r.warns.includes("unverified-version-pin"), r.warns.join(","));
+    });
+
+    it("leaves an unpinned source alone", () => {
+        const r = runGate(manifestWith(
+            { layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+            [-100, 35, -99, 36]));
+        ok(!r.warns.includes("unverified-version-pin"),
+            "only a pinned key makes a claim about versions");
     });
 });
 

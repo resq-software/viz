@@ -97,6 +97,14 @@ interface Layer {
   masks?: string[];
   /** v2: the upstream collection actually queried. */
   collection?: string;
+  /**
+   * v3: the product versions the service actually served for this layer.
+   *
+   * Some archives are not versioned as products but as tile update layers over a standing
+   * archive, so one bbox returns a mosaic of tiles at different versions. A version-pinned
+   * registry key is a claim about tiles, and without this field nothing can honour it.
+   */
+  served_versions?: string[];
 }
 interface Tile { path: string; sha256: string; layers: Layer[]; }
 interface Area { id: string; name: string; bbox: number[]; notes?: string; tiles: Tile[]; }
@@ -209,6 +217,23 @@ function walk(dir: string, out: string[] = []): string[] {
 /** Content hash, or null when the file cannot be read at all.
  *  One read rather than exists-then-read: the pre-check is a race, and the
  *  read's own failure already carries the answer. */
+/**
+ * Splits a version-pinned registry key.
+ *
+ * Keys are pinned as `name@version` because version determines the licence. Returns null for an
+ * unpinned key, and treats the LAST `@` as the separator so a key may contain one.
+ *
+ * @param key Registry key.
+ * @returns Base name and pinned version, or null when the key carries no pin.
+ */
+function versionPin(key: string): { base: string; pin: string } | null {
+  const at = key.lastIndexOf("@");
+  if (at <= 0 || at === key.length - 1) {
+    return null;
+  }
+  return { base: key.slice(0, at), pin: key.slice(at + 1) };
+}
+
 function sha256OrNull(abs: string): string | null {
   try {
     return createHash("sha256").update(readFileSync(abs)).digest("hex");
@@ -435,6 +460,45 @@ for (const area of manifest.areas ?? []) {
             + `"${layer.source}" (${entry.name}). The bytes fetched are not the bytes the manifest describes. `
             + `Header: ${JSON.stringify(header.slice(0, 120))}`);
           break;
+        }
+      }
+
+      // v3: a version pin is a claim about the bytes served, so it has to be checked against
+      // them. AW3D30 is the case that forced this: JAXA does not ship v3.1/v4.0/v4.1 as separate
+      // products but as tile update layers over one archive of 23,993 tiles, published with a
+      // per-tile version list. A single bbox therefore returns a mosaic of mixed versions, and
+      // version is what determines the obligation here — v4.1 is supplemented with Copernicus
+      // GLO-30 and carries its flow-down terms, v3.1 does not. Declaring "aw3d30@3.2" while the
+      // service hands back v4.1 tiles imports those obligations silently, and every check above
+      // ran against the entry the manifest NAMED rather than the bytes it GOT.
+      //
+      // Same contract as the upstream licence header: emit what was served, never assert it.
+      const pin = versionPin(layer.source);
+      if (pin) {
+        const served = layer.served_versions;
+        if (!served?.length) {
+          add("warn", "unverified-version-pin", where,
+            `${layer.source} is version-pinned but the layer records no served_versions, so the `
+            + `pin is declared and not enforced. Capture the versions the service returned.`);
+        }
+        for (const v of served ?? []) {
+          const servedKey = `${pin.base}@${v}`;
+          const servedEntry = sources.get(servedKey);
+          if (!servedEntry) {
+            add("error", "unregistered-served-version", where,
+              `the service served ${pin.base} v${v}, which has no registry entry. Its terms are `
+              + `unknown, so it cannot be admitted on the strength of "${layer.source}".`);
+          } else if (!allowed.has(servedEntry.class)) {
+            add("error", "excluded-served-version", where,
+              `the service served ${servedKey} (class "${servedEntry.class}"), which is not `
+              + `allowed. Declaring "${layer.source}" does not change what arrived.`);
+          } else if (servedKey !== layer.source) {
+            add("error", "served-version-mismatch", where,
+              `this layer declares "${layer.source}" but the service served ${servedKey}. The `
+              + `class, lineage and restriction checks all ran against the declared entry, not `
+              + `the one that arrived. If the archive genuinely returns a mixed-version mosaic, `
+              + `it cannot be described by a single pinned key — split the layer.`);
+          }
         }
       }
 
