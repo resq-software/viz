@@ -18,7 +18,10 @@
 
 import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +75,30 @@ function manifestWith(layer: Record<string, unknown>, bbox: number[], extra: Rec
  * that silently checks nothing. A fixture repo has to be faithful about that too, or these tests
  * pass by not exercising the walk.
  */
+function makeFixtureRoot(root: string): void {
+    makeScanRoots(root);
+    copyVendoredTexts(root);
+}
+
+/**
+ * Copies the vendored licence texts into a fixture root.
+ *
+ * `licence_text_path` resolves against --root, and the gate now hashes the file it names, so a
+ * fixture repo that omits them makes every hashed source look tampered with. Same reason the scan
+ * roots are created: a fixture that is not faithful tests the fixture, not the gate.
+ */
+function copyVendoredTexts(root: string): void {
+    const from = join(HERE, "texts");
+    if (!existsSync(from)) {
+        return;
+    }
+    const to = join(root, "tools", "licences", "texts");
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from)) {
+        copyFileSync(join(from, name), join(to, name));
+    }
+}
+
 function makeScanRoots(root: string): void {
     const declared = JSON.parse(readFileSync(REGISTRY, "utf8")).policy?.scan_roots ?? [];
     for (const rel of declared as string[]) {
@@ -82,7 +109,7 @@ function makeScanRoots(root: string): void {
 /** Runs the real gate over a throwaway tree. */
 function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: string[] } {
     const root = mkdtempSync(join(tmpdir(), "licgate-"));
-    makeScanRoots(root);
+    makeFixtureRoot(root);
     mkdirSync(join(root, "data", "tiles"), { recursive: true });
     writeFileSync(join(root, "data", "tiles", "t.tif"), "x");
     writeFileSync(join(root, "m.json"), JSON.stringify(manifest));
@@ -94,6 +121,9 @@ function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: s
     return {
         passed: out.includes("Licence gate passed"),
         codes: [...out.matchAll(/^ERROR {2}([a-z-]+)/gm)].map((m) => m[1]!),
+        // Warnings too: a test that asserts a WARNING is absent cannot do it by reading errors,
+        // and one that claims to is a test whose name is broader than its assertion.
+        warns: [...out.matchAll(/^WARN {3}([a-z-]+)/gm)].map((m) => m[1]!),
     };
 }
 
@@ -368,7 +398,7 @@ describe("gate, end to end", () => {
         // hashed the external file and reported "Licence gate passed".
         const root = mkdtempSync(join(tmpdir(), "licgate-root-"));
         const outside = mkdtempSync(join(tmpdir(), "licgate-out-"));
-        makeScanRoots(root);
+        makeFixtureRoot(root);
         mkdirSync(join(root, "data", "tiles"), { recursive: true });
         writeFileSync(join(outside, "secret.tif"), "x");
         symlinkSync(join(outside, "secret.tif"), join(root, "data", "tiles", "t.tif"));
@@ -396,7 +426,7 @@ describe("verified_on cannot be faked", () => {
         const dir = mkdtempSync(join(tmpdir(), "licgate-reg-"));
         const regPath = join(dir, "licences.json");
         writeFileSync(regPath, JSON.stringify(reg));
-        makeScanRoots(dir);
+        makeFixtureRoot(dir);
         mkdirSync(join(dir, "data", "tiles"), { recursive: true });
         writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
         writeFileSync(join(dir, "m.json"), JSON.stringify(
@@ -689,7 +719,7 @@ describe("attribution flows down the lineage", () => {
     // and never to the notice, so this credit was silently dropped.
     it("credits a notice-bearing ancestor of a used source", () => {
         const dir = mkdtempSync(join(tmpdir(), "licgate-anc-"));
-        makeScanRoots(dir);
+        makeFixtureRoot(dir);
         mkdirSync(join(dir, "data", "tiles"), { recursive: true });
         writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
         writeFileSync(join(dir, "m.json"), JSON.stringify(
@@ -708,6 +738,128 @@ describe("attribution flows down the lineage", () => {
         const jaxa = reg.sources["aw3d30@3.2"].notice as string;
         ok(text.includes(jaxa),
             `NOTICE must carry the ancestor's required credit.\nExpected: ${jaxa}\nGot:\n${text}`);
+    });
+});
+
+describe("the recorded licence-text hash", () => {
+    // It was stored, required to be non-null, and never compared to the file it names, so a
+    // vendored licence could be edited and the gate would not notice. The digest existed to
+    // detect exactly that and could not, which is the same defect this gate catches in data.
+    it("fails when the vendored text no longer matches", () => {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-hash-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["usgs-3dep"].licence_text_path = "tools/licences/texts/CC0-1.0.txt";
+        reg.sources["usgs-3dep"].licence_text_sha256 = "0".repeat(64);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeScanRoots(dir);
+        mkdirSync(join(dir, "tools", "licences", "texts"), { recursive: true });
+        writeFileSync(join(dir, "tools", "licences", "texts", "CC0-1.0.txt"), "not the licence");
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"), "a mismatched digest must not pass");
+        ok(out.includes("licence-text-hash-mismatch"), out);
+    });
+
+    it("fails when a hash is recorded with no path to anchor it to", () => {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-anchor-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["usgs-3dep"].licence_text_sha256 = "0".repeat(64);
+        delete reg.sources["usgs-3dep"].licence_text_path;
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(out.includes("unanchored-licence-hash"), out);
+    });
+
+    it("fails when the path names a file that is not there", () => {
+        // Distinct from a mismatch: the digest describes bytes that do not exist. Left uncovered
+        // this branch survived mutation — the guard was written and nothing proved it fired.
+        const dir = mkdtempSync(join(tmpdir(), "licgate-gone-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["usgs-3dep"].licence_text_path = "tools/licences/texts/not-vendored.txt";
+        reg.sources["usgs-3dep"].licence_text_sha256 = "0".repeat(64);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"), "a digest describing nothing must not pass");
+        ok(out.includes("missing-licence-text"), out);
+    });
+
+    it("accepts a source whose vendored text matches, with no unhashed warning", () => {
+        // NASADEM: public domain, CC0-1.0, text already vendored. Proves the happy path is
+        // reachable rather than only proving the failures are — and asserts the warning is
+        // actually absent, which the first version of this test claimed in its name and never
+        // checked, because runGate only surfaced errors.
+        const r = runGate(manifestWith(
+            { layer: "elevation", source: "nasadem", fetched_at: "2026-08-01T00:00:00Z" },
+            [-100, 35, -99, 36]));
+        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+        ok(!r.warns.includes("unhashed-licence"),
+            `a source with a matching vendored text must not warn unhashed: ${r.warns.join(",")}`);
+        ok(!r.warns.includes("unverified-source"),
+            `nasadem records a verified_on, so it must not warn unverified: ${r.warns.join(",")}`);
+    });
+
+    it("treats a present-but-malformed digest as an error, not an absent one", () => {
+        // Empty string is falsy, so it used to slip past every check and land on the "unhashed"
+        // warning — which passes outside --strict. A half-filled field must not read as an
+        // empty one, and the file it names must not go unread in silence.
+        for (const bad of ["", "   ", "abc", "Z".repeat(64), "a".repeat(63)]) {
+            const dir = mkdtempSync(join(tmpdir(), "licgate-shape-"));
+            const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+            reg.sources["usgs-3dep"].licence_text_path = "tools/licences/texts/CC0-1.0.txt";
+            reg.sources["usgs-3dep"].licence_text_sha256 = bad;
+            const regPath = join(dir, "licences.json");
+            writeFileSync(regPath, JSON.stringify(reg));
+            makeFixtureRoot(dir);
+            mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+            writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+            writeFileSync(join(dir, "m.json"), JSON.stringify(
+                manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                    [-100, 35, -99, 36])));
+            const p = spawnSync(process.execPath,
+                ["--experimental-strip-types", GATE, "--root", dir,
+                    "--registry", regPath, "--manifest", join(dir, "m.json")],
+                { encoding: "utf8" });
+            const out = `${p.stdout}\n${p.stderr}`;
+            ok(!out.includes("Licence gate passed"),
+                `${JSON.stringify(bad)} must fail WITHOUT --strict, not merely warn`);
+            ok(out.includes("malformed-licence-hash"), `${JSON.stringify(bad)}: ${out}`);
+            // ...and reported as malformed ONLY. A garbled digest is not an absent one, so
+            // emitting "unhashed" alongside would name the wrong problem and send the reader
+            // to vendor a text that is already vendored.
+            ok(!out.includes("unhashed-licence"),
+                `${JSON.stringify(bad)} is malformed, not unhashed — reporting both misnames it: ${out}`);
+        }
     });
 });
 

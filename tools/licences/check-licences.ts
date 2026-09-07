@@ -448,7 +448,47 @@ for (const area of manifest.areas ?? []) {
         add("error", v.code, where, `${entry.name}: ${v.message}`);
       }
 
-      if (!entry.licence_text_sha256) {
+      // The hash has to be checked against the bytes it names, or it is decoration.
+      // It was stored, required to be non-null, and never once compared to the file —
+      // so vendoring a text and recording its digest proved nothing, and a later edit
+      // to a vendored licence would pass silently. That is the same defect this gate
+      // exists to catch in data, living in the gate itself.
+      //
+      // A present-but-malformed digest is its own failure, not an absent one. Empty string is
+      // falsy, so it used to fall straight past every check below and land on the "unhashed"
+      // warning — a half-filled field treated exactly like an empty one, with the file it names
+      // never read. Shape-check first so the value cannot degrade into silence.
+      if (entry.licence_text_sha256 !== null && entry.licence_text_sha256 !== undefined
+        && !/^[0-9a-f]{64}$/.test(entry.licence_text_sha256)) {
+        add("error", "malformed-licence-hash", where,
+          `${entry.name}: licence_text_sha256 is ${JSON.stringify(entry.licence_text_sha256)}, `
+          + `which is not a 64-character hex digest. An unreadable digest verifies nothing and `
+          + `must not read as an absent one.`);
+      } else if (entry.licence_text_sha256 && !entry.licence_text_path) {
+        add("error", "unanchored-licence-hash", where,
+          `${entry.name} records licence_text_sha256 but no licence_text_path. A digest with `
+          + `nothing to compare against verifies nothing; give it the file it describes.`);
+      } else if (entry.licence_text_sha256 && entry.licence_text_path) {
+        const escaped = pathEscape(entry.licence_text_path);
+        if (escaped) {
+          add("error", "licence-text-outside-root", where,
+            `${entry.name}: licence_text_path "${entry.licence_text_path}" ${escaped}`);
+        } else {
+          const actual = sha256OrNull(resolve(ROOT, entry.licence_text_path));
+          if (actual === null) {
+            add("error", "missing-licence-text", where,
+              `${entry.name}: licence_text_path "${entry.licence_text_path}" could not be read, `
+              + `so its recorded digest describes nothing.`);
+          } else if (actual !== entry.licence_text_sha256) {
+            add("error", "licence-text-hash-mismatch", where,
+              `${entry.name}: licence_text_path "${entry.licence_text_path}" hashes to ${actual}, `
+              + `but the registry records ${entry.licence_text_sha256}. Either the vendored text `
+              + `changed under us — which is exactly what the digest is for — or the digest is stale.`);
+          }
+        }
+      }
+
+      if (entry.licence_text_sha256 === null || entry.licence_text_sha256 === undefined) {
         add("warn", "unhashed-licence", where,
           `${entry.name}: licence text has not been hashed. Upstream terms change silently — Microsoft's building footprints moved from ODbL to CDLA-Permissive-2.0.`);
       }
