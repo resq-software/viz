@@ -107,7 +107,11 @@ function makeScanRoots(root: string): void {
 }
 
 /** Runs the real gate over a throwaway tree. */
-function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: string[] } {
+function runGate(manifest: Record<string, unknown>): {
+    passed: boolean;
+    codes: string[];
+    warns: string[];
+} {
     const root = mkdtempSync(join(tmpdir(), "licgate-"));
     makeFixtureRoot(root);
     mkdirSync(join(root, "data", "tiles"), { recursive: true });
