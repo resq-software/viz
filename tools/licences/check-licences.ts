@@ -97,9 +97,26 @@ interface Layer {
   masks?: string[];
   /** v2: the upstream collection actually queried. */
   collection?: string;
+  /**
+   * v3: the product versions the service actually served for this layer.
+   *
+   * Some archives are not versioned as products but as tile update layers over a standing
+   * archive, so one bbox returns a mosaic of tiles at different versions. A version-pinned
+   * registry key is a claim about tiles, and without this field nothing can honour it.
+   */
+  served_versions?: string[];
 }
 interface Tile { path: string; sha256: string; layers: Layer[]; }
 interface Area { id: string; name: string; bbox: number[]; notes?: string; tiles: Tile[]; }
+/** A statement a licence obliges the product itself to carry. */
+interface Clause {
+  origin?: string;
+  mandated_verbatim?: boolean;
+  needs_drafting?: boolean;
+  text?: string | null;
+  notes?: string;
+}
+
 interface Manifest {
   schema: number;
   generated_at: string;
@@ -137,6 +154,16 @@ const REGISTRY_PATH = resolve(arg("registry", join(ROOT, "licences.json"))!);
 const MANIFEST_PATH = resolve(arg("manifest", join(ROOT, "data/manifest.json"))!);
 const EMIT_NOTICE = arg("emit-notice");
 const STRICT = flag("strict");
+
+/**
+ * Days of runway before a verification expires, for `--audit-registry`.
+ *
+ * The per-layer staleness check only sees sources a manifest references, so nothing warns until
+ * a bake trips them — and 29 of the 33 entries here were verified in one sitting, which puts
+ * their expiry on a single day. That is a cliff, not a schedule. This is the early warning.
+ */
+const RUNWAY_DAYS = 30;
+const AUDIT_REGISTRY = flag("audit-registry");
 
 // ---------------------------------------------------------------- load
 
@@ -209,6 +236,23 @@ function walk(dir: string, out: string[] = []): string[] {
 /** Content hash, or null when the file cannot be read at all.
  *  One read rather than exists-then-read: the pre-check is a race, and the
  *  read's own failure already carries the answer. */
+/**
+ * Splits a version-pinned registry key.
+ *
+ * Keys are pinned as `name@version` because version determines the licence. Returns null for an
+ * unpinned key, and treats the LAST `@` as the separator so a key may contain one.
+ *
+ * @param key Registry key.
+ * @returns Base name and pinned version, or null when the key carries no pin.
+ */
+function versionPin(key: string): { base: string; pin: string } | null {
+  const at = key.lastIndexOf("@");
+  if (at <= 0 || at === key.length - 1) {
+    return null;
+  }
+  return { base: key.slice(0, at), pin: key.slice(at + 1) };
+}
+
 function sha256OrNull(abs: string): string | null {
   try {
     return createHash("sha256").update(readFileSync(abs)).digest("hex");
@@ -276,6 +320,9 @@ function pathEscape(relPath: string): string | null {
 const manifestPaths = new Map<string, { area: Area; tile: Tile }>();
 const usedSources = new Set<string>();
 
+/** Clause ids some used source actually obliged the product to carry. */
+const requiredClauses = new Set<string>();
+
 /**
  * Ancestors of a used source whose own licence still demands a credit.
  *
@@ -290,7 +337,32 @@ const noticeAncestors = new Set<string>();
 const needsNotice = (s: SourceEntry) => s.notice_required ?? (s.class === "attribution");
 /** Layer kinds actually present, so the notice asserts only what ships. */
 const usedLayers = new Set<string>();
-const declaredEula = new Set<string>(manifest.eula_clauses ?? []);
+const clauses: Map<string, Clause> = new Map(
+  Object.entries((registry as { clauses?: Record<string, Clause> }).clauses ?? [])
+    .filter(([k]) => !k.startsWith("_")));
+
+// A clause counts as DECLARED only if the register can back it. Membership of the manifest's
+// own list used to be the whole test, so `eula_clauses: ["copernicus-6e-flowdown"]` discharged
+// an obligation nobody had written a word of — a gate satisfied by typing its own answer.
+const declaredEula = new Set<string>();
+for (const id of manifest.eula_clauses ?? []) {
+  const clause = clauses.get(id);
+  if (!clause) {
+    add("error", "unknown-eula-clause", "manifest",
+      `the manifest declares EULA clause "${id}", which is not in the register. An obligation `
+      + `with no recorded text is not discharged by naming it.`);
+    continue;
+  }
+  if (clause.needs_drafting || !clause.text?.trim()) {
+    add("error", "undrafted-eula-clause", "manifest",
+      `the manifest declares EULA clause "${id}", but the register carries no text for it`
+      + `${clause.needs_drafting ? " and marks it as still needing drafting" : ""}. `
+      + `${clause.origin ? `Origin: ${clause.origin}. ` : ""}`
+      + `Until the wording exists this obligation cannot be met, and declaring it must not pass.`);
+    continue;
+  }
+  declaredEula.add(id);
+}
 
 // The registry may declare a rule this build cannot evaluate. That is a gate
 // defect, not a data defect, and it must be loud: an unenforced rule reads as a
@@ -435,6 +507,51 @@ for (const area of manifest.areas ?? []) {
             + `"${layer.source}" (${entry.name}). The bytes fetched are not the bytes the manifest describes. `
             + `Header: ${JSON.stringify(header.slice(0, 120))}`);
           break;
+        }
+      }
+
+      // v3: a version pin is a claim about the bytes served, so it has to be checked against
+      // them. AW3D30 is the case that forced this: JAXA does not ship v3.1/v4.0/v4.1 as separate
+      // products but as tile update layers over one archive of 23,993 tiles, published with a
+      // per-tile version list. A single bbox therefore returns a mosaic of mixed versions, and
+      // version is what determines the obligation here — v4.1 is supplemented with Copernicus
+      // GLO-30 and carries its flow-down terms, v3.1 does not. Declaring "aw3d30@3.2" while the
+      // service hands back v4.1 tiles imports those obligations silently, and every check above
+      // ran against the entry the manifest NAMED rather than the bytes it GOT.
+      //
+      // Same contract as the upstream licence header: emit what was served, never assert it.
+      for (const r of entry.restrictions ?? []) {
+        if (r.kind === "require-eula-clause" && r.clause) {
+          requiredClauses.add(r.clause);
+        }
+      }
+
+      const pin = versionPin(layer.source);
+      if (pin) {
+        const served = layer.served_versions;
+        if (!served?.length) {
+          add("warn", "unverified-version-pin", where,
+            `${layer.source} is version-pinned but the layer records no served_versions, so the `
+            + `pin is declared and not enforced. Capture the versions the service returned.`);
+        }
+        for (const v of served ?? []) {
+          const servedKey = `${pin.base}@${v}`;
+          const servedEntry = sources.get(servedKey);
+          if (!servedEntry) {
+            add("error", "unregistered-served-version", where,
+              `the service served ${pin.base} v${v}, which has no registry entry. Its terms are `
+              + `unknown, so it cannot be admitted on the strength of "${layer.source}".`);
+          } else if (!allowed.has(servedEntry.class)) {
+            add("error", "excluded-served-version", where,
+              `the service served ${servedKey} (class "${servedEntry.class}"), which is not `
+              + `allowed. Declaring "${layer.source}" does not change what arrived.`);
+          } else if (servedKey !== layer.source) {
+            add("error", "served-version-mismatch", where,
+              `this layer declares "${layer.source}" but the service served ${servedKey}. The `
+              + `class, lineage and restriction checks all ran against the declared entry, not `
+              + `the one that arrived. If the archive genuinely returns a mixed-version mosaic, `
+              + `it cannot be described by a single pinned key — split the layer.`);
+          }
         }
       }
 
@@ -604,6 +721,26 @@ function buildNotice(): string {
     "",
   ];
 
+  const carried = [...requiredClauses]
+    .map((id) => [id, clauses.get(id)] as const)
+    .filter((pair): pair is [string, Clause] => Boolean(pair[1]?.text?.trim()))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  if (carried.length) {
+    lines.push("## Statements this product is required to carry", "",
+      "These are obligations on the product itself, not credits. Each is here because a source",
+      "baked into it requires it; the gate refuses to generate this file if a required clause has",
+      "no recorded text.",
+      "");
+    for (const [id, c] of carried) {
+      lines.push(`### ${id}`, "");
+      if (c.origin) {
+        lines.push(`*${c.origin}${c.mandated_verbatim ? " — required verbatim" : ""}*`, "");
+      }
+      lines.push(c.text!.trim(), "");
+    }
+  }
+
   if (attr.length) {
     lines.push("## Attribution required", "");
     for (const [, s] of attr) {
@@ -680,8 +817,63 @@ if (EMIT_NOTICE) {
   if (errors.length) {
     console.log(`Not writing ${EMIT_NOTICE}: notices are only generated from a clean manifest.`);
   } else {
-    writeFileSync(resolve(ROOT, EMIT_NOTICE), buildNotice(), "utf8");
+    // No separate "did the notice really carry it" check here on purpose. buildNotice emits
+    // exactly the clauses this run collected, so a verifier over the same set cannot disagree
+    // with it — it would read as a guarantee while being unreachable, which is the defect this
+    // whole change is about. The real guarantee is the test that regenerates the notice and
+    // greps it for the required sentence.
+    const notice = buildNotice();
+    writeFileSync(resolve(ROOT, EMIT_NOTICE), notice, "utf8");
     console.log(`Wrote ${EMIT_NOTICE}.`);
+  }
+}
+
+// Registry-wide verification audit. Deliberately separate from the manifest walk: that walk
+// can only see sources something already bakes, so it cannot warn about an expiry until the
+// expiry is already breaking a build. Run this on a schedule to see the cliff coming.
+if (AUDIT_REGISTRY) {
+  const limit = registry.policy.verification_max_age_days;
+  const rows: { key: string; name: string; days: number | null }[] = [];
+
+  for (const [key, raw] of Object.entries(registry.sources)) {
+    if (key.startsWith("_") || typeof raw === "string") continue;
+    const entry = raw as SourceEntry;
+    const ms = parseIso(entry.verified_on ?? undefined);
+    rows.push({
+      key,
+      name: entry.name,
+      days: ms === null ? null : Math.floor(limit - (Date.now() - ms) / 86_400_000),
+    });
+  }
+
+  const never = rows.filter((r) => r.days === null);
+  const due = rows.filter((r) => r.days !== null && r.days <= RUNWAY_DAYS)
+    .sort((a, b) => a.days! - b.days!);
+
+  console.log(`\nRegistry verification audit (limit ${limit} days, runway ${RUNWAY_DAYS}):`);
+  for (const r of never) {
+    console.log(`  NEVER VERIFIED  ${r.key} — ${r.name}`);
+  }
+  for (const r of due) {
+    const state = r.days! < 0 ? `EXPIRED ${-r.days!}d ago` : `expires in ${r.days!}d`;
+    console.log(`  ${state.padEnd(18)} ${r.key} — ${r.name}`);
+  }
+  const dated = rows.filter((r) => r.days !== null);
+  if (dated.length) {
+    const soonest = dated.reduce((a, b) => (a.days! < b.days! ? a : b));
+    console.log(`  ${dated.length} dated entries; soonest expiry in ${soonest.days} days (${soonest.key}).`);
+  }
+
+  // Never-verified entries are listed, not failed on: --strict already blocks the first tile
+  // that references one, so failing here too would only make this job permanently red. A signal
+  // that is always on is one people learn to scroll past, and this one has to still mean
+  // something on the day the cliff arrives.
+  if (due.length) {
+    console.error(
+      `\n${due.length} entr${due.length === 1 ? "y is" : "ies are"} within ${RUNWAY_DAYS} days `
+      + `of expiry. Re-read those licences at their publisher pages and update verified_on `
+      + `before --strict starts refusing bakes that use them.`);
+    process.exit(1);
   }
 }
 

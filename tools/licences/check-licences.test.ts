@@ -107,7 +107,11 @@ function makeScanRoots(root: string): void {
 }
 
 /** Runs the real gate over a throwaway tree. */
-function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: string[] } {
+function runGate(manifest: Record<string, unknown>): {
+    passed: boolean;
+    codes: string[];
+    warns: string[];
+} {
     const root = mkdtempSync(join(tmpdir(), "licgate-"));
     makeFixtureRoot(root);
     mkdirSync(join(root, "data", "tiles"), { recursive: true });
@@ -123,7 +127,7 @@ function runGate(manifest: Record<string, unknown>): { passed: boolean; codes: s
         codes: [...out.matchAll(/^ERROR {2}([a-z-]+)/gm)].map((m) => m[1]!),
         // Warnings too: a test that asserts a WARNING is absent cannot do it by reading errors,
         // and one that claims to is a test whose name is broader than its assertion.
-        warns: [...out.matchAll(/^WARN {3}([a-z-]+)/gm)].map((m) => m[1]!),
+        warns: [...out.matchAll(/^WARN {2}([a-z-]+)/gm)].map((m) => m[1]!),
     };
 }
 
@@ -379,12 +383,18 @@ describe("gate, end to end", () => {
         ok(r.codes.includes("tile-without-layers"), r.codes.join(","));
     });
 
-    it("accepts a fully-discharged Copernicus layer", () => {
+    it("cannot discharge Copernicus while 6(e) is still unwritten", () => {
+        // This case used to assert the opposite — that declaring both clause ids passed. It did
+        // pass, and that was the defect: `declaredEulaClauses.has(id)` was the whole test, so the
+        // manifest discharged an obligation by naming it. 6(e) requires a contractual clause
+        // binding subsequent users; nobody has drafted one, so it is not dischargeable yet and
+        // the honest expectation is a failure.
         const r = runGate(manifestWith(
             { layer: "elevation", source: "copernicus-dem", fetched_at: at }, [0, 0, 1, 1],
             { eula_clauses: ["copernicus-6c-liability", "copernicus-6e-flowdown"] },
         ));
-        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+        ok(!r.passed, "an undrafted contractual obligation must not pass");
+        ok(r.codes.includes("undrafted-eula-clause"), r.codes.join(","));
     });
 
     it("accepts 3DEP inside US territory", () => {
@@ -860,6 +870,206 @@ describe("the recorded licence-text hash", () => {
             ok(!out.includes("unhashed-licence"),
                 `${JSON.stringify(bad)} is malformed, not unhashed — reporting both misnames it: ${out}`);
         }
+    });
+});
+
+describe("a version pin is a claim about the bytes served", () => {
+    // JAXA does not ship AW3D30 v3.1/v4.0/v4.1 as separate products but as tile update layers
+    // over one archive of 23,993 tiles, published with a per-tile version list. A single bbox
+    // returns a mosaic of mixed versions, and version is what determines the obligation here.
+    const layer = (extra: Record<string, unknown>) => manifestWith(
+        { layer: "elevation", source: "aw3d30@3.2", fetched_at: "2026-08-01T00:00:00Z", ...extra },
+        [138.0, 37.0, 141.5, 39.0]);
+
+    it("fails when a different version arrived than the one declared", () => {
+        // The harm is not that @4.0 is barred — flow-down is an ALLOWED class. It is that every
+        // check ran against @3.2, which carries no EULA restrictions, while @4.0 carries two
+        // require-eula-clause rules. Declaring the older pin skips the clause requirement whole.
+        const r = runGate(layer({ served_versions: ["4.0"] }));
+        ok(!r.passed, "a version that was not declared must not pass on the declared one's terms");
+        ok(r.codes.includes("served-version-mismatch"), r.codes.join(","));
+        ok(!r.codes.includes("missing-eula-clause"),
+            "and the clause check demonstrably did NOT run for the served version — which is "
+            + "exactly why the mismatch has to be caught here");
+    });
+
+    it("fails when the served version has no registry entry at all", () => {
+        // v3.1 is what JAXA serves over Japan, and it is not in the register. Unknown terms must
+        // not be admitted on the strength of a neighbouring version's key.
+        const r = runGate(layer({ served_versions: ["3.1"] }));
+        ok(!r.passed, "an unregistered version has unknown terms and must not pass");
+        ok(r.codes.includes("unregistered-served-version"), r.codes.join(","));
+    });
+
+    it("fails when the served version's class is excluded outright", () => {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-ver-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["aw3d30@4.0"].class = "non-commercial";
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(layer({ served_versions: ["4.0"] })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("excluded-served-version"), out);
+    });
+
+    it("fails on a mixed-version mosaic, which one pinned key cannot describe", () => {
+        const r = runGate(layer({ served_versions: ["3.2", "4.0"] }));
+        ok(!r.passed, "a mosaic spanning versions cannot be described by one pinned key");
+        ok(r.codes.includes("served-version-mismatch"), r.codes.join(","));
+    });
+
+    it("warns when a pinned layer records nothing about what was served", () => {
+        // The state every manifest written before this check is in: pin declared, unenforced.
+        const r = runGate(layer({}));
+        ok(r.warns.includes("unverified-version-pin"), r.warns.join(","));
+    });
+
+    it("passes when the served version is the pinned one", () => {
+        const r = runGate(layer({ served_versions: ["3.2"] }));
+        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
+        ok(!r.warns.includes("unverified-version-pin"), r.warns.join(","));
+    });
+
+    it("leaves an unpinned source alone", () => {
+        const r = runGate(manifestWith(
+            { layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+            [-100, 35, -99, 36]));
+        ok(!r.warns.includes("unverified-version-pin"),
+            "only a pinned key makes a claim about versions");
+    });
+});
+
+describe("an EULA clause is discharged by its text, not by its name", () => {
+    // The defect: `declaredEulaClauses.has(id)` was the entire test, so writing the id into the
+    // manifest satisfied the obligation. A gate answering its own question.
+    const copernicus = (eula: string[]) => manifestWith(
+        { layer: "elevation", source: "copernicus-dem", fetched_at: "2026-08-01T00:00:00Z",
+            election: "attribution" },
+        [8.0, 46.0, 9.0, 47.0], { eula_clauses: eula });
+
+    it("refuses a clause the register has no text for, however loudly declared", () => {
+        // 6(e) is contract drafting nobody has done. Naming it must not discharge it — this is
+        // the case the whole clause register exists for.
+        const r = runGate(copernicus(["copernicus-6c-liability", "copernicus-6e-flowdown"]));
+        ok(!r.passed, "an undrafted obligation must not pass because its id was typed");
+        ok(r.codes.includes("undrafted-eula-clause"), r.codes.join(","));
+        // ...and the underlying requirement is still reported unmet, not swallowed.
+        ok(r.codes.includes("missing-eula-clause"), r.codes.join(","));
+    });
+
+    it("refuses a clause id that is not in the register at all", () => {
+        const r = runGate(copernicus(["copernicus-6c-liability", "we-promise-honestly"]));
+        ok(!r.passed, "an unknown clause id must not pass");
+        ok(r.codes.includes("unknown-eula-clause"), r.codes.join(","));
+    });
+
+    it("still refuses when no clause is declared", () => {
+        const r = runGate(copernicus([]));
+        ok(!r.passed, "flow-down without its clauses must not pass");
+        ok(r.codes.includes("missing-eula-clause"), r.codes.join(","));
+    });
+
+    it("carries a satisfied clause's verbatim text into the generated notice", () => {
+        // not-for-navigation: text recorded, so the obligation is dischargeable — and the proof
+        // is that the sentence reaches the product's own notice.
+        const dir = mkdtempSync(join(tmpdir(), "licgate-clause-"));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(manifestWith(
+            { layer: "bathymetry", source: "noaa-cudem", fetched_at: "2026-08-01T00:00:00Z" },
+            [-76.2, 37.8, -75.8, 38.2], { eula_clauses: ["not-for-navigation"] })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", REGISTRY, "--manifest", join(dir, "m.json"),
+                "--emit-notice", "NOTICE.md"],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(out.includes("Licence gate passed"), out);
+
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const text = reg.clauses["not-for-navigation"].text as string;
+        const notice = readFileSync(join(dir, "NOTICE.md"), "utf8");
+        ok(notice.includes(text),
+            `the product's notice must carry the statement it is obliged to make:\n${notice}`);
+    });
+
+    it("does not carry a clause no baked source asked for", () => {
+        const r = runGate(manifestWith(
+            { layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+            [-100, 35, -99, 36]));
+        ok(r.passed, r.codes.join(","));
+    });
+});
+
+describe("the registry verification audit", () => {
+    /** Runs the gate in --audit-registry mode over a registry with the given dates applied. */
+    function audit(mutate: (reg: Record<string, any>) => void) {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-audit-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        mutate(reg);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir, "--registry", regPath,
+                "--manifest", join(dir, "m.json"), "--audit-registry"],
+            { encoding: "utf8" });
+        return { out: `${p.stdout}\n${p.stderr}`, status: p.status };
+    }
+
+    /** An ISO date `days` before today. */
+    const daysAgo = (days: number) =>
+        new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+    it("fails once an entry is inside the runway, naming it", () => {
+        const r = audit((reg) => { reg.sources["esa-worldcover"].verified_on = daysAgo(175); });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("esa-worldcover"), r.out);
+        ok(/expires in \d+d/.test(r.out), r.out);
+    });
+
+    it("fails on an entry that has already expired", () => {
+        const r = audit((reg) => { reg.sources["esa-worldcover"].verified_on = daysAgo(200); });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("EXPIRED"), r.out);
+    });
+
+    it("passes while every dated entry is outside the runway", () => {
+        const r = audit((reg) => {
+            for (const [k, v] of Object.entries<any>(reg.sources)) {
+                if (!k.startsWith("_") && v.verified_on) v.verified_on = daysAgo(1);
+            }
+        });
+        strictEqual(r.status, 0, r.out);
+        ok(r.out.includes("soonest expiry in"), r.out);
+    });
+
+    it("lists a never-verified entry without failing on it", () => {
+        // --strict already blocks the first tile referencing one. Failing here too would make a
+        // weekly job permanently red, and a signal that is always on stops being a signal.
+        const r = audit((reg) => {
+            for (const [k, v] of Object.entries<any>(reg.sources)) {
+                if (!k.startsWith("_") && v.verified_on) v.verified_on = daysAgo(1);
+            }
+            reg.sources["esa-worldcover"].verified_on = null;
+        });
+        strictEqual(r.status, 0, r.out);
+        ok(r.out.includes("NEVER VERIFIED"), r.out);
+        ok(r.out.includes("esa-worldcover"), r.out);
     });
 });
 

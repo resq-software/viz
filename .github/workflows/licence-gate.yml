@@ -11,6 +11,14 @@ on:
   pull_request:
   release:
     types: [published]
+  schedule:
+    # Weekly, for the registry verification audit only. The per-layer staleness
+    # check can only see sources a manifest already references, so it cannot warn
+    # about an expiry until that expiry is already failing a build — and 29 of the
+    # 33 entries were verified in one sitting, which puts them on a single expiry
+    # date. This is what makes that a schedule rather than a cliff.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -133,3 +141,33 @@ jobs:
           node --experimental-strip-types tools/licences/check-licences.ts \
             --root . --registry tools/licences/licences.json \
             --manifest data/manifest.json --strict
+
+  # Registry verification audit. Separate job because it asks a different question
+  # from the gate: not "is what we bake licensed" but "is what we believe about
+  # these licences still current". Runs on the schedule and on demand; green until
+  # something is within a month of expiring, then red with the entry named.
+  verification-audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c  # v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Audit registry verification dates
+        run: |
+          node --experimental-strip-types tools/licences/check-licences.ts \
+            --root . --registry tools/licences/licences.json \
+            --manifest data/manifest.json --audit-registry
