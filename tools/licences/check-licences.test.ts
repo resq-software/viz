@@ -1010,6 +1010,69 @@ describe("an EULA clause is discharged by its text, not by its name", () => {
     });
 });
 
+describe("the registry verification audit", () => {
+    /** Runs the gate in --audit-registry mode over a registry with the given dates applied. */
+    function audit(mutate: (reg: Record<string, any>) => void) {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-audit-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        mutate(reg);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            manifestWith({ layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+                [-100, 35, -99, 36])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir, "--registry", regPath,
+                "--manifest", join(dir, "m.json"), "--audit-registry"],
+            { encoding: "utf8" });
+        return { out: `${p.stdout}\n${p.stderr}`, status: p.status };
+    }
+
+    /** An ISO date `days` before today. */
+    const daysAgo = (days: number) =>
+        new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+    it("fails once an entry is inside the runway, naming it", () => {
+        const r = audit((reg) => { reg.sources["esa-worldcover"].verified_on = daysAgo(175); });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("esa-worldcover"), r.out);
+        ok(/expires in \d+d/.test(r.out), r.out);
+    });
+
+    it("fails on an entry that has already expired", () => {
+        const r = audit((reg) => { reg.sources["esa-worldcover"].verified_on = daysAgo(200); });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("EXPIRED"), r.out);
+    });
+
+    it("passes while every dated entry is outside the runway", () => {
+        const r = audit((reg) => {
+            for (const [k, v] of Object.entries<any>(reg.sources)) {
+                if (!k.startsWith("_") && v.verified_on) v.verified_on = daysAgo(1);
+            }
+        });
+        strictEqual(r.status, 0, r.out);
+        ok(r.out.includes("soonest expiry in"), r.out);
+    });
+
+    it("lists a never-verified entry without failing on it", () => {
+        // --strict already blocks the first tile referencing one. Failing here too would make a
+        // weekly job permanently red, and a signal that is always on stops being a signal.
+        const r = audit((reg) => {
+            for (const [k, v] of Object.entries<any>(reg.sources)) {
+                if (!k.startsWith("_") && v.verified_on) v.verified_on = daysAgo(1);
+            }
+            reg.sources["esa-worldcover"].verified_on = null;
+        });
+        strictEqual(r.status, 0, r.out);
+        ok(r.out.includes("NEVER VERIFIED"), r.out);
+        ok(r.out.includes("esa-worldcover"), r.out);
+    });
+});
+
 describe("strict mode", () => {
     it("passes on the committed tree, so the blocking gate can run strict", () => {
         // The gate job runs --strict. If a source loses its verified_on or its

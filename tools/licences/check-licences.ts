@@ -155,6 +155,16 @@ const MANIFEST_PATH = resolve(arg("manifest", join(ROOT, "data/manifest.json"))!
 const EMIT_NOTICE = arg("emit-notice");
 const STRICT = flag("strict");
 
+/**
+ * Days of runway before a verification expires, for `--audit-registry`.
+ *
+ * The per-layer staleness check only sees sources a manifest references, so nothing warns until
+ * a bake trips them — and 29 of the 33 entries here were verified in one sitting, which puts
+ * their expiry on a single day. That is a cliff, not a schedule. This is the early warning.
+ */
+const RUNWAY_DAYS = 30;
+const AUDIT_REGISTRY = flag("audit-registry");
+
 // ---------------------------------------------------------------- load
 
 function loadJson<T>(path: string, label: string): T {
@@ -815,6 +825,55 @@ if (EMIT_NOTICE) {
     const notice = buildNotice();
     writeFileSync(resolve(ROOT, EMIT_NOTICE), notice, "utf8");
     console.log(`Wrote ${EMIT_NOTICE}.`);
+  }
+}
+
+// Registry-wide verification audit. Deliberately separate from the manifest walk: that walk
+// can only see sources something already bakes, so it cannot warn about an expiry until the
+// expiry is already breaking a build. Run this on a schedule to see the cliff coming.
+if (AUDIT_REGISTRY) {
+  const limit = registry.policy.verification_max_age_days;
+  const rows: { key: string; name: string; days: number | null }[] = [];
+
+  for (const [key, raw] of Object.entries(registry.sources)) {
+    if (key.startsWith("_") || typeof raw === "string") continue;
+    const entry = raw as SourceEntry;
+    const ms = parseIso(entry.verified_on ?? undefined);
+    rows.push({
+      key,
+      name: entry.name,
+      days: ms === null ? null : Math.floor(limit - (Date.now() - ms) / 86_400_000),
+    });
+  }
+
+  const never = rows.filter((r) => r.days === null);
+  const due = rows.filter((r) => r.days !== null && r.days <= RUNWAY_DAYS)
+    .sort((a, b) => a.days! - b.days!);
+
+  console.log(`\nRegistry verification audit (limit ${limit} days, runway ${RUNWAY_DAYS}):`);
+  for (const r of never) {
+    console.log(`  NEVER VERIFIED  ${r.key} — ${r.name}`);
+  }
+  for (const r of due) {
+    const state = r.days! < 0 ? `EXPIRED ${-r.days!}d ago` : `expires in ${r.days!}d`;
+    console.log(`  ${state.padEnd(18)} ${r.key} — ${r.name}`);
+  }
+  const dated = rows.filter((r) => r.days !== null);
+  if (dated.length) {
+    const soonest = dated.reduce((a, b) => (a.days! < b.days! ? a : b));
+    console.log(`  ${dated.length} dated entries; soonest expiry in ${soonest.days} days (${soonest.key}).`);
+  }
+
+  // Never-verified entries are listed, not failed on: --strict already blocks the first tile
+  // that references one, so failing here too would only make this job permanently red. A signal
+  // that is always on is one people learn to scroll past, and this one has to still mean
+  // something on the day the cliff arrives.
+  if (due.length) {
+    console.error(
+      `\n${due.length} entr${due.length === 1 ? "y is" : "ies are"} within ${RUNWAY_DAYS} days `
+      + `of expiry. Re-read those licences at their publisher pages and update verified_on `
+      + `before --strict starts refusing bakes that use them.`);
+    process.exit(1);
   }
 }
 
