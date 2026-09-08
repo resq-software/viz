@@ -183,7 +183,7 @@
       "class": "attribution",
       "spdx": "CC-BY-4.0",
       "licence_url": "https://www.pgc.umn.edu/guides/stereo-derived-elevation-models/pgc-dem-products-arcticdem-rema-and-earthdem/",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
       "verified_on": "2026-09-05",
       "notice": "DEMs provided by the Byrd Polar and Climate Research Center and the Polar Geospatial Center under NSF-OPP awards 1043681, 1542736, 1543501, 1559691, 1810976, and 2129685.",
       "courtesy_credit": null,
@@ -193,7 +193,8 @@
       "permitted_layers": [
         "elevation"
       ],
-      "restrictions": []
+      "restrictions": [],
+      "licence_text_path": "tools/licences/texts/CC-BY-4.0.txt"
     },
     "noaa-cudem": {
       "name": "NOAA Continuously Updated Digital Elevation Model",
@@ -271,7 +272,7 @@
       "class": "attribution",
       "spdx": "CC-BY-4.0",
       "licence_url": "https://www.gmrt.org/about/terms_of_use.php",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
       "verified_on": "2026-09-05",
       "notice": "Global Multi-Resolution Topography Synthesis (GMRT), https://www.gmrt.org. Ryan, W. B. F., et al. (2009), Global Multi-Resolution Topography (GMRT) synthesis data set, Geochem. Geophys. Geosyst., 10, Q03014, doi:10.1029/2008GC002332. Data should not be used for navigation purposes.",
       "courtesy_credit": null,
@@ -292,14 +293,15 @@
           "clause": "not-for-navigation",
           "reason": "GMRT's terms state the data should not be used for navigation. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
         }
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/CC-BY-4.0.txt"
     },
     "emodnet-bathymetry": {
       "name": "EMODnet Bathymetry",
       "class": "attribution",
       "spdx": "CC-BY-4.0",
       "licence_url": "https://emodnet.ec.europa.eu/en/bathymetry",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
       "verified_on": "2026-09-05",
       "notice": "This data product was created by EMODnet (https://emodnet.ec.europa.eu/en/), and is owned by the EU and licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) license. DO NOT USE FOR NAVIGATION.",
       "courtesy_credit": null,
@@ -315,14 +317,15 @@
           "clause": "not-for-navigation",
           "reason": "EMODnet's terms state the DTM must not be used for navigation. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
         }
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/CC-BY-4.0.txt"
     },
     "esa-worldcover": {
       "name": "ESA WorldCover 10m",
       "class": "attribution",
       "spdx": "CC-BY-4.0",
       "licence_url": "https://esa-worldcover.org/en/data-access",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
       "verified_on": "2026-09-05",
       "notice": "(c) ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium",
       "courtesy_credit": null,
@@ -332,7 +335,8 @@
         "landcover"
       ],
       "notice_required": true,
-      "restrictions": []
+      "restrictions": [],
+      "licence_text_path": "tools/licences/texts/CC-BY-4.0.txt"
     },
     "naip": {
       "name": "National Agriculture Imagery Program",
@@ -431,7 +435,7 @@
       "class": "attribution",
       "spdx": "CC-BY-4.0",
       "licence_url": "https://sites.research.google/gr/open-buildings/",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
       "verified_on": "2026-09-05",
       "notice": "Building footprints: Google Open Buildings (V3), (c) Google LLC, used under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Modified: resampled and merged.",
       "courtesy_credit": null,
@@ -449,7 +453,8 @@
           ],
           "reason": "Dual-licensed CC BY 4.0 OR ODbL. Electing CC BY is what keeps this out of the share-alike class, and the election must be recorded at the moment of the bake, not asserted retrospectively."
         }
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/CC-BY-4.0.txt"
     },
     "_excluded_comment": "Entries below are recorded so the gate names them explicitly instead of failing with a generic 'unknown source'. A named exclusion is a better error message than a missing key.",
     "copernicus-dem": {
@@ -636,7 +641,7 @@
       "class": "attribution",
       "spdx": "CC-BY-4.0",
       "licence_url": "https://www.pgc.umn.edu/guides/stereo-derived-elevation-models/pgc-dem-products-arcticdem-rema-and-earthdem/",
-      "licence_text_sha256": null,
+      "licence_text_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
       "verified_on": "2026-09-05",
       "notice": "DEMs provided by the Polar Geospatial Center under NSF-OPP awards 1043681, 1559691, 1542736, 1810976, and 2129685.",
       "courtesy_credit": null,
@@ -653,7 +658,8 @@
           "from": "2022-06-15",
           "reason": "Alaska data from 15 June 2022 onward is withheld under EOCL/NextView imagery-licence restrictions. Derived DEMs under EOCL are not publicly releasable without prior NGA approval. Use usgs-3dep for Alaska instead."
         }
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/CC-BY-4.0.txt"
     },
     "arcticdem-mosaics": {
       "name": "ArcticDEM (v4.1 mosaics)",
