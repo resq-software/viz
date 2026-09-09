@@ -1,7 +1,15 @@
 # USDA — NAIP terms of use
 
-**Status:** ready to send once the acquisition years are filled in. Unblocks
-`paradise-ca`, the only area using NAIP.
+**Status: SENT 2026-09-09. Awaiting reply.**
+
+Still blocking — `verified_on` stays null until USDA actually establishes the terms.
+Unblocks `paradise-ca` once answered.
+
+Acquisitions named in the sent version, found by querying a NAIP catalogue over the
+`paradise-ca` bbox: 2012 (1.0 m), 2014 (1.0 m), 2016 (0.6 m), 2018 (0.6 m),
+2020 (0.6 m), 2022 (0.6 m). Prioritised **2018**, flown 18 July — four months
+before the Camp Fire. Fallback if post-2017 comes back uncertain: **2016**, same
+resolution, also pre-fire, and pre-AP-26.
 
 **To:** `geo.sales@usda.gov` — USDA Farm Production and Conservation Business
 Center (FPAC-BC), Geospatial Enterprise Operations (GEO), Customer Services.
