@@ -1158,6 +1158,50 @@ describe("a contract term is not discharged by existing", () => {
         ok(out.includes("Licence gate passed"), out);
     });
 
+    it("refuses a ratification record with no date", () => {
+        // Names a reviewer, says nothing about when — so nothing establishes the review covered
+        // the text it is supposed to cover.
+        const out = withClause({
+            needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+            kind: "contract-term", ratified: { by: "Example Counsel" },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+    });
+
+    it("refuses a valid date with no reviewer named", () => {
+        // Reaches the reviewer check on its own. Every other case here also has a bad date, so
+        // without this the "by" condition could be deleted and nothing would notice — it
+        // survived exactly that mutation before this test existed.
+        const out = withClause({
+            needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+            kind: "contract-term", ratified: { by: "   ", on: "2026-09-09" },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+        ok(out.includes("no reviewer is named"), out);
+    });
+
+    it("refuses a blank or unparseable review date", () => {
+        for (const on of ["", "   ", "soon", "2026-02-30"]) {
+            const out = withClause({
+                needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+                kind: "contract-term", ratified: { by: "Example Counsel", on },
+            });
+            ok(!out.includes("Licence gate passed"), `${JSON.stringify(on)}: ${out}`);
+            ok(out.includes("unratified-contract-term"), `${JSON.stringify(on)}: ${out}`);
+        }
+    });
+
+    it("refuses a review dated in the future", () => {
+        const out = withClause({
+            needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+            kind: "contract-term", ratified: { by: "Example Counsel", on: "2099-01-01" },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+    });
+
     it("does not demand ratification of a statement", () => {
         // not-for-navigation and the USGS modification disclosure are wording we carry, not
         // terms binding anyone. Requiring legal sign-off on those would be noise, and noise is
