@@ -1,0 +1,320 @@
+{
+  "schema": 1,
+  "_comment": "The areas the bake pipeline targets, and the geodetic anchor each one places its scene frame on. Approved as scope on 2026-09-09; bake order follows whichever licence work clears first, so an area appearing here is NOT a claim that it is bakeable today - run check-areas.ts for that. Every bbox is exactly TERRAIN_SIZE (4000 m) square about its centre, because the scene is; origin is that centre, replacing the single placeholder LocalOrigin that every scene used to share. CENTRES WERE CHOSEN, NOT SURVEYED - they place a 4 km box over the feature each area is named for and are worth a review against the actual terrain before a bake is trusted.",
+  "worldSizeMeters": 4000,
+  "areas": [
+    {
+      "id": "paradise-ca",
+      "name": "Paradise, CA",
+      "tier": "A",
+      "why": "Camp Fire 2018 evacuation failure",
+      "bbox": [
+        -121.645271,
+        39.741513,
+        -121.598529,
+        39.777687
+      ],
+      "origin": {
+        "originId": "area-paradise-ca",
+        "latitudeDeg": 39.7596,
+        "longitudeDeg": -121.6219,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32610",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "imagery": "naip",
+        "landcover": "esa-worldcover"
+      }
+    },
+    {
+      "id": "santa-monica-mtns",
+      "name": "Santa Monica Mountains, CA",
+      "tier": "A",
+      "why": "Chaparral canyons meeting the coast",
+      "bbox": [
+        -118.721697,
+        34.081913,
+        -118.678303,
+        34.118087
+      ],
+      "origin": {
+        "originId": "area-santa-monica-mtns",
+        "latitudeDeg": 34.1,
+        "longitudeDeg": -118.7,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32611",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "bathymetry": "noaa-cudem",
+        "landcover": "esa-worldcover"
+      }
+    },
+    {
+      "id": "lower-ninth-ward",
+      "name": "Lower Ninth Ward, LA",
+      "tier": "A",
+      "why": "Katrina; below sea level, levee geometry",
+      "bbox": [
+        -90.047738,
+        29.946613,
+        -90.006262,
+        29.982787
+      ],
+      "origin": {
+        "originId": "area-lower-ninth-ward",
+        "latitudeDeg": 29.9647,
+        "longitudeDeg": -90.027,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32615",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "landcover": "esa-worldcover"
+      },
+      "notes": "Near-zero slope on purpose. Encode range MUST be per-area; a project-wide range sized for Longs Peak quantises slope here at roughly 2 degrees."
+    },
+    {
+      "id": "hatteras-nc",
+      "name": "Cape Hatteras, NC",
+      "tier": "A",
+      "why": "Barrier island, inlet, dune line",
+      "bbox": [
+        -75.712692,
+        35.201213,
+        -75.668708,
+        35.237387
+      ],
+      "origin": {
+        "originId": "area-hatteras-nc",
+        "latitudeDeg": 35.2193,
+        "longitudeDeg": -75.6907,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32618",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "bathymetry": "noaa-cudem",
+        "landcover": "esa-worldcover"
+      }
+    },
+    {
+      "id": "mount-washington",
+      "name": "Mount Washington, NH",
+      "tier": "A",
+      "why": "Extreme relief, alpine",
+      "bbox": [
+        -71.328391,
+        44.252413,
+        -71.278209,
+        44.288587
+      ],
+      "origin": {
+        "originId": "area-mount-washington",
+        "latitudeDeg": 44.2705,
+        "longitudeDeg": -71.3033,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32619",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "landcover": "esa-worldcover"
+      }
+    },
+    {
+      "id": "longs-peak",
+      "name": "Longs Peak, CO",
+      "tier": "A",
+      "why": "High alpine SAR, above treeline",
+      "bbox": [
+        -105.638641,
+        40.236813,
+        -105.591559,
+        40.272987
+      ],
+      "origin": {
+        "originId": "area-longs-peak",
+        "latitudeDeg": 40.2549,
+        "longitudeDeg": -105.6151,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32613",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "landcover": "esa-worldcover"
+      }
+    },
+    {
+      "id": "sf-marina",
+      "name": "Marina District, SF, CA",
+      "tier": "A",
+      "why": "Liquefaction zone, dense waterfront",
+      "bbox": [
+        -122.459739,
+        37.784913,
+        -122.414261,
+        37.821087
+      ],
+      "origin": {
+        "originId": "area-sf-marina",
+        "latitudeDeg": 37.803,
+        "longitudeDeg": -122.437,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32610",
+      "sources": {
+        "elevation": "usgs-3dep",
+        "bathymetry": "noaa-cudem",
+        "landcover": "esa-worldcover"
+      },
+      "notes": "Urban gap is deliberate: nothing baked carries a building mask, so the classifier never returns Urban. Do not synthesise one from land cover."
+    },
+    {
+      "id": "tangier-sound",
+      "name": "Tangier Sound, MD/VA",
+      "tier": "A",
+      "why": "Shallow, complex vessel operations",
+      "bbox": [
+        -76.015746,
+        37.809913,
+        -75.970254,
+        37.846087
+      ],
+      "origin": {
+        "originId": "area-tangier-sound",
+        "latitudeDeg": 37.828,
+        "longitudeDeg": -75.993,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32618",
+      "sources": {
+        "elevation": "noaa-cudem",
+        "bathymetry": "noaa-cudem",
+        "landcover": "esa-worldcover"
+      }
+    },
+    {
+      "id": "geirangerfjord",
+      "name": "Geirangerfjord, NO",
+      "tier": "A",
+      "why": "Community reachable only by water",
+      "bbox": [
+        7.167604,
+        62.082913,
+        7.244396,
+        62.119087
+      ],
+      "origin": {
+        "originId": "area-geirangerfjord",
+        "latitudeDeg": 62.101,
+        "longitudeDeg": 7.206,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32632",
+      "sources": {
+        "elevation": "arcticdem-strips",
+        "bathymetry": "emodnet-bathymetry",
+        "landcover": "esa-worldcover"
+      },
+      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there."
+    },
+    {
+      "id": "reykjanes",
+      "name": "Reykjanes, IS",
+      "tier": "A",
+      "why": "Recent volcanic evacuations, lava field",
+      "bbox": [
+        -22.490809,
+        63.861913,
+        -22.409191,
+        63.898087
+      ],
+      "origin": {
+        "originId": "area-reykjanes",
+        "latitudeDeg": 63.88,
+        "longitudeDeg": -22.45,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32627",
+      "sources": {
+        "elevation": "arcticdem-strips",
+        "landcover": "esa-worldcover"
+      },
+      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there."
+    },
+    {
+      "id": "rhine-meuse-delta",
+      "name": "Rhine-Meuse delta, NL",
+      "tier": "B",
+      "why": "Flood defence below sea level",
+      "bbox": [
+        4.370948,
+        51.781913,
+        4.429052,
+        51.818087
+      ],
+      "origin": {
+        "originId": "area-rhine-meuse-delta",
+        "latitudeDeg": 51.8,
+        "longitudeDeg": 4.4,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32631",
+      "sources": {
+        "elevation": "aw3d30@3.2",
+        "bathymetry": "emodnet-bathymetry",
+        "landcover": "esa-worldcover"
+      },
+      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there. Tier B by geography, not by blocker: the allowed 30 m source aw3d30@3.2 matches Copernicus to within ~0.5 m RMSE here, so counsel is not on the critical path. Both options are 30 m DSMs and marginal for a low-gradient flood scenario - see the design doc."
+    },
+    {
+      "id": "sendai-plain",
+      "name": "Sendai plain, JP",
+      "tier": "B",
+      "why": "Tsunami inundation, coastal plain",
+      "bbox": [
+        140.927119,
+        38.241913,
+        140.972881,
+        38.278087
+      ],
+      "origin": {
+        "originId": "area-sendai-plain",
+        "latitudeDeg": 38.26,
+        "longitudeDeg": 140.95,
+        "verticalMeters": 0.0,
+        "verticalReference": "MeanSeaLevel",
+        "yawRad": 0.0
+      },
+      "targetCrs": "EPSG:32654",
+      "sources": {
+        "elevation": "aw3d30@3.2",
+        "landcover": "esa-worldcover"
+      },
+      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there. Tier B by geography, not by blocker: the allowed 30 m source aw3d30@3.2 matches Copernicus to within ~0.5 m RMSE here, so counsel is not on the critical path. Both options are 30 m DSMs and marginal for a low-gradient flood scenario - see the design doc."
+    }
+  ]
+}

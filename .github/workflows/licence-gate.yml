@@ -56,6 +56,17 @@ jobs:
       - name: Gate self-test
         run: node --experimental-strip-types --test tools/licences/check-licences.test.ts
 
+      # Area definitions: geometry the scene depends on, plus a live cross-check of every
+      # declared source against the register. Runs beside the licence tests because the two
+      # answer halves of one question — what may we bake, and where.
+      - name: Area definition tests
+        run: node --experimental-strip-types --test tools/areas/check-areas.test.ts
+
+      - name: Check area definitions
+        run: |
+          node --experimental-strip-types tools/areas/check-areas.ts \
+            --areas data/areas.json --registry tools/licences/licences.json
+
       - name: Validate manifest against schema
         run: |
           npx --yes ajv-cli@5.0.0 validate \
