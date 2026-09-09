@@ -10,6 +10,15 @@
 > Until a named reviewer has approved it, `copernicus-6e-flowdown` in
 > `tools/licences/licences.json` stays unratified and the licence gate refuses any
 > tile that depends on it. That is deliberate.
+>
+> **It also lives here, outside the shipped assets, on purpose.** The first draft
+> of this was placed in `client/public/legal/` and linked from the settings panel
+> as "Terms" — a document headed *not in force*, with liability and warranty left
+> as placeholders, presented to users as the terms. Review caught it. When counsel
+> approves it, move it to `client/public/legal/terms.md` and restore the link in
+> `client/index.html`; `scripts/copy-legal.mjs` refuses to build while anything
+> other than the generated notices sits in that directory, so the move and the
+> approval have to happen together.
 
 ---
 

@@ -14,7 +14,7 @@
 //
 // Runs before the Vite build, and fails loudly rather than shipping without notices.
 
-import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,5 +46,24 @@ if (!notice.trim()) {
 }
 
 mkdirSync(DEST_DIR, { recursive: true });
+
+// Nothing but the generated notices may live here. The first version of this change also put
+// a DRAFT end-user terms document in this directory and linked it from the settings panel as
+// "Terms" — a file headed "NOT IN FORCE", with liability and warranty left as placeholders,
+// presented to users as the product's terms. Review caught it; this makes it not recur.
+//
+// An unratified legal document served to users is worse than none: a reader has no way to know
+// it is a draft, and the placeholders sit exactly where the protections would be.
+const stray = readdirSync(DEST_DIR).filter((name) => name !== "notices.md");
+if (stray.length) {
+  console.error(
+    `copy-legal: ${DEST_DIR} contains ${stray.map((s) => JSON.stringify(s)).join(", ")}.\n`
+    + "Only the generated notices may ship from here. A legal document in this directory is "
+    + "served to users and linked from the product, so it must be one somebody has approved — "
+    + "keep drafts under tools/licences/ until then.",
+  );
+  process.exit(1);
+}
+
 copyFileSync(SOURCE, DEST);
 console.log(`copy-legal: NOTICE.md -> client/public/legal/notices.md (${notice.length} bytes)`);
