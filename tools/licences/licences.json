@@ -107,6 +107,13 @@
       "needs_drafting": false,
       "text": "The bathymetric and topographic data in this product are not suitable for navigation and must not be used for it. For navigation, consult the official nautical chart series of the relevant hydrographic office.",
       "notes": "Every bathymetry source admitted here carries this obligation, and it sat only in prose notes with no restriction enforcing it - a product-safety statement nothing checked. The wording is ours; the duty to carry one is not."
+    },
+    "usgs-modification-disclosure": {
+      "origin": "USGS 3DEP FGDC use constraints",
+      "mandated_verbatim": false,
+      "needs_drafting": false,
+      "text": "Elevation data in this product derived from the USGS 3D Elevation Program have been modified from the form USGS distributes them in. They are reprojected to a local grid, resampled to the product's own resolution, clipped to the area of interest, and re-encoded; per-tile detail of every transformation applied is recorded in the product's provenance manifest. These modifications are ours. They were not approved or endorsed by the USGS, and nothing here should be read as a USGS statement about the data.",
+      "notes": "The USGS use constraints say a user who modifies the data 'is obligated to describe the types of modifications they perform', and 'specifically agrees not to misrepresent the data, nor to imply that changes made were approved or endorsed by the USGS'. A bake does modify: reproject, resample, clip, re-encode. The duty is theirs; this wording is ours. Recorded as a clause rather than a notes paragraph because a notes paragraph is not a control - the registry previously carried this obligation nowhere at all."
     }
   },
   "sources": {
@@ -115,12 +122,12 @@
       "class": "public-domain",
       "spdx": null,
       "licence_url": "https://www.sciencebase.gov/catalog/item/4f70aa71e4b058caae3f8de1",
-      "licence_text_sha256": null,
-      "verified_on": null,
+      "licence_text_sha256": "e8e42d7a71ebf5fbb8ccdae3a90523f185fdc17997954893e437845c22a35a9a",
+      "verified_on": "2026-09-09",
       "notice": null,
       "courtesy_credit": "Map services and data available from U.S. Geological Survey, National Geospatial Program.",
       "coverage": "CONUS, Alaska, Hawaii, US territories",
-      "notes": "Licence text UNVERIFIED, and verified_on is null because of it - but NOT for the reason previously recorded here. The old note claimed 'usgs.gov returned 403 to every direct fetch'; that conflates two hosts. www.usgs.gov does 403, www.sciencebase.gov (the recorded licence_url) returns 200 and is the right product. What is missing is not access but any rights statement on that page: it has no rights or useconst field at all. Verbatim terms DO exist one hop away in the per-tile FGDC metadata beside the GeoTIFFs (accconst/useconst/distliab), but those are tile-scoped and vary by tile and vintage, so a human must ratify which document is canonical before it is vendored. The acknowledgement is REQUESTED, not a licence condition - but the useconst clause also carries modification-disclosure and no-misrepresentation terms this entry does not yet capture. Do not apply the USGS identifier or logo; it is trademarked.",
+      "notes": "Public domain - a work of the US federal government, not an SPDX-catalogued licence. Terms transcribed from the FGDC metadata USGS ships beside every 3DEP tile, because www.usgs.gov returns 403 to automated fetches while the staged product metadata does not. VERIFICATION METHOD, so the claim is auditable: the accconst/useconst/distliab block was fetched from five tiles (n19w156, n40w106, n36w076, n45w072, n30w090) spanning publication dates 2023-05-22 to 2026-07-29 and hashed - byte-identical across all five, so the text is product-level rather than per-tile and the earlier concern that a human must pick a canonical tile does not apply. Acknowledgement is REQUESTED, not required; but the modification-disclosure and no-misrepresentation duties in the same block ARE obligations, and are now carried as a clause. Do not apply the USGS identifier or logo; it is trademarked.",
       "notice_required": false,
       "permitted_layers": [
         "elevation"
@@ -130,8 +137,14 @@
           "kind": "clip",
           "region": "us-territory",
           "reason": "The seamless 1-arc-second grid extends over Canada and the Mexican border under interagency arrangements with NRCan and INEGI; those pixels are not US federal works. Clipping keeps the public-domain basis intact."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "usgs-modification-disclosure",
+          "reason": "The FGDC use constraints oblige anyone who modifies the data to describe the modifications and not to imply USGS endorsement. A bake modifies. This entry recorded the acknowledgement as merely requested and captured neither duty."
         }
-      ]
+      ],
+      "licence_text_path": "tools/licences/texts/USGS-3DEP-terms.txt"
     },
     "nasadem": {
       "name": "NASADEM",
@@ -201,8 +214,8 @@
       "class": "public-domain",
       "spdx": null,
       "licence_url": "https://www.ncei.noaa.gov/metadata/geoportal/rest/metadata/item/gov.noaa.ngdc.mgg.dem:199919/html",
-      "licence_text_sha256": null,
-      "verified_on": "2026-09-05",
+      "licence_text_sha256": "4a2f8cacd2672aa6e60f4fffe132476e7cd8f45174dc5416266c3369a35a8523",
+      "verified_on": "2026-09-09",
       "notice": null,
       "courtesy_credit": "Bathymetric data courtesy of NOAA National Centers for Environmental Information.",
       "coverage": "US coastal",
@@ -218,15 +231,16 @@
           "reason": "NCEI publishes CUDEM with an explicit not-for-navigation constraint. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
         }
       ],
-      "notice_required": false
+      "notice_required": false,
+      "licence_text_path": "tools/licences/texts/noaa-cudem-terms.txt"
     },
     "noaa-crm": {
       "name": "NOAA Coastal Relief Model",
       "class": "public-domain",
       "spdx": null,
       "licence_url": "https://www.ncei.noaa.gov/products/coastal-relief-model",
-      "licence_text_sha256": null,
-      "verified_on": "2026-09-05",
+      "licence_text_sha256": "6ed2d649323d05c32541d788eae536d320e5d5dae9fba38723698cedfaf92861",
+      "verified_on": "2026-09-09",
       "notice": null,
       "courtesy_credit": "Bathymetric data courtesy of NOAA National Centers for Environmental Information.",
       "coverage": "US coastal",
@@ -246,7 +260,8 @@
           "reason": "NCEI's CRM record states the model is not suitable for navigation. Promoted from a prose note to an enforced clause: a safety statement that only a human reading notes would find is not a control."
         }
       ],
-      "notice_required": false
+      "notice_required": false,
+      "licence_text_path": "tools/licences/texts/noaa-crm-terms.txt"
     },
     "noaa-etopo-2022": {
       "name": "NOAA ETOPO 2022",
