@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/copy-legal.mjs",
     "build": "tsc --noEmit && vite build",
     "bundle:check": "node scripts/check-bundle-size.mjs",
     "typecheck": "tsc --noEmit",

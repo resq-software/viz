@@ -1042,6 +1042,14 @@ body:has(#settings-panel.open) .cockpit { display: none; }
 }
 
 .settings-footer { padding: 14px 18px 0; }
+.settings-legal {
+  margin: 10px 0 0;
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.65;
+}
+.settings-legal a { color: inherit; }
+.settings-legal span { margin: 0 6px; }
 .settings-reset-btn {
   width: 100%;
   padding: 8px;
