@@ -60,7 +60,12 @@ const TILE_SHA = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a48
 
 function manifestWith(layer: Record<string, unknown>, bbox: number[], extra: Record<string, unknown> = {}) {
     return {
-        schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1", ...extra,
+        schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1",
+        // Most fixtures below use usgs-3dep as a generic admissible source, and 3DEP requires
+        // the modification-disclosure clause. Declaring a clause a layer does not require is
+        // harmless, so this keeps those fixtures about the thing they are actually testing.
+        eula_clauses: ["usgs-modification-disclosure"],
+        ...extra,
         areas: [{
             id: "a", name: "A", bbox,
             tiles: [{ path: "data/tiles/t.tif", sha256: TILE_SHA, layers: [layer] }],

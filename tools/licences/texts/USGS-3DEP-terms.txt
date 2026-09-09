@@ -1,0 +1,44 @@
+USGS 3D Elevation Program (3DEP) — terms of access and use
+
+Not a licence: 3DEP products are works of the United States federal government and
+are in the public domain. What follows are the access, use and liability constraints
+USGS ships in the FGDC metadata beside every 3DEP tile, reproduced verbatim.
+
+Transcribed from the product's own metadata rather than a web page, because
+www.usgs.gov refuses automated fetches (HTTP 403) while the staged product metadata
+does not. The constraint text was confirmed byte-identical across tiles n19w156,
+n40w106, n36w076, n45w072 and n30w090, spanning publication dates 2023-05-22 to
+2026-07-29 — so it is product-level, not per-tile.
+
+Access constraints
+------------------
+None. Any downloading and use of these data signifies a user's agreement to
+comprehension and compliance of the USGS Standard Disclaimer. Insure all portions of
+metadata are read and clearly understood before using these data in order to protect
+both user and USGS interests.
+
+Use constraints
+---------------
+There is no guarantee or warranty concerning the accuracy of the data. Users should be
+aware that temporal changes may have occurred since these data were collected and that
+some parts of these data may no longer represent actual surface conditions. Users should
+not use these data for critical applications without a full awareness of their
+limitations. Acknowledgement of the originating agencies would be appreciated in
+products derived from these data. Any user who modifies the data is obligated to
+describe the types of modifications they perform. User specifically agrees not to
+misrepresent the data, nor to imply that changes made were approved or endorsed by the
+USGS. Please refer to https://www.usgs.gov/privacy.html for the USGS disclaimer.
+
+Distribution liability
+----------------------
+Although these data have been processed successfully on a computer system at the U.S.
+Geological Survey (USGS), no warranty expressed or implied is made regarding the display
+or utility of the data for other purposes, nor on all computer systems, nor shall the
+act of distribution constitute any such warranty. The USGS or the U.S. Government shall
+not be held liable for improper or incorrect use of the data described and/or contained
+herein.
+
+Data credit
+-----------
+Acknowledgement of the originating agencies would be appreciated in products derived
+from these data.
