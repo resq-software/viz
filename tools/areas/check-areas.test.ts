@@ -164,6 +164,37 @@ describe("the licence cross-check", () => {
         ok(/not vendored or hashed/.test(r.out), r.out);
     });
 
+    it("blocks on a drafted contract term nobody has ratified", () => {
+        // The gate refuses an unratified contract term. If this checker asked only whether the
+        // clause had TEXT, drafting one would make an area read bakeable here while its first
+        // tile was still refused — the two tools disagreeing about the same registry, which is
+        // exactly what this cross-check exists to prevent. It happened once with
+        // permitted_layers; this is the same shape.
+        const r = run(undefined, (reg) => {
+            reg.clauses["copernicus-6e-flowdown"].needs_drafting = false;
+            reg.clauses["copernicus-6e-flowdown"].text = "Licensee shall bind subsequent users.";
+            reg.clauses["copernicus-6e-flowdown"].kind = "contract-term";
+            reg.clauses["copernicus-6e-flowdown"].ratified = null;
+            // Clear the unrelated blocker so this one is what the assertion sees.
+            reg.clauses["jaxa-commercial-use-notification"].needs_drafting = false;
+            reg.clauses["jaxa-commercial-use-notification"].text = "Notified.";
+        });
+        ok(r.out.includes("contract term nobody has ratified"), r.out);
+        ok(/rhine-meuse-delta/.test(r.out), r.out);
+    });
+
+    it("stops blocking once that term is ratified", () => {
+        const r = run(undefined, (reg) => {
+            reg.clauses["copernicus-6e-flowdown"].needs_drafting = false;
+            reg.clauses["copernicus-6e-flowdown"].text = "Licensee shall bind subsequent users.";
+            reg.clauses["copernicus-6e-flowdown"].kind = "contract-term";
+            reg.clauses["copernicus-6e-flowdown"].ratified = { by: "Example Counsel", on: "2026-09-09" };
+            reg.clauses["jaxa-commercial-use-notification"].needs_drafting = false;
+            reg.clauses["jaxa-commercial-use-notification"].text = "Notified.";
+        });
+        ok(!r.out.includes("contract term nobody has ratified"), r.out);
+    });
+
     it("does not call an area bakeable when its source is not in the register", () => {
         const r = run((doc) => { doc.areas[0].sources.elevation = "no-such-source"; });
         ok(r.out.includes("not in the licence register"), r.out);

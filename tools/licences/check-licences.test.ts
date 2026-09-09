@@ -390,7 +390,7 @@ describe("gate, end to end", () => {
         ok(r.codes.includes("tile-without-layers"), r.codes.join(","));
     });
 
-    it("cannot discharge Copernicus while 6(e) is still unwritten", () => {
+    it("cannot discharge Copernicus while 6(e) is drafted but unratified", () => {
         // This case used to assert the opposite — that declaring both clause ids passed. It did
         // pass, and that was the defect: `declaredEulaClauses.has(id)` was the whole test, so the
         // manifest discharged an obligation by naming it. 6(e) requires a contractual clause
@@ -400,8 +400,11 @@ describe("gate, end to end", () => {
             { layer: "elevation", source: "copernicus-dem", fetched_at: at }, [0, 0, 1, 1],
             { eula_clauses: ["copernicus-6c-liability", "copernicus-6e-flowdown"] },
         ));
-        ok(!r.passed, "an undrafted contractual obligation must not pass");
-        ok(r.codes.includes("undrafted-eula-clause"), r.codes.join(","));
+        ok(!r.passed, "an unratified contractual obligation must not pass");
+        // 6(e) now HAS draft text, so the block moved from "nobody wrote it" to "nobody
+        // approved it". Both are correct refusals; this asserts the current one rather than
+        // the state the register happened to be in when the test was written.
+        ok(r.codes.includes("unratified-contract-term"), r.codes.join(","));
     });
 
     it("accepts 3DEP inside US territory", () => {
@@ -994,13 +997,33 @@ describe("an EULA clause is discharged by its text, not by its name", () => {
         [8.0, 46.0, 9.0, 47.0], { eula_clauses: eula });
 
     it("refuses a clause the register has no text for, however loudly declared", () => {
-        // 6(e) is contract drafting nobody has done. Naming it must not discharge it — this is
-        // the case the whole clause register exists for.
-        const r = runGate(copernicus(["copernicus-6c-liability", "copernicus-6e-flowdown"]));
-        ok(!r.passed, "an undrafted obligation must not pass because its id was typed");
-        ok(r.codes.includes("undrafted-eula-clause"), r.codes.join(","));
+        // Naming an obligation must not discharge it — the case the clause register exists for.
+        //
+        // Constructs an undrafted clause rather than borrowing whichever one happens to be
+        // undrafted today. The first version named copernicus-6e-flowdown, and then 6(e) was
+        // drafted, so the test began asserting the opposite of its own name.
+        const dir = mkdtempSync(join(tmpdir(), "licgate-undrafted-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.clauses["copernicus-6e-flowdown"] = {
+            origin: "fixture", needs_drafting: true, text: null,
+        };
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(
+            copernicus(["copernicus-6c-liability", "copernicus-6e-flowdown"])));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(!out.includes("Licence gate passed"),
+            "an undrafted obligation must not pass because its id was typed");
+        ok(out.includes("undrafted-eula-clause"), out);
         // ...and the underlying requirement is still reported unmet, not swallowed.
-        ok(r.codes.includes("missing-eula-clause"), r.codes.join(","));
+        ok(out.includes("missing-eula-clause"), out);
     });
 
     it("refuses a clause id that is not in the register at all", () => {
