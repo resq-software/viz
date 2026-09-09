@@ -1,9 +1,19 @@
 ---
 # Trigger - when should this workflow run?
+# On demand only, matching the other three agentic workflows in this repo — none of
+# them runs per-PR either.
+#
+# It used to run on `pull_request: [opened]` and failed 12 of its last 25 runs, all at
+# `Execute Gemini CLI` on free-tier Google AI Studio quota. So roughly half of all PRs
+# opened here carried a red check that meant nothing, on a job that is not a required
+# status check. A signal that is wrong half the time is worse than no signal: it teaches
+# people to skip the checks list, which is where the real failures also appear.
+#
+# The audit itself still has value when it runs, and CodeRabbit already reviews every PR
+# automatically — so this is available by dispatch when someone wants a second opinion,
+# without spending a coin-flip red square on every PR to get it.
 on:
-  pull_request:
-    types: [opened]
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 # Permissions - what can this workflow access?
 permissions:
