@@ -257,7 +257,20 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        # `--with-deps` runs `apt-get update`, and the hosted runner image carries Google's
+        # chrome-stable apt source. When that mirror serves a Packages.gz whose hash does not
+        # match its index — which it did on 2026-09-09, failing every PR for hours — apt exits
+        # 100 and this step dies, blocking the `required` check and therefore every merge.
+        #
+        # We do not need that source. Playwright downloads its own pinned Chromium build; the
+        # only thing apt provides here is shared libraries, and those come from Ubuntu's repos.
+        # Disabling it removes a third-party CDN from the critical path of every merge.
+        #
+        # Written to tolerate the file being absent, so a future runner image that drops it
+        # does not turn this mitigation into its own failure.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list                      /etc/apt/sources.list.d/google-chrome.sources
+          npx playwright install --with-deps chromium
 
       - name: Download the measured client build
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
