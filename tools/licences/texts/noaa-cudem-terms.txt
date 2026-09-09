@@ -1,0 +1,37 @@
+NOAA NCEI Continuously Updated Digital Elevation Model (CUDEM)
+
+Not a licence: produced by NOAA NCEI and not subject to copyright protection within the
+United States. What follows are the use limitations and constraints NOAA publishes in the
+ISO 19115-2 metadata record gov.noaa.ngdc.mgg.dem:199919 - 1/9 Arc-Second Resolution Bathymetric-Topographic Tiles, reproduced verbatim.
+
+Transcribed from the metadata record rather than the product web page, because the web
+page states the terms in prose while the record states them as constraint fields.
+
+------------------------------------------------------------------------
+Not to be used for navigation. Although these data are of high quality and useful for
+planning and modeling purposes, they are not suitable for navigation. For navigation,
+please refer to the NOS nautical chart series.
+
+------------------------------------------------------------------------
+Produced by the NOAA National Centers for Environmental Information. Not subject to
+copyright protection within the United States.
+
+------------------------------------------------------------------------
+Distribution liability: NOAA and NCEI make no warranty, expressed or implied, regarding
+these data, nor does the fact of distribution constitute such a warranty. NOAA and NCEI
+cannot assume liability for any damages caused by any errors or omissions in these data.
+If appropriate, NCEI can only certify that the data it distributes are an authentic copy
+of the records that were accepted for inclusion in the NCEI archives.
+
+------------------------------------------------------------------------
+Use liability: NOAA and NCEI cannot provide any warranty as to the accuracy,
+reliability, or completeness of furnished data. Users assume responsibility to determine
+the usability of these data. The user is responsible for the results of any application
+of this data for other than its intended purpose
+
+------------------------------------------------------------------------
+Cite as: Cooperative Institute for Research in Environmental Sciences (CIRES) at the
+University of Colorado, Boulder. 2014: Continuously Updated Digital Elevation Model
+(CUDEM) - 1/9 Arc-Second Resolution Bathymetric-Topographic Tiles. [indicate subset
+used]. NOAA National Centers for Environmental Information.
+https://doi.org/10.25921/ds9v-ky35. Accessed [date].

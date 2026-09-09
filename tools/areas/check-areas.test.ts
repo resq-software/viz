@@ -29,14 +29,30 @@ const REAL_AREAS = join(REPO, "data", "areas.json");
 const REAL_REGISTRY = join(REPO, "tools", "licences", "licences.json");
 
 /** Runs the checker over an areas document, against the real licence register. */
-function run(mutate?: (doc: any) => void): { status: number; out: string } {
+function run(
+    mutate?: (doc: any) => void,
+    mutateRegistry?: (reg: any) => void,
+): { status: number; out: string } {
     const doc = JSON.parse(readFileSync(REAL_AREAS, "utf8"));
     mutate?.(doc);
     const dir = mkdtempSync(join(tmpdir(), "areas-"));
     const path = join(dir, "areas.json");
     writeFileSync(path, JSON.stringify(doc));
+
+    // Tests that care about BLOCKED behaviour construct the block themselves rather than
+    // relying on whichever sources happen to be uncleared today. The first version of these
+    // asserted on the real registry's current state and broke the moment licence work landed,
+    // which made progress look like regression.
+    let registryPath = REAL_REGISTRY;
+    if (mutateRegistry) {
+        const reg = JSON.parse(readFileSync(REAL_REGISTRY, "utf8"));
+        mutateRegistry(reg);
+        registryPath = join(dir, "licences.json");
+        writeFileSync(registryPath, JSON.stringify(reg));
+    }
+
     const p = spawnSync(process.execPath,
-        ["--experimental-strip-types", CHECKER, "--areas", path, "--registry", REAL_REGISTRY],
+        ["--experimental-strip-types", CHECKER, "--areas", path, "--registry", registryPath],
         { encoding: "utf8" });
     return { status: p.status ?? -1, out: `${p.stdout}\n${p.stderr}` };
 }
@@ -137,10 +153,15 @@ describe("inputs this checker must refuse rather than misread", () => {
 
 describe("the licence cross-check", () => {
     it("reports an area blocked when a source is unverified or unhashed", () => {
-        const r = run();
-        // usgs-3dep is both today, and it is the single biggest blocker.
-        ok(r.out.includes("usgs-3dep"), r.out);
-        ok(/never verified|not vendored or hashed/.test(r.out), r.out);
+        // Constructs the block rather than assuming one exists: which sources are outstanding
+        // changes as licence work lands, and a test pinned to that reads a clearance as a break.
+        const r = run(undefined, (reg) => {
+            reg.sources["esa-worldcover"].verified_on = null;
+            reg.sources["esa-worldcover"].licence_text_sha256 = null;
+        });
+        ok(r.out.includes("esa-worldcover"), r.out);
+        ok(/never verified/.test(r.out), r.out);
+        ok(/not vendored or hashed/.test(r.out), r.out);
     });
 
     it("does not call an area bakeable when its source is not in the register", () => {
@@ -160,14 +181,20 @@ describe("the licence cross-check", () => {
     });
 
     it("counts areas, not occurrences, when ranking blockers", () => {
-        // noaa-cudem serves BOTH elevation and bathymetry at tangier-sound. Counting reasons
-        // instead of areas reported it blocking five areas when it blocks four, and that number
-        // was repeated before anyone checked it.
-        const r = run();
-        const line = r.out.split("\n").find((l) => l.includes("noaa-cudem")
-            && /^\s+\d+\s+noaa-cudem/.test(l));
+        // noaa-cudem serves BOTH elevation and bathymetry at tangier-sound, so counting reasons
+        // instead of areas overstated it by one. Blocked here on purpose so the arithmetic is
+        // exercised whatever the registry's real state is.
+        const r = run(undefined, (reg) => {
+            reg.sources["noaa-cudem"].licence_text_sha256 = null;
+        });
+        const line = r.out.split("\n").find((l) => /^\s+\d+\s+noaa-cudem\s*$/.test(l));
         ok(line, `no ranking line for noaa-cudem:\n${r.out}`);
-        strictEqual(line!.trim().split(/\s+/)[0], "4",
-            `noaa-cudem blocks four distinct areas, not five: ${line}`);
+
+        // Independently: how many DISTINCT areas name it, in any layer.
+        const areas = JSON.parse(readFileSync(REAL_AREAS, "utf8")).areas;
+        const distinct = areas.filter((a: any) =>
+            Object.values(a.sources).includes("noaa-cudem")).length;
+        strictEqual(line!.trim().split(/\s+/)[0], String(distinct),
+            `ranking must count distinct areas (${distinct}), not source occurrences: ${line}`);
     });
 });
