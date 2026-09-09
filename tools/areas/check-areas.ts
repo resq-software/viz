@@ -102,7 +102,11 @@ if (doc.schema !== SUPPORTED_SCHEMA) {
 }
 const registry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
 const allowed = new Set<string>(registry.policy.allowed_classes);
-const clauses: Record<string, { text?: string | null }> = registry.clauses ?? {};
+const clauses: Record<string, {
+  text?: string | null;
+  kind?: string;
+  ratified?: { by?: string; on?: string } | null;
+}> = registry.clauses ?? {};
 
 /**
  * Why a source cannot be baked today, or null when it can.
@@ -134,8 +138,15 @@ function blockedBecause(key: string, layer: string): string | null {
 
   for (const r of entry.restrictions ?? []) {
     if (r.kind !== "require-eula-clause" || !r.clause) continue;
-    if (!clauses[r.clause]?.text?.trim()) {
+    const clause = clauses[r.clause];
+    if (!clause?.text?.trim()) {
       reasons.push(`EULA clause "${r.clause}" has no drafted text`);
+    } else if (clause.kind === "contract-term" && !clause.ratified?.by?.trim()) {
+      // Asks the same question the gate asks. Checking only for text would report an area
+      // bakeable the moment someone DRAFTED a contract term, while the gate still refused the
+      // tile for want of a ratification — the two tools disagreeing about the same registry,
+      // which is the failure this cross-check exists to prevent.
+      reasons.push(`EULA clause "${r.clause}" is a contract term nobody has ratified`);
     }
   }
   return reasons.length ? reasons.join("; ") : null;
