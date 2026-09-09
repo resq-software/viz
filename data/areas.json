@@ -284,11 +284,11 @@
       },
       "targetCrs": "EPSG:32631",
       "sources": {
-        "elevation": "aw3d30@3.2",
+        "elevation": "aw3d30@4.1",
         "bathymetry": "emodnet-bathymetry",
         "landcover": "esa-worldcover"
       },
-      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there. Tier B by geography, not by blocker: the allowed 30 m source aw3d30@3.2 matches Copernicus to within ~0.5 m RMSE here, so counsel is not on the critical path. Both options are 30 m DSMs and marginal for a low-gradient flood scenario - see the design doc."
+      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there. The Netherlands is covered by AW3D30 v4.1, which JAXA void-filled with Copernicus DEM GLO-30, so this area inherits the Copernicus Article 6(c) and 6(e) obligations. 6(e) is undrafted, so counsel IS on this area's critical path."
     },
     {
       "id": "sendai-plain",
@@ -311,10 +311,10 @@
       },
       "targetCrs": "EPSG:32654",
       "sources": {
-        "elevation": "aw3d30@3.2",
+        "elevation": "aw3d30@3.1",
         "landcover": "esa-worldcover"
       },
-      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there. Tier B by geography, not by blocker: the allowed 30 m source aw3d30@3.2 matches Copernicus to within ~0.5 m RMSE here, so counsel is not on the critical path. Both options are 30 m DSMs and marginal for a low-gradient flood scenario - see the design doc."
+      "notes": "Elevation is a SURFACE model: below the tree line the routed surface is canopy top, not ground. Bake the WorldCover tree-cover mask with it and have CheckRoute decline a confident verdict there. Japan is covered by AW3D30 v3.1 per JAXA's version map - not v3.2 (33 tiles worldwide) and not v4.1 (which excludes Japan). v3.1 is pre-v4 and carries no Copernicus content, so this area does NOT depend on the Copernicus clauses. It is still blocked by JAXA's own commercial-use obligation, which applies to every AW3D30 version."
     }
   ]
 }

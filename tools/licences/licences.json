@@ -114,6 +114,13 @@
       "needs_drafting": false,
       "text": "Elevation data in this product derived from the USGS 3D Elevation Program have been modified from the form USGS distributes them in. They are reprojected to a local grid, resampled to the product's own resolution, clipped to the area of interest, and re-encoded; per-tile detail of every transformation applied is recorded in the product's provenance manifest. These modifications are ours. They were not approved or endorsed by the USGS, and nothing here should be read as a USGS statement about the data.",
       "notes": "The USGS use constraints say a user who modifies the data 'is obligated to describe the types of modifications they perform', and 'specifically agrees not to misrepresent the data, nor to imply that changes made were approved or endorsed by the USGS'. A bake does modify: reproject, resample, clip, re-encode. The duty is theirs; this wording is ours. Recorded as a clause rather than a notes paragraph because a notes paragraph is not a control - the registry previously carried this obligation nowhere at all."
+    },
+    "jaxa-commercial-use-notification": {
+      "origin": "JAXA Terms of Use of Research Data, clause 2.3",
+      "mandated_verbatim": false,
+      "needs_drafting": true,
+      "text": null,
+      "notes": "Clause 2.3 verbatim: 'The user can use the Research Data for commercial purposes without a fee; however, the user needs to notify JAXA thereof in advance.' This is an ACTION, not a notice - nothing written in our own documentation discharges it. Someone has to notify JAXA at earth@ml.jaxa.jp before commercial use, and record here that they did. needs_drafting is the closest flag the register has and its name understates the case: the blocker is a notification nobody has sent, not wording nobody has written. Left unsatisfiable on purpose. NOTE ALSO clause 2.5, 'The terms are subject to change without notice', and clause 3, 'The copyrights of the products provided in the Service are the property of JAXA' - so this is licensed material, not public domain. CONFLICT FOR COUNSEL, found on reading the incorporated document: Research Data clause 2.3 permits commercial use subject to advance NOTIFICATION, while the JAXA Site Policy - which 2.3's own preamble says the user 'is required to follow' in addition - states that 'use of the Materials for business or commercial purposes without the prior PERMISSION of the copyright holder (JAXA) is strictly prohibited'. Notification and permission are different obligations and only one of them can be discharged unilaterally. Whether the Site Policy's 'Materials' reaches data hosted on eorc.jaxa.jp is arguable; both texts are vendored so counsel can read them rather than take this summary's word for it."
     }
   },
   "sources": {
@@ -751,8 +758,8 @@
       "class": "attribution",
       "spdx": null,
       "licence_url": "https://www.eorc.jaxa.jp/ALOS/en/dataset/aw3d30/",
-      "licence_text_sha256": null,
-      "verified_on": "2026-09-06",
+      "licence_text_sha256": "fd429b226838aa75516f0a7ce2601ad6854c8569adf42fc43bd54f222f695adf",
+      "verified_on": "2026-09-09",
       "notice": "The original data is provided by JAXA. (c) JAXA ALOS World 3D - 30m",
       "notice_required": true,
       "courtesy_credit": null,
@@ -760,9 +767,16 @@
         "elevation"
       ],
       "coverage": "Global",
-      "restrictions": [],
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "jaxa-commercial-use-notification",
+          "reason": "JAXA terms 2.3 requires advance notification of commercial use."
+        }
+      ],
       "derived_from": [],
-      "notes": "Pre-v4. The dataset's own section 5 terms permit commercial and non-commercial use free of charge, requiring that JAXA be shown as the provider of the original data when products are supplied to third parties. Carries NO Copernicus content - that arrives at v4.0. NOTE: a separate, general JAXA research-data policy carries an advance-notification duty and a terms-may-change clause. Which of the two instruments governs this dataset is unresolved; the narrower dataset-specific terms are recorded here, and an earlier revision of this registry wrongly treated the broader policy as settled."
+      "notes": "CLASS IS UNDER QUESTION - see clause 2.3. The previous note here claimed 'the dataset's own section 5 terms permit commercial and non-commercial use free of charge, requiring that JAXA be shown as the provider'. That is FALSE: section 5 of the AW3D30 page says only that the dataset 'is available to use with no charge under the \"Terms for Use\"' and links to the general JAXA Terms of Use of Research Data. Those terms govern, and 2.3 requires ADVANCE NOTIFICATION to JAXA before commercial use. 'attribution' means a notice discharges the obligation; an advance notification is an action and is not discharged by any notice. Counsel should rule on the class; until then the require-eula-clause blocks the source. SCOPE: v3.2 is THIRTY-THREE tiles out of 23,993 - four small corrective releases (19+2+7+5) between Jan 2021 and Feb 2022, each replacing v3.1 tiles. It is 0.14% of the globe and is NOT a general-purpose elevation source. An area needing global AW3D30 receives v4.1, or v3.1 over Japan. Pinning an area to @3.2 names something that almost certainly does not cover it.",
+      "licence_text_path": "tools/licences/texts/JAXA-research-data-terms.txt"
     },
     "aw3d30@4.0": {
       "name": "ALOS World 3D 30m (AW3D30)",
@@ -793,7 +807,68 @@
       "derived_from": [
         "copernicus-dem"
       ],
-      "notes": "EXCLUDED BY DEFAULT relative to @3.2, and the reason is the whole argument for version pinning: v4.0 is produced using Copernicus GLO-30-F and reproduces its attribution and liability text. The obligation is acquired by UPGRADING, not spread through the pixels, so the control is a pin rather than a mask. Admissible only if the Copernicus clauses are accepted."
+      "notes": "EXCLUDED BY DEFAULT relative to @3.2, and the reason is the whole argument for version pinning: v4.0 is produced using Copernicus GLO-30-F and reproduces its attribution and liability text. The obligation is acquired by UPGRADING, not spread through the pixels, so the control is a pin rather than a mask. Admissible only if the Copernicus clauses are accepted. SCOPE CORRECTION: v4.0 is 1,886 tiles covering PART OF ANTARCTICA, not a global release. JAXA's release notes place the Copernicus GLO-30 void-fill at v4.1, so the Copernicus inheritance recorded here should be re-read against the v4.0 product description directly."
+    },
+    "aw3d30@3.1": {
+      "name": "ALOS World 3D-30m v3.1",
+      "class": "attribution",
+      "spdx": null,
+      "licence_url": "https://earth.jaxa.jp/en/data/policy/",
+      "licence_text_path": "tools/licences/texts/JAXA-research-data-terms.txt",
+      "licence_text_sha256": "fd429b226838aa75516f0a7ce2601ad6854c8569adf42fc43bd54f222f695adf",
+      "verified_on": "2026-09-09",
+      "notice": "The original data used for this product have been supplied by JAXA's ALOS World 3D-30m (AW3D30).",
+      "courtesy_credit": null,
+      "coverage": "23,997 tiles released Apr 2020 + Jan 2021 - effectively global at the time, and per JAXA's current version map still what covers JAPAN and most of Antarctica. Pre-v4, so it carries NO Copernicus content. This is the version a Japan-area bake actually receives.",
+      "notes": "CLASS IS UNDER QUESTION - see clause 2.3. The previous note here claimed 'the dataset's own section 5 terms permit commercial and non-commercial use free of charge, requiring that JAXA be shown as the provider'. That is FALSE: section 5 of the AW3D30 page says only that the dataset 'is available to use with no charge under the \"Terms for Use\"' and links to the general JAXA Terms of Use of Research Data. Those terms govern, and 2.3 requires ADVANCE NOTIFICATION to JAXA before commercial use. 'attribution' means a notice discharges the obligation; an advance notification is an action and is not discharged by any notice. Counsel should rule on the class; until then the require-eula-clause blocks the source. 23,997 tiles released Apr 2020 + Jan 2021 - effectively global at the time, and per JAXA's current version map still what covers JAPAN and most of Antarctica. Pre-v4, so it carries NO Copernicus content. This is the version a Japan-area bake actually receives.",
+      "permitted_layers": [
+        "elevation"
+      ],
+      "notice_required": true,
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "jaxa-commercial-use-notification",
+          "reason": "JAXA terms 2.3 requires advance notification of commercial use. Nobody has sent it, so the source is blocked until someone does and records it."
+        }
+      ]
+    },
+    "aw3d30@4.1": {
+      "name": "ALOS World 3D-30m v4.1",
+      "class": "flow-down",
+      "spdx": null,
+      "licence_url": "https://earth.jaxa.jp/en/data/policy/",
+      "licence_text_path": "tools/licences/texts/JAXA-research-data-terms.txt",
+      "licence_text_sha256": "fd429b226838aa75516f0a7ce2601ad6854c8569adf42fc43bd54f222f695adf",
+      "verified_on": "2026-09-09",
+      "notice": "The original data used for this product have been supplied by JAXA's ALOS World 3D-30m (AW3D30).",
+      "courtesy_credit": null,
+      "coverage": "19,051 tiles released Apr 2024, covering the globe EXCEPT Japan and Antarctica - so this, not @4.0, is what most of the world actually receives today. JAXA's release notes record Copernicus DEM GLO-30 added as supplementary void-fill data at THIS version, which is why it is flow-down and why it inherits the Copernicus Article 6(c) and 6(e) clauses.",
+      "notes": "CLASS IS UNDER QUESTION - see clause 2.3. The previous note here claimed 'the dataset's own section 5 terms permit commercial and non-commercial use free of charge, requiring that JAXA be shown as the provider'. That is FALSE: section 5 of the AW3D30 page says only that the dataset 'is available to use with no charge under the \"Terms for Use\"' and links to the general JAXA Terms of Use of Research Data. Those terms govern, and 2.3 requires ADVANCE NOTIFICATION to JAXA before commercial use. 'attribution' means a notice discharges the obligation; an advance notification is an action and is not discharged by any notice. Counsel should rule on the class; until then the require-eula-clause blocks the source. 19,051 tiles released Apr 2024, covering the globe EXCEPT Japan and Antarctica - so this, not @4.0, is what most of the world actually receives today. JAXA's release notes record Copernicus DEM GLO-30 added as supplementary void-fill data at THIS version, which is why it is flow-down and why it inherits the Copernicus Article 6(c) and 6(e) clauses.",
+      "permitted_layers": [
+        "elevation"
+      ],
+      "notice_required": true,
+      "derived_from": [
+        "copernicus-dem"
+      ],
+      "restrictions": [
+        {
+          "kind": "require-eula-clause",
+          "clause": "jaxa-commercial-use-notification",
+          "reason": "JAXA terms 2.3 requires advance notification of commercial use. Nobody has sent it, so the source is blocked until someone does and records it."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "copernicus-6c-liability",
+          "reason": "Inherited via Copernicus GLO-30 void-fill added at v4.1."
+        },
+        {
+          "kind": "require-eula-clause",
+          "clause": "copernicus-6e-flowdown",
+          "reason": "Inherited via Copernicus GLO-30 void-fill added at v4.1."
+        }
+      ]
     }
   }
 }

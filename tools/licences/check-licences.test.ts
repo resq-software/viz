@@ -116,6 +116,7 @@ function runGate(manifest: Record<string, unknown>): {
     passed: boolean;
     codes: string[];
     warns: string[];
+    out: string;
 } {
     const root = mkdtempSync(join(tmpdir(), "licgate-"));
     makeFixtureRoot(root);
@@ -133,6 +134,7 @@ function runGate(manifest: Record<string, unknown>): {
         // Warnings too: a test that asserts a WARNING is absent cannot do it by reading errors,
         // and one that claims to is a test whose name is broader than its assertion.
         warns: [...out.matchAll(/^WARN {2}([a-z-]+)/gm)].map((m) => m[1]!),
+        out,
     };
 }
 
@@ -893,15 +895,27 @@ describe("a version pin is a claim about the bytes served", () => {
         const r = runGate(layer({ served_versions: ["4.0"] }));
         ok(!r.passed, "a version that was not declared must not pass on the declared one's terms");
         ok(r.codes.includes("served-version-mismatch"), r.codes.join(","));
-        ok(!r.codes.includes("missing-eula-clause"),
-            "and the clause check demonstrably did NOT run for the served version — which is "
-            + "exactly why the mismatch has to be caught here");
+        // The clause check runs against the DECLARED entry's restrictions, never the served
+        // one's. @4.0 inherits the two Copernicus clauses and @3.2 does not, so the findings
+        // name @3.2's clause and never @4.0's — which is the whole reason the mismatch needs
+        // its own check.
+        //
+        // The first version of this assertion read `.some(c => c === "..." && false)`, which is
+        // always false and so always passed. A tautology dressed as a check, written one commit
+        // after adding tests about exactly that. It now asserts on real output.
+        ok(r.codes.includes("missing-eula-clause"),
+            `@3.2's own JAXA clause should be reported: ${r.codes.join(",")}`);
+        ok(!/copernicus/.test(r.out),
+            "@4.0's Copernicus clauses must be ABSENT — they were never evaluated, because the "
+            + `check ran against the declared entry: ${r.out}`);
     });
 
     it("fails when the served version has no registry entry at all", () => {
-        // v3.1 is what JAXA serves over Japan, and it is not in the register. Unknown terms must
-        // not be admitted on the strength of a neighbouring version's key.
-        const r = runGate(layer({ served_versions: ["3.1"] }));
+        // Unknown terms must not be admitted on the strength of a neighbouring version's key.
+        // Uses a version that does not and will not exist, rather than a real one — the first
+        // version of this test named v3.1, which was then added to the register, so the test
+        // started asserting the opposite of what it was written for.
+        const r = runGate(layer({ served_versions: ["9.9"] }));
         ok(!r.passed, "an unregistered version has unknown terms and must not pass");
         ok(r.codes.includes("unregistered-served-version"), r.codes.join(","));
     });
@@ -938,9 +952,28 @@ describe("a version pin is a claim about the bytes served", () => {
     });
 
     it("passes when the served version is the pinned one", () => {
-        const r = runGate(layer({ served_versions: ["3.2"] }));
-        ok(r.passed, `expected pass, got: ${r.codes.join(",")}`);
-        ok(!r.warns.includes("unverified-version-pin"), r.warns.join(","));
+        // Built on a fixture registry rather than the real one. Every version-pinned source in
+        // the register now carries JAXA's undrafted commercial-notification clause and therefore
+        // cannot pass — correctly. This test is about the version check agreeing with itself, so
+        // it removes the unrelated blocker instead of losing the happy path altogether.
+        const dir = mkdtempSync(join(tmpdir(), "licgate-vok-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        reg.sources["aw3d30@3.2"].restrictions =
+            (reg.sources["aw3d30@3.2"].restrictions ?? [])
+                .filter((r: { kind: string }) => r.kind !== "require-eula-clause");
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(layer({ served_versions: ["3.2"] })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        const out = `${p.stdout}\n${p.stderr}`;
+        ok(out.includes("Licence gate passed"), out);
+        ok(!out.includes("unverified-version-pin"), out);
     });
 
     it("leaves an unpinned source alone", () => {

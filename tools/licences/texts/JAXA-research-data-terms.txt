@@ -1,0 +1,184 @@
+JAXA terms as they govern ALOS World 3D-30m (AW3D30)
+
+AW3D30's own dataset page, section 5 'Terms of Use', states in full only that the
+dataset 'is available to use with no charge under the "Terms for Use"' and links to
+the first document below. There are no dataset-specific terms.
+
+BOTH documents are reproduced because the first incorporates the second by reference:
+'In addition to the terms, the user of the Research Data is required to follow the
+Terms of Use on JAXA's Site Policy page.'
+
+==============================================================================
+PART A — Terms of Use of Research Data
+https://earth.jaxa.jp/en/data/policy/
+==============================================================================
+
+The user should comply with the following terms when using the images and research data
+(Research Data) on the website of the Space Technology Directorate I at the Japan
+Aerospace Exploration Agency (JAXA) which has the clear statement to the effect that the
+use of the images and research data is subject to the Terms of Use of Research Data. In
+addition to the terms, the user of the Research Data is required to follow the Terms of
+Use on JAXA’s Site Policy page.
+(
+https://global.jaxa.jp/policy.html
+)
+1. Disclaimers
+JAXA holds no liability for any consequence caused by the use of the Research Data or by
+the quality thereof.
+2. The Terms of Use of Research Data
+As long as complying with the following paragraphs 2.1 – 2.5, the user can use, modify
+or distribute to the third party the Research Data at his/her disposal without a fee.
+2.1. Credit
+When using the Research Data, the user is required to indicate its sources (JAXA and the
+research name) so that JAXA can be acknowledged as the original distributor of the
+Research Data. The user also needs to credit JAXA as the original distributor when
+distributing any derivatives of the Research Data to any third party or making such
+derivatives public. As for the Research Data containing data provided by organizations
+other than JAXA, the user is requested to acknowledge not only JAXA but also such
+organizations.
+The examples of acknowledgments and credit lines:
+(Put an appropriate research name for XXXX such as AW3D or GSMaP.)
+“The data used for this paper have been provided by XXXX of the Japan Aerospace
+Exploration Agency.”
+“The original data used for this product have been supplied by JAXA’s XXXX.”
+“Credit: XXXX (JAXA)”
+“Provided by XXXX (Japan Aerospace Exploration Agency)”
+If the Research Data are provided by not only JAXA but also other organizations, the
+user should indicate as follows (examples in the case of NASA):
+“The data used for this paper have been provided through XXXX of the Japan Aerospace
+Exploration Agency and the National Aeronautics and Space Administration.”
+“Credit: XXXX (JAXA/NASA)”
+2.2. Publicizes a product using the Research Data
+When the user publicizes a product using the Research Data such as research papers, it
+would be appreciated if the user could, where possible, notify JAXA at the contact
+address on the website or the email below.
+2.3. Commercial purposes use
+The user can use the Research Data for commercial purposes without a fee; however, the
+user needs to notify JAXA thereof in advance.
+2.4. GDPR
+JAXA handles the personal information such as names and e-mail addresses in accordance
+with the Code and other laws and regulations regarding personal information including
+GDPR and JAXA’s rules on protection of personal information. For details, refer to”
+Consent for handling personal information based on GDPR
+“.
+2.5. Change of the terms
+The terms are subject to change without notice.
+3. Ownership of Data
+The copyrights of the products provided in the Service are the property of JAXA.
+4. Inquiries
+For any inquiries about the terms, notification of the commercial use of the Research
+Data etc., please contact us at:
+earth*ml.jaxa.jp
+(Please replace “*” with “@”)
+Data usage policy team, Space Technology Directorate I, JAXA
+
+==============================================================================
+PART B — JAXA Site Policy, Terms of Use (incorporated by Part A)
+https://global.jaxa.jp/policy.html
+==============================================================================
+
+Terms of Use
+Your use of the materials, including texts, drawings, images, voice data and video data,
+published on this website (hereinafter referred to as the "Site") operated by the Japan
+Aerospace Exploration Agency (hereinafter referred to as "JAXA") shall be in compliance
+with the terms and conditions set forth herein (the "Terms of Use").
+Your browsing or linking of the Site, downloading or reprinting of the materials
+contained in the Site, or otherwise using the Site constitutes your agreement to be
+bound by the Terms of Use.
+The Terms of Use may be revised or changed without any prior notice. If the Terms of Use
+are revised or changed, JAXA will post the new terms on the Site to inform you of such
+revision or change. Please check the Terms of Use periodically for changes even after
+you have browsed or linked to the Site, or downloaded or reprinted any materials
+contained in the Site, or otherwise used the Site. Your use of the Site following the
+posting of such a revision or change shall constitute your acceptance of the Terms of
+Use as revised.
+Please note that the site policies or equivalent statements on websites of the three
+former organizations that were merged into JAXA, (namely, National Space Development
+Agency of Japan (NASDA), the Institute of Space and Astronautical Science (ISAS), and
+National Aerospace Laboratory (NAL)), have lost their validity. Therefore, only the
+Terms of Use will be applied for the use of any material including texts, drawings,
+images, voice data, and video data available from the websites of the three
+organizations.
+1. Disclaimer
+Please be aware in advance that:
+Although JAXA has taken every care to manage the Site, JAXA assumes no responsibility
+regarding the safety of the contents of the Site or the reliability of information
+provided on the Site. JAXA is not responsible to you for any damage that may be caused
+by the use of the Site and/or the information on the Site.
+JAXA may change or delete the information on the Site, or may suspend or terminate the
+operation of the Site without any prior notice. JAXA is not responsible to you for any
+inconvenience that may be caused by such changes or deletion of the information, or by
+such suspension or termination of the operation of the Site.
+2. Scope and Conditions for Use of the Contents of the Site
+(1) Scope of Use
+Unless otherwise stated, all materials, including texts, drawings, images, voice data,
+and video data, published on the Site (the "Materials") and the copyrights therein are
+the property of JAXA, and the Materials are protected in Japan and internationally by
+copyright laws and international copyright treaties. When you use the Materials, you are
+requested to comply with the conditions stipulated by JAXA.
+It is to be noted that, under copyright laws, you may use the Materials without
+obtaining permission of the copyright holder (JAXA) to the extent that your use is for
+the purpose of press (media) activity/scientific research/educational activity/ and/or
+private use (for example, printing out the Materials and/or storing the same on a hard
+disc for the purpose of use in the course of lessons in a school or other educational
+institutions established for nonprofit-making or for the purpose of personal use, family
+use or other similar uses within a limited circle).
+When you use our materials for the purposes mentioned above, you are requested to comply
+with the conditions of use set forth in paragraph (2) below pursuant to copyright laws.
+However, please note that the following uses are not covered by the aforementioned scope
+of use.
+For using materials about individuals including astronauts without prior permission from
+JAXA in order to protect the publicity rights and the rights of portraits of
+individuals.
+For using materials, including texts, drawings, images, vice data and video data, that
+belong to other organizations apart from JAXA. If you wish to use such materials, please
+contact the copyright holder of the said material.
+For using the JAXA logo.The JAXA logo is a registered trademark in Japan and other
+countries. It is not available for the general public to use unless prior permission is
+received from the trademark holder (JAXA.)
+Your use of the Materials for business or commercial purposes without the prior
+permission of the copyright holder (JAXA) is strictly prohibited. If you wish to use the
+Materials for such business or commercial purposes, please be sure to contact us for
+prior permission at:
+Public Affairs Department
+Japan Aerospace Exploration Agency (JAXA)
+Ochanomizu sola city, 4-6 Kandasurugadai, Chiyoda-ku, Tokyo 101-8008 Japan
+Contact and FAQ
+You are strictly prohibited to use the Materials published on the Site for any of the
+following acts for any reason whatsoever:
+Acts of supporting and/or promoting, or slandering and/or defaming the activity of a
+specific person/group/organization;
+Acts which are conducted for the purpose of or in a manner offending public order and
+morals;
+Acts which are likely to cause misunderstanding about JAXA's operations and/or Japanese
+aerospace research and development activities; or
+Acts which are likely to damage JAXA's image and/or reputation, or to infringe upon the
+rights of a specific person and/or organization (Please be aware that these acts also
+include an act of pretending or misleading people into believing that a certain
+achievement published on the Site (including academic theses) is your achievement you.)
+(2) Conditions of Use
+(Indication of Source)
+When you use the Materials on the Site, you are requested to indicate their source in
+such a manner as designated by JAXA, for example, "Provided by Japan Aerospace
+Exploration Agency (JAXA)" or "Courtesy of JAXA". If space is limited, shorter versions
+of the indication such as "Provided by JAXA" or "JAXA" are acceptable.
+Some of the Materials may be owned and provided by an other organization or jointly
+owned by an other organization and JAXA. As long as the source of the Materials is
+specified on The Site, you are requested to indicate the said source (i.e. "Provided by
+NASA" or "Provided by NASA/JAXA")
+(Modification of Data)
+No modification is allowed to any of the Materials, except for a modification needed for
+indicating their source. The act of "modification" includes, but not limited to, acts of
+trimming a drawing, image, voice data or video data (for example, an act of changing the
+ratio of height and length of an image, cropping part of an image, or mounting an image
+inside another image that seriously undermines the original image etc.), changing
+colors, and turning over an image.
+(JAXA Digital Archives)
+When you wish to utilize any materials, including texts, drawings, images, voice data
+and video data, saved in the JAXA Digital Archives, please refer to "Copyright
+Information" in the Digital Archives before you use the same.
+Click here for more information on Digital Archives
+Inquiries:
+Open hours: 9:30 to 12:15, 13:00 to 17:30
+(Weekdays)(JST)
+Contact and FAQ
