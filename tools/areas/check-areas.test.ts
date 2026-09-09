@@ -123,6 +123,18 @@ describe("geometry that would otherwise be wrong quietly", () => {
     });
 });
 
+describe("inputs this checker must refuse rather than misread", () => {
+    it("rejects a schema it does not understand", () => {
+        // The AreaDoc interface is an assertion, not a check. A schema-2 document with similar
+        // fields would validate under schema-1 rules and be reported clean — a pass from
+        // something that never actually checked it.
+        const r = run((doc) => { doc.schema = 2; });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("only"), r.out);
+        ok(r.out.includes("schema"), r.out);
+    });
+});
+
 describe("the licence cross-check", () => {
     it("reports an area blocked when a source is unverified or unhashed", () => {
         const r = run();
@@ -136,5 +148,26 @@ describe("the licence cross-check", () => {
         ok(r.out.includes("not in the licence register"), r.out);
         // The definition is still valid — the area is blocked, not malformed.
         strictEqual(r.status, 0, r.out);
+    });
+
+    it("blocks a source used for a layer its licence does not cover", () => {
+        // The licence gate enforces permitted_layers per manifest layer. Without the same check
+        // here an area reads bakeable and then has its first tile rejected — the disagreement
+        // this cross-check exists to prevent. usgs-3dep is elevation-only.
+        const r = run((doc) => { doc.areas[0].sources.landcover = "usgs-3dep"; });
+        ok(r.out.includes('does not supply the "landcover" layer'), r.out);
+        strictEqual(r.status, 0, r.out);
+    });
+
+    it("counts areas, not occurrences, when ranking blockers", () => {
+        // noaa-cudem serves BOTH elevation and bathymetry at tangier-sound. Counting reasons
+        // instead of areas reported it blocking five areas when it blocks four, and that number
+        // was repeated before anyone checked it.
+        const r = run();
+        const line = r.out.split("\n").find((l) => l.includes("noaa-cudem")
+            && /^\s+\d+\s+noaa-cudem/.test(l));
+        ok(line, `no ranking line for noaa-cudem:\n${r.out}`);
+        strictEqual(line!.trim().split(/\s+/)[0], "4",
+            `noaa-cudem blocks four distinct areas, not five: ${line}`);
     });
 });

@@ -48,6 +48,14 @@ interface Origin {
   verticalReference: string;
 }
 
+interface RegistryEntry {
+  class: string;
+  verified_on?: string | null;
+  licence_text_sha256?: string | null;
+  permitted_layers?: string[];
+  restrictions?: { kind: string; clause?: string }[];
+}
+
 interface Area {
   id: string;
   name: string;
@@ -79,6 +87,19 @@ const fail = (area: string, code: string, message: string) =>
   problems.push({ area, code, message });
 
 const doc: AreaDoc = JSON.parse(readFileSync(AREAS_PATH, "utf8"));
+
+// The interface above is an assertion, not a check — a schema-2 document with structurally
+// similar fields would be validated under schema-1 rules and reported clean. Refuse what this
+// checker does not know how to read, the same way the licence gate refuses an unknown
+// restriction kind rather than skipping it.
+const SUPPORTED_SCHEMA = 1;
+if (doc.schema !== SUPPORTED_SCHEMA) {
+  console.error(
+    `${AREAS_PATH} declares schema ${JSON.stringify(doc.schema)}, but this checker only `
+    + `understands ${SUPPORTED_SCHEMA}. Validating it under the wrong rules would report a clean `
+    + `result for a document nothing has actually checked.`);
+  process.exit(1);
+}
 const registry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
 const allowed = new Set<string>(registry.policy.allowed_classes);
 const clauses: Record<string, { text?: string | null }> = registry.clauses ?? {};
@@ -90,14 +111,24 @@ const clauses: Record<string, { text?: string | null }> = registry.clauses ?? {}
  * reported bakeable here does not then fail the gate on its first tile.
  *
  * @param key Registry key.
+ * @param layer Layer the area draws from this source.
  * @returns Semicolon-joined reasons, or null when nothing blocks it.
  */
-function blockedBecause(key: string): string | null {
+function blockedBecause(key: string, layer: string): string | null {
   const entry = registry.sources[key];
   if (!entry || typeof entry === "string") return "not in the licence register";
   if (!allowed.has(entry.class)) return `class "${entry.class}" is excluded`;
 
   const reasons: string[] = [];
+
+  // The gate enforces this per manifest layer, so without it here an area could be reported
+  // bakeable and then have its first tile rejected — which is exactly the disagreement this
+  // function's contract promises not to have.
+  if (entry.permitted_layers && !entry.permitted_layers.includes(layer)) {
+    reasons.push(
+      `does not supply the "${layer}" layer (permits ${entry.permitted_layers.join(", ")})`);
+  }
+
   if (!entry.verified_on) reasons.push("never verified against its publisher page");
   if (!entry.licence_text_sha256) reasons.push("licence text not vendored or hashed");
 
@@ -186,7 +217,7 @@ const blocked: { id: string; reasons: string[] }[] = [];
 for (const area of doc.areas) {
   const reasons: string[] = [];
   for (const [layer, key] of Object.entries(area.sources)) {
-    const why = blockedBecause(key);
+    const why = blockedBecause(key, layer);
     if (why) reasons.push(`${layer} (${key}): ${why}`);
   }
   if (reasons.length) blocked.push({ id: area.id, reasons });
@@ -210,17 +241,20 @@ if (blocked.length) {
 
 // Which source unblocks the most, so the next licence task picks itself rather than being
 // chosen by whoever last looked at the list.
-const cost = new Map<string, number>();
+// Count AREAS, not occurrences. One source can serve two layers in the same area — noaa-cudem
+// supplies both elevation and bathymetry at tangier-sound — and counting the reasons instead of
+// the areas overstated it by one, which is the sort of number that then gets repeated.
+const cost = new Map<string, Set<string>>();
 for (const b of blocked) {
   for (const r of b.reasons) {
     const key = r.slice(r.indexOf("(") + 1, r.indexOf(")"));
-    cost.set(key, (cost.get(key) ?? 0) + 1);
+    (cost.get(key) ?? cost.set(key, new Set()).get(key)!).add(b.id);
   }
 }
 if (cost.size) {
   console.log("Blocking sources, by how many areas each holds up:");
-  for (const [key, n] of [...cost].sort((a, b) => b[1] - a[1])) {
-    console.log(`  ${String(n).padStart(2)}  ${key}`);
+  for (const [key, ids] of [...cost].sort((a, b) => b[1].size - a[1].size)) {
+    console.log(`  ${String(ids.size).padStart(2)}  ${key}`);
   }
   console.log("");
 }
