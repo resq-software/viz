@@ -116,6 +116,7 @@ function runGate(manifest: Record<string, unknown>): {
     passed: boolean;
     codes: string[];
     warns: string[];
+    out: string;
 } {
     const root = mkdtempSync(join(tmpdir(), "licgate-"));
     makeFixtureRoot(root);
@@ -133,6 +134,7 @@ function runGate(manifest: Record<string, unknown>): {
         // Warnings too: a test that asserts a WARNING is absent cannot do it by reading errors,
         // and one that claims to is a test whose name is broader than its assertion.
         warns: [...out.matchAll(/^WARN {2}([a-z-]+)/gm)].map((m) => m[1]!),
+        out,
     };
 }
 
@@ -894,11 +896,18 @@ describe("a version pin is a claim about the bytes served", () => {
         ok(!r.passed, "a version that was not declared must not pass on the declared one's terms");
         ok(r.codes.includes("served-version-mismatch"), r.codes.join(","));
         // The clause check runs against the DECLARED entry's restrictions, never the served
-        // one's. @4.0 inherits the two Copernicus clauses and @3.2 does not, so those two are
-        // absent from the findings even though @4.0 is what actually arrived — which is the
-        // whole reason the mismatch has to be caught by its own check.
-        ok(!r.codes.some((c) => c === "missing-eula-clause" && false), "sanity");
-        ok(!/copernicus-6e/.test(r.codes.join(",")), r.codes.join(","));
+        // one's. @4.0 inherits the two Copernicus clauses and @3.2 does not, so the findings
+        // name @3.2's clause and never @4.0's — which is the whole reason the mismatch needs
+        // its own check.
+        //
+        // The first version of this assertion read `.some(c => c === "..." && false)`, which is
+        // always false and so always passed. A tautology dressed as a check, written one commit
+        // after adding tests about exactly that. It now asserts on real output.
+        ok(r.codes.includes("missing-eula-clause"),
+            `@3.2's own JAXA clause should be reported: ${r.codes.join(",")}`);
+        ok(!/copernicus/.test(r.out),
+            "@4.0's Copernicus clauses must be ABSENT — they were never evaluated, because the "
+            + `check ran against the declared entry: ${r.out}`);
     });
 
     it("fails when the served version has no registry entry at all", () => {

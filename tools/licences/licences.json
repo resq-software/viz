@@ -120,7 +120,7 @@
       "mandated_verbatim": false,
       "needs_drafting": true,
       "text": null,
-      "notes": "Clause 2.3 verbatim: 'The user can use the Research Data for commercial purposes without a fee; however, the user needs to notify JAXA thereof in advance.' This is an ACTION, not a notice - nothing written in our own documentation discharges it. Someone has to notify JAXA at earth@ml.jaxa.jp before commercial use, and record here that they did. needs_drafting is the closest flag the register has and its name understates the case: the blocker is a notification nobody has sent, not wording nobody has written. Left unsatisfiable on purpose. NOTE ALSO clause 2.5, 'The terms are subject to change without notice', and clause 3, 'The copyrights of the products provided in the Service are the property of JAXA' - so this is licensed material, not public domain."
+      "notes": "Clause 2.3 verbatim: 'The user can use the Research Data for commercial purposes without a fee; however, the user needs to notify JAXA thereof in advance.' This is an ACTION, not a notice - nothing written in our own documentation discharges it. Someone has to notify JAXA at earth@ml.jaxa.jp before commercial use, and record here that they did. needs_drafting is the closest flag the register has and its name understates the case: the blocker is a notification nobody has sent, not wording nobody has written. Left unsatisfiable on purpose. NOTE ALSO clause 2.5, 'The terms are subject to change without notice', and clause 3, 'The copyrights of the products provided in the Service are the property of JAXA' - so this is licensed material, not public domain. CONFLICT FOR COUNSEL, found on reading the incorporated document: Research Data clause 2.3 permits commercial use subject to advance NOTIFICATION, while the JAXA Site Policy - which 2.3's own preamble says the user 'is required to follow' in addition - states that 'use of the Materials for business or commercial purposes without the prior PERMISSION of the copyright holder (JAXA) is strictly prohibited'. Notification and permission are different obligations and only one of them can be discharged unilaterally. Whether the Site Policy's 'Materials' reaches data hosted on eorc.jaxa.jp is arguable; both texts are vendored so counsel can read them rather than take this summary's word for it."
     }
   },
   "sources": {
@@ -758,7 +758,7 @@
       "class": "attribution",
       "spdx": null,
       "licence_url": "https://www.eorc.jaxa.jp/ALOS/en/dataset/aw3d30/",
-      "licence_text_sha256": "b413b831546fde7fefae2e39b5bd1b8d47f9a545a512aba6aed44c48e567f41a",
+      "licence_text_sha256": "fd429b226838aa75516f0a7ce2601ad6854c8569adf42fc43bd54f222f695adf",
       "verified_on": "2026-09-09",
       "notice": "The original data is provided by JAXA. (c) JAXA ALOS World 3D - 30m",
       "notice_required": true,
@@ -815,7 +815,7 @@
       "spdx": null,
       "licence_url": "https://earth.jaxa.jp/en/data/policy/",
       "licence_text_path": "tools/licences/texts/JAXA-research-data-terms.txt",
-      "licence_text_sha256": "b413b831546fde7fefae2e39b5bd1b8d47f9a545a512aba6aed44c48e567f41a",
+      "licence_text_sha256": "fd429b226838aa75516f0a7ce2601ad6854c8569adf42fc43bd54f222f695adf",
       "verified_on": "2026-09-09",
       "notice": "The original data used for this product have been supplied by JAXA's ALOS World 3D-30m (AW3D30).",
       "courtesy_credit": null,
@@ -839,7 +839,7 @@
       "spdx": null,
       "licence_url": "https://earth.jaxa.jp/en/data/policy/",
       "licence_text_path": "tools/licences/texts/JAXA-research-data-terms.txt",
-      "licence_text_sha256": "b413b831546fde7fefae2e39b5bd1b8d47f9a545a512aba6aed44c48e567f41a",
+      "licence_text_sha256": "fd429b226838aa75516f0a7ce2601ad6854c8569adf42fc43bd54f222f695adf",
       "verified_on": "2026-09-09",
       "notice": "The original data used for this product have been supplied by JAXA's ALOS World 3D-30m (AW3D30).",
       "courtesy_credit": null,
