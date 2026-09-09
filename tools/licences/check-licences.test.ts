@@ -1111,6 +1111,114 @@ describe("the registry verification audit", () => {
     });
 });
 
+describe("a contract term is not discharged by existing", () => {
+    // The distinction the register turns on: a "statement" is wording the product carries and
+    // nobody outside is bound by it, so the text discharges it. A "contract-term" binds someone
+    // else — Copernicus 6(e) obliges us to bind subsequent users — and a draft of one is not a
+    // discharged obligation. Without this, drafting text to unblock a build would silently make
+    // that draft the thing the product relies on.
+    function withClause(patch: Record<string, unknown>) {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-ratify-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        Object.assign(reg.clauses["copernicus-6e-flowdown"], patch);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(manifestWith(
+            { layer: "elevation", source: "copernicus-dem", fetched_at: "2026-08-01T00:00:00Z",
+                election: "attribution" },
+            [8.0, 46.0, 9.0, 47.0],
+            { eula_clauses: ["copernicus-6c-liability", "copernicus-6e-flowdown"] })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        return `${p.stdout}\n${p.stderr}`;
+    }
+
+    it("refuses a drafted contract term nobody has ratified", () => {
+        const out = withClause({
+            needs_drafting: false,
+            text: "Licensee shall bind each subsequent user by written terms no less protective.",
+            kind: "contract-term",
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+    });
+
+    it("accepts it once someone has ratified it", () => {
+        const out = withClause({
+            needs_drafting: false,
+            text: "Licensee shall bind each subsequent user by written terms no less protective.",
+            kind: "contract-term",
+            ratified: { by: "Example Counsel", on: "2026-09-09" },
+        });
+        ok(out.includes("Licence gate passed"), out);
+    });
+
+    it("refuses a ratification record with no date", () => {
+        // Names a reviewer, says nothing about when — so nothing establishes the review covered
+        // the text it is supposed to cover.
+        const out = withClause({
+            needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+            kind: "contract-term", ratified: { by: "Example Counsel" },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+    });
+
+    it("refuses a valid date with no reviewer named", () => {
+        // Reaches the reviewer check on its own. Every other case here also has a bad date, so
+        // without this the "by" condition could be deleted and nothing would notice — it
+        // survived exactly that mutation before this test existed.
+        const out = withClause({
+            needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+            kind: "contract-term", ratified: { by: "   ", on: "2026-09-09" },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+        ok(out.includes("no reviewer is named"), out);
+    });
+
+    it("refuses a blank or unparseable review date", () => {
+        for (const on of ["", "   ", "soon", "2026-02-30"]) {
+            const out = withClause({
+                needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+                kind: "contract-term", ratified: { by: "Example Counsel", on },
+            });
+            ok(!out.includes("Licence gate passed"), `${JSON.stringify(on)}: ${out}`);
+            ok(out.includes("unratified-contract-term"), `${JSON.stringify(on)}: ${out}`);
+        }
+    });
+
+    it("refuses a review dated in the future", () => {
+        const out = withClause({
+            needs_drafting: false, text: "Licensee shall bind each subsequent user.",
+            kind: "contract-term", ratified: { by: "Example Counsel", on: "2099-01-01" },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("unratified-contract-term"), out);
+    });
+
+    it("does not demand ratification of a statement", () => {
+        // not-for-navigation and the USGS modification disclosure are wording we carry, not
+        // terms binding anyone. Requiring legal sign-off on those would be noise, and noise is
+        // what makes a control get routed around.
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        for (const id of ["not-for-navigation", "usgs-modification-disclosure"]) {
+            const c = reg.clauses[id];
+            ok(c, `${id} missing from the register`);
+            ok(c.kind !== "contract-term", `${id} should be a statement, not a contract term`);
+        }
+        const r = runGate(manifestWith(
+            { layer: "elevation", source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" },
+            [-100, 35, -99, 36]));
+        ok(r.passed, `a statement clause must not need ratifying: ${r.codes.join(",")}`);
+    });
+});
+
 describe("strict mode", () => {
     it("passes on the committed tree, so the blocking gate can run strict", () => {
         // The gate job runs --strict. If a source loses its verified_on or its

@@ -115,6 +115,21 @@ interface Clause {
   needs_drafting?: boolean;
   text?: string | null;
   notes?: string;
+  /**
+   * What the clause IS, which decides what discharges it.
+   *
+   * "statement" — wording the product must carry, e.g. a not-for-navigation warning or a
+   * modification disclosure. Carrying the text discharges it; nobody outside is bound by it.
+   *
+   * "contract-term" — wording that binds someone else, e.g. Copernicus Article 6(e)'s
+   * requirement to bind subsequent users by contract. Text alone does NOT discharge one of
+   * these: a clause that creates an obligation on a third party has to be reviewed by someone
+   * qualified before it can be relied on, or the register would be asserting that a draft is
+   * binding. Defaults to "statement".
+   */
+  kind?: "statement" | "contract-term";
+  /** Who reviewed a contract-term clause and when. Absent means nobody has. */
+  ratified?: { by: string; on: string; note?: string } | null;
 }
 
 interface Manifest {
@@ -360,6 +375,34 @@ for (const id of manifest.eula_clauses ?? []) {
       + `${clause.origin ? `Origin: ${clause.origin}. ` : ""}`
       + `Until the wording exists this obligation cannot be met, and declaring it must not pass.`);
     continue;
+  }
+
+  // A clause that binds a third party is not discharged by existing. Someone qualified has to
+  // have read it — otherwise a draft written to unblock a build would silently become the thing
+  // the product relies on, which is the failure this whole register was built against, in its
+  // most consequential form.
+  if (clause.kind === "contract-term") {
+    // Both halves, and the date has to be a real one. A record naming a reviewer with no date
+    // says nothing about whether the review predates the text it is supposed to cover, and a
+    // half-filled record discharging an obligation is the same "declared, not done" shape the
+    // clause register was added to close.
+    const ratifiedOn = parseIso(clause.ratified?.on);
+    const problem = !clause.ratified?.by?.trim()
+      ? "no reviewer is named"
+      : ratifiedOn === null
+        ? `the review date ${JSON.stringify(clause.ratified?.on ?? null)} is not a real date`
+        : ratifiedOn > Date.now()
+          ? `the review date ${clause.ratified!.on} is in the future`
+          : null;
+
+    if (problem) {
+      add("error", "unratified-contract-term", "manifest",
+        `EULA clause "${id}" is a contract term binding subsequent users, and ${problem}. `
+        + `Draft text is not a discharged obligation. `
+        + `${clause.origin ? `Origin: ${clause.origin}. ` : ""}`
+        + `Record who reviewed it and on what date in the clause's "ratified" field.`);
+      continue;
+    }
   }
   declaredEula.add(id);
 }
