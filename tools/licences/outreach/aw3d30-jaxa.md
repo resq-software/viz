@@ -1,7 +1,9 @@
 # JAXA — AW3D30 commercial-use notification
 
-**Status:** ready to send. Unblocks `sendai-plain`, and is a precondition for
-`rhine-meuse-delta` too.
+**Status: SENT 2026-09-09. Awaiting reply.**
+
+Still blocking until JAXA answers — see "When a reply arrives" below. Unblocks
+`sendai-plain` once answered, and is a precondition for `rhine-meuse-delta` too.
 
 **To:** `earth@ml.jaxa.jp`
 *(published on the page obfuscated as `earth*ml.jaxa.jp` with the instruction
