@@ -35,16 +35,22 @@ namespace ResQ.Viz.Web.Tests;
 /// <para>
 /// The reason is specific. The submodule is pinned to <c>a3f8b89</c> on <c>release/0.6.x</c>,
 /// three commits past the <c>v0.6.0</c> tag, and those three commits are what added drone
-/// attitude, the explicit yaw command, and landing recovery. No tag contains them. So moving the
-/// pin to <c>v0.6.0</c> — which is exactly what <c>CLAUDE.md</c> used to invite by describing the
-/// submodule as "pinned to a release tag" — still builds, still passes every other test, and
-/// silently reverts takeoff and rotation. That failure would surface as the client looking wrong,
-/// a long way from its cause.
+/// attitude, the explicit yaw command, and landing recovery. No tag contains them.
 /// </para>
 /// <para>
-/// Moving the pin to <c>main</c> is loud rather than silent: <c>ResQ.Simulation.Engine</c> and all
-/// three MAVLink projects were removed there, so the build cannot resolve its project references
-/// at all. That divergence is a standing decision for a human, not something a test can hold.
+/// Moving the pin is not what these tests guard, because both ways of doing it already fail
+/// loudly. <c>v0.6.0</c> is a compile error — viz calls <c>Hover(yaw)</c> and
+/// <c>GoTo(…, yaw:)</c>, which that tag has no overloads for. <c>main</c> cannot resolve its
+/// project references at all, because <c>ResQ.Simulation.Engine</c> and all three MAVLink
+/// projects were removed there. That second divergence is a standing decision for a human, not
+/// something a test can hold.
+/// </para>
+/// <para>
+/// What these guard is the part no compiler can see: behaviour that changed without changing a
+/// signature. The landing re-arm lives inside <c>ApplyCommand</c> and the roll/pitch term inside
+/// <c>IntegrateAttitude</c>, so reverting either builds green. Verified by applying each revert
+/// in the submodule — the build stayed green and exactly one test here went red. Those are the
+/// failures that would surface as "the client looks wrong", a long way from the cause.
 /// </para>
 /// </remarks>
 public sealed class SdkFlightContractTests
@@ -97,12 +103,20 @@ public sealed class SdkFlightContractTests
         model.State.Velocity.Length().Should().BeGreaterThan(1f, "it should actually be moving");
     }
 
-    [Fact]
-    public void ALandedDroneReArmsOnAnyNonLandCommand()
+    /// <summary>Every command type that is not <c>Land</c>, so the name's "any" is honest.</summary>
+    public static TheoryData<string> NonLandCommands() => new() { "GoTo", "Hover", "RTL" };
+
+    [Theory]
+    [MemberData(nameof(NonLandCommands))]
+    public void ALandedDroneReArmsOnAnyNonLandCommand(string command)
     {
         // HasLanded latches, and Step() returns early while it is set. Without the re-arm, a
         // drone that has landed once ignores every later command and sits frozen for the rest of
         // the session — the bug that made takeoff appear to do nothing.
+        //
+        // Parameterised because the re-arm is keyed on command.Type, so covering only GoTo would
+        // pass a regression that cleared HasLanded for GoTo and not for Hover or RTL. The
+        // assertion says "any non-Land command"; this makes the test say it too.
         var model = new KinematicFlightModel(new Vector3(0f, 20f, 0f));
         model.ApplyCommand(FlightCommand.Land());
 
@@ -111,15 +125,33 @@ public sealed class SdkFlightContractTests
 
         model.HasLanded.Should().BeTrue("the drone should reach the ground and latch as landed");
 
-        model.ApplyCommand(FlightCommand.GoTo(new Vector3(0f, 60f, 0f)));
-        model.HasLanded.Should().BeFalse("any command other than Land must re-arm a landed drone");
+        model.ApplyCommand(command switch
+        {
+            "GoTo" => FlightCommand.GoTo(new Vector3(0f, 60f, 0f)),
+            "Hover" => FlightCommand.Hover(),
+            "RTL" => FlightCommand.RTL(),
+            _ => throw new ArgumentOutOfRangeException(nameof(command), command, "unmapped command"),
+        });
 
+        model.HasLanded.Should().BeFalse(
+            $"{command} is not Land, so it must re-arm a landed drone");
+
+        // Only GoTo and RTL have somewhere to go: RTL rewrites to GoTo(LaunchPosition), which is
+        // 20 m up from where this drone came to rest. Hover holds station, so asserting a climb
+        // for it would assert the wrong contract — the re-armed flag is what matters there.
         float before = model.State.Position.Y;
         for (int i = 0; i < 120; i++)
             model.Step(1.0 / 60.0, Vector3.Zero);
 
-        model.State.Position.Y.Should().BeGreaterThan(before,
-            "a re-armed drone must actually climb, not merely clear the flag");
+        if (command == "Hover")
+        {
+            model.HasLanded.Should().BeFalse("a hovering drone stays re-armed rather than re-latching");
+        }
+        else
+        {
+            model.State.Position.Y.Should().BeGreaterThan(before,
+                "a re-armed drone must actually climb, not merely clear the flag");
+        }
     }
 
     [Fact]
