@@ -334,7 +334,10 @@ jobs:
   # licence gate reported as a check called `gate`, one letter from this file's `gates`, and
   # a PR could merge with it red. Calling it here puts it inside the aggregate.
   licences:
-    uses: ./.github/workflows/licence-gate.yml
+    # `$/` not `./` — GitHub's self-repository syntax, added July 2026. It is treated as a form
+    # of pinning and, unlike the workspace-relative form, cannot resolve to something a previous
+    # step cloned into the workspace at runtime. Flagged by zizmor's self-repository audit.
+    uses: $/.github/workflows/licence-gate.yml
 
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
