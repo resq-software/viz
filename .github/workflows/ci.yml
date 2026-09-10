@@ -334,10 +334,21 @@ jobs:
   # licence gate reported as a check called `gate`, one letter from this file's `gates`, and
   # a PR could merge with it red. Calling it here puts it inside the aggregate.
   licences:
-    # `$/` not `./` — GitHub's self-repository syntax, added July 2026. It is treated as a form
-    # of pinning and, unlike the workspace-relative form, cannot resolve to something a previous
-    # step cloned into the workspace at runtime. Flagged by zizmor's self-repository audit.
-    uses: $/.github/workflows/licence-gate.yml
+    # `./` and not GitHub's newer `$/` self-repository syntax, deliberately. zizmor's
+    # self-repository audit asks for `$/`, and it is the better form — treated as a kind of
+    # pinning, and unable to resolve to something a previous step cloned into the workspace at
+    # runtime. But actionlint v1.7.12, which runs in this same workflow and hard-fails the build,
+    # does not recognise it:
+    #
+    #   ci.yml:340:11: reusable workflow call "$/.github/workflows/licence-gate.yml" at "uses"
+    #   is not following the format "owner/repo/path/to/workflow.yml@ref" nor
+    #   "./path/to/workflow.yml" [workflow-call]
+    #
+    # Two linters in one pipeline disagreeing. actionlint is on the required path via
+    # `gates`; the zizmor finding is an advisory code-scanning alert. So this takes the form
+    # that builds, and switches when actionlint learns the syntax. Nothing in this repo's CI
+    # clones an action into the workspace, so the gap that `$/` closes is not open here.
+    uses: ./.github/workflows/licence-gate.yml
 
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
