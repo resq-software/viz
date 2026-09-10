@@ -11,7 +11,8 @@
 - `src/ResQ.Viz.Web/Services/` — SimulationService, VizFrameBuilder, ScenarioService
 - `src/ResQ.Viz.Web/Controllers/` — REST API for simulation control
 - `tests/ResQ.Viz.Web.Tests/` — xUnit tests
-- `lib/dotnet-sdk/` — Git submodule: resq-software/dotnet-sdk (pinned to a release tag; init required)
+- `lib/dotnet-sdk/` — Git submodule: resq-software/dotnet-sdk (init required). **Not pinned to a
+  release tag** — see below.
 - `docs/` — Design spec and implementation plan
 
 ## Commands
@@ -52,6 +53,31 @@ git submodule update --init --recursive          # Init SDK submodule
 - `ResQ.Mavlink.Dialect` — custom messages (from lib/dotnet-sdk)
 - `ResQ.Mavlink.Mesh` — mesh simulation (from lib/dotnet-sdk)
 - `Vite.AspNetCore` 2.x — Vite ↔ ASP.NET integration (dev server proxy + build target)
+
+## The SDK submodule pin
+
+`lib/dotnet-sdk` is pinned to **`a3f8b89` on `release/0.6.x`**, three commits past the `v0.6.0`
+tag. Those three commits (#85–#87) added drone attitude, the explicit yaw command, and landing
+recovery. **No tag contains them.** Do not "tidy" the pin onto a tag.
+
+The SDK's `main` has since restructured: `ResQ.Simulation.Engine`, `ResQ.Mavlink`,
+`ResQ.Mavlink.Dialect` and `ResQ.Mavlink.Mesh` **do not exist there**. All four are project
+references in `ResQ.Viz.Web.csproj`, so viz is on a branch `main` has moved past. Reconciling that
+is an architecture decision, not a submodule bump.
+
+Both ways of moving the pin fail loudly, which is worth knowing before you worry about it:
+
+| move the pin to | what happens |
+| --- | --- |
+| `v0.6.0` (the only tag) | **compile error** — viz calls `Hover(yaw)` and `GoTo(…, yaw:)`, which that tag lacks |
+| `main` | **project references do not resolve** — the four projects are gone |
+
+What is *not* covered by either is behaviour that changed without changing a signature. Landing
+recovery and attitude integration both live inside methods whose API is unchanged, so reverting
+either compiles cleanly and silently freezes drones after landing or flattens their rotation.
+`tests/ResQ.Viz.Web.Tests/SdkFlightContractTests.cs` is a contract test that fails on exactly
+that; verified by reverting each in the submodule and watching it go red while the build stayed
+green.
 
 ## Git hooks
 
