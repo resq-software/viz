@@ -205,9 +205,76 @@ public partial class V1CompatibilityTests
     }
 
     /// <summary>
-    /// The v1 snapshot mapping exactly as <see cref="SimulationRoom.GetSnapshot"/> performs it,
-    /// kept here as the reference the v2 projection is measured against.
+    /// Drives the real room and checks the shipped v1 snapshot against the motion it describes.
     /// </summary>
+    /// <remarks>
+    /// The one thing a hand-copied reference cannot police is the shipped mapping itself.
+    /// Transposing two components in <c>CaptureDroneSnapshots</c> — publishing vertical speed in
+    /// a lateral slot on every v1 frame — left the whole C# suite green, because the only
+    /// comparison was against a copy carrying the same transposition by construction.
+    /// <para>
+    /// So this asserts a property no copy can satisfy vacuously: the published velocity must
+    /// point the way the drone actually moved between two snapshots. A commanded climb-and-
+    /// traverse makes all three components distinct, so a swap of any pair breaks the agreement.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void GetSnapshot_Publishes_Velocity_Components_In_The_Order_The_Drone_Moved()
+    {
+        var room = new SimulationRoom(
+            id: "v1-velocity-order", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
+        room.AddDrone("d1", new Vector3(0f, 20f, 0f));
+        // Distinct magnitudes on all three axes: a transposition cannot hide behind symmetry.
+        room.SendCommand("d1", FlightCommand.GoTo(new Vector3(120f, 70f, -45f)));
+        for (var i = 0; i < 90; i++) room.StepOnce();
+
+        var before = room.GetSnapshot()[0];
+        for (var i = 0; i < 6; i++) room.StepOnce();
+        var after = room.GetSnapshot()[0];
+
+        var moved = new[]
+        {
+            after.Position[0] - before.Position[0],
+            after.Position[1] - before.Position[1],
+            after.Position[2] - before.Position[2],
+        };
+        var travelled = Math.Sqrt((moved[0] * moved[0]) + (moved[1] * moved[1]) + (moved[2] * moved[2]));
+        travelled.Should().BeGreaterThan(0.5, "the drone must actually be under way for this to mean anything");
+
+        var speed = Math.Sqrt(
+            (before.Velocity[0] * before.Velocity[0])
+            + (before.Velocity[1] * before.Velocity[1])
+            + (before.Velocity[2] * before.Velocity[2]));
+        speed.Should().BeGreaterThan(0.5, "a moving drone reports a non-zero velocity");
+
+        // Cosine between published velocity and observed displacement. Near 1 only when the
+        // components line up; any transposition of a pair drops it well below.
+        var dot = (before.Velocity[0] * moved[0])
+            + (before.Velocity[1] * moved[1])
+            + (before.Velocity[2] * moved[2]);
+        (dot / (speed * travelled)).Should().BeGreaterThan(0.95,
+            "the velocity v1 publishes must point the way the drone moved — if this fails, the "
+            + "components in CaptureDroneSnapshots are transposed and every v1 frame is wrong");
+    }
+
+    /// <summary>
+    /// A RE-IMPLEMENTATION of the v1 snapshot mapping, not a call to it.
+    /// </summary>
+    /// <remarks>
+    /// The distinction matters and the old summary hid it — it claimed to be the mapping "exactly
+    /// as <see cref="SimulationRoom.GetSnapshot"/> performs it". It is a copy, so a change to
+    /// <c>CaptureDroneSnapshots</c> is invisible here, and the copy had already drifted:
+    /// production sets <c>Vendor</c> from the asset descriptor and this omitted the argument
+    /// entirely, which made the Vendor assertion compare null to null.
+    /// <para>
+    /// It cannot simply call the shipped mapping: that is private to <see cref="SimulationRoom"/>,
+    /// which does not expose the descriptors and states <c>AssetProjection</c> needs, so there is
+    /// no single object to drive both from. What closes the gap instead is
+    /// <c>GetSnapshot_Publishes_Velocity_Components_In_The_Order_The_Drone_Moved</c>, which drives
+    /// the real room and checks the shipped output against the motion it describes — the
+    /// component order being exactly what a copy cannot police.
+    /// </para>
+    /// </remarks>
     private static IReadOnlyList<DroneVizState> LegacyDroneVizStates(AssetWorld world) =>
         world.Drones.Select(d =>
         {
@@ -220,7 +287,10 @@ public partial class V1CompatibilityTests
                 Vel: [physics.Velocity.X, physics.Velocity.Y, physics.Velocity.Z],
                 Battery: physics.BatteryPercent,
                 Status: d.FlightModel.HasLanded ? "landed" : "flying",
-                Armed: !d.FlightModel.HasLanded);
+                Armed: !d.FlightModel.HasLanded,
+                // Production sets this from the descriptor. Omitted here, the Vendor assertion in
+                // the caller compared null to null and passed on a copy that had drifted.
+                Vendor: world.Descriptors.FirstOrDefault(x => x.AssetId == d.Id)?.Vendor);
         }).ToList();
 
     private static VizFrameBuilder BuilderWithSurvivorAtOrigin() =>
