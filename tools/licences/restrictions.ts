@@ -114,7 +114,27 @@ export function intersects(a: BBox, b: BBox): boolean {
  *
  *  Returning null rather than NaN keeps every comparison explicit — a date the
  *  gate cannot parse must fail closed, not silently compare false. */
-export function parseIso(value: string | undefined): number | null {
+/**
+ * The value as a non-empty trimmed string, or null if it is not usable as one.
+ *
+ * Same reason as parseIso's type guard: registry fields come from JSON.parse, so `by: 42`
+ * reaches `.trim()` and throws. Callers want "nobody is named", not a stack trace.
+ *
+ * @param value Any parsed JSON value.
+ * @returns The trimmed string, or null when absent, non-string, or blank.
+ */
+export function nonEmptyString(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const t = value.trim();
+    return t ? t : null;
+}
+
+export function parseIso(value: unknown): number | null {
+    // The registry is JSON.parse output, so a field typed `string` here can be a number, an
+    // object, or anything else at runtime. Without this, `20260910` (unquoted in the JSON)
+    // reaches .trim() and throws a TypeError instead of being reported as not a real date —
+    // and both callers, this gate and tools/areas/check-areas.ts, have the same exposure.
+    if (typeof value !== "string") return null;
     if (!value) return null;
 
     const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(value.trim());

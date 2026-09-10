@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-import { ok, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+
+import { KNOWN_KINDS } from "../licences/restrictions.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECKER = join(HERE, "check-areas.ts");
@@ -249,5 +251,122 @@ describe("the licence cross-check", () => {
             Object.values(a.sources).includes("noaa-cudem")).length;
         strictEqual(line!.trim().split(/\s+/)[0], String(distinct),
             `ranking must count distinct areas (${distinct}), not source occurrences: ${line}`);
+    });
+});
+
+describe("the two tools agree about the whole registry, not just clauses", () => {
+    // This cross-check has now failed four times, each on a different axis: permitted_layers,
+    // then clause kinds, then sign-off DATES, then geometry. Each fix closed one axis and left
+    // the next one open, because the checker re-implemented a subset of the gate's rules by hand
+    // instead of asking the gate's own evaluator.
+    //
+    // Found by a mutation sweep: moving 3DEP's licensed region into the Pacific left all seven
+    // areas that draw on it reading "bakeable", and a discharge dated 2099 left sendai-plain
+    // "bakeable" while the gate refused its first tile with "the date 2099-01-01 is in the future".
+
+    it("blocks an area whose source sign-off is dated in the future", () => {
+        const r = run(undefined, (reg) => {
+            reg.clauses["jaxa-commercial-use-notification"].discharged.on = "2099-01-01";
+        });
+        ok(r.out.includes("is in the future"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
+    it("blocks an area whose sign-off date is not a real date", () => {
+        // The gate's parseIso rejects impossible calendar dates rather than rolling them over.
+        const r = run(undefined, (reg) => {
+            reg.clauses["jaxa-commercial-use-notification"].discharged.on = "2026-02-30";
+        });
+        ok(r.out.includes("is not a real date"), r.out);
+    });
+
+    it("blocks a contract term ratified with a future date", () => {
+        const r = run(undefined, (reg) => {
+            reg.clauses["copernicus-6e-flowdown"].ratified =
+                { by: "Example Counsel", on: "2099-01-01" };
+        });
+        ok(r.out.includes("is in the future"), r.out);
+    });
+
+    it("blocks an area that sits outside its source's licensed region", () => {
+        // `clip` was never asked here at all — the loop skipped every kind but require-eula-clause.
+        // The region is NAMED and resolved through policy.regions, so the honest mutation is to
+        // move the named region rather than to overwrite the name with a raw box: that would
+        // block for "region not defined", which is a different rule firing.
+        const r = run(undefined, (reg) => {
+            reg.policy.regions["us-territory"] = [[-160.0, 20.0, -159.0, 21.0]];
+        });
+        ok(r.out.includes('not contained in region "us-territory"'), r.out);
+        ok(!/12 declared, 10 bakeable/.test(r.out),
+            "moving 3DEP's licensed region must change the bakeable count");
+    });
+
+    it("reports a restriction kind it does not classify, rather than skipping it", () => {
+        // The silent `continue` is how geometry went unasked for as long as it did. A new rule in
+        // restrictions.ts must force a decision here, not slip through as satisfied.
+        const r = run(undefined, (reg) => {
+            reg.sources["usgs-3dep"].restrictions.push({ kind: "require-carbon-offset" });
+        });
+        ok(r.out.includes("is not classified by this checker"), r.out);
+    });
+
+    it("classifies every restriction kind the gate can evaluate", () => {
+        // The structural guard. KNOWN_KINDS is the gate's own list; if restrictions.ts gains a
+        // rule and nobody classifies it here, this fails instead of the checker quietly not
+        // asking it. That is the failure mode all four rounds shared.
+        const src = readFileSync(CHECKER, "utf8");
+        const listed = (name: string): string[] => {
+            const decl = `const ${name}: readonly string[] = [`;
+            const at = src.indexOf(decl);
+            ok(at !== -1, `${name} not found in check-areas.ts`);
+            // Start after the declaration, not at it: the declaration itself contains a "]"
+            // inside `readonly string[]`, and searching from `at` finds that one instead of the
+            // array's closing bracket — yielding an empty list and a test that fails for the
+            // wrong reason.
+            const from = at + decl.length;
+            const body = src.slice(from, src.indexOf("]", from));
+            return (body.match(/"[^"]+"/g) ?? []).map((q) => q.slice(1, -1));
+        };
+        const classified = new Set([...listed("AREA_EVALUABLE_KINDS"), ...listed("TILE_ONLY_KINDS")]);
+        deepStrictEqual(KNOWN_KINDS.filter((k) => !classified.has(k)), [],
+            "restriction kinds the gate evaluates but check-areas.ts does not classify");
+    });
+});
+
+describe("registry fields are JSON, not the types they are annotated as", () => {
+    // check-areas.ts and check-licences.ts both read the register through JSON.parse, so a field
+    // declared `string` can be a number at runtime. Review caught that `by: 42` reached .trim()
+    // and threw `TypeError: signoff?.by?.trim is not a function` — a stack trace instead of the
+    // "nobody has recorded doing" this is supposed to say. Guarded in restrictions.ts so the one
+    // fix covers both callers, which is this file's whole argument.
+    it("reports an unusable sign-off instead of crashing on it", () => {
+        const r = run(undefined, (reg) => {
+            const d = reg.clauses["jaxa-commercial-use-notification"].discharged;
+            d.by = 42;
+            d.on = 20260910;
+        });
+        ok(!/TypeError/.test(r.out), r.out);
+        ok(r.out.includes("nobody has recorded doing"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
+    it("reports a non-string DATE instead of crashing on it", () => {
+        // `by` is a valid string here on purpose. With both fields bad, the `by` check short-
+        // circuits and parseIso is never reached — so removing parseIso's type guard left all
+        // 27 tests green. An unguarded guard, found by mutating it. This reaches it.
+        const r = run(undefined, (reg) => {
+            reg.clauses["jaxa-commercial-use-notification"].discharged.on = 20260910;
+        });
+        ok(!/TypeError/.test(r.out), r.out);
+        ok(r.out.includes("is not a real date"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
+    it("reports an unusable ratification instead of crashing on it", () => {
+        const r = run(undefined, (reg) => {
+            reg.clauses["copernicus-6e-flowdown"].ratified = { by: { name: "counsel" }, on: [2026] };
+        });
+        ok(!/TypeError/.test(r.out), r.out);
+        ok(r.out.includes("nobody has ratified"), r.out);
     });
 });
