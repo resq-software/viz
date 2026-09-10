@@ -1356,3 +1356,41 @@ describe("Copernicus Article 6 is carried in full", () => {
             + `nothing discharges 6(a). Published: ${JSON.stringify(published)}`);
     });
 });
+
+describe("the Copernicus notices match the vendored licence exactly", () => {
+    // Terminal punctuation here turns on one character's position, and a reviewer already read
+    // it the other way. In the licence PDF:
+    //
+    //   6(a)  ...by the European Union and ESA; all rights reserved.        <- unquoted, period IN
+    //   6(b)  "...by the European Union and ESA; all rights reserved”.      <- period AFTER the ”
+    //
+    // So 6(a)'s notice ends with a full stop and 6(b)'s does not: 6(b)'s period closes the
+    // licence's own sentence, outside the quotation, and is not part of the mandated string.
+    // Rather than restate that reading, these tests check the register against the vendored
+    // licence text itself, so a transcription slip in either notice fails here.
+    const licence = () => readFileSync(
+        join(HERE, "texts", "copernicus-worlddem-30.txt"), "utf8")
+        .replace(/\s+/g, " ");
+
+    it("carries 6(b)'s notice as exactly what sits between the quotes", () => {
+        const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const notice = registry.sources["copernicus-dem"].notice as string;
+        // Opening quote is straight, closing is curly — the PDF's own typography. Requiring the
+        // closing `”.` is the whole point: it pins where the notice stops.
+        ok(licence().includes(`"${notice}”.`),
+            `the register's Copernicus notice is not exactly the string Article 6(b) quotes. `
+            + `A trailing full stop belongs to the licence's sentence, not to the notice.`);
+    });
+
+    it("carries 6(a)'s notice, full stop included, in the flow-down clause", () => {
+        const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const clause = registry.clauses["copernicus-6e-flowdown"].text as string;
+        const quoted = clause.match(/using the notice: "([^"]+)"/);
+        ok(quoted, "sub-letter (a) of the flow-down clause no longer quotes a notice");
+        ok(quoted![1].endsWith("all rights reserved."),
+            `6(a)'s notice is unquoted in the licence and ends with a full stop; the clause has `
+            + `${JSON.stringify(quoted![1].slice(-40))}`);
+        ok(licence().includes(quoted![1]),
+            "sub-letter (a)'s notice does not appear in the vendored licence text");
+    });
+});
