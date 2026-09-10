@@ -32,6 +32,30 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { KNOWN_KINDS, evaluateRestrictions, parseIso } from "../licences/restrictions.ts";
+
+/**
+ * Restriction kinds an AREA can be judged on, before any tile exists.
+ *
+ * These turn only on where the area is, which data/areas.json already states. The gate applies
+ * the very same rules per baked tile through the very same evaluator, so agreeing here is not a
+ * coincidence — it is the same code.
+ */
+const AREA_EVALUABLE_KINDS: readonly string[] = ["clip", "exclude-region"];
+
+/**
+ * Restriction kinds that cannot be settled until a tile is baked.
+ *
+ * Each needs a fact only the manifest carries — when the bytes were fetched, which mask was
+ * applied, which licence limb was elected, which upstream collection served it. Reporting these
+ * as satisfied would be a lie, and skipping them silently was the bug: an area came back
+ * "bakeable" while the gate stood ready to refuse its first tile.
+ */
+const TILE_ONLY_KINDS: readonly string[] = [
+  "require-eula-clause", "fetched-after", "fetched-before",
+  "require-mask", "require-election", "require-collection-allowlist",
+];
+
 /** Metres per degree of latitude. Spherical, matching how the bboxes were generated. */
 const M_PER_DEG_LAT = 110_574;
 
@@ -110,6 +134,29 @@ const clauses: Record<string, {
 }> = registry.clauses ?? {};
 
 /**
+ * Why a dated sign-off does not count, or null when it does.
+ *
+ * The gate validates these dates with parseIso and refuses a future one. This checker used to
+ * read only `.by`, so a discharge dated 2099 left an area "bakeable" while the gate refused its
+ * first tile — the same disagreement, on a third axis, after two rounds of closing it. Uses the
+ * gate's own parseIso so the two cannot drift on what a date even is.
+ *
+ * @param signoff The clause's `ratified` or `discharged` record.
+ * @param noun What the date is called in the message ("review" or "record").
+ * @returns A phrase completing "is a contract term ..." / "is an action ...", or null.
+ */
+function dateProblem(
+  signoff: { by?: string; on?: string } | null | undefined,
+  noun: string,
+): string | null {
+  if (!signoff?.by?.trim()) return `nobody has ${noun === "review" ? "ratified" : "recorded doing"}`;
+  const at = parseIso(signoff.on);
+  if (at === null) return `whose ${noun} date ${JSON.stringify(signoff.on ?? null)} is not a real date`;
+  if (at > Date.now()) return `whose ${noun} date ${signoff.on} is in the future`;
+  return null;
+}
+
+/**
  * Why a source cannot be baked today, or null when it can.
  *
  * Deliberately asks the same questions the licence gate asks of a manifest layer, so an area
@@ -119,7 +166,7 @@ const clauses: Record<string, {
  * @param layer Layer the area draws from this source.
  * @returns Semicolon-joined reasons, or null when nothing blocks it.
  */
-function blockedBecause(key: string, layer: string): string | null {
+function blockedBecause(key: string, layer: string, area: Area): string | null {
   const entry = registry.sources[key];
   if (!entry || typeof entry === "string") return "not in the licence register";
   if (!allowed.has(entry.class)) return `class "${entry.class}" is excluded`;
@@ -137,17 +184,47 @@ function blockedBecause(key: string, layer: string): string | null {
   if (!entry.verified_on) reasons.push("never verified against its publisher page");
   if (!entry.licence_text_sha256) reasons.push("licence text not vendored or hashed");
 
+  // Geometry the area already determines, judged by the SAME evaluator the gate uses per tile.
+  // Hand-rolling a subset here is what let an area read "bakeable" while sitting outside its
+  // source's licensed region: this loop used to `continue` past every kind but require-eula-clause,
+  // so `clip` and `exclude-region` were never asked. Verified by moving 3DEP's licensed region to
+  // the Pacific — all seven areas that draw on it stayed "bakeable".
+  const geometry = (entry.restrictions ?? []).filter(
+    (r: { kind: string }) => AREA_EVALUABLE_KINDS.includes(r.kind));
+  if (geometry.length) {
+    for (const v of evaluateRestrictions(geometry as never, {
+      area: { id: area.id, bbox: area.bbox },
+      // Geometry rules read none of these; the tile-only kinds that would are filtered out above.
+      layer: { layer, source: key, fetched_at: "" },
+      policy: registry.policy,
+      declaredEulaClauses: new Set<string>(),
+    })) {
+      reasons.push(v.message);
+    }
+  }
+
+  // A kind in neither list is a rule nobody classified. Loud rather than skipped: a silent
+  // fall-through here is precisely how the geometry rules went unasked for as long as they did.
+  for (const r of entry.restrictions ?? []) {
+    if (!AREA_EVALUABLE_KINDS.includes(r.kind) && !TILE_ONLY_KINDS.includes(r.kind)) {
+      reasons.push(
+        `restriction kind "${r.kind}" is not classified by this checker, so it is not being `
+        + `asked. Add it to AREA_EVALUABLE_KINDS or TILE_ONLY_KINDS in check-areas.ts.`);
+    }
+  }
+
   for (const r of entry.restrictions ?? []) {
     if (r.kind !== "require-eula-clause" || !r.clause) continue;
     const clause = clauses[r.clause];
     if (!clause?.text?.trim()) {
       reasons.push(`EULA clause "${r.clause}" has no drafted text`);
-    } else if (clause.kind === "contract-term" && !clause.ratified?.by?.trim()) {
+    } else if (clause.kind === "contract-term" && dateProblem(clause.ratified, "review")) {
       // Asks the same question the gate asks. Checking only for text would report an area
       // bakeable the moment someone DRAFTED a contract term, while the gate still refused the
       // tile for want of a ratification — the two tools disagreeing about the same registry,
       // which is the failure this cross-check exists to prevent.
-      reasons.push(`EULA clause "${r.clause}" is a contract term nobody has ratified`);
+      reasons.push(
+        `EULA clause "${r.clause}" is a contract term ${dateProblem(clause.ratified, "review")}`);
     } else if (clause.kind === "action") {
       // Same contract, third kind. An action clause is discharged by evidence of something done
       // outside this repository, so text says nothing about whether it happened. Found by
@@ -156,8 +233,11 @@ function blockedBecause(key: string, layer: string): string | null {
       // moment a new kind was added. The record is checked for existence here too, because a
       // path is only evidence while the file is there.
       const record = clause.discharged?.record?.trim();
-      if (!clause.discharged?.by?.trim() || !record) {
-        reasons.push(`EULA clause "${r.clause}" is an action nobody has recorded doing`);
+      const when = dateProblem(clause.discharged, "record");
+      if (when) {
+        reasons.push(`EULA clause "${r.clause}" is an action ${when}`);
+      } else if (!record) {
+        reasons.push(`EULA clause "${r.clause}" is an action with no evidence path recorded`);
       } else if (!existsSync(resolve(record))) {
         reasons.push(
           `EULA clause "${r.clause}" names evidence at "${record}", which does not exist`);
@@ -243,7 +323,7 @@ const blocked: { id: string; reasons: string[] }[] = [];
 for (const area of doc.areas) {
   const reasons: string[] = [];
   for (const [layer, key] of Object.entries(area.sources)) {
-    const why = blockedBecause(key, layer);
+    const why = blockedBecause(key, layer, area);
     if (why) reasons.push(`${layer} (${key}): ${why}`);
   }
   if (reasons.length) blocked.push({ id: area.id, reasons });
