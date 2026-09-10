@@ -195,6 +195,28 @@ describe("the licence cross-check", () => {
         ok(!r.out.includes("contract term nobody has ratified"), r.out);
     });
 
+    it("blocks on an action clause whose evidence file is gone", () => {
+        // Third clause kind, same contract. An action is discharged by evidence of something
+        // done outside this repository, so having text says nothing about whether it happened.
+        // Found by deleting the JAXA reply: the gate refused the tile while this checker still
+        // called sendai-plain bakeable. Adding a kind silently reopened the disagreement the
+        // test above exists to close, so this pins the third one too.
+        const r = run(undefined, (reg) => {
+            reg.clauses["jaxa-commercial-use-notification"].discharged.record =
+                "tools/licences/outreach/no-such-file.md";
+        });
+        ok(r.out.includes("which does not exist"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
+    it("blocks on an action clause nobody recorded doing", () => {
+        const r = run(undefined, (reg) => {
+            reg.clauses["jaxa-commercial-use-notification"].discharged = null;
+        });
+        ok(r.out.includes("action nobody has recorded doing"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
     it("does not call an area bakeable when its source is not in the register", () => {
         const r = run((doc) => { doc.areas[0].sources.elevation = "no-such-source"; });
         ok(r.out.includes("not in the licence register"), r.out);

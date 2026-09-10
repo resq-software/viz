@@ -83,6 +83,28 @@ function manifestWith(layer: Record<string, unknown>, bbox: number[], extra: Rec
 function makeFixtureRoot(root: string): void {
     makeScanRoots(root);
     copyVendoredTexts(root);
+    copyOutreachRecords(root);
+}
+
+/**
+ * Copies the outreach correspondence into a fixture root.
+ *
+ * An "action" clause names the record that evidences it, and the gate resolves that path
+ * against --root and checks it exists — deliberately, because the obligation lives outside the
+ * repository and the file is the only thing proving it was met. A fixture root without these
+ * makes every discharged action clause look unevidenced. Same reason as copyVendoredTexts: a
+ * fixture that is not faithful tests the fixture, not the gate.
+ */
+function copyOutreachRecords(root: string): void {
+    const from = join(HERE, "outreach");
+    if (!existsSync(from)) {
+        return;
+    }
+    const to = join(root, "tools", "licences", "outreach");
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from)) {
+        copyFileSync(join(from, name), join(to, name));
+    }
 }
 
 /**
@@ -1392,5 +1414,118 @@ describe("the Copernicus notices match the vendored licence exactly", () => {
             + `${JSON.stringify(quoted![1].slice(-40))}`);
         ok(licence().includes(quoted![1]),
             "sub-letter (a)'s notice does not appear in the vendored licence text");
+    });
+});
+
+describe("an action is not discharged by describing it", () => {
+    // The third clause kind. A "statement" is discharged by carrying text and a "contract-term"
+    // by someone qualified ratifying it — but JAXA Research Data clause 2.3 obliges us to NOTIFY
+    // JAXA before commercial use, and no wording anywhere in this repository does that. Before
+    // this kind existed the only flag available was `needs_drafting`, so clearing the blocker
+    // would have meant writing prose. These tests exist because that would have passed.
+    function withClause(patch: Record<string, unknown>) {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-action-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const clause = reg.clauses["jaxa-commercial-use-notification"];
+        clause.discharged = undefined;
+        delete clause.discharged;
+        Object.assign(clause, patch);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(manifestWith(
+            { layer: "elevation", source: "aw3d30@3.1", fetched_at: "2026-08-01T00:00:00Z" },
+            [140.9, 38.2, 141.0, 38.3],
+            {
+                eula_clauses: reg.sources["aw3d30@3.1"].restrictions
+                    .filter((r: any) => r.kind === "require-eula-clause").map((r: any) => r.clause),
+            })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        return { out: `${p.stdout}\n${p.stderr}`, dir };
+    }
+
+    it("refuses an action clause with text but no evidence", () => {
+        const { out } = withClause({});
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("undischarged-action-clause"), out);
+    });
+
+    it("refuses one whose record does not exist", () => {
+        // The distinguishing check. Naming a file is free; the obligation lives outside the
+        // repository and the file is the only thing that evidences it.
+        const { out } = withClause({
+            discharged: {
+                by: "Someone", on: "2026-09-10",
+                record: "tools/licences/outreach/no-such-reply.md",
+            },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("undischarged-action-clause"), out);
+        ok(out.includes("does not exist"), out);
+    });
+
+    it("refuses a future date", () => {
+        const { out } = withClause({
+            discharged: {
+                by: "Someone", on: "2099-01-01",
+                record: "tools/licences/outreach/aw3d30-jaxa-reply.md",
+            },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("undischarged-action-clause"), out);
+    });
+
+    it("refuses a record with nobody named", () => {
+        const { out } = withClause({
+            discharged: {
+                by: "  ", on: "2026-09-10",
+                record: "tools/licences/outreach/aw3d30-jaxa-reply.md",
+            },
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("undischarged-action-clause"), out);
+    });
+
+    it("accepts one evidenced by a record that exists", () => {
+        const { out } = withClause({
+            discharged: {
+                by: "ALOS-2/ALOS Science Project, EORC, JAXA",
+                on: "2026-09-10",
+                record: "tools/licences/outreach/aw3d30-jaxa-reply.md",
+            },
+        });
+        ok(out.includes("Licence gate passed"), out);
+    });
+
+    it("keeps an action clause out of the notices as a carried statement", () => {
+        // Its text describes something done outside this repo. Printing it under "Statements
+        // this product is required to carry" would claim the product carries a statement it
+        // does not.
+        const { out, dir } = withClause({
+            discharged: {
+                by: "ALOS-2/ALOS Science Project, EORC, JAXA",
+                on: "2026-09-10",
+                record: "tools/licences/outreach/aw3d30-jaxa-reply.md",
+            },
+        });
+        ok(out.includes("Licence gate passed"), out);
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", join(dir, "licences.json"), "--manifest", join(dir, "m.json"),
+                "--emit-notice", "N.md"],
+            { encoding: "utf8" });
+        ok(`${p.stdout}`.includes("Wrote N.md"), p.stdout + p.stderr);
+        const notice = readFileSync(join(dir, "N.md"), "utf8");
+        ok(!notice.includes("jaxa-commercial-use-notification"),
+            "an action clause was emitted as a statement the product carries");
+        // The attribution it does owe is still there.
+        ok(notice.includes(reg.sources["aw3d30@3.1"].notice),
+            "clause 2.1 attribution is missing from the generated notice");
     });
 });

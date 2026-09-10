@@ -29,7 +29,7 @@
 // --strict additionally fails when NO area is bakeable — the state that should stop a release
 // rather than merely inform one.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /** Metres per degree of latitude. Spherical, matching how the bboxes were generated. */
@@ -106,6 +106,7 @@ const clauses: Record<string, {
   text?: string | null;
   kind?: string;
   ratified?: { by?: string; on?: string } | null;
+  discharged?: { by?: string; on?: string; record?: string } | null;
 }> = registry.clauses ?? {};
 
 /**
@@ -147,6 +148,20 @@ function blockedBecause(key: string, layer: string): string | null {
       // tile for want of a ratification — the two tools disagreeing about the same registry,
       // which is the failure this cross-check exists to prevent.
       reasons.push(`EULA clause "${r.clause}" is a contract term nobody has ratified`);
+    } else if (clause.kind === "action") {
+      // Same contract, third kind. An action clause is discharged by evidence of something done
+      // outside this repository, so text says nothing about whether it happened. Found by
+      // deleting the JAXA reply: the gate refused the tile while this tool still called the area
+      // bakeable — the disagreement the comment above promises not to have, reappearing the
+      // moment a new kind was added. The record is checked for existence here too, because a
+      // path is only evidence while the file is there.
+      const record = clause.discharged?.record?.trim();
+      if (!clause.discharged?.by?.trim() || !record) {
+        reasons.push(`EULA clause "${r.clause}" is an action nobody has recorded doing`);
+      } else if (!existsSync(resolve(record))) {
+        reasons.push(
+          `EULA clause "${r.clause}" names evidence at "${record}", which does not exist`);
+      }
     }
   }
   return reasons.length ? reasons.join("; ") : null;
