@@ -8,7 +8,13 @@ name: licence-gate
 on:
   push:
     branches: [main]
-  pull_request:
+  # Called by ci.yml so this gate sits inside the `required` aggregate the org ruleset
+  # watches. Without that call it ran on every PR, reported as a check named `gate`, and
+  # blocked nothing: the ruleset requires exactly one context, `required`, and a job in
+  # another workflow file cannot appear in its `needs:`. A PR could merge with the licence
+  # gate red. `pull_request` is deliberately NOT a trigger here any more — it would run the
+  # whole thing twice per PR, once uncounted.
+  workflow_call:
   release:
     types: [published]
   schedule:
