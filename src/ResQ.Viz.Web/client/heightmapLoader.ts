@@ -33,6 +33,20 @@ export interface HeightmapSampler {
     readonly worldSize: number;
 }
 
+/**
+ * How elevation is packed into the image's channels.
+ *
+ * `gray8` is the hand-made-file format this loader shipped with: a grayscale PNG whose red
+ * channel carries 0..255. It gives 256 elevation levels over the whole of `heightScale`, and
+ * that is too coarse for baked DEM tiles — see {@link decodeElevationGrid} for the arithmetic.
+ *
+ * `rg16` packs a 16-bit value big-endian across two channels, red as the high byte and green as
+ * the low byte, for 65536 levels. Canvas `getImageData` is 8-bit per channel by specification,
+ * so a genuinely 16-bit PNG is silently truncated when drawn to a canvas; splitting the value
+ * across two 8-bit channels is what survives that decode.
+ */
+export type HeightmapEncoding = 'gray8' | 'rg16';
+
 interface HeightmapOptions {
     /** World extent in metres the image covers (centred on origin). Default 4000. */
     worldSize?:   number;
@@ -40,6 +54,8 @@ interface HeightmapOptions {
     heightScale?: number;
     /** Metres added to every sample (sea-level offset). Default 0. */
     baseOffset?:  number;
+    /** Channel packing. Default `gray8`, which is what hand-made files use. */
+    encoding?:    HeightmapEncoding;
 }
 
 /** Options for {@link buildSamplerFromGrid}. */
@@ -100,6 +116,80 @@ export function buildSamplerFromGrid(o: GridSamplerOptions): HeightmapSampler {
     };
 }
 
+/** Inputs to {@link decodeElevationGrid}. */
+export interface DecodeOptions {
+    /** Metres represented by a full-scale sample. */
+    heightScale: number;
+    /** Metres added to every sample. */
+    baseOffset:  number;
+    /** Channel packing. */
+    encoding:    HeightmapEncoding;
+}
+
+/**
+ * Decode RGBA bytes to a row-major elevation grid in metres.
+ *
+ * Pulled out of the fetch path so it can be tested without a DOM: this is the step that decides
+ * how much vertical detail survives, and it fed drone contact physics untested.
+ *
+ * ## Why `gray8` is not good enough for a baked tile
+ *
+ * 8 bits gives 256 levels across the whole of `heightScale`, so the quantum is
+ * `heightScale / 255` metres. At the bake grid's spacing — 2048 samples across 4000 m, so
+ * 1.953 m per cell — that quantum lands as a slope between adjacent cells:
+ *
+ * | heightScale | quantum | apparent slope across one cell |
+ * | ----------- | ------- | ------------------------------ |
+ * | 400 m       | 1.569 m | 38.8° |
+ * | 800 m       | 3.137 m | 58.1° |
+ * | 1500 m      | 5.882 m | 71.6° |
+ *
+ * A typical wheeled or tracked ground vehicle tops out near 30°, so on any real slope every
+ * quantisation boundary becomes a false cliff the mobility model reads as impassable. The
+ * terrain does not merely lose detail — it grows obstacles that are not there. `rg16` puts the
+ * quantum at 6.1 mm for a 400 m scale, or 0.18° across a cell, which is below the noise in the
+ * source DEM.
+ *
+ * `gray8` remains the default because the hand-made files documented in
+ * `public/heightmaps/README.md` are grayscale, and changing what they mean would silently move
+ * existing terrain.
+ *
+ * @param data RGBA bytes, 4 per pixel, as `getImageData` returns them.
+ * @param width Grid columns.
+ * @param height Grid rows.
+ * @param o Scale, offset and channel packing.
+ * @returns Row-major elevations in metres.
+ */
+export function decodeElevationGrid(
+    data: Uint8ClampedArray | Uint8Array,
+    width: number,
+    height: number,
+    o: DecodeOptions,
+): Float32Array {
+    const { heightScale, baseOffset, encoding } = o;
+    const count = width * height;
+    if (data.length < count * 4) {
+        throw new Error(
+            `heightmap: pixel buffer holds ${data.length} bytes, need ${count * 4} for ${width}x${height}`);
+    }
+    const cells = new Float32Array(count);
+    if (encoding === 'rg16') {
+        // Big-endian across two channels: red high, green low. Canvas getImageData is 8-bit per
+        // channel by specification, so a 16-bit PNG loses its low bits on the way through a
+        // canvas — the split is what survives that, not a space optimisation.
+        for (let i = 0; i < count; i++) {
+            const raw = (data[i * 4]! << 8) | data[i * 4 + 1]!;
+            cells[i] = baseOffset + (raw / 65535) * heightScale;
+        }
+    } else {
+        // Grayscale files store RGB = GGG, so the red channel is canonical.
+        for (let i = 0; i < count; i++) {
+            cells[i] = baseOffset + (data[i * 4]! / 255) * heightScale;
+        }
+    }
+    return cells;
+}
+
 const _samplerCache = new Map<string, HeightmapSampler>();
 
 /**
@@ -117,6 +207,7 @@ async function loadHeightmapSampler(
         worldSize   = 4000,
         heightScale = 400,
         baseOffset  = 0,
+        encoding    = 'gray8',
     } = opts;
 
     // Guard against NaN/Infinity from bad URL params and non-positive
@@ -127,22 +218,18 @@ async function loadHeightmapSampler(
     if (!Number.isFinite(heightScale))                     throw new Error(`heightmap: heightScale must be finite, got ${heightScale}`);
     if (!Number.isFinite(baseOffset))                      throw new Error(`heightmap: baseOffset must be finite, got ${baseOffset}`);
 
-    const cacheKey = `${url}|${worldSize}|${heightScale}|${baseOffset}`;
+    const cacheKey = `${url}|${worldSize}|${heightScale}|${baseOffset}|${encoding}`;
     const cached   = _samplerCache.get(cacheKey);
     if (cached) return cached;
 
     const img = await _fetchImage(url);
     const { data, width, height } = _decodePixels(img);
 
-    // Grayscale heightmaps store RGB = GGG, so the red channel is canonical.
     // Decode straight to a metres grid; buildSamplerFromGrid handles the
     // bilinear lookup (shared with the eroded-DEM path so both map world →
     // grid identically). Bilinear over metres == bilinear over 0..1 then
     // scaled — affine, so the result is unchanged from the old inline path.
-    const cells = new Float32Array(width * height);
-    for (let i = 0; i < cells.length; i++) {
-        cells[i] = baseOffset + (data[i * 4]! / 255) * heightScale;
-    }
+    const cells = decodeElevationGrid(data, width, height, { heightScale, baseOffset, encoding });
 
     const sampler = buildSamplerFromGrid({ cells, width, height, worldSize, key: cacheKey });
     _samplerCache.set(cacheKey, sampler);
@@ -150,7 +237,7 @@ async function loadHeightmapSampler(
 }
 
 /**
- * Read `?heightmap=<url>&heightScale=<m>&worldSize=<m>&baseOffset=<m>` from
+ * Read `?heightmap=<url>&heightScale=<m>&worldSize=<m>&baseOffset=<m>&encoding=<gray8|rg16>` from
  * window.location and return a sampler, or null if no heightmap is configured
  * or the load fails. Never throws — callers treat null as "use procedural".
  */
@@ -176,6 +263,17 @@ export async function loadHeightmapFromLocation(): Promise<HeightmapSampler | nu
     if (hs !== undefined) opts.heightScale = hs;
     if (ws !== undefined) opts.worldSize   = ws;
     if (bo !== undefined) opts.baseOffset  = bo;
+
+    // Unrecognised values fall back to the default rather than throwing, matching how the
+    // numeric params above treat a typo — but an unknown encoding is warned about, because
+    // silently decoding an rg16 tile as gray8 produces terrain that looks plausible and is
+    // wrong by up to heightScale/255 everywhere.
+    const enc = params.get('encoding');
+    if (enc === 'gray8' || enc === 'rg16') {
+        opts.encoding = enc;
+    } else if (enc !== null) {
+        log.warn('unknown encoding, using gray8', { encoding: enc });
+    }
 
     try {
         return await loadHeightmapSampler(url, opts);
