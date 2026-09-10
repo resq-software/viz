@@ -124,10 +124,19 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
 
 describe('entry-chunk boundaries', () => {
   it.each(DEFERRED_MODULES)('keeps $path out of the entry chunk ($why)', ({ path }) => {
-    // Matches a value import of the module; `import type` is excluded because it
-    // leaves no runtime edge.
+    // Matches any STATIC runtime edge to the module. `import type` is excluded because it
+    // leaves none.
+    //
+    // The mandatory `from` used to be the whole bug: a bare side-effect import —
+    // `import './operator/advancedSafety';` — never matched, even though it is a full static
+    // edge that pulls the module and its stylesheet into the entry chunk. That form is not
+    // hypothetical here; app.ts opens with six of them (fonts and stylesheets), so it is the
+    // idiomatic way to add an eager edge in this exact file. All 24 of these guards were blind
+    // to it. A re-export (`export { X } from './path'`) is the same shape and also now matched.
+    const quoted = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const staticImport = new RegExp(
-      `^import\\s+(?!type\\b)[^;]*from\\s+'${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`,
+      // import ... from 'path'  |  export ... from 'path'  |  import 'path'
+      `^\\s*(?:import\\s+(?!type\\b)[^;]*from\\s+|export\\s+(?!type\\b)[^;]*from\\s+|import\\s+)'${quoted}'`,
       'm',
     );
     expect(
