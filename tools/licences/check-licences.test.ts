@@ -1529,3 +1529,116 @@ describe("an action is not discharged by describing it", () => {
             "clause 2.1 attribution is missing from the generated notice");
     });
 });
+
+describe("a region box the registry cannot describe fails closed", () => {
+    // asBox exists to refuse coordinates that cannot describe a place on Earth, and it was
+    // applied only to the AREA's bbox. policy.regions came straight out of JSON.parse with its
+    // BBox type asserted rather than checked.
+    //
+    // For `clip` that was survivable: a bad box makes `contains` false and the rule errors
+    // anyway. For `exclude-region` it was not. A bad box makes `intersects` false, the rule
+    // returns null, and the exclusion silently does not apply — fail OPEN, on a licence
+    // carve-out.
+    //
+    // Measured before fixing: a tile squarely inside Alaska drawing on an Alaska-excluded source
+    // errored `restricted-region` and the gate FAILED; swapping two corners of
+    // policy.regions.alaska made the same tile report `0 error(s)` and "Licence gate passed".
+    const IN_ALASKA: [number, number, number, number] = [-150.0, 61.0, -149.0, 62.0];
+
+    function run(mutateRegion?: (reg: any) => void) {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-region-"));
+        const reg = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        mutateRegion?.(reg);
+        const regPath = join(dir, "licences.json");
+        writeFileSync(regPath, JSON.stringify(reg));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        writeFileSync(join(dir, "m.json"), JSON.stringify(manifestWith(
+            { layer: "elevation", source: "arcticdem-strips", fetched_at: "2026-08-01T00:00:00Z" },
+            IN_ALASKA,
+            { eula_clauses: (reg.sources["arcticdem-strips"].restrictions ?? [])
+                .filter((r: any) => r.kind === "require-eula-clause").map((r: any) => r.clause) })));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", regPath, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        return `${p.stdout}\n${p.stderr}`;
+    }
+
+    it("still excludes an Alaska tile when the region box is sound", () => {
+        // The control. Without this, the tests below could pass because the exclusion never
+        // fires at all rather than because the guard works.
+        const out = run();
+        ok(out.includes("restricted-region"), out);
+        ok(!out.includes("Licence gate passed"), out);
+    });
+
+    it("refuses an inverted region box instead of ignoring the exclusion", () => {
+        const out = run((reg) => {
+            const b = reg.policy.regions["alaska"][0];
+            reg.policy.regions["alaska"] = [[b[2], b[3], b[0], b[1]]];
+        });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("restriction-unresolvable"), out);
+        ok(out.includes("not a usable bbox"), out);
+    });
+
+    it("refuses an out-of-range region box", () => {
+        const out = run((reg) => { reg.policy.regions["alaska"] = [[-200, 51.2, -129.9, 71.5]]; });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("restriction-unresolvable"), out);
+    });
+
+    it("refuses a region box with the wrong number of coordinates", () => {
+        const out = run((reg) => { reg.policy.regions["alaska"] = [[-172.5, 51.2, -129.9]] as never; });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("restriction-unresolvable"), out);
+    });
+
+    it("refuses a null region box instead of crashing on it", () => {
+        // policy.regions is JSON.parse output, so a box can be any shape at runtime. `[null]`
+        // reached asBox and threw `TypeError: Cannot read properties of null (reading 'length')`
+        // — a crash inside a licence check, which is a worse failure than the message it
+        // replaced. Review caught it; asBox now takes `unknown`.
+        const out = run((reg) => { reg.policy.regions["alaska"] = [null] as never; });
+        ok(!out.includes("TypeError"), out);
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("restriction-unresolvable"), out);
+    });
+
+    it("refuses region boxes that are not arrays", () => {
+        for (const shape of [[42], ["x"], [{ minLon: 1 }]]) {
+            const out = run((reg) => { reg.policy.regions["alaska"] = shape as never; });
+            ok(!out.includes("TypeError"), `${JSON.stringify(shape)}: ${out}`);
+            ok(out.includes("restriction-unresolvable"), `${JSON.stringify(shape)}: ${out}`);
+        }
+    });
+
+    it("refuses a region value that is not an array at all", () => {
+        for (const shape of ["alaska", { a: 1 }, 42]) {
+            const out = run((reg) => { reg.policy.regions["alaska"] = shape as never; });
+            ok(!out.includes("TypeError"), `${JSON.stringify(shape)}: ${out}`);
+            ok(out.includes("restriction-unresolvable"), `${JSON.stringify(shape)}: ${out}`);
+        }
+    });
+
+    it("says the region is not an array, rather than blaming one of its characters", () => {
+        // asBox's own type guard already makes a string region fail closed, so the
+        // Array.isArray check in regionBoxes changes the MESSAGE, not the verdict — verified by
+        // reverting it to truthiness and watching all 111 tests stay green. Left in and pinned
+        // here rather than dropped, because without it a string region is iterated character by
+        // character and the gate reports `whose box "a" is not a usable bbox`, sending a reader
+        // to look for a box that does not exist.
+        const out = run((reg) => { reg.policy.regions["alaska"] = "alaska" as never; });
+        ok(out.includes("does not define as a non-empty array of boxes"), out);
+        ok(!out.includes('whose box "a"'), out);
+    });
+
+    it("refuses a non-finite region box", () => {
+        // JSON has no NaN, but null parses and Number.isFinite(null) is false.
+        const out = run((reg) => { reg.policy.regions["alaska"] = [[-172.5, 51.2, null, 71.5]] as never; });
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("restriction-unresolvable"), out);
+    });
+});

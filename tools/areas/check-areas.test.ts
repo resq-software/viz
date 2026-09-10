@@ -67,6 +67,13 @@ describe("the shipped area definitions", () => {
 
     it("all declare an elevation source", () => {
         // Terrain is the entire point of a bake; an area without one is a typo, not a choice.
+        //
+        // NOTE: this asserts on the shipped DATA and never runs the checker. That is deliberate
+        // and it is not coverage of the `no-elevation` guard — the guard is driven separately in
+        // "guards that only fire on data nobody ships" below. Read together they say two
+        // different things: the data is right today, and the checker would catch it if it were
+        // not. This test used to be the only thing with "elevation source" in its name, which
+        // made the guard look covered when nothing drove it.
         const doc = JSON.parse(readFileSync(REAL_AREAS, "utf8"));
         for (const a of doc.areas) {
             ok(a.sources?.elevation, `${a.id} declares no elevation source`);
@@ -368,5 +375,35 @@ describe("registry fields are JSON, not the types they are annotated as", () => 
         });
         ok(!/TypeError/.test(r.out), r.out);
         ok(r.out.includes("nobody has ratified"), r.out);
+    });
+});
+
+describe("guards that only fire on data nobody ships", () => {
+    // `no-sources` and `no-elevation` were the only two of the checker's nine fail codes with no
+    // test driving them. The test that sounded like coverage — "all declare an elevation source"
+    // — reads data/areas.json in the test process and never invokes the checker, so it verifies
+    // the data rather than the guard. And because every shipped area does declare an elevation
+    // source, neither guard fires in any other run either: present, correct-looking, and never
+    // once executed.
+    it("refuses an area that declares no sources at all", () => {
+        const r = run((doc) => { doc.areas[0].sources = {}; });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("no-sources"), r.out);
+    });
+
+    it("refuses an area that declares sources but no elevation", () => {
+        const r = run((doc) => {
+            doc.areas[0].sources = { landcover: "esa-worldcover" };
+        });
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("no-elevation"), r.out);
+    });
+
+    it("names the offending area, not just the code", () => {
+        // A fail code with no id in it sends a reader to grep 12 areas by hand.
+        const r = run((doc) => { doc.areas[2].sources = { landcover: "esa-worldcover" }; });
+        strictEqual(r.status, 1, r.out);
+        const doc = JSON.parse(readFileSync(REAL_AREAS, "utf8"));
+        ok(r.out.includes(doc.areas[2].id), r.out);
     });
 });
