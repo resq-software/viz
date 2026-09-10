@@ -1153,7 +1153,12 @@ describe("a contract term is not discharged by existing", () => {
             { layer: "elevation", source: "copernicus-dem", fetched_at: "2026-08-01T00:00:00Z",
                 election: "attribution" },
             [8.0, 46.0, 9.0, 47.0],
-            { eula_clauses: ["copernicus-6c-liability", "copernicus-6e-flowdown"] })));
+            // Derived from the register rather than restated. This suite is about whether an
+            // unratified contract term blocks, not about which clauses copernicus-dem happens to
+            // require — pinning the list here made adding 6(d) look like a regression in the
+            // ratification guard.
+            { eula_clauses: reg.sources["copernicus-dem"].restrictions
+                .filter((r: any) => r.kind === "require-eula-clause").map((r: any) => r.clause) })));
         const p = spawnSync(process.execPath,
             ["--experimental-strip-types", GATE, "--root", dir,
                 "--registry", regPath, "--manifest", join(dir, "m.json")],
@@ -1271,5 +1276,83 @@ describe("full-licence-text sources", () => {
         }
         deepStrictEqual(broken, [],
             "a licence requiring its full text to ship is not discharged by a placeholder");
+    });
+});
+
+describe("the terms draft cannot drift from the clause register", () => {
+    // product-terms-draft.md tells a reviewer to change the flow-down wording in the register
+    // and not in the document. Nothing enforced that, so the two could disagree while the
+    // document kept claiming they could not — the same shape as a check that never fires.
+    // The register is the source of truth; the document carries a rendering of it.
+    const DRAFT = join(HERE, "product-terms-draft.md");
+    const BEGIN = "<!-- BEGIN copernicus-6e-flowdown";
+    const END = "<!-- END copernicus-6e-flowdown -->";
+
+    it("reproduces copernicus-6e-flowdown verbatim", () => {
+        const doc = readFileSync(DRAFT, "utf8");
+        const from = doc.indexOf(BEGIN);
+        const to = doc.indexOf(END);
+        ok(from !== -1 && to > from, "the generated-block markers are missing from the draft");
+
+        // Everything between the marker lines, unquoted: strip the "> " each line carries.
+        const block = doc.slice(doc.indexOf("\n", from) + 1, to).trim();
+        const rendered = block.split("\n")
+            .map((line) => line.replace(/^> ?/, ""))
+            .join("\n")
+            .replace(/\n{2,}/g, "\n\n");
+
+        const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        strictEqual(rendered, registry.clauses["copernicus-6e-flowdown"].text,
+            "product-terms-draft.md §4 no longer matches the register. Regenerate the block from "
+            + "clauses['copernicus-6e-flowdown'].text rather than editing the document.");
+    });
+
+    it("still says the clause is unratified, because it is", () => {
+        // The draft's premise is that the gate blocks until counsel signs off. If someone
+        // ratifies the clause, that sentence stops being true and the document needs revising.
+        const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        strictEqual(registry.clauses["copernicus-6e-flowdown"].ratified, null,
+            "copernicus-6e-flowdown has been ratified — product-terms-draft.md's header and its "
+            + "'Before this ships' list both assume it has not, and now need updating.");
+    });
+});
+
+describe("Copernicus Article 6 is carried in full", () => {
+    // Every other check on these clauses runs per manifest layer, so it stays invisible until a
+    // bake references copernicus-dem — and nothing does yet. Removing a required clause from the
+    // source therefore passed the gate, the areas check and this suite in silence. Verified by
+    // deleting the 6(d) requirement: no check anywhere went red.
+    //
+    // These three are not registry trivia. They are what Article 6 obliges, read against the
+    // licence for instance COP-DEM-GLO-30-F vendored at texts/copernicus-worlddem-30.txt:
+    //   6(a)/6(b) — notices, discharged by the source's `notice` field, not by a clause
+    //   6(c)      — the liability sentence, mandated verbatim
+    //   6(d)      — no implied endorsement; the only Article 6 duty with no trigger at all
+    //   6(e)      — flow-down, a contract term, blocking until ratified
+    // Deleting a row here should take an argument about the licence, not a passing build.
+    it("requires the 6(c), 6(d) and 6(e) clauses", () => {
+        const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const required = (registry.sources["copernicus-dem"].restrictions ?? [])
+            .filter((r: { kind?: string }) => r.kind === "require-eula-clause")
+            .map((r: { clause?: string }) => r.clause)
+            .sort();
+        deepStrictEqual(required, [
+            "copernicus-6c-liability",
+            "copernicus-6d-nonendorsement",
+            "copernicus-6e-flowdown",
+        ]);
+    });
+
+    it("carries the 6(a) source notice inside the 6(b) notice it publishes", () => {
+        // The register discharges both notices with one string, on the reading that 6(b)'s
+        // modified-data notice contains 6(a)'s source notice verbatim. If the published notice is
+        // ever reworded so that stops being true, 6(a) goes unmet with nothing else covering it.
+        const registry = JSON.parse(readFileSync(REGISTRY, "utf8"));
+        const published = registry.sources["copernicus-dem"].notice as string;
+        const sourceNotice = "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 "
+            + "provided under COPERNICUS by the European Union and ESA; all rights reserved";
+        ok(published.includes(sourceNotice),
+            `the published Copernicus notice no longer contains Article 6(a)'s source notice, so `
+            + `nothing discharges 6(a). Published: ${JSON.stringify(published)}`);
     });
 });
