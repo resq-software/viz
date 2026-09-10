@@ -30,8 +30,13 @@
 #   Perplexity   https://docs.perplexity.ai/guides/bots
 #   Apple        https://support.apple.com/en-us/119829
 #   Common Crawl https://commoncrawl.org/ccbot
-#   ByteDance    https://www.useragentstring.com/Bytespider.php
+#   ByteDance    https://darkvisitors.com/agents/bytespider  (third-party — see below)
 #   Amazon       https://developer.amazon.com/amazonbot
+#
+# Every row above but ByteDance points at the vendor's own documentation. ByteDance
+# publishes none, so that row cites a third-party register instead. It previously cited
+# useragentstring.com, which now 404s; expect this one to rot again, and do not spend time
+# hunting for an official page, because there isn't one.
 
 User-agent: *
 Content-Signal: ai-train=no, search=yes, ai-input=no

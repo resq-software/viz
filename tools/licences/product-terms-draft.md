@@ -24,24 +24,35 @@
 
 ## Why this file exists
 
-Four obligations attach to data baked into this product, and none is satisfied by
+Seven obligations attach to data baked into this product, and none is satisfied by
 a document nobody reads:
 
-| obligation | source | discharged in |
-|---|---|---|
-| Liability sentence, verbatim | Copernicus DEM, Art. 6(c) | `notices.md`, generated |
-| Not for navigation | NOAA CUDEM/CRM, GMRT, EMODnet | `notices.md`, generated |
-| Modification disclosure | USGS 3DEP use constraints | `notices.md`, generated |
-| **Flow-down to subsequent users** | **Copernicus DEM, Art. 6(e)** | **here — §4** |
+| obligation | source | binds this product | discharged in |
+|---|---|---|---|
+| Source notice on any distribution or communication | Copernicus DEM, Art. 6(a) | yes — the product communicates to the public | `notices.md`, generated |
+| Modified-data notice | Copernicus DEM, Art. 6(b) | yes — the bake resamples and reprojects | `notices.md`, generated |
+| Liability sentence, verbatim | Copernicus DEM, Art. 6(c) | yes | `notices.md`, generated |
+| No implied endorsement | Copernicus DEM, Art. 6(d) | yes, unconditionally | `notices.md`, generated |
+| **Flow-down to subsequent users** | **Copernicus DEM, Art. 6(e)** | **only if §2 grants redistribution** | **here — §4** |
+| Not for navigation | NOAA CUDEM/CRM, GMRT, EMODnet | yes | `notices.md`, generated |
+| Modification disclosure | USGS 3DEP use constraints | yes | `notices.md`, generated |
 
-The first three are *statements*: carrying the text discharges them, and
-`notices.md` is generated from the licence register so they cannot drift. The
-fourth is a *contract term* — it binds whoever receives the data from you — and a
+Every one of these except 6(e) is a *statement*: carrying the text discharges it,
+and `notices.md` is generated from the licence register so they cannot drift.
+6(e) is a *contract term* — it binds whoever receives the data from you — and a
 statement cannot do that job.
 
-**Read [`notices.md`](./notices.md) alongside this.** It is generated from the
+One row is worth a second look. **6(a) and 6(b) are discharged by a single
+string.** The notice the register carries is 6(b)'s modified-data form, which
+reproduces 6(a)'s source notice word for word inside itself behind the prefix
+*produced using Copernicus WorldDEM-30*. That is a reading, not a certainty;
+a reviewer should confirm it rather than take it on trust.
+
+**Read [`NOTICE.md`](../../NOTICE.md) alongside this.** It is generated from the
 provenance manifest and is the authoritative list of what this product contains
-and what each source requires.
+and what each source requires. `scripts/copy-legal.mjs` copies it to
+`client/public/legal/notices.md` at build time, which is the name §6 refers to and
+the name users see.
 
 ---
 
@@ -67,6 +78,21 @@ restriction put in its place, which is simpler and cheaper to comply with.
 
 If **yes**, §4 is mandatory and must survive review intact.
 
+Two facts belong in that decision, neither of which decides it:
+
+- **Nothing upstream forces the answer.** The Copernicus licence's Right of Use
+  article already grants reproduction, distribution, communication to the general
+  public, and adaptation — worldwide, unlimited in time, and free of charge under
+  the Financial Conditions article. Whether the *licensee* gets any of that is
+  purely this product's commercial call, not something the upstream licence
+  settles.
+- **Breach of Article 6 ends the licence.** The Termination article — cite it by
+  title, because the licence numbers it "Article 9" and numbers the IPR article
+  immediately before it "Article 9" too — lets the Licensor terminate with the
+  immediate result of the user losing every right granted. Granting redistribution
+  buys a clause that has to survive every future edit, and the cost of getting it
+  wrong later is the data, not a warning letter.
+
 ## 3. Restrictions
 
 **[COUNSEL]** — reverse engineering, benchmarking, export control, and whether
@@ -78,38 +104,49 @@ otherwise. The wording is in `notices.md`.
 
 ## 4. Copernicus flow-down — [COUNSEL, and not optional if §2 grants redistribution]
 
-Drafted from the verbatim Article 6 of the Copernicus DEM licence, and reproduced
-from `copernicus-6e-flowdown` in the licence register so the two cannot drift.
-**Change it there, not here.**
+Verified against the licence for Copernicus DEM instance **COP-DEM-GLO-30-F**,
+vendored at `tools/licences/texts/copernicus-worlddem-30.txt` and hashed into the
+register, because the publisher's own directory URL now returns 403.
 
-> Where this product supplies elevation data derived from the Copernicus
-> WorldDEM-30, and where you are granted any right to distribute or communicate
-> that data to the public, whether modified or not, you must ensure that anyone
-> receiving it from you is bound by these same obligations, namely: (a) to state,
-> where the data have been adapted or modified, "produced using Copernicus
-> WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018
-> provided under COPERNICUS by the European Union and ESA; all rights reserved";
-> (b) to ensure that recipients understand that neither the Licensor nor any other
-> entity in charge of the Copernicus programme may be held liable in any respect,
-> and to include in their own licence, warning or notice the sentence "The
-> organisations in charge of the Copernicus programme by law or by delegation do
-> not incur any liability for any use of the Copernicus WorldDEM-30"; (c) not to
-> state or imply that the Licensor or the Copernicus programme endorses them,
-> their use of the data, or any product they make from it; and (d) to impose these
-> same obligations, including this one, on anyone to whom they in turn grant such
-> rights.
+The text below is **generated from `copernicus-6e-flowdown` in the licence
+register**. Change it there, not here; a test in `check-licences.test.ts` fails if
+the two stop matching.
 
-Three things a reviewer should check, because each shaped the wording:
+<!-- BEGIN copernicus-6e-flowdown — generated from tools/licences/licences.json -->
+> Part of the elevation data in this product derives from the Copernicus WorldDEM-30, supplied under the licence for Copernicus DEM instance COP-DEM-GLO-30-F. Article 6 of that licence places obligations on every user of that data. The following obligations bind you directly.
+>
+> (a) When you communicate the data to the general public or distribute it, whether or not you have modified it, you must inform the general public of the source by using the notice: "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved."
+>
+> (b) Where you have adapted or modified the data, you must in addition provide the notice: "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved".
+>
+> (c) If you exercise a right to distribute the data or to communicate it to the general public, modified or not, you must ensure that those who receive it from you understand that neither the Licensor nor any other legal entity in charge of the Copernicus programme, or of the delivery of Copernicus data and information under that programme, may be held liable with regard to any aspect of the Copernicus WorldDEM-30; and you must add to your own licence, or to any legal warning or notice covering that distribution or communication, the sentence: "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30".
+>
+> (d) You must not convey the impression to the general public that your activities are officially endorsed by the Provider, the Licensor, or any other legal entity in charge of the Copernicus programme or of the delivery of Copernicus data and information under that programme. This obligation applies whether or not you ever distribute the data.
+>
+> (e) Where you grant anyone else the right to distribute the data or to communicate it to the general public, modified or not, you must ensure that they are bound by obligations (a) to (d) above and by this obligation (e), so that every subsequent recipient carries the same duties.
+<!-- END copernicus-6e-flowdown -->
 
-1. **"The above obligations" means 6(a) through 6(d)**, not just attribution. The
-   draft flows down the modified-data notice, the liability sentence, the
-   non-endorsement duty, and 6(e) itself so the chain does not break at the second
-   hop. 6(d) is the one most easily dropped.
-2. **The two quoted strings are the licence's own wording** and carry authority.
-   Everything around them is ours and carries none until approved.
-3. **6(c) binds this product regardless of §2.** Unlike 6(e) it is unconditional,
-   because this product does communicate to the general public. It is discharged
-   in `notices.md`, not here.
+Five things a reviewer should check, because each shaped the wording:
+
+1. **The lettering is the licence's own.** (a)–(e) here are Article 6(a)–(e)
+   there, so this can be diffed against the licence line by line. An earlier draft
+   renumbered — its (a)–(d) were 6(b)–(e) — and dropped 6(a) in the process.
+2. **"The above obligations" in 6(e) means 6(a) through 6(d)**, not just
+   attribution. The clause carries all four and then re-imposes itself as (e), so
+   the chain does not break at the second hop. 6(d) is the one most easily lost.
+3. **The triggers differ per sub-letter, and 6(d) has none.** 6(a) applies on any
+   distribution or communication, modified or not; 6(b) only where the data have
+   been adapted; 6(c) where a distribution or communication right is exercised;
+   6(d) unconditionally. So 6(d) binds this product whatever §2 decides, and is
+   carried in `notices.md` as `copernicus-6d-nonendorsement`. It is the reason
+   answering §2 "no" does not clear Article 6 entirely.
+4. **The licensee is bound directly, not merely asked to pass obligations on.** A
+   licensee who distributes is a User under Article 6 in their own right. An
+   earlier draft obliged them only to bind the *next* recipient, which left the
+   licensee's own conduct unaddressed — the gap that lettering fix exposed.
+5. **The three quoted strings are the licence's own wording** and carry authority;
+   they are reproduced with the real copyright symbol because the licence mandates
+   them verbatim. Everything around them is ours and carries none until approved.
 
 ## 5. Data accuracy and fitness
 
@@ -127,6 +164,12 @@ The notices at [`notices.md`](./notices.md) form part of these terms. They are
 generated from the provenance manifest by the licence gate, and the build refuses
 to produce a release without them.
 
+> **Do not "fix" that link.** It is relative to `client/public/legal/`, where this
+> document goes once approved and where `notices.md` already sits. It does not
+> resolve from `tools/licences/`, and that is the only thing about this file that
+> is supposed to be broken while it waits here. §6 is terms text addressed to a
+> user; the link on line 51 is scaffolding addressed to you.
+
 ## 7. Liability, indemnity, governing law, changes to these terms
 
 **[COUNSEL]** — all of it.
@@ -139,6 +182,9 @@ to produce a release without them.
 2. **Have counsel review**, then record the reviewer and date in
    `clauses["copernicus-6e-flowdown"].ratified` in `tools/licences/licences.json`.
    The gate keeps refusing Copernicus-derived tiles until that exists.
-3. **Decide how these terms are presented.** A link in the settings panel makes
+3. **Re-check the two `notices.md` links after the move.** §6's becomes correct the
+   moment this file lands in `client/public/legal/`; the one above it stops being
+   correct at the same moment and needs repointing.
+4. **Decide how these terms are presented.** A link in the settings panel makes
    them findable, which is enough to *read* them and probably not enough to *form
    a contract*. That is a product and legal decision, not an engineering one.
