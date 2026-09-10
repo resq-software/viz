@@ -70,15 +70,78 @@ public class SimulationServiceTests
     }
 
     [Fact]
-    public void SetWeather_Changes_Wind_Mode()
+    public void SetWeather_Steady_Wind_Pushes_A_Hovering_Drone()
     {
-        var room = CreateRoom();
-        room.AddDrone("d1", new Vector3(0f, 50f, 0f));
-        room.StepOnce();
-        room.SetWeather("steady", 20.0, 90.0);
-        for (var i = 0; i < 10; i++) room.StepOnce();
-        var after = room.GetSnapshot()[0];
-        after.Should().NotBeNull();
+        // The previous version of this test asserted `after.Should().NotBeNull()` on a record it
+        // had just indexed out of a list — an assertion with no way to fail. It passed
+        // "steady", 20 m/s and never read a position, a velocity, Visibility or Precipitation,
+        // so replacing SetWeather's body with a Calm/0/0 config left all 1378 tests green.
+        //
+        // Wind reaches drones through AssetEnvironment.GetWind, so drift is what SetWeather
+        // actually does. Two rooms rather than one before-and-after, because a drone that drifts
+        // on its own would make a single room's movement prove nothing.
+        static SimulationRoom Hovering(SimulationRoom room)
+        {
+            room.AddDrone("d1", new Vector3(0f, 50f, 0f));
+            room.StepOnce();
+            return room;
+        }
+
+        var calm = Hovering(CreateRoom());
+        var windy = Hovering(CreateRoom());
+        windy.SetWeather("steady", 20.0, 90.0);
+
+        for (var i = 0; i < 60; i++)
+        {
+            calm.StepOnce();
+            windy.StepOnce();
+        }
+
+        var calmPos = calm.GetSnapshot()[0].Position;
+        var windyPos = windy.GetSnapshot()[0].Position;
+
+        var drift = Math.Sqrt(
+            Math.Pow(windyPos[0] - calmPos[0], 2) + Math.Pow(windyPos[2] - calmPos[2], 2));
+
+        drift.Should().BeGreaterThan(1.0,
+            "a steady 20 m/s wind must move a hovering drone away from where calm air leaves it — "
+            + "if this is zero, SetWeather is not reaching the simulation");
+    }
+
+    [Fact]
+    public void Two_Rooms_With_The_Same_Weather_End_In_The_Same_Place()
+    {
+        // The control for the test above, and not the one I first wrote. I assumed a hovering
+        // drone stays put in calm air and asserted it moved less than a metre; it moves 7.75 m
+        // over 60 steps on its own. So "the drone moved" proves nothing about wind.
+        //
+        // What makes the comparison above valid is DETERMINISM: two rooms differing only in
+        // weather must otherwise land identically, so any separation between them is the wind
+        // and not noise. That is what this pins. If it ever fails, the drift assertion above
+        // stops meaning anything and should not be trusted.
+        static SimulationRoom Hovering(SimulationRoom room)
+        {
+            room.AddDrone("d1", new Vector3(0f, 50f, 0f));
+            room.StepOnce();
+            return room;
+        }
+
+        var a = Hovering(CreateRoom());
+        var b = Hovering(CreateRoom());
+        for (var i = 0; i < 60; i++)
+        {
+            a.StepOnce();
+            b.StepOnce();
+        }
+
+        var pa = a.GetSnapshot()[0].Position;
+        var pb = b.GetSnapshot()[0].Position;
+        var separation = Math.Sqrt(
+            Math.Pow(pa[0] - pb[0], 2) + Math.Pow(pa[1] - pb[1], 2) + Math.Pow(pa[2] - pb[2], 2));
+
+        separation.Should().BeLessThan(1e-3,
+            "two rooms given the same weather must step identically, or the wind comparison above "
+            + "is measuring nondeterminism rather than wind");
     }
 
     [Fact]

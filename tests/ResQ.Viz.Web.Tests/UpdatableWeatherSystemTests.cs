@@ -53,12 +53,46 @@ public class UpdatableWeatherSystemTests
     }
 
     [Fact]
-    public void Update_Swaps_Inner_Configuration_Without_Throwing()
+    public void Update_Swaps_Inner_Configuration_So_Later_Reads_See_The_New_Values()
     {
+        // The whole contract of Update is that later reads come from the NEW inner system, and
+        // the previous version of this test could not observe that: it swapped `new
+        // WeatherConfig()` for another `new WeatherConfig()` — the same defaults — and then
+        // asserted only NotThrow plus `>= 0`. Replacing the body of Update with `{ }` left it
+        // green. Distinguishable values, and the assertion is the change itself.
         var sys = Create();
-        var act = () => sys.Update(new WeatherConfig());
+        sys.Visibility.Should().Be(1.0, "the default config this system was built from");
+        sys.Precipitation.Should().Be(0.0);
+
+        sys.Update(new WeatherConfig(Visibility: 0.25, Precipitation: 0.75));
+
+        sys.Visibility.Should().Be(0.25, "reads after Update must come from the new inner system");
+        sys.Precipitation.Should().Be(0.75);
+    }
+
+    [Fact]
+    public void Update_Is_Idempotent_And_Repeatable()
+    {
+        // A swap that only works once — or that mutates rather than replaces — passes the test
+        // above. This drives it twice and back again.
+        var sys = Create();
+        sys.Update(new WeatherConfig(Visibility: 0.25, Precipitation: 0.75));
+        sys.Update(new WeatherConfig(Visibility: 0.5, Precipitation: 0.1));
+        sys.Visibility.Should().Be(0.5);
+        sys.Precipitation.Should().Be(0.1);
+
+        sys.Update(new WeatherConfig());
+        sys.Visibility.Should().Be(1.0, "swapping back to defaults is still a swap");
+        sys.Precipitation.Should().Be(0.0);
+    }
+
+    [Fact]
+    public void Update_Does_Not_Throw()
+    {
+        // Kept as its own case. The test above would also catch a throw, but naming it means a
+        // failure says which property broke.
+        var sys = Create();
+        var act = () => sys.Update(new WeatherConfig(Visibility: 0.25));
         act.Should().NotThrow();
-        sys.Visibility.Should().BeGreaterThanOrEqualTo(0);
-        sys.Precipitation.Should().BeGreaterThanOrEqualTo(0);
     }
 }
