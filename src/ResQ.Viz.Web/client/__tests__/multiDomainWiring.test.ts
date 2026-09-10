@@ -122,27 +122,73 @@ const DEFERRED_MODULES: ReadonlyArray<{ readonly path: string; readonly why: str
   { path: './operator/panelDom', why: 'Advanced/Safety DOM vocabulary' },
 ];
 
+/**
+ * True when `source` has a STATIC runtime edge to `path`.
+ *
+ * Not a single regex, because three distinct forms have to be told apart and two of them are
+ * easy to get wrong in opposite directions:
+ *
+ *  - `import './path'` — a bare side-effect import. A full runtime edge that pulls the module and
+ *    its stylesheet into the entry chunk. The original guard required `from`, so it missed this
+ *    entirely; app.ts opens with six of them, making it the idiomatic way to break these guards.
+ *  - `import { type A } from './path'` / `export { type A } from './path'` — every specifier
+ *    type-only. TypeScript elides the whole statement (verbatimModuleSyntax is not set), so there
+ *    is NO runtime edge. Flagging it fails correct code, which review caught in the first version
+ *    of this fix.
+ *  - `import { A, type B } from './path'` — mixed. A real edge, and the common form in app.ts.
+ *
+ * @param source The module source to scan.
+ * @param path Module specifier, exactly as written in the import.
+ * @returns True when importing `source` would pull `path` into the same chunk.
+ */
+function hasStaticRuntimeEdge(source: string, path: string): boolean {
+  const quoted = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const statement = new RegExp(
+    `^\\s*(?:import|export)\\b([^;]*?)\\bfrom\\s*'${quoted}'|^\\s*import\\s*'${quoted}'`,
+    'gm',
+  );
+  for (const match of source.matchAll(statement)) {
+    const clause = match[1];
+    if (clause === undefined) return true;          // bare side-effect import
+    if (/^\s*type\b/.test(clause)) continue;        // `import type ... from`
+    const braces = clause.match(/\{([^}]*)\}/);
+    if (!braces) return true;                       // default or namespace binding
+    const specifiers = braces[1]!.split(',').map((x) => x.trim()).filter(Boolean);
+    // An empty list (`import {} from`) is elided too; a single value specifier is an edge.
+    if (specifiers.some((x) => !/^type\b/.test(x))) return true;
+  }
+  return false;
+}
+
 describe('entry-chunk boundaries', () => {
   it.each(DEFERRED_MODULES)('keeps $path out of the entry chunk ($why)', ({ path }) => {
-    // Matches any STATIC runtime edge to the module. `import type` is excluded because it
-    // leaves none.
-    //
-    // The mandatory `from` used to be the whole bug: a bare side-effect import —
-    // `import './operator/advancedSafety';` — never matched, even though it is a full static
-    // edge that pulls the module and its stylesheet into the entry chunk. That form is not
-    // hypothetical here; app.ts opens with six of them (fonts and stylesheets), so it is the
-    // idiomatic way to add an eager edge in this exact file. All 24 of these guards were blind
-    // to it. A re-export (`export { X } from './path'`) is the same shape and also now matched.
-    const quoted = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const staticImport = new RegExp(
-      // import ... from 'path'  |  export ... from 'path'  |  import 'path'
-      `^\\s*(?:import\\s+(?!type\\b)[^;]*from\\s+|export\\s+(?!type\\b)[^;]*from\\s+|import\\s+)'${quoted}'`,
-      'm',
-    );
     expect(
-      staticImport.test(appSrc),
+      hasStaticRuntimeEdge(appSrc, path),
       `app.ts statically imports ${path}; it must be reached through import() instead`,
     ).toBe(false);
+  });
+
+  // The helper decides what counts as an edge, so its own boundaries are pinned here rather
+  // than left to the 24 cases above, which only ever exercise the "no edge" answer.
+  it.each([
+    ["import './x';", true, 'bare side-effect import'],
+    ["import { A } from './x';", true, 'value specifier'],
+    ["import { A, type B } from './x';", true, 'mixed specifiers'],
+    ["import D from './x';", true, 'default binding'],
+    ["import * as N from './x';", true, 'namespace binding'],
+    ["export { A } from './x';", true, 're-export of a value'],
+    ["import type { A } from './x';", false, 'import type'],
+    ["export type { A } from './x';", false, 'export type'],
+    ["import { type A } from './x';", false, 'inline type-only specifier'],
+    ["import { type A, type B } from './x';", false, 'all specifiers type-only'],
+    ["export { type A } from './x';", false, 'type-only re-export'],
+  ])('%s -> %s (%s)', (line, expected) => {
+    expect(hasStaticRuntimeEdge(line, './x')).toBe(expected);
+  });
+
+  it('does not confuse a different module for the one it was asked about', () => {
+    expect(hasStaticRuntimeEdge("import { A } from './xyz';", './x')).toBe(false);
+    expect(hasStaticRuntimeEdge("import { A } from './x';", './xyz')).toBe(false);
   });
 
   it('reaches optional operator surfaces through dynamic imports', () => {
