@@ -22,6 +22,41 @@ https://localhost:5001/?heightmap=/heightmaps/mount-washington.png
 - `heightScale=<m>` — pixel 255 → this many metres. Default `400`.
 - `worldSize=<m>` — width/height the image covers. Default `4000`.
 - `baseOffset=<m>` — sea-level bias added to every sample. Default `0`.
+- `encoding=<gray8|rg16>` — how elevation is packed. Default `gray8`.
+
+## Encoding, and why 8-bit is not enough for a baked tile
+
+`gray8` is what a hand-made grayscale PNG uses: the red channel carries 0..255, so
+there are **256 elevation levels across the whole of `heightScale`**. That quantum
+is `heightScale / 255` — 1.57 m at the default 400 m scale.
+
+That is not merely a loss of detail. At the bake grid's spacing (2048 samples
+across 4000 m, so 1.95 m per cell) the quantum lands as a *slope* between adjacent
+cells:
+
+| `heightScale` | quantum | apparent slope across one cell |
+|---|---|---|
+| 400 m | 1.569 m | 38.8° |
+| 800 m | 3.137 m | 58.1° |
+| 1500 m | 5.882 m | 71.6° |
+
+A wheeled or tracked ground vehicle tops out near 30°, so on any real slope every
+quantisation boundary becomes a false cliff the mobility model reads as
+impassable — terrain grows obstacles that are not there. Below the quantum,
+features vanish: a 0.5 m levee crest rounds to nothing, while 1 m and 2 m steps
+both collapse onto the same 1.57 m level.
+
+`rg16` packs a 16-bit value big-endian across two channels — **red is the high
+byte, green the low byte** — for 65536 levels, or 6.1 mm at a 400 m scale. Use it
+for anything derived from a real DEM.
+
+> **Why split the value rather than ship a 16-bit PNG?** The loader decodes
+> through a 2D canvas, and `getImageData` is 8-bit per channel by specification.
+> A genuinely 16-bit PNG is silently truncated on the way through. Splitting
+> across two 8-bit channels is what survives that decode.
+
+`gray8` stays the default so the hand-made files described above keep meaning what
+they did.
 
 Example with a deep-valley DEM:
 
