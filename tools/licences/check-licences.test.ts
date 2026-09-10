@@ -1596,6 +1596,45 @@ describe("a region box the registry cannot describe fails closed", () => {
         ok(out.includes("restriction-unresolvable"), out);
     });
 
+    it("refuses a null region box instead of crashing on it", () => {
+        // policy.regions is JSON.parse output, so a box can be any shape at runtime. `[null]`
+        // reached asBox and threw `TypeError: Cannot read properties of null (reading 'length')`
+        // — a crash inside a licence check, which is a worse failure than the message it
+        // replaced. Review caught it; asBox now takes `unknown`.
+        const out = run((reg) => { reg.policy.regions["alaska"] = [null] as never; });
+        ok(!out.includes("TypeError"), out);
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("restriction-unresolvable"), out);
+    });
+
+    it("refuses region boxes that are not arrays", () => {
+        for (const shape of [[42], ["x"], [{ minLon: 1 }]]) {
+            const out = run((reg) => { reg.policy.regions["alaska"] = shape as never; });
+            ok(!out.includes("TypeError"), `${JSON.stringify(shape)}: ${out}`);
+            ok(out.includes("restriction-unresolvable"), `${JSON.stringify(shape)}: ${out}`);
+        }
+    });
+
+    it("refuses a region value that is not an array at all", () => {
+        for (const shape of ["alaska", { a: 1 }, 42]) {
+            const out = run((reg) => { reg.policy.regions["alaska"] = shape as never; });
+            ok(!out.includes("TypeError"), `${JSON.stringify(shape)}: ${out}`);
+            ok(out.includes("restriction-unresolvable"), `${JSON.stringify(shape)}: ${out}`);
+        }
+    });
+
+    it("says the region is not an array, rather than blaming one of its characters", () => {
+        // asBox's own type guard already makes a string region fail closed, so the
+        // Array.isArray check in regionBoxes changes the MESSAGE, not the verdict — verified by
+        // reverting it to truthiness and watching all 111 tests stay green. Left in and pinned
+        // here rather than dropped, because without it a string region is iterated character by
+        // character and the gate reports `whose box "a" is not a usable bbox`, sending a reader
+        // to look for a box that does not exist.
+        const out = run((reg) => { reg.policy.regions["alaska"] = "alaska" as never; });
+        ok(out.includes("does not define as a non-empty array of boxes"), out);
+        ok(!out.includes('whose box "a"'), out);
+    });
+
     it("refuses a non-finite region box", () => {
         // JSON has no NaN, but null parses and Number.isFinite(null) is false.
         const out = run((reg) => { reg.policy.regions["alaska"] = [[-172.5, 51.2, null, 71.5]] as never; });

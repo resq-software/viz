@@ -82,7 +82,12 @@ export interface Violation {
  *  here answers a licence question, and answering one from coordinates that
  *  cannot describe a place on Earth is guessing. Rejecting returns null, which
  *  the callers turn into `restriction-unresolvable`: loud, and fail-closed. */
-function asBox(b: readonly number[]): BBox | null {
+function asBox(b: unknown): BBox | null {
+    // `unknown`, not `readonly number[]`. Every caller feeds this JSON.parse output whose shape
+    // is asserted rather than checked, so `[null]` in policy.regions reached `b.length` and threw
+    // a TypeError instead of being reported as unusable. A crash is a worse failure than the
+    // message it replaces, and here it is a crash inside a licence check.
+    if (!Array.isArray(b)) return null;
     if (b.length !== 4 || !b.every(Number.isFinite)) return null;
     const [minLon, minLat, maxLon, maxLat] = b as [number, number, number, number];
     if (minLon > maxLon || minLat > maxLat) return null;
@@ -188,12 +193,15 @@ function regionBoxes(ctx: EvalContext, name: string | undefined): RegionLookup {
         return { problem: "names no region" };
     }
     const raw = ctx.policy.regions?.[name];
-    if (!raw || !raw.length) {
-        return { problem: `names region "${name}", which policy.regions does not define` };
+    // Array.isArray, not truthiness: a string region value has a truthy .length and would be
+    // iterated character by character, and a non-array object silently reads as "not defined".
+    if (!Array.isArray(raw) || !raw.length) {
+        return { problem: `names region "${name}", which policy.regions does not define as a `
+            + `non-empty array of boxes` };
     }
     const boxes: BBox[] = [];
     for (const candidate of raw) {
-        const box = asBox(candidate as readonly number[]);
+        const box = asBox(candidate);
         if (!box) {
             return { problem: `names region "${name}", whose box ${JSON.stringify(candidate)} is not `
                 + `a usable bbox — it must be [minLon, minLat, maxLon, maxLat], finite, in range, and `
