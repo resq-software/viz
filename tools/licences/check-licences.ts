@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, readdirSync, lstatSync, realpathSync, exis
 import { createHash } from "node:crypto";
 import { join, relative, extname, resolve, sep } from "node:path";
 
-import { evaluateRestrictions, KNOWN_KINDS, parseIso, type BBox, type Restriction } from "./restrictions.ts";
+import { evaluateRestrictions, KNOWN_KINDS, nonEmptyString, parseIso, type BBox, type Restriction } from "./restrictions.ts";
 import { ancestorsOf, resolveLineage } from "./lineage.ts";
 
 // ---------------------------------------------------------------- types
@@ -404,7 +404,7 @@ for (const id of manifest.eula_clauses ?? []) {
     // half-filled record discharging an obligation is the same "declared, not done" shape the
     // clause register was added to close.
     const ratifiedOn = parseIso(clause.ratified?.on);
-    const problem = !clause.ratified?.by?.trim()
+    const problem = !nonEmptyString(clause.ratified?.by)
       ? "no reviewer is named"
       : ratifiedOn === null
         ? `the review date ${JSON.stringify(clause.ratified?.on ?? null)} is not a real date`
@@ -427,8 +427,8 @@ for (const id of manifest.eula_clauses ?? []) {
   // wrote is exactly the "declared, not done" failure in a new costume.
   if (clause.kind === "action") {
     const dischargedOn = parseIso(clause.discharged?.on);
-    const record = clause.discharged?.record?.trim();
-    const problem = !clause.discharged?.by?.trim()
+    const record = nonEmptyString(clause.discharged?.record);
+    const problem = !nonEmptyString(clause.discharged?.by)
       ? "nobody is named as having performed or confirmed it"
       : dischargedOn === null
         ? `the date ${JSON.stringify(clause.discharged?.on ?? null)} is not a real date`

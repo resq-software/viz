@@ -32,7 +32,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { KNOWN_KINDS, evaluateRestrictions, parseIso } from "../licences/restrictions.ts";
+import { KNOWN_KINDS, evaluateRestrictions, nonEmptyString, parseIso } from "../licences/restrictions.ts";
 
 /**
  * Restriction kinds an AREA can be judged on, before any tile exists.
@@ -149,7 +149,7 @@ function dateProblem(
   signoff: { by?: string; on?: string } | null | undefined,
   noun: string,
 ): string | null {
-  if (!signoff?.by?.trim()) return `nobody has ${noun === "review" ? "ratified" : "recorded doing"}`;
+  if (!nonEmptyString(signoff?.by)) return `nobody has ${noun === "review" ? "ratified" : "recorded doing"}`;
   const at = parseIso(signoff.on);
   if (at === null) return `whose ${noun} date ${JSON.stringify(signoff.on ?? null)} is not a real date`;
   if (at > Date.now()) return `whose ${noun} date ${signoff.on} is in the future`;

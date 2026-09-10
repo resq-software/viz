@@ -332,3 +332,41 @@ describe("the two tools agree about the whole registry, not just clauses", () =>
             "restriction kinds the gate evaluates but check-areas.ts does not classify");
     });
 });
+
+describe("registry fields are JSON, not the types they are annotated as", () => {
+    // check-areas.ts and check-licences.ts both read the register through JSON.parse, so a field
+    // declared `string` can be a number at runtime. Review caught that `by: 42` reached .trim()
+    // and threw `TypeError: signoff?.by?.trim is not a function` — a stack trace instead of the
+    // "nobody has recorded doing" this is supposed to say. Guarded in restrictions.ts so the one
+    // fix covers both callers, which is this file's whole argument.
+    it("reports an unusable sign-off instead of crashing on it", () => {
+        const r = run(undefined, (reg) => {
+            const d = reg.clauses["jaxa-commercial-use-notification"].discharged;
+            d.by = 42;
+            d.on = 20260910;
+        });
+        ok(!/TypeError/.test(r.out), r.out);
+        ok(r.out.includes("nobody has recorded doing"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
+    it("reports a non-string DATE instead of crashing on it", () => {
+        // `by` is a valid string here on purpose. With both fields bad, the `by` check short-
+        // circuits and parseIso is never reached — so removing parseIso's type guard left all
+        // 27 tests green. An unguarded guard, found by mutating it. This reaches it.
+        const r = run(undefined, (reg) => {
+            reg.clauses["jaxa-commercial-use-notification"].discharged.on = 20260910;
+        });
+        ok(!/TypeError/.test(r.out), r.out);
+        ok(r.out.includes("is not a real date"), r.out);
+        ok(/sendai-plain/.test(r.out), r.out);
+    });
+
+    it("reports an unusable ratification instead of crashing on it", () => {
+        const r = run(undefined, (reg) => {
+            reg.clauses["copernicus-6e-flowdown"].ratified = { by: { name: "counsel" }, on: [2026] };
+        });
+        ok(!/TypeError/.test(r.out), r.out);
+        ok(r.out.includes("nobody has ratified"), r.out);
+    });
+});
