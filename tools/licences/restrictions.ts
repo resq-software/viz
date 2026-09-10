@@ -160,10 +160,49 @@ export function parseIso(value: unknown): number | null {
 
 // --------------------------------------------------------------- rules
 
-function regionBoxes(ctx: EvalContext, name: string | undefined): readonly BBox[] | null {
-    if (!name) return null;
-    const boxes = ctx.policy.regions?.[name];
-    return boxes && boxes.length ? boxes : null;
+/** A resolved region, or the reason it could not be resolved. */
+type RegionLookup =
+    | { readonly boxes: readonly BBox[] }
+    | { readonly problem: string };
+
+/**
+ * Resolves a named region from policy.regions, validating every box it carries.
+ *
+ * The validation is the point. `BBox` here is an assertion over `JSON.parse` output, not a
+ * checked type, and this used to hand those boxes to the rules unexamined — `asBox` was applied
+ * only to the AREA's bbox. For `clip` that was survivable, because a bad box makes `contains`
+ * false and the rule errors anyway. For `exclude-region` it was not: a bad box makes
+ * `intersects` false, the rule returns null, and the exclusion silently does not apply.
+ *
+ * Measured, not theorised. A tile squarely inside Alaska drawing on an Alaska-excluded source
+ * errors with `restricted-region` and the gate FAILS. Swap two corners of policy.regions.alaska
+ * — one transposition, the kind of edit nobody would look twice at — and the same tile produces
+ * `0 error(s)` and "Licence gate passed". A licence carve-out turned off by a typo.
+ *
+ * @param ctx Evaluation context carrying the policy.
+ * @param name Region name the restriction refers to.
+ * @returns The validated boxes, or a phrase completing "clip ..." / "exclude-region ...".
+ */
+function regionBoxes(ctx: EvalContext, name: string | undefined): RegionLookup {
+    if (!name) {
+        return { problem: "names no region" };
+    }
+    const raw = ctx.policy.regions?.[name];
+    if (!raw || !raw.length) {
+        return { problem: `names region "${name}", which policy.regions does not define` };
+    }
+    const boxes: BBox[] = [];
+    for (const candidate of raw) {
+        const box = asBox(candidate as readonly number[]);
+        if (!box) {
+            return { problem: `names region "${name}", whose box ${JSON.stringify(candidate)} is not `
+                + `a usable bbox — it must be [minLon, minLat, maxLon, maxLat], finite, in range, and `
+                + `not inverted. Refusing rather than evaluating a licence question against `
+                + `coordinates that cannot describe a place on Earth` };
+        }
+        boxes.push(box);
+    }
+    return { boxes };
 }
 
 type Rule = (r: Restriction, ctx: EvalContext) => Violation | null;
@@ -171,11 +210,12 @@ type Rule = (r: Restriction, ctx: EvalContext) => Violation | null;
 const RULES: Readonly<Record<string, Rule>> = {
     /** Source is licensed only INSIDE the named region. */
     clip(r, ctx) {
-        const boxes = regionBoxes(ctx, r.region);
-        if (!boxes) {
+        const region = regionBoxes(ctx, r.region);
+        if ("problem" in region) {
             return { code: "restriction-unresolvable",
-                message: `clip names region "${r.region}", which policy.regions does not define.` };
+                message: `clip ${region.problem}.` };
         }
+        const boxes = region.boxes;
         const inner = asBox(ctx.area.bbox);
         if (!inner) {
             return { code: "restriction-unresolvable",
@@ -188,11 +228,12 @@ const RULES: Readonly<Record<string, Rule>> = {
 
     /** Source is NOT licensed inside the named region, optionally only from a date. */
     "exclude-region"(r, ctx) {
-        const boxes = regionBoxes(ctx, r.region);
-        if (!boxes) {
+        const region = regionBoxes(ctx, r.region);
+        if ("problem" in region) {
             return { code: "restriction-unresolvable",
-                message: `exclude-region names region "${r.region}", which policy.regions does not define.` };
+                message: `exclude-region ${region.problem}.` };
         }
+        const boxes = region.boxes;
         const inner = asBox(ctx.area.bbox);
         if (!inner) {
             return { code: "restriction-unresolvable",
