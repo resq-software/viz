@@ -1,9 +1,17 @@
 # JAXA — AW3D30 commercial-use notification
 
-**Status: SENT 2026-09-09. Awaiting reply.**
+**Status: SENT 2026-09-09. ANSWERED 2026-09-10 — see
+[`aw3d30-jaxa-reply.md`](./aw3d30-jaxa-reply.md).**
 
-Still blocking until JAXA answers — see "When a reply arrives" below. Unblocks
-`sendai-plain` once answered, and is a precondition for `rhine-meuse-delta` too.
+No longer blocking. JAXA's ALOS-2/ALOS Science Project confirmed commercial use
+is permitted with no further action required, and resolved the Site Policy
+question on scope: that policy governs unaltered individual images on the
+website, not the AW3D30 dataset. `sendai-plain` is unblocked;
+`rhine-meuse-delta` now waits only on the Copernicus 6(e) ratification.
+
+The reply file is the evidence behind
+`clauses["jaxa-commercial-use-notification"].discharged`, and both the licence
+gate and the areas checker fail if it goes missing.
 
 **To:** `earth@ml.jaxa.jp`
 *(published on the page obfuscated as `earth*ml.jaxa.jp` with the instruction

@@ -98,6 +98,10 @@ the two.
 | `fetched-outside-window` | error | Data acquired when different terms applied. |
 | `missing-eula-clause` | error | A clause the licence forces into the product's legal notice is not declared. |
 | `layer-source-mismatch` | error | This source does not supply that layer kind. |
+| `unknown-eula-clause` | error | The manifest declares a clause the register does not have. |
+| `undrafted-eula-clause` | error | Declared clause whose wording nobody has written. |
+| `unratified-contract-term` | error | A `contract-term` clause nobody qualified has reviewed. Draft text is not a discharged obligation. |
+| `undischarged-action-clause` | error | An `action` clause with no evidence, or whose evidence file is missing. |
 | `upstream-header-mismatch` | error | The captured header names a producer the declared source is not. |
 | `unknown-restriction-kind` | error | The registry declares a rule this build cannot evaluate. |
 | `derived-from-excluded` | error | A transitive upstream is not admissible. Names the path. |
@@ -115,6 +119,35 @@ the two.
 | `unhashed-licence` | warn | Licence text not hashed. Upstream terms change silently. |
 | `unverified-source` | warn | Licence never read against its primary publisher page. |
 | `stale-verification` | warn | Last read more than `verification_max_age_days` ago. |
+
+## Clause kinds
+
+A clause records an obligation a licence puts on the product. What *discharges*
+it differs by kind, and the gate asks a different question for each — because the
+one thing all three have in common is that none of them is discharged by being
+declared.
+
+| Kind | Discharged by | Gate requires |
+| --- | --- | --- |
+| `statement` | carrying the wording | non-empty `text`; it is emitted into `NOTICE.md` |
+| `contract-term` | someone qualified reviewing it | `ratified: { by, on }` with a real, past date |
+| `action` | doing something outside this repo | `discharged: { by, on, record }`, and `record` must name a file that exists |
+
+`action` exists because JAXA Research Data clause 2.3 obliges us to *notify JAXA*
+before commercial use. No wording anywhere in this repository does that. Until the
+kind existed the nearest flag was `needs_drafting`, whose name understates the
+case: the blocker was a notification nobody had sent, not wording nobody had
+written — so clearing it would have meant a build unblocked by prose.
+
+Two consequences worth knowing:
+
+- An `action` clause is **not** written into `NOTICE.md` as a statement the
+  product carries. Its text describes something done elsewhere, and printing it
+  under a heading that reads "obligations on the product itself" would claim the
+  product carries a statement it does not.
+- The `record` path is checked for existence by both this gate and
+  `tools/areas/check-areas.ts`. Deleting the correspondence fails the build
+  rather than quietly leaving the claim unevidenced.
 
 ## Design notes
 

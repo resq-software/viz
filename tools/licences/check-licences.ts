@@ -126,10 +126,27 @@ interface Clause {
    * these: a clause that creates an obligation on a third party has to be reviewed by someone
    * qualified before it can be relied on, or the register would be asserting that a draft is
    * binding. Defaults to "statement".
+   *
+   * "action" — an obligation discharged by DOING something outside this repository, e.g. JAXA
+   * Research Data clause 2.3's requirement to notify JAXA in advance of commercial use. No
+   * wording discharges one of these. Text describes the obligation; the "discharged" field
+   * carries the evidence, and without it the clause blocks. Before this kind existed the only
+   * available flag was `needs_drafting`, whose name understates the case: the blocker was a
+   * notification nobody had sent, not wording nobody had written — and clearing it would have
+   * meant a build unblocked by prose.
    */
-  kind?: "statement" | "contract-term";
+  kind?: "statement" | "contract-term" | "action";
   /** Who reviewed a contract-term clause and when. Absent means nobody has. */
   ratified?: { by: string; on: string; note?: string } | null;
+  /**
+   * Evidence that an "action" clause's obligation was actually performed.
+   *
+   * `on` is when it happened, `by` who did it or who confirmed it, and `record` a repo path to
+   * the correspondence or artefact that proves it. The path is checked: an action clause whose
+   * record does not exist on disk is not discharged, because the whole point of this kind is
+   * that the obligation lives outside the repository and only the evidence is in it.
+   */
+  discharged?: { by: string; on: string; record: string; note?: string } | null;
 }
 
 interface Manifest {
@@ -401,6 +418,35 @@ for (const id of manifest.eula_clauses ?? []) {
         + `Draft text is not a discharged obligation. `
         + `${clause.origin ? `Origin: ${clause.origin}. ` : ""}`
         + `Record who reviewed it and on what date in the clause's "ratified" field.`);
+      continue;
+    }
+  }
+
+  // An action clause is discharged by evidence, never by text. Same shape as ratification
+  // above, plus one extra requirement: the named record has to exist. A path to a file nobody
+  // wrote is exactly the "declared, not done" failure in a new costume.
+  if (clause.kind === "action") {
+    const dischargedOn = parseIso(clause.discharged?.on);
+    const record = clause.discharged?.record?.trim();
+    const problem = !clause.discharged?.by?.trim()
+      ? "nobody is named as having performed or confirmed it"
+      : dischargedOn === null
+        ? `the date ${JSON.stringify(clause.discharged?.on ?? null)} is not a real date`
+        : dischargedOn > Date.now()
+          ? `the date ${clause.discharged!.on} is in the future`
+          : !record
+            ? "no record path is given, so nothing evidences it"
+            : !existsSync(resolve(ROOT, record))
+              ? `the record it names, "${record}", does not exist`
+              : null;
+
+    if (problem) {
+      add("error", "undischarged-action-clause", "manifest",
+        `EULA clause "${id}" is an obligation discharged by doing something, and ${problem}. `
+        + `Wording does not discharge it. `
+        + `${clause.origin ? `Origin: ${clause.origin}. ` : ""}`
+        + `Record who did it, when, and the path to the evidence in the clause's `
+        + `"discharged" field.`);
       continue;
     }
   }
@@ -764,9 +810,15 @@ function buildNotice(): string {
     "",
   ];
 
+  // "action" clauses are excluded on purpose. Their text describes an obligation performed
+  // outside this repository — notifying a licensor, obtaining a permission — and printing it
+  // under a heading that reads "obligations on the product itself" would tell a reader the
+  // product carries a statement it does not. The evidence lives in the clause's "discharged"
+  // record instead, and the gate refuses the build if that record is missing.
   const carried = [...requiredClauses]
     .map((id) => [id, clauses.get(id)] as const)
-    .filter((pair): pair is [string, Clause] => Boolean(pair[1]?.text?.trim()))
+    .filter((pair): pair is [string, Clause] =>
+      Boolean(pair[1]?.text?.trim()) && pair[1]!.kind !== "action")
     .sort((a, b) => a[0].localeCompare(b[0]));
 
   if (carried.length) {
