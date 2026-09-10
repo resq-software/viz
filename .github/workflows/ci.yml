@@ -328,11 +328,19 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # ── Licence gate, called so it is actually required ─────────────────
+  # It ran on every PR before this and blocked nothing. The org ruleset requires exactly one
+  # context, `required`, and `needs:` cannot name a job in another workflow file — so the
+  # licence gate reported as a check called `gate`, one letter from this file's `gates`, and
+  # a PR could merge with it red. Calling it here puts it inside the aggregate.
+  licences:
+    uses: ./.github/workflows/licence-gate.yml
+
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
     name: required
     runs-on: ubuntu-latest
-    needs: [gates, client, client-budget, browser]
+    needs: [gates, client, client-budget, browser, licences]
     permissions: {}    # pure aggregator: only reads needs.*.result env vars
     if: always()
     steps:
@@ -342,13 +350,21 @@ jobs:
           CLIENT:  ${{ needs.client.result }}
           BUDGET:  ${{ needs.client-budget.result }}
           BROWSER: ${{ needs.browser.result }}
+          LICENCES: ${{ needs.licences.result }}
         run: |
           set -eu
-          ok() { case "$1" in success|skipped|"") return 0;; *) return 1;; esac; }
+          # `skipped` passes for the four below because each skips only as a CONSEQUENCE of an
+          # upstream failure that is itself named here — browser needs [gates, client-budget],
+          # client-budget needs client — so the real failure is already reported. `licences` is
+          # different: it has no `needs:`, so nothing else would report its absence. A skipped
+          # licence gate must fail this job, or the hole this call was added to close reopens.
+          ok()     { case "$1" in success|skipped|"") return 0;; *) return 1;; esac; }
+          strict() { case "$1" in success) return 0;; *) return 1;; esac; }
           fail=0
-          ok "$GATES"   || { echo "::error::gates=$GATES";          fail=1; }
-          ok "$CLIENT"  || { echo "::error::client=$CLIENT";        fail=1; }
-          ok "$BUDGET"  || { echo "::error::client-budget=$BUDGET"; fail=1; }
-          ok "$BROWSER" || { echo "::error::browser=$BROWSER";      fail=1; }
+          ok "$GATES"        || { echo "::error::gates=$GATES";          fail=1; }
+          ok "$CLIENT"       || { echo "::error::client=$CLIENT";        fail=1; }
+          ok "$BUDGET"       || { echo "::error::client-budget=$BUDGET"; fail=1; }
+          ok "$BROWSER"      || { echo "::error::browser=$BROWSER";      fail=1; }
+          strict "$LICENCES" || { echo "::error::licences=$LICENCES";    fail=1; }
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER"
+          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER licences=$LICENCES"
