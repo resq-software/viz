@@ -94,8 +94,15 @@ export function writeRay(
     maxT: number,
     mask: number,
 ): void {
-    const o = i * 12;
     const { f, u } = views;
+    // Both bounds, and integrality. The upper check alone is one-sided: for i = -1 the offset is
+    // -12, `o + 11` is -1, and `-1 >= f.length` is false — so a negative index sailed straight
+    // past a guard whose whole stated purpose is to refuse out-of-bounds access. A fractional
+    // index is the same class: i = 0.5 lands mid-record and reads neighbouring slots.
+    if (!Number.isInteger(i) || i < 0) {
+        throw new RangeError(`writeRay: index ${i} must be a non-negative integer`);
+    }
+    const o = i * 12;
     if (o + 11 >= f.length) {
         const cap = Math.floor(f.length / 12);
         throw new RangeError(`writeRay: index ${i} out of bounds (buffer holds ${cap} rays)`);
@@ -131,8 +138,16 @@ export type ParsedHit = {
  * by making them look like legitimate "no hit" results downstream.)
  */
 export function readHit(views: RayBufferViews, i: number): ParsedHit {
-    const o = i * 8;
     const { f, u } = views;
+    // See writeRay: the upper bound alone lets a negative index through. Here the consequence is
+    // worse than a bad write — readHit(views, -1) returned an object whose every field was
+    // `undefined` while typed `number`, because the `!` assertions are erased at runtime. That is
+    // precisely the "looks like a legitimate result downstream" failure the comment above refuses
+    // to allow for the all-zero case.
+    if (!Number.isInteger(i) || i < 0) {
+        throw new RangeError(`readHit: index ${i} must be a non-negative integer`);
+    }
+    const o = i * 8;
     if (o + 7 >= f.length) {
         const cap = Math.floor(f.length / 8);
         throw new RangeError(`readHit: index ${i} out of bounds (buffer holds ${cap} hits)`);
