@@ -240,6 +240,7 @@ describe('rendered shell contracts', () => {
     const overlays = read('../styles/operator-overlays.css');
     const operator = read('../styles/operator.css');
 
+    const dvrSource = read('../editor/dvr.ts');
     expect(effectiveProperty(overlays, '.dvr-scrub', 'min-width', 390)).toBe('0');
     for (const width of [390, 700]) {
       for (const lowPriority of ['.dvr-rec', '.dvr-tostart', '.dvr-speed']) {
@@ -247,6 +248,24 @@ describe('rendered shell contracts', () => {
           .toBe('none');
       }
       for (const core of ['.dvr-play', '.dvr-step', '.dvr-reset', '.dvr-time', '.dvr-live']) {
+        // Two parts, and the second one used to be the whole assertion.
+        //
+        // `effectiveProperty` returns undefined when no rule matches, and none of these five
+        // selectors declares `display` anywhere — .dvr-step has no CSS rule at all. So
+        // `.not.toBe('none')` was `expect(undefined).not.toBe('none')`, ten times. It does still
+        // catch someone hiding a core control, which is the regression it was written for, but
+        // it cannot tell "visible" from "this selector does not exist" — so renaming .dvr-play
+        // in dvr.ts left it green while the hidden-controls loop above would have failed on the
+        // same rename.
+        //
+        // Pinning existence against dvr.ts, where these classes are actually created, is what
+        // closes that. CSS is the wrong place to look: .dvr-step is unstyled by design.
+        // Matched inside a string literal rather than as an exact quoted token: .dvr-live
+        // is assigned as 'dvr-live is-live', so requiring `'dvr-live'` verbatim fails on
+        // correct code. Requiring it inside quotes keeps a passing mention in a comment
+        // from standing in for the real thing.
+        expect(dvrSource, `${core} is created in dvr.ts`)
+          .toMatch(new RegExp(`['\"\`][^'\"\`]*\\b${core.slice(1)}\\b`));
         expect(effectiveProperty(overlays, core, 'display', width), `${core} at ${width}px`)
           .not.toBe('none');
       }

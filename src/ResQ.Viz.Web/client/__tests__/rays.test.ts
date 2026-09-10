@@ -100,4 +100,47 @@ describe('writeRay / readHit roundtrip', () => {
         const views = createHitBuffer(2);
         expect(() => readHit(views, 2)).toThrow(RangeError);
     });
+
+    // The guards were one-sided. `if (o + 7 >= f.length)` with `o = i * 8` computes -1 for
+    // i = -1, and `-1 >= length` is false — so a negative index passed a check whose entire
+    // stated purpose is to refuse out-of-bounds access, and readHit returned an object whose
+    // every field was `undefined` while typed `number`. The `!` assertions are type-level and
+    // erased at runtime. That is the "looks like a legitimate result downstream" failure the
+    // function's own doc comment refuses to allow for the all-zero case.
+    describe('indices that are not a slot at all', () => {
+        it.each([-1, -8, -0.5])('readHit rejects %p', (i) => {
+            const views = createHitBuffer(2);
+            expect(() => readHit(views, i)).toThrow(RangeError);
+        });
+
+        it.each([-1, -12, -0.5])('writeRay rejects %p', (i) => {
+            const views = createRayBuffer(3);
+            expect(() => writeRay(views, i, [0, 0, 0], [1, 0, 0], 1, 0)).toThrow(RangeError);
+        });
+
+        it.each([0.5, 1.5])('readHit rejects the fractional index %p', (i) => {
+            // Lands mid-record and reads neighbouring slots, which the upper-bound check cannot
+            // see because the offset is still inside the buffer.
+            const views = createHitBuffer(4);
+            expect(() => readHit(views, i)).toThrow(RangeError);
+        });
+
+        it.each([0.5, 1.5])('writeRay rejects the fractional index %p', (i) => {
+            const views = createRayBuffer(4);
+            expect(() => writeRay(views, i, [0, 0, 0], [1, 0, 0], 1, 0)).toThrow(RangeError);
+        });
+
+        it('readHit(-1) does not return a hit-shaped object of undefined', () => {
+            // The regression stated as the caller sees it, not as a guard condition.
+            const views = createHitBuffer(2);
+            let result: unknown;
+            try { result = readHit(views, -1); } catch { result = 'threw'; }
+            expect(result).toBe('threw');
+        });
+
+        it('still accepts every valid index', () => {
+            const views = createHitBuffer(3);
+            for (const i of [0, 1, 2]) expect(() => readHit(views, i)).not.toThrow();
+        });
+    });
 });
