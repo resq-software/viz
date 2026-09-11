@@ -52,8 +52,24 @@ public sealed record AssetSpawnRequest(
 
 /// <summary>Translates between the v2 asset model and the v1 drone-only wire contract.</summary>
 /// <remarks>
-/// <b>Not on the serving path.</b> This is the reference projection the v1 compatibility tests
-/// measure against; no production code calls any method here.
+/// <b>Not on the serving path, and deliberately staying that way.</b> This is the reference
+/// projection the v1 compatibility tests measure against; no production code calls any method
+/// here.
+/// <para>
+/// <b>Decided 2026-09-10: these will not be wired up.</b> They are a better implementation of
+/// what production hand-rolls, and the obvious move would be to connect them — but v1 is being
+/// removed after its deprecation cycle, and attaching new machinery to a surface on its way out
+/// buys a migration nobody wants. The three v1-to-v2 COMMAND adapters that lived here were
+/// deleted on the same reasoning; these remain because the compatibility tests are still the
+/// written record of what v1 means while v1 still ships. They go when it does.
+/// </para>
+/// <para>
+/// So do not "fix" the duplication by calling into this from SimulationRoom or VizFrameBuilder.
+/// The duplication is known, is recorded below, and is guarded instead by tests that drive the
+/// real room — see <c>GetSnapshot_Publishes_Velocity_Components_In_The_Order_The_Drone_Moved</c>,
+/// which measures the shipped mapping rather than comparing two implementations that both sit
+/// off the serving path.
+/// </para>
 /// <para>
 /// The previous summary claimed the opposite — "v1 survives as a projection rather than as a
 /// parallel code path: two populations kept in step by hand drift, one population with a filter

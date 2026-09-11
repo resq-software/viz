@@ -1,0 +1,6 @@
+# Exact versions, because a reprojection is only reproducible if the projection library is.
+# pyproj bundles PROJ's datum grids; a minor bump can move every pixel by metres.
+rasterio==1.3.10
+pyproj==3.6.1
+numpy==1.26.4
+Pillow==10.3.0

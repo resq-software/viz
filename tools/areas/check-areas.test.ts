@@ -407,3 +407,61 @@ describe("guards that only fire on data nobody ships", () => {
         ok(r.out.includes(doc.areas[2].id), r.out);
     });
 });
+
+describe("the bake toolchain is pinned in one place, not two", () => {
+    // tools/bake/bake.sh stamps TOOLCHAIN_DIGEST into the manifest's `generator` field, and the
+    // Dockerfile's FROM is what actually runs. If those drift apart, every manifest produced
+    // names a toolchain that did not run — which is worse than naming none, because it reads as
+    // provenance. bake.sh checks this at runtime; this checks it in CI, where nobody has to
+    // remember to run a bake first.
+    const bakeDir = join(REPO, "tools", "bake");
+
+    it("bake.sh and the Dockerfile name the same image digest", () => {
+        const digests = (file: string): string[] => {
+            const src = readFileSync(join(bakeDir, file), "utf8");
+            return [...new Set(src.match(/sha256:[0-9a-f]{64}/g) ?? [])];
+        };
+        const dockerfile = digests("Dockerfile");
+        const script = digests("bake.sh");
+
+        strictEqual(dockerfile.length, 1, "the Dockerfile must pin exactly one base image digest");
+        strictEqual(script.length, 1, "bake.sh must name exactly one toolchain digest");
+        strictEqual(script[0], dockerfile[0],
+            "bake.sh would stamp a toolchain into the manifest that the Dockerfile does not run");
+    });
+
+    it("pins by digest rather than by tag", () => {
+        // `FROM ghcr.io/osgeo/gdal:ubuntu-small-3.9.2` is a moving target — the publisher can
+        // republish it — so a manifest recording that has said almost nothing about its bytes.
+        const dockerfile = readFileSync(join(bakeDir, "Dockerfile"), "utf8");
+        const from = dockerfile.split("\n").find((l) => l.startsWith("FROM "));
+        ok(from, "the Dockerfile has no FROM line");
+        ok(from!.includes("@sha256:"), `FROM must pin a digest, got: ${from}`);
+
+        // Not a placeholder. The first draft of this Dockerfile carried a sixty-four-zero digest
+        // as a stand-in, which looks exactly like a real pin and fails only at build time with a
+        // manifest-not-found — long after a reader has believed the toolchain is pinned.
+        const digest = from!.match(/@sha256:([0-9a-f]{64})/)?.[1];
+        ok(digest, `FROM digest must be a full 64-hex sha256, got: ${from}`);
+        ok(!/^0+$/.test(digest!), "FROM pins a placeholder digest, not a real image");
+        ok(new Set(digest!).size > 4,
+            `FROM digest looks like a placeholder rather than a real digest: ${digest}`);
+    });
+
+    it("refuses to run the bake outside the pinned image", () => {
+        // The bake not running on a bare machine is the property, not an inconvenience: a bake
+        // that only runs on one laptop makes the provenance manifest unverifiable.
+        // Read with comments stripped. The first version of this asserted the flag appeared
+        // anywhere in the file, and bake.sh explains --network=none in a comment directly above
+        // the line that uses it — so deleting the flag from the actual `run` left the test green.
+        // A guard that cannot tell code from prose about the code is not a guard.
+        const script = readFileSync(join(bakeDir, "bake.sh"), "utf8")
+            .split("\n")
+            .filter((line) => !line.trimStart().startsWith("#"))
+            .join("\n");
+
+        ok(/\b(docker|podman)\b/.test(script), "bake.sh must run through a container runtime");
+        ok(/run\b[^\n]*--network=none/.test(script),
+            "the bake container must not reach the network, or a bake can substitute an input");
+    });
+});

@@ -63,46 +63,84 @@ terrain data, or both), term, territory, and how the licence ends.
 
 ## 2. Grant
 
-**[COUNSEL]** — what the licensee may do.
+**ANSWERED 2026-09-10 — no redistribution.** The commercial decision is taken: a
+licensee receives the right to *use* the product, not to distribute or communicate
+its baked elevation data to anyone. §3 carries that as an express restriction.
 
-One question decides whether §4 is needed at all, so answer it first:
+The question this settles, kept because the reasoning still has to survive counsel:
 
 > **Does the licensee receive any right to distribute or communicate the baked
 > elevation data onward, to anyone?**
 
-If **no** — the grant is to use the product, not to redistribute its data — then
-Copernicus Article 6(e) is not engaged, because it applies only "where the user
+**No.** So Copernicus Article 6(e) is not engaged — it applies only "where the user
 grants to any Subsequent User the rights to distribute or communicate to the
-General Public". §4 can then be deleted and an express *no-redistribution*
-restriction put in its place, which is simpler and cheaper to comply with.
+General Public", and this product grants no such right.
 
-If **yes**, §4 is mandatory and must survive review intact.
+Two facts that shaped it, neither of which decided it:
 
-Two facts belong in that decision, neither of which decides it:
-
-- **Nothing upstream forces the answer.** The Copernicus licence's Right of Use
+- **Nothing upstream forced the answer.** The Copernicus licence's Right of Use
   article already grants reproduction, distribution, communication to the general
-  public, and adaptation — worldwide, unlimited in time, and free of charge under
-  the Financial Conditions article. Whether the *licensee* gets any of that is
-  purely this product's commercial call, not something the upstream licence
-  settles.
+  public, and adaptation — worldwide, unlimited in time, free of charge under the
+  Financial Conditions article. Whether the *licensee* gets any of that was purely
+  this product's commercial call.
 - **Breach of Article 6 ends the licence.** The Termination article — cite it by
   title, because the licence numbers it "Article 9" and numbers the IPR article
   immediately before it "Article 9" too — lets the Licensor terminate with the
   immediate result of the user losing every right granted. Granting redistribution
-  buys a clause that has to survive every future edit, and the cost of getting it
-  wrong later is the data, not a warning letter.
+  would have bought a clause that has to survive every future edit, for a
+  planning-and-training tool that has no product reason to redistribute terrain.
+
+**What this does NOT settle, and what has not changed:**
+
+1. **6(d) still binds, unconditionally.** It is the one Article 6 obligation with no
+   trigger — no distribution condition, no modification condition — so answering §2
+   "no" does not clear Article 6. It is carried in `notices.md` as
+   `copernicus-6d-nonendorsement`, and 6(a)–(c) are carried there too because this
+   product itself communicates to the general public.
+2. **The licence gate is unchanged and still blocking.**
+   `clauses["copernicus-6e-flowdown"]` remains `ratified: null`, so every
+   Copernicus-derived tile is still refused. That is deliberate. A commercial
+   decision that 6(e) is not engaged is not the same thing as counsel confirming it,
+   and the register is built so the second has to happen explicitly. Clearing it is
+   the reviewer's act, not this document's.
+3. **If §2 is ever reopened**, §4 comes back with it. It is kept below rather than
+   deleted for that reason, and because it is the record of what the obligation
+   actually says.
 
 ## 3. Restrictions
 
-**[COUNSEL]** — reverse engineering, benchmarking, export control, and whether
-redistribution of the baked data is prohibited outright (see §2).
+**[COUNSEL]** — reverse engineering, benchmarking, export control.
+
+**No redistribution of the baked data.** Settled by §2, and the term that replaces
+§4 rather than sitting beside it. Counsel drafts the wording; the substance is that
+a licensee may use the product and may not distribute, publish, or communicate to
+the public the elevation, bathymetry or land-cover data it contains, in whole or in
+part, whether modified or not.
+
+Two notes for whoever drafts it:
+
+- **Scope it to the DATA, not to output.** A screenshot, a printed map, a recorded
+  fly-through — a planning and training tool is useless if its pictures cannot leave
+  the building. The restriction that Article 6(e) turns on is the onward supply of
+  the elevation data itself as data.
+- **Scenario sharing is the case to check.** If two agencies ever need to exchange a
+  prepared scenario, share it by *area id* and let the recipient's install obtain
+  the same tiles under its own licence. Embedding terrain in a shared scenario is
+  redistribution and would reopen §2. The codebase is already shaped this way —
+  scenarios reference terrain by preset id rather than carrying it — so this costs
+  nothing today and is worth not losing.
 
 **Not a drafting matter, and not to be softened:** this product's terrain and
 bathymetry are **not suitable for navigation**, and no term here may imply
 otherwise. The wording is in `notices.md`.
 
-## 4. Copernicus flow-down — [COUNSEL, and not optional if §2 grants redistribution]
+## 4. Copernicus flow-down — NOT IN FORCE while §2 grants no redistribution
+
+**§2 was answered "no" on 2026-09-10, so Article 6(e) is not engaged and this section does
+not go into the shipped terms.** It is kept for two reasons: it is the record of what 6(e)
+actually obliges, checked against the licence itself, and it comes straight back if §2 is ever
+reopened. The register still requires ratification before any Copernicus-derived tile can bake —
+see §2, note 2.
 
 Verified against the licence for Copernicus DEM instance **COP-DEM-GLO-30-F**,
 vendored at `tools/licences/texts/copernicus-worlddem-30.txt` and hashed into the
@@ -178,7 +216,9 @@ to produce a release without them.
 
 ## Before this ships
 
-1. **Answer the §2 redistribution question.** It may delete §4 entirely.
+1. ~~**Answer the §2 redistribution question.**~~ **Done 2026-09-10: no
+   redistribution.** §4 is out of the shipped terms; §3 carries the express
+   restriction instead. The licence gate is deliberately unchanged — see §2, note 2.
 2. **Have counsel review**, then record the reviewer and date in
    `clauses["copernicus-6e-flowdown"].ratified` in `tools/licences/licences.json`.
    The gate keeps refusing Copernicus-derived tiles until that exists.
