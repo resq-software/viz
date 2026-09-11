@@ -204,18 +204,31 @@ public sealed class TrackValidationTests
 
         AcceptedTrack(api, ReportRequest("good-1"));
 
+        // A second accepted track that actually carries the optional parts. Without it the two
+        // optional enum checks in AssertEveryEnumIsDeclared never execute: ReportRequest defaults
+        // both geo and transponder to null, so the snapshot-boundary check the test is named for
+        // was not happening for VerticalReference or TransponderKind at all.
+        AcceptedTrack(api, ReportRequest(
+            "good-2",
+            transponder: new TransponderIdentity(TransponderKind.AdsB, "ABC123"),
+            geo: new GeoPosition(38.9f, -77.0f, 120.0, VerticalReference.Ellipsoid)));
+
         var snapshot = Body<VizSnapshotV2>(api.GetSnapshot());
-        snapshot.Tracks.Should().ContainSingle().Which.TrackId.Should().Be("good-1");
+        snapshot.Tracks.Select(t => t.TrackId).Should().BeEquivalentTo(["good-1", "good-2"]);
 
-        foreach (var track in snapshot.Tracks)
-        {
-            AssertEveryEnumIsDeclared(track);
-        }
-
+        var coverage = snapshot.Tracks.Select(AssertEveryEnumIsDeclared).ToList();
         foreach (var held in room.CaptureTrackFrame().Tracks)
         {
-            AssertEveryEnumIsDeclared(held.Track);
+            coverage.Add(AssertEveryEnumIsDeclared(held.Track));
         }
+
+        // The assertions above are only worth anything if they ran. Both optional branches must
+        // have been reached by at least one track, or this test has quietly stopped checking the
+        // two enums it was written to check.
+        coverage.Should().Contain(c => c.Geo,
+            "some track must carry a geodetic echo, or VerticalReference is never checked");
+        coverage.Should().Contain(c => c.Transponder,
+            "some track must carry a transponder, or TransponderKind is never checked");
     }
 
     /// <summary>The refusal happens in the pure validator, before anything is touched.</summary>
@@ -434,27 +447,57 @@ public sealed class TrackValidationTests
 
     /// <summary>Every enum a published contact carries names a declared member.</summary>
     /// <param name="track">Contact as it appears on the wire.</param>
-    private static void AssertEveryEnumIsDeclared(ExternalTrackState track)
+    /// <summary>Which optional parts of a track this assertion actually reached.</summary>
+    /// <param name="Geo">The pose carried a geodetic echo, so its VerticalReference was checked.</param>
+    /// <param name="Transponder">The track carried a transponder, so its Kind was checked.</param>
+    private readonly record struct EnumCoverage(bool Geo, bool Transponder);
+
+    /// <summary>
+    /// Asserts every enum on a track names a declared value, and reports which optional branches
+    /// it was able to reach.
+    /// </summary>
+    /// <remarks>
+    /// The return value exists because two of these four checks used to be unreachable. The only
+    /// accepted track in the calling test comes from <c>ReportRequest</c>, which defaults both
+    /// <c>transponder</c> and <c>geo</c> to null, so <c>track.Pose.Geo is { } geo</c> and
+    /// <c>track.Transponder is { } transponder</c> were false for every track the helper ever
+    /// saw. Inverting either assertion to <c>BeFalse()</c> left the suite green.
+    /// <para>
+    /// Reporting coverage rather than just asserting is what makes the caller able to prove it
+    /// drove both branches — otherwise a later fixture change could quietly stop exercising them
+    /// again and nothing would say so.
+    /// </para>
+    /// </remarks>
+    /// <param name="track">Track to check.</param>
+    /// <returns>Which optional branches were reached.</returns>
+    private static EnumCoverage AssertEveryEnumIsDeclared(ExternalTrackState track)
     {
         Enum.IsDefined(track.Classification).Should().BeTrue();
         Enum.IsDefined(track.Freshness).Should().BeTrue();
         Enum.IsDefined(track.Pose.Frame).Should().BeTrue();
         Enum.IsDefined(track.Twist.Frame).Should().BeTrue();
 
+        track.Sources.Should().NotBeEmpty("Sources is documented as never empty");
         foreach (var source in track.Sources)
         {
             Enum.IsDefined(source.Kind).Should().BeTrue();
         }
 
+        var sawGeo = false;
         if (track.Pose.Geo is { } geo)
         {
             Enum.IsDefined(geo.VerticalReference).Should().BeTrue();
+            sawGeo = true;
         }
 
+        var sawTransponder = false;
         if (track.Transponder is { } transponder)
         {
             Enum.IsDefined(transponder.Kind).Should().BeTrue();
+            sawTransponder = true;
         }
+
+        return new EnumCoverage(sawGeo, sawTransponder);
     }
 
     /// <summary>Unwraps a problem response and checks the status it was answered with.</summary>
