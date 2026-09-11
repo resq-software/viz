@@ -20,6 +20,11 @@ What IS settled, and is what tools/bake/ currently provides:
   - bake.sh emits the generator string the provenance manifest records
   - the container runs with --network=none, so a bake cannot substitute an input
 
+This image carries GDAL and its Python bindings and nothing else. There is deliberately no pip
+layer: an earlier one pinned four packages from memory and shipped 38 known vulnerabilities, and
+pinning direct dependencies alone still lets the transitive graph move. Add what a stage needs,
+with a fully hashed lock generated inside this image, when that stage is written.
+
 What is NOT, and must be built before this returns success:
   1. fetch    — pull source rasters for an area bbox, recording fetched_at per layer
   2. reproject— source CRS to the area's targetCrs (data/areas.json)
