@@ -9,7 +9,10 @@
   "properties": {
     "schema": { "const": 1 },
     "generated_at": { "type": "string", "format": "date-time" },
-    "generator": { "type": "string" },
+    "generator": {
+      "type": "string",
+      "description": "What produced these bytes, INCLUDING the toolchain. A reprojection is only reproducible if the projection library is — pyproj bundles PROJ's datum grids, and a shift that changes between releases moves every pixel — so a generator naming only the script has recorded which sources a tile drew on but not what turned them into pixels. tools/bake/bake.sh emits the correct string, which pins the container by digest rather than by tag: 'resq-viz-bake/1 gdal@sha256:...'. A tag is a moving target and records almost nothing. ENFORCED, not merely described: check-licences.ts refuses a manifest carrying geospatial layers whose generator names no digest-pinned toolchain (code generator-without-toolchain). A credits import of texture assets is exempt, because no bake toolchain produced it."
+    },
     "eula_clauses": {
       "type": "array",
       "items": { "type": "string" },

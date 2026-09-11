@@ -407,3 +407,97 @@ describe("guards that only fire on data nobody ships", () => {
         ok(r.out.includes(doc.areas[2].id), r.out);
     });
 });
+
+describe("the bake toolchain is pinned in one place, not two", () => {
+    // tools/bake/bake.sh stamps TOOLCHAIN_DIGEST into the manifest's `generator` field, and the
+    // Dockerfile's FROM is what actually runs. If those drift apart, every manifest produced
+    // names a toolchain that did not run — which is worse than naming none, because it reads as
+    // provenance. bake.sh checks this at runtime; this checks it in CI, where nobody has to
+    // remember to run a bake first.
+    const bakeDir = join(REPO, "tools", "bake");
+
+    it("bake.sh and the Dockerfile name the same image digest", () => {
+        const digests = (file: string): string[] => {
+            const src = readFileSync(join(bakeDir, file), "utf8");
+            return [...new Set(src.match(/sha256:[0-9a-f]{64}/g) ?? [])];
+        };
+        const dockerfile = digests("Dockerfile");
+        const script = digests("bake.sh");
+
+        strictEqual(dockerfile.length, 1, "the Dockerfile must pin exactly one base image digest");
+        strictEqual(script.length, 1, "bake.sh must name exactly one toolchain digest");
+        strictEqual(script[0], dockerfile[0],
+            "bake.sh would stamp a toolchain into the manifest that the Dockerfile does not run");
+    });
+
+    it("pins by digest rather than by tag", () => {
+        // `FROM ghcr.io/osgeo/gdal:ubuntu-small-3.9.2` is a moving target — the publisher can
+        // republish it — so a manifest recording that has said almost nothing about its bytes.
+        const dockerfile = readFileSync(join(bakeDir, "Dockerfile"), "utf8");
+        const from = dockerfile.split("\n").find((l) => l.startsWith("FROM "));
+        ok(from, "the Dockerfile has no FROM line");
+        ok(from!.includes("@sha256:"), `FROM must pin a digest, got: ${from}`);
+
+        // Not a placeholder. The first draft of this Dockerfile carried a sixty-four-zero digest
+        // as a stand-in, which looks exactly like a real pin and fails only at build time with a
+        // manifest-not-found — long after a reader has believed the toolchain is pinned.
+        const digest = from!.match(/@sha256:([0-9a-f]{64})/)?.[1];
+        ok(digest, `FROM digest must be a full 64-hex sha256, got: ${from}`);
+        ok(!/^0+$/.test(digest!), "FROM pins a placeholder digest, not a real image");
+        ok(new Set(digest!).size > 4,
+            `FROM digest looks like a placeholder rather than a real digest: ${digest}`);
+    });
+
+    it("refuses to run the bake outside the pinned image", () => {
+        // The bake not running on a bare machine is the property, not an inconvenience: a bake
+        // that only runs on one laptop makes the provenance manifest unverifiable.
+        // Read with comments stripped. The first version of this asserted the flag appeared
+        // anywhere in the file, and bake.sh explains --network=none in a comment directly above
+        // the line that uses it — so deleting the flag from the actual `run` left the test green.
+        // A guard that cannot tell code from prose about the code is not a guard.
+        const script = readFileSync(join(bakeDir, "bake.sh"), "utf8")
+            .split("\n")
+            .filter((line) => !line.trimStart().startsWith("#"))
+            .join("\n");
+
+        ok(/\b(docker|podman)\b/.test(script), "bake.sh must run through a container runtime");
+        ok(/run\b[^\n]*--network=none/.test(script),
+            "the bake container must not reach the network, or a bake can substitute an input");
+    });
+});
+
+describe("the bake wrapper cannot claim provenance for a bake that did not run", () => {
+    // bake.sh's whole job is recording which toolchain produced a tile, so the one thing it must
+    // never do is print that record when nothing succeeded.
+    //
+    // It used to end with `bash -c "tools/bake/run-bake.sh $*"`, which made the arguments BE
+    // shell: `bake.sh 'x; true'` ran the stub, then ran `true`, whose zero exit replaced the
+    // stub's failure — and the generator string was printed for a bake that never happened.
+    // Caught in review, not by me.
+    const script = readFileSync(join(REPO, "tools", "bake", "bake.sh"), "utf8")
+        .split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
+
+    it("passes arguments as arguments, never interpolated into a shell string", () => {
+        ok(!/bash\s+-c\s+"[^"]*\$[*@]/.test(script),
+            "arguments interpolated into `bash -c` are executable, not data");
+        ok(!/\$\*/.test(script), "$* loses argument boundaries; use \"$@\"");
+        ok(/--entrypoint\s+\S*run-bake\.sh/.test(script),
+            "the bake script must be the entrypoint so its exit status is the container's");
+        ok(/"\$@"/.test(script), "arguments must reach the container as arguments");
+    });
+
+    it("prints the generator string only after the bake command", () => {
+        // Ordering is the property: the echo is unconditional under `set -e`, so it runs only if
+        // nothing above it failed. If the run ever moves below the echo, that stops being true.
+        const runAt = script.search(/\brun\b[^\n]*--network=none/);
+        const echoAt = script.search(/echo\s+"resq-viz-bake/);
+        ok(runAt !== -1, "no container run found");
+        ok(echoAt !== -1, "no generator string found");
+        ok(runAt < echoAt, "the generator string must be printed after the bake, not before");
+    });
+
+    it("fails fast rather than continuing past an error", () => {
+        ok(/set -euo pipefail/.test(script),
+            "without -e the generator string prints even when the bake command fails");
+    });
+});
