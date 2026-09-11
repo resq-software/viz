@@ -1,6 +1,13 @@
 # Exact versions, because a reprojection is only reproducible if the projection library is.
 # pyproj bundles PROJ's datum grids; a minor bump can move every pixel by metres.
-rasterio==1.3.10
-pyproj==3.6.1
-numpy==1.26.4
-Pillow==10.3.0
+#
+# Resolved from PyPI on 2026-09-11, not from memory. The first version of this file pinned
+# pillow 10.3.0 and three siblings from recall, and osv-scanner found 38 known vulnerabilities
+# across them — 29 rated High. Pinning is only a safety property if the pin is current; a stale
+# pin is a vulnerability with a version number on it. Re-resolve when bumping:
+#
+#   curl -s https://pypi.org/pypi/<name>/json | jq -r .info.version
+rasterio==1.5.1
+pyproj==3.8.0
+numpy==2.5.3
+Pillow==12.3.0
