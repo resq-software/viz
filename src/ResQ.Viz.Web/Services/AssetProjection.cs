@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-using System.Globalization;
 using System.Numerics;
 using ResQ.Viz.Web.Models;
 
@@ -53,10 +52,23 @@ public sealed record AssetSpawnRequest(
 
 /// <summary>Translates between the v2 asset model and the v1 drone-only wire contract.</summary>
 /// <remarks>
-/// v1 survives as a projection rather than as a parallel code path: two populations kept in
-/// step by hand drift, one population with a filter cannot.
+/// <b>Not on the serving path.</b> This is the reference projection the v1 compatibility tests
+/// measure against; no production code calls any method here.
 /// <para>
-/// <b>The filter is the safety property.</b> Every v1 surface assumes its list holds drones and
+/// The previous summary claimed the opposite — "v1 survives as a projection rather than as a
+/// parallel code path: two populations kept in step by hand drift, one population with a filter
+/// cannot". v1 survives precisely AS the parallel hand-written path:
+/// <c>SimulationRoom.CaptureDroneSnapshots</c> builds the drone states,
+/// <c>VizFrameBuilder</c> builds the v1 frame and its detections, and
+/// <c>SimController.SendCommand</c> switches straight onto <c>FlightCommand</c>. The drift that
+/// summary said could not happen had already happened: the hand-written mapping set
+/// <c>Vendor</c> and the reference did not, and transposing two velocity components in the
+/// shipped capture went unnoticed by the whole suite.
+/// </para>
+/// <para>
+/// <b>The filter would be the safety property, if this were on the serving path.</b> Nothing
+/// exercises it today — production is air-only structurally, because the world's drone list can
+/// only hold air assets. Every v1 surface assumes its list holds drones and
 /// nothing else — the spawn endpoint caps on its length, the command and fault endpoints use it
 /// as an existence check, and the frame builder iterates it to attribute detections. A rover
 /// leaking into that list changes four behaviours at once and throws nothing, so the projection
@@ -290,100 +302,6 @@ public static class AssetProjection
             AssetId: assetId,
             Vendor: vendor,
             Model: request.Model);
-    }
-
-    /// <summary>Maps a v1 command type onto its v2 command kind.</summary>
-    /// <remarks>
-    /// <c>hover</c> becomes <c>hold</c> because the v1 name describes how a multirotor happens
-    /// to stay still, not what was asked for — a rover holds by stopping and a vessel cannot
-    /// hold at all, which the capability gate can only express if the kind is domain-neutral.
-    /// <c>auto</c> becomes <c>resumeAutonomy</c>: it was never a flight command, it hands the
-    /// asset back to the coordinator.
-    /// <para>
-    /// The v1 token is lower-cased before matching, reproducing exactly what the v1 endpoint
-    /// does today, so a client that has been sending <c>"HOVER"</c> keeps working. The v2 kinds
-    /// it produces are matched ordinally by everything downstream — case folding a v2 token
-    /// would make the wire contract depend on the server's culture.
-    /// </para>
-    /// </remarks>
-    /// <param name="type">v1 command type: <c>hover</c>, <c>goto</c>, <c>rtl</c>, <c>land</c> or <c>auto</c>.</param>
-    /// <param name="kind">The matching token from <see cref="CommandKinds"/>, or null when unrecognised.</param>
-    /// <returns><see langword="true"/> when <paramref name="type"/> is a known v1 command type.</returns>
-    public static bool TryToCommandKind(string? type, out string? kind)
-    {
-        kind = type?.ToLowerInvariant() switch
-        {
-            "hover" => CommandKinds.Hold,
-            "goto" => CommandKinds.GoTo,
-            "rtl" => CommandKinds.ReturnToBase,
-            "land" => CommandKinds.Land,
-            "auto" => CommandKinds.ResumeAutonomy,
-            _ => null,
-        };
-
-        return kind is not null;
-    }
-
-    /// <summary>Adapts a v1 command target array into a frame-qualified v2 target.</summary>
-    /// <remarks>
-    /// v1's <c>Target</c> is a bare triple that has always meant the scene frame. Naming the
-    /// frame is the whole point: once other domains share the endpoint, an unnamed triple is a
-    /// waypoint that will eventually be resolved against the wrong origin, silently.
-    /// </remarks>
-    /// <param name="target">v1 target array, or null when the command carries none.</param>
-    /// <param name="originId">Local origin the scene frame is anchored to, or null when unanchored.</param>
-    /// <returns>A point target, or null when <paramref name="target"/> is null.</returns>
-    /// <exception cref="ArgumentException">The array is present but not a finite 3-element array.</exception>
-    public static PointCommandTarget? ToCommandTarget(float[]? target, string? originId = null)
-    {
-        if (target is null)
-        {
-            return null;
-        }
-
-        if (target.Length != 3)
-        {
-            throw new ArgumentException(
-                "Target must be a 3-element array [X, Y, Z].", nameof(target));
-        }
-
-        var point = new Vector3(target[0], target[1], target[2]);
-        if (!float.IsFinite(point.X) || !float.IsFinite(point.Y) || !float.IsFinite(point.Z))
-        {
-            throw new ArgumentException("Target contains a non-finite value.", nameof(target));
-        }
-
-        // No acceptance radius: v1 never had one, and the executing model's own tolerance is
-        // the honest default, being vehicle-specific.
-        return new PointCommandTarget(
-            new FramedPose(CoordinateFrame.LocalEus, originId, point, Quaternion.Identity));
-    }
-
-    /// <summary>Adapts a v1 commanded yaw into the v2 course parameter.</summary>
-    /// <remarks>
-    /// The two are different angles. v1's yaw is a scene rotation about <c>+Y</c> with zero
-    /// facing <c>+Z</c>; v2's course is clockwise from true north, and <c>+Z</c> is south.
-    /// Passing one through as the other points a vehicle told to head north due south, so the
-    /// conversion goes through the tested helper rather than a sign flip written out here.
-    /// </remarks>
-    /// <param name="yaw">v1 commanded yaw in radians, or null to leave the heading free.</param>
-    /// <returns>A single-entry parameter bag, or null when <paramref name="yaw"/> is null.</returns>
-    /// <exception cref="ArgumentException"><paramref name="yaw"/> is present but not finite.</exception>
-    public static IReadOnlyDictionary<string, string>? ToCommandParameters(float? yaw)
-    {
-        if (yaw is not { } sceneYaw)
-        {
-            return null;
-        }
-
-        double course = CoordinateFrames.HeadingFromSceneYaw(sceneYaw);
-
-        // Round-trippable formatting: the validator parses these back as doubles, and a
-        // fixed-precision format would quietly move the commanded heading.
-        return new Dictionary<string, string>(1, StringComparer.Ordinal)
-        {
-            [CommandParameters.Course] = course.ToString("R", CultureInfo.InvariantCulture),
-        };
     }
 
     /// <summary>Whether a captured air state describes a drone that is off the ground.</summary>
