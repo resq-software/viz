@@ -437,6 +437,42 @@ public sealed partial class DeltaTransportHardeningTests
     /// this state has one stalled recipient, not one per message.
     /// </para>
     /// </remarks>
+    /// <summary>A v2 send that throws must force the next frame to be a keyframe.</summary>
+    /// <remarks>
+    /// The repair in <c>SendStreamFramesAsync</c>'s <c>catch (Exception)</c> was unreachable:
+    /// every <c>IFrameBroadcaster</c> double in this suite returns a task that never faults, so
+    /// no test could enter the block, and deleting <c>room.RequestKeyframe()</c> from it left the
+    /// whole suite green. The class remarks state why it matters — "a send that threw may have
+    /// left the chain advanced past a frame that never reached the wire, so every subscriber's
+    /// next delta would name a base it does not hold".
+    /// </remarks>
+    [Fact]
+    public async Task A_Failed_v2_Send_Forces_The_Next_Frame_To_Be_A_Keyframe()
+    {
+        var room = CreatePopulatedRoom();
+        room.IncrementDeltaSubscribers();
+        var broadcaster = new FaultingDeltaBroadcaster(faults: 1);
+        var manager = CreateManager(broadcaster);
+
+        // First tick establishes the chain with a keyframe; nothing to repair yet.
+        await manager.BroadcastRoomAsync(room, CancellationToken.None);
+        broadcaster.Published.Should().ContainSingle().Which.IsKeyframe.Should().BeTrue(
+            "a chain opens with a keyframe");
+
+        // Second tick sends a delta, and that send throws.
+        await manager.BroadcastRoomAsync(room, CancellationToken.None);
+        broadcaster.DeltaAttempts.Should().Be(1, "the faulting send must actually have been attempted");
+        broadcaster.Published.Should().ContainSingle(
+            "the frame that threw never reached a client, so it is not in the chain");
+
+        // Third tick must repair rather than continue the chain.
+        await manager.BroadcastRoomAsync(room, CancellationToken.None);
+        broadcaster.Published.Should().HaveCount(2);
+        broadcaster.Published[^1].IsKeyframe.Should().BeTrue(
+            "after a send that threw, subscribers hold a base the next delta would not name — the "
+            + "repair must re-establish them with a keyframe rather than wait for the periodic one");
+    }
+
     private sealed class StalledV2Broadcaster : IFrameBroadcaster
     {
         private readonly TaskCompletionSource _v2 =
