@@ -11,3 +11,15 @@ rasterio==1.5.1
 pyproj==3.8.0
 numpy==2.5.3
 Pillow==12.3.0
+
+# NEXT STEP, not done here: a fully hashed lock file.
+#
+# These four are direct dependencies only. `pip install -r` resolves their transitive graph fresh
+# on every build, so the bake environment can still move even with the base image digest fixed —
+# which undercuts the reason the image is digest-pinned at all. Raised in review of #240 and
+# correct.
+#
+# It is a bigger change than it looks: pip's --require-hashes is all-or-nothing across the whole
+# graph, so this needs a resolver run that produces every transitive package with its hash, and
+# that run has to happen somewhere reproducible. Left as the next step rather than half-done,
+# because a lock file covering some of the graph is not a lock file.
