@@ -14,7 +14,6 @@ import {
   domainLabel,
   emptySelection,
   filterableFromV2,
-  filterableFromView,
   fleetSummaryText,
   humanise,
   loadSelection,
@@ -186,18 +185,6 @@ describe('projections', () => {
     expect(projected.operationalState).toBe(OperationalState.Holding);
   });
 
-  // The v1 stream has no descriptor at all, so agency and fleet must come back
-  // null — never a fabricated default that would file every drone under one fleet.
-  it('reports agency and fleet as unknown when there is no descriptor', () => {
-    const view = {
-      id: 'd1', displayName: 'd1', domain: AssetDomain.Air,
-      vehicleClass: VehicleClass.Multirotor, operationalState: OperationalState.Active,
-      freshness: DataFreshness.Fresh,
-    } as AssetView;
-    const projected = filterableFromView(view);
-    expect(projected.agencyId).toBeNull();
-    expect(projected.fleetId).toBeNull();
-  });
 });
 
 describe('persistence', () => {

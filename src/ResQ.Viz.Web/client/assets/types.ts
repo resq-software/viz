@@ -142,8 +142,20 @@ export const VehicleClass = {
 export type VehicleClass = (typeof VehicleClass)[keyof typeof VehicleClass];
 
 /** What an asset is declared able to do. Behaviour — and every command affordance the panel renders
- *  — is gated on these bits, never on a switch over `VehicleClass`. Declared in C# as `[Flags] enum
- *  : ulong`; all values in use fit comfortably inside a JS number. */
+ *  — is gated on these bits, never on a switch over `VehicleClass`.
+ *
+ *  **That gate runs server-side**, in `CommandDefinition.IsSatisfiedBy`, and reaches the client
+ *  already applied as the command list of `GET /api/v2/sim/assets/{id}/capabilities`. The client
+ *  does not re-derive it. This mask is carried for presentation only.
+ *
+ *  Said explicitly because it was not obvious: `hasAllCapabilities` and `hasAnyCapability` used to
+ *  live here, implementing that gate client-side, and were called from nowhere — the sentence
+ *  above reads as though they were the mechanism, and they never were. Do not re-add them without
+ *  a caller; two implementations of one gate is how the client and server come to disagree about
+ *  what a vehicle may be asked to do.
+ *
+ *  Declared in C# as `[Flags] enum : ulong`; all values in use fit comfortably inside a JS
+ *  number. */
 export const AssetCapability = {
   None: 0,
   Arm: 1 << 0,
@@ -168,18 +180,6 @@ export type AssetCapabilityMask = number;
 export type AssetCapabilityName =
   | 'Arm' | 'Navigate2D' | 'Navigate3D' | 'Takeoff' | 'Land' | 'Reverse'
   | 'PivotTurn' | 'StationKeep' | 'Dock' | 'ManualControl' | 'MeshRelay';
-
-/** True when `mask` declares every bit in `flags`. A zero `flags` is vacuously true, matching how
- *  an ungated command is treated server-side. */
-export function hasAllCapabilities(mask: AssetCapabilityMask, flags: number): boolean {
-  return (mask & flags) === flags;
-}
-
-/** True when `mask` declares at least one bit in `flags`. This is the `Any` match a command like
- *  `goTo` uses so a rover need not claim 3D navigation. */
-export function hasAnyCapability(mask: AssetCapabilityMask, flags: number): boolean {
-  return (mask & flags) !== 0;
-}
 
 /** Coarse operational state, deliberately domain-neutral: a vessel holding station, a parked rover
  *  and a loitering multirotor are all `Holding`. Colour carries this; silhouette carries the

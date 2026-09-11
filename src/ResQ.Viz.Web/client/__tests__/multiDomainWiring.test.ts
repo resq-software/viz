@@ -414,6 +414,23 @@ describe('entry-chunk boundaries', () => {
     expect(subscribeAt).toBeGreaterThan(negotiateAt);
   });
 
+  it('reports a default scenario that failed to start', () => {
+    // Both startup mutations return an outcome and StartupCoordinator discards both — it does
+    // `void this._deps.startLegacyScenario(...)` and drops the StartupMutationResult from the v2
+    // call. So a default scenario that failed left the console empty with nothing said anywhere,
+    // and StartupMutationResult.success had no reader in the whole client.
+    //
+    // Source-level because app.ts cannot be imported under vitest, which is the same reason the
+    // assertions above it are shaped this way.
+    const legacy = appSrc.slice(appSrc.indexOf('startLegacyScenario: async'));
+    expect(legacy.slice(0, legacy.indexOf('startV2Scenario')))
+      .toMatch(/if \(!result\.success\)[\s\S]*?log\.warn\(/);
+
+    const v2 = appSrc.slice(appSrc.indexOf('startV2Scenario: async'));
+    expect(v2.slice(0, v2.indexOf('schedule:')))
+      .toMatch(/if \(!result\.success\)[\s\S]*?log\.warn\(/);
+  });
+
   it('uses the exact mode-specific defaults and removes drone-count startup', () => {
     expect(appSrc).toContain("apiPost('/api/sim/scenario/single')");
     expect(appSrc).toMatch(/startV2Scenario:\s*async name =>[\s\S]*?import\('\.\/operator\/consoleApi'\)[\s\S]*?requestScenarioStart\(scenarioRuntime, name,/);
