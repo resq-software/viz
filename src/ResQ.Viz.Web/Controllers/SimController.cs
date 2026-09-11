@@ -180,6 +180,16 @@ public sealed class SimController : ControllerBase
         if (request.Yaw is { } yaw && (float.IsNaN(yaw) || float.IsInfinity(yaw)))
             return BadRequest(new { error = "Yaw contains an invalid value." });
 
+        // v1 yaw is a SCENE rotation about +Y with zero facing +Z. v2's course is clockwise from
+        // true north, and +Z is south. They are different angles, and passing one through as the
+        // other points a vehicle told to head north due south — convert with
+        // CoordinateFrames.HeadingFromSceneYaw rather than a sign flip written out by hand.
+        //
+        // Recorded here because this is the line a migration would touch. It used to live on
+        // AssetProjection.ToCommandParameters, a v1-to-v2 command adapter with no caller: v1
+        // commands go straight to FlightCommand below and never enter the v2 envelope, by a
+        // written decision for the deprecation cycle. That adapter is gone; this warning is the
+        // part of it worth keeping.
         FlightCommand command = request.Type.ToLowerInvariant() switch
         {
             "hover" => FlightCommand.Hover(request.Yaw),

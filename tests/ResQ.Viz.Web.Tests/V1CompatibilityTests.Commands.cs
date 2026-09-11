@@ -36,67 +36,6 @@ public partial class V1CompatibilityTests
     /// Each v1 token maps to the domain-neutral kind it was always shorthand for, and matching
     /// stays case-insensitive because the v1 endpoint has always lower-cased before comparing.
     /// </summary>
-    [Theory]
-    [InlineData("hover", CommandKinds.Hold)]
-    [InlineData("goto", CommandKinds.GoTo)]
-    [InlineData("rtl", CommandKinds.ReturnToBase)]
-    [InlineData("land", CommandKinds.Land)]
-    [InlineData("auto", CommandKinds.ResumeAutonomy)]
-    [InlineData("HOVER", CommandKinds.Hold)]
-    [InlineData("GoTo", CommandKinds.GoTo)]
-    [InlineData("Rtl", CommandKinds.ReturnToBase)]
-    [InlineData("LAND", CommandKinds.Land)]
-    [InlineData("Auto", CommandKinds.ResumeAutonomy)]
-    public void Each_V1_Command_Type_Maps_To_Its_Intended_V2_Kind(string v1Type, string expectedKind)
-    {
-        AssetProjection.TryToCommandKind(v1Type, out var kind).Should().BeTrue();
-        kind.Should().Be(expectedKind);
-    }
-
-    /// <summary>
-    /// Anything that was not a v1 type stays unrecognised — a v2 token included, since the v1
-    /// endpoint has never accepted one and must not start accepting one by accident.
-    /// </summary>
-    [Theory]
-    [InlineData("explode")]
-    [InlineData("")]
-    [InlineData(CommandKinds.Hold)]
-    [InlineData(CommandKinds.Takeoff)]
-    public void A_Non_V1_Command_Type_Maps_To_Nothing(string v1Type)
-    {
-        AssetProjection.TryToCommandKind(v1Type, out var kind).Should().BeFalse();
-        kind.Should().BeNull();
-    }
-
-    /// <summary>A missing command type is unrecognised rather than a null-reference crash.</summary>
-    [Fact]
-    public void A_Null_V1_Command_Type_Maps_To_Nothing()
-    {
-        AssetProjection.TryToCommandKind(null, out var kind).Should().BeFalse();
-        kind.Should().BeNull();
-    }
-
-    /// <summary>
-    /// Every v1 command still clears the v2 gate for a multirotor: the catalog knows the kind, it
-    /// applies to the air domain, and the multirotor profile declares what it requires. Tighten a
-    /// capability without checking this and a v1 client's commands start being rejected.
-    /// </summary>
-    [Theory]
-    [InlineData("hover")]
-    [InlineData("goto")]
-    [InlineData("rtl")]
-    [InlineData("land")]
-    [InlineData("auto")]
-    public void Every_V1_Command_Still_Passes_The_V2_Gate_For_A_Multirotor(string v1Type)
-    {
-        AssetProjection.TryToCommandKind(v1Type, out var kind).Should().BeTrue();
-        CommandCatalog.TryGet(kind, out var definition).Should().BeTrue();
-
-        definition!.AppliesTo(AssetDomain.Air).Should().BeTrue();
-        definition.IsSatisfiedBy(AssetProfiles.CapabilitiesFor(VehicleClass.Multirotor)).Should().BeTrue();
-        AssetCommandTranslator.ToAssetCommandKind(kind).Should().NotBe(AssetCommandKind.Unspecified);
-    }
-
     /// <summary>A v1 spawn is an air multirotor at the same scene position, with its model kept.</summary>
     [Fact]
     public void A_V1_Spawn_Becomes_An_Air_Multirotor_At_The_Same_Scene_Position()
@@ -113,19 +52,6 @@ public partial class V1CompatibilityTests
     }
 
     /// <summary>A v1 goto target keeps its numbers and gains the frame it always implied.</summary>
-    [Fact]
-    public void A_V1_Goto_Target_Keeps_Its_Numbers_And_Gains_The_Scene_Frame()
-    {
-        var target = AssetProjection.ToCommandTarget([100f, 50f, 100f]);
-
-        target!.Point.Frame.Should().Be(CoordinateFrame.LocalEus);
-        target.Point.Position.Should().Be(new Vector3(100f, 50f, 100f));
-        AssetProjection.ToCommandTarget(null).Should().BeNull();
-    }
-
-    // ─── Detections ─────────────────────────────────────────────────────────
-
-    /// <summary>A projected detection carries its reporting asset in v1's only such field.</summary>
     [Fact]
     public void A_Detection_Projected_To_V1_Carries_Its_Reporter_As_DroneId()
     {
