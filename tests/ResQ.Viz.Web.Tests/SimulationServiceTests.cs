@@ -296,14 +296,29 @@ public class SimulationServiceTests
     [Fact]
     public void Tick_Returns_Broadcast_Flag_Every_Sixth_Step()
     {
+        // Records WHICH ticks broadcast, not just how many. Counting alone accepts any stream
+        // that happens to produce the right total: two frames at ticks 0 and 1 followed by ten
+        // dead ticks counted 2 and passed, which is a stream that has died rather than one
+        // broadcasting at 10 Hz. Neither this test nor its paused twin looked past tick 12
+        // either, so a cadence that drifts after the first window was invisible.
         var room = CreateRoom();
-        var broadcasts = 0;
-        for (var i = 0; i < 12; i++)
+        var broadcastTicks = new List<int>();
+        const int ticks = 36;
+        for (var i = 0; i < ticks; i++)
         {
-            var (broadcast, _) = room.Tick();
-            if (broadcast) broadcasts++;
+            if (room.Tick().ShouldBroadcast) broadcastTicks.Add(i);
         }
-        broadcasts.Should().Be(2, "every 6th tick of 12 should broadcast");
+
+        // Indices 5, 11, 17... and not 0, 6, 12...: the tick counter increments before the
+        // modulo test, so the SIXTH tick broadcasts, which is index 5. I asserted the zero-based
+        // sequence first and the test corrected me — the old count-only assertion was consistent
+        // with either, which is part of why it held so little.
+        broadcastTicks.Should().Equal([5, 11, 17, 23, 29, 35],
+            "every 6th tick broadcasts, and it must keep doing so past the first window");
+
+        // The same fact as a property, so the literal above cannot drift away from the rule.
+        broadcastTicks.Should().OnlyContain(t => (t + 1) % 6 == 0);
+        broadcastTicks.Should().HaveCount(ticks / 6);
     }
 
     [Fact]
@@ -444,12 +459,19 @@ public class SimulationServiceTests
     /// <summary>Broadcasts continue at 10 Hz while paused, so a paused client still receives frames and does not appear disconnected.</summary>
     public void Tick_Broadcasts_At_10Hz_Even_While_Paused()
     {
+        // Same shape as the unpaused case, and for the same reason: a count alone cannot tell a
+        // steady cadence from a stream that stopped early.
         var room = CreateRoom();
         room.Pause();
-        var broadcasts = 0;
-        for (var i = 0; i < 12; i++)
-            if (room.Tick().ShouldBroadcast) broadcasts++;
-        broadcasts.Should().Be(2, "broadcast cadence is driven by real ticks, not sim steps");
+        var broadcastTicks = new List<int>();
+        const int ticks = 36;
+        for (var i = 0; i < ticks; i++)
+        {
+            if (room.Tick().ShouldBroadcast) broadcastTicks.Add(i);
+        }
+
+        broadcastTicks.Should().Equal([5, 11, 17, 23, 29, 35],
+            "broadcast cadence is driven by real ticks, not sim steps");
         room.TickCount.Should().Be(0, "paused world advanced no steps");
     }
 

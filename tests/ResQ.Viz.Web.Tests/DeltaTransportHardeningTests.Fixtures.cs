@@ -159,6 +159,67 @@ public sealed partial class DeltaTransportHardeningTests
     /// Deliberately not a mock: these cases assert on which stream published and in what shape,
     /// and a verification-based double would only ever prove that a call happened.
     /// </remarks>
+    /// <summary>A broadcaster whose v2 delta send throws once, then behaves.</summary>
+    /// <remarks>
+    /// Every other double in this suite returns a task that never faults, which left
+    /// <c>SendStreamFramesAsync</c>'s <c>catch (Exception)</c> — and the
+    /// <c>room.RequestKeyframe()</c> repair inside it — unreachable by any test. That repair is
+    /// the only thing that re-establishes subscribers ahead of the periodic keyframe after a send
+    /// that may have advanced the chain past a frame nobody received, so it is worth being able
+    /// to reach.
+    /// <para>
+    /// It faults the DELTA rather than the keyframe, because the first v2 frame in a chain is
+    /// always a keyframe: faulting that would prove only that a failed keyframe is followed by
+    /// another keyframe, which happens anyway.
+    /// </para>
+    /// </remarks>
+    private sealed class FaultingDeltaBroadcaster : IFrameBroadcaster
+    {
+        private int _faultsRemaining;
+
+        /// <summary>Creates a broadcaster that throws on its first <paramref name="faults"/> delta sends.</summary>
+        /// <param name="faults">How many delta sends to fault before behaving.</param>
+        public FaultingDeltaBroadcaster(int faults) => _faultsRemaining = faults;
+
+        /// <summary>The delta chain as a client sees it — only frames whose send actually landed.</summary>
+        public List<PublishedFrame> Published { get; } = [];
+
+        /// <summary>How many delta sends were attempted, landed or not.</summary>
+        public int DeltaAttempts { get; private set; }
+
+        /// <inheritdoc />
+        public Task BroadcastFrameAsync(string roomId, VizFrame frame, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        /// <inheritdoc />
+        public Task BroadcastSnapshotAsync(
+            string roomId, VizSnapshotV2 snapshot, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        /// <inheritdoc />
+        public Task BroadcastKeyframeAsync(
+            string roomId, VizSnapshotV2 snapshot, CancellationToken cancellationToken)
+        {
+            Published.Add(new PublishedFrame(snapshot, null));
+            return Task.CompletedTask;
+        }
+
+        /// <inheritdoc />
+        public Task BroadcastDeltaAsync(
+            string roomId, VizDeltaV2 delta, CancellationToken cancellationToken)
+        {
+            DeltaAttempts++;
+            if (_faultsRemaining > 0)
+            {
+                _faultsRemaining--;
+                return Task.FromException(new InvalidOperationException("transport went away"));
+            }
+
+            Published.Add(new PublishedFrame(null, delta));
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class RecordingBroadcaster : IFrameBroadcaster
     {
         /// <summary>Every v1 frame published, in order.</summary>

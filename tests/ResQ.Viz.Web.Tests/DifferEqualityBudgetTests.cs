@@ -184,6 +184,71 @@ public sealed partial class DifferEqualityBudgetTests
             "{0} moved by its full quantum", figure);
     }
 
+    /// <summary>Each budgeted figure is also ELIDED when it moves less than its own quantum.</summary>
+    /// <remarks>
+    /// Only the percentage had both halves pinned. This theory's twin above covers energy,
+    /// endurance and draw at the quantum, and nothing anywhere moved those three below it — so
+    /// the budget could have been anything at all in that direction. Tightening
+    /// <c>PowerEnergyWh</c> to 1e-12, which makes energy effectively bit-exact and re-sends every
+    /// draining asset, left the suite green.
+    /// <para>
+    /// The elided figure must still arrive on the carried stamp. An elided value that is not
+    /// re-delivered is a frozen value on the client, which is the failure the stamp exists to
+    /// prevent.
+    /// </para>
+    /// </remarks>
+    /// <param name="figure">Which budgeted figure to move.</param>
+    [Theory]
+    [InlineData("energy")]
+    [InlineData("endurance")]
+    [InlineData("draw")]
+    public void Each_Budgeted_Figure_Is_Elided_Below_Its_Own_Quantum(string figure)
+    {
+        // 0.9 of the quantum: inside the budget by a clear margin, so this does not turn into a
+        // test of floating-point comparison at the boundary.
+        const double fraction = 0.9;
+        var held = Member("ugv-1", AssetDomain.Ground, 60.0);
+        var moved = figure switch
+        {
+            "energy" => held with
+            {
+                EnergyWh = held.EnergyWh - (VizSnapshotDiffer.Budget.PowerEnergyWh * fraction),
+            },
+            "endurance" => held with
+            {
+                EnduranceSeconds = held.EnduranceSeconds
+                    - (VizSnapshotDiffer.Budget.PowerEndurance.TotalSeconds * fraction),
+            },
+            _ => held with
+            {
+                DrawWatts = held.DrawWatts + (VizSnapshotDiffer.Budget.PowerDrawWatts * fraction),
+            },
+        };
+
+        var diff = Diff1([held], [moved]);
+        diff.Assets.Should().BeEmpty("{0} moved less than its own quantum", figure);
+
+        var stamped = diff.Carried.Should().ContainSingle().Which.Power;
+        stamped.Should().NotBeNull("an elided figure that is not re-delivered is a frozen figure");
+
+        // Read back through the shapes the stamp actually carries: energy and endurance sit on
+        // PowerState itself, draw only on the battery source.
+        var arrived = figure switch
+        {
+            "energy" => stamped!.RemainingEnergyWh,
+            "endurance" => stamped!.RemainingTime?.TotalSeconds,
+            _ => stamped!.Sources.Should().ContainSingle().Which.DrawWatts,
+        };
+        var expected = figure switch
+        {
+            "energy" => moved.EnergyWh,
+            "endurance" => moved.EnduranceSeconds,
+            _ => moved.DrawWatts,
+        };
+        arrived.Should().BeApproximately(expected, 1e-9,
+            "{0} must arrive on the carried stamp as it was measured", figure);
+    }
+
     /// <summary>
     /// Fields that are states rather than integrators are compared exactly, at any magnitude.
     /// </summary>

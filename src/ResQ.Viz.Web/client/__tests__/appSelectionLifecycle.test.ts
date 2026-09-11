@@ -198,9 +198,25 @@ describe('complete displayed snapshots reconcile shared selection', () => {
     });
 
     it('runs reconciliation before the asset manager can silently evict selection', () => {
+        // Both operands are pinned before they are ordered. Previously this was only
+        //
+        //     expect(body.indexOf('_reconcileV2Selection(projected)'))
+        //         .toBeLessThan(body.indexOf('droneManager.assets.update'));
+        //
+        // and indexOf returns -1 for a string that is absent, so deleting the call site
+        // altogether passed as -1 < 987. Every other reference in this file is
+        // bodyOf('_reconcileV2Selection'), which brace-matches the DECLARATION — untouched by
+        // deleting the call — and app.ts cannot be imported under vitest, so nothing else
+        // covered it. The ordering is the point of the test, but only once both ends exist.
         const body = bodyOf('_renderSnapshot');
-        expect(body.indexOf('_reconcileV2Selection(projected)'))
-            .toBeLessThan(body.indexOf('droneManager.assets.update'));
+        const reconcile = body.indexOf('_reconcileV2Selection(projected)');
+        const assetUpdate = body.indexOf('droneManager.assets.update');
+
+        expect(reconcile, '_renderSnapshot must call _reconcileV2Selection(projected)')
+            .toBeGreaterThanOrEqual(0);
+        expect(assetUpdate, '_renderSnapshot must call droneManager.assets.update')
+            .toBeGreaterThanOrEqual(0);
+        expect(reconcile).toBeLessThan(assetUpdate);
     });
 
     it('checks assets and tracks only against their complete projected collections', () => {
