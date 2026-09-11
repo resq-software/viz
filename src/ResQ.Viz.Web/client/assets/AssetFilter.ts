@@ -27,7 +27,6 @@ import '../styles/assets.css';
 
 import type { AssetDescriptor, AssetState } from './types';
 import { AssetDomain, DataFreshness, OperationalState, VehicleClass } from './types';
-import type { AssetView } from './assetView';
 
 // ── Enum presentation ───────────────────────────────────────────────────────
 
@@ -116,9 +115,13 @@ export function vehicleClassLabel(vehicleClass: number): string {
  *
  * Not `AssetDescriptor & AssetState`: those carry covariances, fault codes and
  * mesh paths that no facet keys on, and the v1 drone stream cannot produce them
- * at all. This shape is a superset of the corresponding `AssetView` fields plus
- * the two descriptor identifiers a mixed-agency picture is organised by, so an
- * `AssetView` with `agencyId`/`fleetId` attached satisfies it structurally.
+ * at all — which is moot for filtering, because the fleet filter mount lives inside the
+ * v2 console branch (`index.html`) and is inert in legacy mode.
+ *
+ * `filterableFromView`, the adapter that projected a v1 `AssetView` onto this shape, was
+ * deleted with that reasoning: it had no production caller, because both real call sites
+ * (`fleetUi.ts`, `operator/AssetRoster.ts`) use `filterableFromV2`. Re-add it only alongside
+ * a v1 surface that actually renders a fleet filter.
  */
 export interface FilterableAsset {
   readonly id: string;
@@ -146,29 +149,6 @@ export function filterableFromV2(
     fleetId: descriptor.fleetId,
     operationalState: state.operationalState,
     freshness: state.freshness,
-  };
-}
-
-/**
- * Projects a scene view onto the filterable shape.
- *
- * `descriptor` is optional because the v1 drone stream has no descriptor to give:
- * agency and fleet come back null there, which the facets render as unassigned
- * rather than inventing a fleet nobody declared.
- */
-export function filterableFromView(
-  view: AssetView,
-  descriptor?: AssetDescriptor | null,
-): FilterableAsset {
-  return {
-    id: view.id,
-    displayName: view.displayName,
-    domain: view.domain,
-    vehicleClass: view.vehicleClass,
-    agencyId: descriptor?.agencyId ?? null,
-    fleetId: descriptor?.fleetId ?? null,
-    operationalState: view.operationalState,
-    freshness: view.freshness,
   };
 }
 

@@ -254,10 +254,30 @@ const startupCoordinator = new StartupCoordinator({
         operatorShell.setBootStatus(status);
         if (operatorShell.mode === 'booting') loadingOverlay.setStartupStatus(status);
     },
-    startLegacyScenario: async () =>
-        (await apiPost('/api/sim/scenario/single')).success,
-    startV2Scenario: async name => (await import('./operator/consoleApi'))
-        .requestScenarioStart(scenarioRuntime, name, undefined, () => operatorShell.mode === 'v2'),
+    // Both of these report an outcome, and both outcomes used to be discarded: StartupCoordinator
+    // does `void this._deps.startLegacyScenario(...)` and drops the StartupMutationResult from the
+    // v2 call, so a default scenario that failed to start left the console empty with nothing said
+    // anywhere. The boolean and the result are still returned — the coordinator's contracts are
+    // unchanged — but a failure is now on the record where every other API failure already goes.
+    startLegacyScenario: async () => {
+        const result = await apiPost('/api/sim/scenario/single');
+        if (!result.success) {
+            log.warn('default legacy scenario failed to start', { error: result.error.message });
+        }
+        return result.success;
+    },
+    startV2Scenario: async name => {
+        const result = await (await import('./operator/consoleApi'))
+            .requestScenarioStart(scenarioRuntime, name, undefined, () => operatorShell.mode === 'v2');
+        if (!result.success) {
+            log.warn('default v2 scenario failed to start', {
+                error: result.error.kind === 'problem'
+                    ? `${result.error.problem.reasonCode ?? result.error.problem.code}: ${result.error.problem.detail}`
+                    : result.error.message,
+            });
+        }
+        return result;
+    },
     schedule: (callback, ms) => window.setTimeout(callback, ms),
     cancel: id => window.clearTimeout(id),
 });
