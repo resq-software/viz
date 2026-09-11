@@ -465,3 +465,39 @@ describe("the bake toolchain is pinned in one place, not two", () => {
             "the bake container must not reach the network, or a bake can substitute an input");
     });
 });
+
+describe("the bake wrapper cannot claim provenance for a bake that did not run", () => {
+    // bake.sh's whole job is recording which toolchain produced a tile, so the one thing it must
+    // never do is print that record when nothing succeeded.
+    //
+    // It used to end with `bash -c "tools/bake/run-bake.sh $*"`, which made the arguments BE
+    // shell: `bake.sh 'x; true'` ran the stub, then ran `true`, whose zero exit replaced the
+    // stub's failure — and the generator string was printed for a bake that never happened.
+    // Caught in review, not by me.
+    const script = readFileSync(join(REPO, "tools", "bake", "bake.sh"), "utf8")
+        .split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
+
+    it("passes arguments as arguments, never interpolated into a shell string", () => {
+        ok(!/bash\s+-c\s+"[^"]*\$[*@]/.test(script),
+            "arguments interpolated into `bash -c` are executable, not data");
+        ok(!/\$\*/.test(script), "$* loses argument boundaries; use \"$@\"");
+        ok(/--entrypoint\s+\S*run-bake\.sh/.test(script),
+            "the bake script must be the entrypoint so its exit status is the container's");
+        ok(/"\$@"/.test(script), "arguments must reach the container as arguments");
+    });
+
+    it("prints the generator string only after the bake command", () => {
+        // Ordering is the property: the echo is unconditional under `set -e`, so it runs only if
+        // nothing above it failed. If the run ever moves below the echo, that stops being true.
+        const runAt = script.search(/\brun\b[^\n]*--network=none/);
+        const echoAt = script.search(/echo\s+"resq-viz-bake/);
+        ok(runAt !== -1, "no container run found");
+        ok(echoAt !== -1, "no generator string found");
+        ok(runAt < echoAt, "the generator string must be printed after the bake, not before");
+    });
+
+    it("fails fast rather than continuing past an error", () => {
+        ok(/set -euo pipefail/.test(script),
+            "without -e the generator string prints even when the bake command fails");
+    });
+});

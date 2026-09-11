@@ -58,9 +58,13 @@ const codes = (rs: Restriction[], c: EvalContext) => evaluateRestrictions(rs, c)
  *  and every failure below is attributable to the rule under test. */
 const TILE_SHA = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881";
 
+// The generator carries a digest-pinned toolchain because most fixtures below declare
+// geospatial layers, and the gate requires those to name what produced their pixels. A
+// fixture that does not satisfy a real rule tests the fixture rather than the gate — the same
+// reason makeFixtureRoot copies the vendored licence texts and the outreach records.
 function manifestWith(layer: Record<string, unknown>, bbox: number[], extra: Record<string, unknown> = {}) {
     return {
-        schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1",
+        schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1 gdal@sha256:6af57cbe64534fd8c3803ac4158e9bf812dfb1968cf13e8922b80f665d76d063",
         // Most fixtures below use usgs-3dep as a generic admissible source, and 3DEP requires
         // the modification-disclosure clause. Declaring a clause a layer does not require is
         // harmless, so this keeps those fixtures about the thing they are actually testing.
@@ -575,7 +579,7 @@ describe("manifest path below a symlinked parent", () => {
         symlinkSync(join(outside, "tiles"), join(root, "vendor", "tiles"));
 
         const manifest = {
-            schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1",
+            schema: 1, generated_at: "2026-09-05T00:00:00Z", generator: "test/1 gdal@sha256:6af57cbe64534fd8c3803ac4158e9bf812dfb1968cf13e8922b80f665d76d063",
             areas: [{
                 id: "a", name: "A", bbox: [-100, 35, -99, 36],
                 tiles: [{
@@ -1640,5 +1644,61 @@ describe("a region box the registry cannot describe fails closed", () => {
         const out = run((reg) => { reg.policy.regions["alaska"] = [[-172.5, 51.2, null, 71.5]] as never; });
         ok(!out.includes("Licence gate passed"), out);
         ok(out.includes("restriction-unresolvable"), out);
+    });
+});
+
+describe("a geospatial manifest must name the toolchain that made its pixels", () => {
+    // manifest.schema.json describes this requirement. The schema accepts any string, so until
+    // now the description asserted a guarantee nothing checked — the exact defect this gate
+    // exists to catch, written into the gate's own schema. Review caught it.
+    //
+    // Scoped to geospatial layers on purpose: data/manifest.json is a credits import of texture
+    // assets that no bake toolchain produced, and it stays valid.
+    function withGenerator(generator: string, layer = "elevation") {
+        const dir = mkdtempSync(join(tmpdir(), "licgate-generator-"));
+        makeFixtureRoot(dir);
+        mkdirSync(join(dir, "data", "tiles"), { recursive: true });
+        writeFileSync(join(dir, "data", "tiles", "t.tif"), "x");
+        const manifest = manifestWith(
+            { layer, source: "usgs-3dep", fetched_at: "2026-08-01T00:00:00Z" }, CONUS);
+        writeFileSync(join(dir, "m.json"), JSON.stringify({ ...manifest, generator }));
+        const p = spawnSync(process.execPath,
+            ["--experimental-strip-types", GATE, "--root", dir,
+                "--registry", REGISTRY, "--manifest", join(dir, "m.json")],
+            { encoding: "utf8" });
+        return `${p.stdout}\n${p.stderr}`;
+    }
+
+    it("refuses a generator naming no toolchain", () => {
+        const out = withGenerator("credits-import/0.1.0");
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("generator-without-toolchain"), out);
+    });
+
+    it("refuses a toolchain pinned by tag rather than digest", () => {
+        // A tag is a moving target; recording one says almost nothing about the bytes.
+        const out = withGenerator("resq-viz-bake/1 gdal:ubuntu-small-3.9.2");
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("generator-without-toolchain"), out);
+    });
+
+    it("refuses a truncated digest", () => {
+        const out = withGenerator("resq-viz-bake/1 gdal@sha256:6af57cbe");
+        ok(!out.includes("Licence gate passed"), out);
+        ok(out.includes("generator-without-toolchain"), out);
+    });
+
+    it("accepts a digest-pinned toolchain", () => {
+        const out = withGenerator(
+            "resq-viz-bake/1 gdal@sha256:"
+            + "6af57cbe64534fd8c3803ac4158e9bf812dfb1968cf13e8922b80f665d76d063");
+        ok(out.includes("Licence gate passed"), out);
+    });
+
+    it("leaves a non-geospatial manifest alone", () => {
+        // The control, and the reason the rule is scoped rather than universal: without it this
+        // change would have failed the shipped credits import, which no bake produced.
+        const out = withGenerator("credits-import/0.1.0", "texture");
+        ok(!out.includes("generator-without-toolchain"), out);
     });
 });

@@ -48,9 +48,17 @@ image="resq-viz-bake:${TOOLCHAIN_DIGEST#sha256:}"
 
 # --network=none deliberately: fetching happens in its own step with its own provenance record.
 # A bake that can reach the network is a bake that can quietly substitute an input.
+#
+# --entrypoint and "$@", NOT `bash -c "... $*"`. Interpolating the arguments into a shell string
+# let them BE shell: `bake.sh 'x; true'` ran run-bake.sh with x, then ran `true`, whose zero exit
+# replaced the stub's failure — and this script went on to print a generator string for a bake
+# that never happened. A wrapper whose entire job is recording provenance must not be able to
+# claim provenance for nothing. Passing the arguments as arguments also keeps their boundaries,
+# so an area id with a space stays one id.
 "$runtime" run --rm --network=none \
     -v "$ROOT:/work" -w /work \
-    "$image" -c "tools/bake/run-bake.sh $*" >&2
+    --entrypoint /work/tools/bake/run-bake.sh \
+    "$image" "$@" >&2
 
 # The line the manifest wants. Emitted last and on stdout, so a caller can capture it while the
 # build and bake chatter above goes to stderr.

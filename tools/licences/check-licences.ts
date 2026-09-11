@@ -373,6 +373,33 @@ const clauses: Map<string, Clause> = new Map(
   Object.entries((registry as { clauses?: Record<string, Clause> }).clauses ?? [])
     .filter(([k]) => !k.startsWith("_")));
 
+// A geospatial manifest has to name the toolchain that produced its pixels, not just the sources
+// its bytes came from. A reprojection is only reproducible if the projection library is — pyproj
+// bundles PROJ's datum grids, and a shift between releases moves every pixel — so a generator
+// naming only the script records which sources a tile drew on and nothing about what turned them
+// into pixels.
+//
+// Enforced rather than documented. manifest.schema.json describes this requirement, the schema
+// accepts any string, and a description asserting a guarantee nothing checks is the exact defect
+// this gate exists to catch. Review pointed out I had just written one.
+//
+// Scoped to manifests carrying geospatial layers: data/manifest.json is a credits import of
+// texture assets, which no bake toolchain produced and which is legitimately exempt.
+{
+  const geoLayers = new Set(
+    ["elevation", "bathymetry", "landcover", "imagery", "buildings", "hydrology"]);
+  const carriesGeo = manifest.areas.some(
+    (a) => a.tiles.some((t) => t.layers.some((l) => geoLayers.has(l.layer))));
+
+  if (carriesGeo && !/@sha256:[0-9a-f]{64}/.test(manifest.generator ?? "")) {
+    add("error", "generator-without-toolchain", "manifest",
+      `the manifest carries geospatial layers but its generator, `
+      + `${JSON.stringify(manifest.generator ?? null)}, names no digest-pinned toolchain. `
+      + `A tile's provenance is not just which sources it drew on; it is what turned them into `
+      + `pixels, and a tag is a moving target. tools/bake/bake.sh emits the correct string.`);
+  }
+}
+
 // A clause counts as DECLARED only if the register can back it. Membership of the manifest's
 // own list used to be the whole test, so `eula_clauses: ["copernicus-6e-flowdown"]` discharged
 // an obligation nobody had written a word of — a gate satisfied by typing its own answer.
