@@ -32,12 +32,32 @@ public sealed class SwarmCoordinatorTests
         return new SimulationWorld(new SimulationConfig(), terrain, weather.Object);
     }
 
+    /// <summary>An empty fleet is survivable, and a fleet after one is still routed correctly.</summary>
+    /// <remarks>
+    /// Worth being precise about what this pins, because it was cited as covering more than it
+    /// does: on its own the NotThrow says only that Tick survives, and Tick returns early on an
+    /// empty list before reaching anything that could fail. The route map is private, so "nothing
+    /// was routed" is not observable from here.
+    /// <para>
+    /// What IS observable is that an empty tick leaves the coordinator usable — the second half
+    /// below. The divide-by-zero this guards against lives in BuildSectorPatrolRoute, where a
+    /// total of zero makes `cols` zero and `idx % cols` an integer modulo by zero; that is
+    /// defended at the division itself, next to the same clamp BuildSarSectorRoute has always
+    /// had, rather than at a caller that cannot reach it.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void Tick_WithZeroDrones_DoesNotThrow()
+    public void Tick_WithZeroDrones_DoesNotThrow_AndLeavesTheCoordinatorUsable()
     {
         var ctrl = new SwarmCoordinator(FlatTerrain());
         ctrl.Invoking(c => c.Tick(0, new List<SimulatedDrone>()))
             .Should().NotThrow();
+
+        // A real fleet immediately afterwards must still be routed, so an empty tick cannot have
+        // left partial state behind.
+        var drone = new SimulatedDrone("d1", new Vector3(0f, 40f, 0f), FlightModelType.Kinematic);
+        ctrl.Invoking(c => c.Tick(1, [drone])).Should().NotThrow();
+        ctrl.IsManual("d1").Should().BeFalse("an auto-routed drone is not under manual control");
     }
 
     [Fact]

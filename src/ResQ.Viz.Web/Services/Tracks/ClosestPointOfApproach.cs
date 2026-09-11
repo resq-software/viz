@@ -141,6 +141,23 @@ public static partial class ClosestPointOfApproach
 
         if (isClosing)
         {
+            // t is positive and finite whenever this line runs, and the test below stays anyway.
+            //
+            // Positive because isClosing already required approachRate < 0 over a relativeSpeed
+            // floored at MinRelativeSpeedMps. Finite only because PositionEus and VelocityEus are
+            // System.Numerics.Vector3 — float32 triples — so every product above sits far inside
+            // double's range, and IsUsable has already refused a non-finite component.
+            //
+            // Both of those are ARRANGEMENT, not type. Nothing in the signature stops a future
+            // change from widening those vectors to double, at which point this becomes Inf/Inf
+            // and the guard is the only thing between that and a NaN closest-approach point
+            // published to an operator. The mirror in client/assets/overlays/ApproachGeometry.ts
+            // runs the identical expression on wire doubles with no IsUsable gate ahead of it,
+            // where the same test does fire — the two must not derive one picture two ways.
+            //
+            // A mutation sweep flagged this as unreachable, which it is. Kept deliberately: this
+            // is a closest-point-of-approach between tracked contacts, and a redundant test on a
+            // safety figure costs a comparison.
             double t = -approachRate / (relativeSpeed * relativeSpeed);
             if (t > 0.0 && double.IsFinite(t))
             {

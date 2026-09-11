@@ -242,10 +242,33 @@ public sealed class SwarmCoordinator
         }
     }
 
+    /// <summary>Records a fresh sector route for one drone.</summary>
+    /// <remarks>
+    /// Both preconditions are guaranteed by the sole caller, <see cref="Tick"/>: it returns early
+    /// when <paramref name="all"/> is empty and then loops over it by index, so
+    /// <paramref name="idx"/> is in range and <paramref name="all"/> is non-empty.
+    /// <para>
+    /// This used to open with <c>if (idx &lt; 0) idx = _roles.Count;</c> and clamp with
+    /// <c>Math.Max(all.Count, 1)</c>. Neither could ever fire, and both are gone — a branch that
+    /// cannot run still tells a reader that a negative index or an empty fleet is a case worth
+    /// handling here, and neither is. The invariant is written down instead, which is the thing
+    /// the dead code was standing in for.
+    /// </para>
+    /// <para>
+    /// <b>If a second caller is ever added, restore the checks rather than assuming.</b> That is
+    /// not hypothetical: the v2 equivalent, <c>GroundSurfaceCoordinator.Assign</c>, is called both
+    /// from its Tick loop and out-of-band from the diversion path, where an asset is routed
+    /// because it was picked as nearest to a contact and no loop index is in hand. That is exactly
+    /// the shape the removed line anticipated.
+    /// </para>
+    /// </remarks>
+    /// <param name="drone">The drone to route.</param>
+    /// <param name="all">Every drone in the world; non-empty, and containing <paramref name="drone"/>.</param>
+    /// <param name="idx">This drone's index within <paramref name="all"/>; not negative.</param>
+    /// <param name="simTime">Simulated time, recorded as the leg start for the waypoint timeout.</param>
     private void AssignRole(SimulatedDrone drone, IReadOnlyList<SimulatedDrone> all, int idx, double simTime)
     {
-        if (idx < 0) idx = _roles.Count;
-        var route = BuildRoute(idx, Math.Max(all.Count, 1), drone.FlightModel.State.Position);
+        var route = BuildRoute(idx, all.Count, drone.FlightModel.State.Position);
         _roles[drone.Id] = new DroneRole(route, 0, simTime, false);
     }
 
@@ -286,6 +309,15 @@ public sealed class SwarmCoordinator
     /// </summary>
     private Vector3[] BuildSectorPatrolRoute(int idx, int total)
     {
+        // Clamped here rather than at the caller, matching BuildSarSectorRoute, which has always
+        // done the same on its own first line. The hazard is local: with total == 0, cols is 0 and
+        // `idx % cols` below is an integer modulo by zero — a DivideByZeroException, not a wrong
+        // route. AssignRole used to pass Math.Max(all.Count, 1) and that clamp was dead, because
+        // Tick returns early on an empty fleet; removing it from there left this the only
+        // unguarded route builder of the two. Defending at the division keeps the pair consistent
+        // and puts the check where a future second caller cannot route around it.
+        total = Math.Max(total, 1);
+
         // Grid layout
         int cols = (int)Math.Ceiling(Math.Sqrt(total));
         int rows = (int)Math.Ceiling((double)total / cols);
