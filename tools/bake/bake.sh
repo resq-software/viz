@@ -44,7 +44,32 @@ if [ -z "$runtime" ]; then
 fi
 
 image="resq-viz-bake:${TOOLCHAIN_DIGEST#sha256:}"
-"$runtime" build -t "$image" "$HERE" >&2
+
+# Preflight, so a registry problem reads as one. `docker build` on a denied pull reports
+# `denied: denied`, which looks like a credentials mistake and is usually not: the GDAL images
+# live on ghcr.io, and a runtime that cannot reach it fails exactly this way while plain HTTPS to
+# the same registry still works. Measured on one such host — curl with an anonymous bearer token
+# read the manifest fine while the daemon was refused.
+if ! "$runtime" image inspect "$image" >/dev/null 2>&1; then
+    if ! "$runtime" build -t "$image" "$HERE" >&2; then
+        echo >&2
+        echo "error: could not build the bake image." >&2
+        echo >&2
+        echo "If the failure above says 'denied', the likely cause is the container runtime being" >&2
+        echo "unable to pull from ghcr.io — not your credentials. Check it directly:" >&2
+        echo >&2
+        echo "  $runtime pull ghcr.io/osgeo/gdal:ubuntu-small-3.9.2     # runtime path" >&2
+        echo "  TOK=\$(curl -s 'https://ghcr.io/token?scope=repository:osgeo/gdal:pull' | jq -r .token)" >&2
+        echo "  curl -sI -H \"Authorization: Bearer \$TOK\" \\" >&2
+        echo "    https://ghcr.io/v2/osgeo/gdal/manifests/ubuntu-small-3.9.2   # plain HTTPS path" >&2
+        echo >&2
+        echo "If the second works and the first does not, it is the runtime's registry access," >&2
+        echo "and the bake has to run somewhere that can reach ghcr.io. Do NOT repin to" >&2
+        echo "docker.io/osgeo/gdal to work around it: that mirror stopped at GDAL 3.6.3 in March" >&2
+        echo "2023 and is not the same toolchain." >&2
+        exit 1
+    fi
+fi
 
 # --network=none deliberately: fetching happens in its own step with its own provenance record.
 # A bake that can reach the network is a bake that can quietly substitute an input.

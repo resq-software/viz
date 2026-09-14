@@ -501,3 +501,32 @@ describe("the bake wrapper cannot claim provenance for a bake that did not run",
             "without -e the generator string prints even when the bake command fails");
     });
 });
+
+describe("a registry failure reads as a registry failure", () => {
+    // `docker build` on a denied pull reports `denied: denied`, which reads as a credentials
+    // mistake and usually is not. The GDAL images live on ghcr.io, and a runtime that cannot
+    // reach it fails exactly that way while plain HTTPS to the same registry still works —
+    // measured on one such host: an anonymous bearer token read the manifest while the daemon
+    // was refused. Someone hitting that cryptic error should not have to rediscover it.
+    const script = readFileSync(join(REPO, "tools", "bake", "bake.sh"), "utf8");
+
+    it("explains a denied pull rather than leaving the raw error", () => {
+        ok(script.includes("ghcr.io"), "the diagnostic must name the registry that is denied");
+        ok(/not your credentials/i.test(script),
+            "a denied pull reads as an auth problem and usually is not");
+    });
+
+    it("warns against the stale mirror as a workaround", () => {
+        // docker.io/osgeo/gdal is pullable where ghcr.io is not, which makes it an inviting fix.
+        // It stopped at GDAL 3.6.3 in March 2023 and is not the same toolchain — repinning to it
+        // would trade a bake that cannot run for one that runs on something else.
+        ok(/docker\.io\/osgeo\/gdal/.test(script),
+            "the obvious wrong workaround must be named, or someone will take it");
+        ok(/3\.6\.3/.test(script), "say what the mirror is stuck at, not just that it is stale");
+    });
+
+    it("does not rebuild an image it already has", () => {
+        ok(/image inspect/.test(script),
+            "a bake should not pay a build on every run when the image is present");
+    });
+});
