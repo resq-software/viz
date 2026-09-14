@@ -511,7 +511,13 @@ describe("a registry failure reads as a registry failure", () => {
     const script = readFileSync(join(REPO, "tools", "bake", "bake.sh"), "utf8");
 
     it("explains a denied pull rather than leaving the raw error", () => {
-        ok(script.includes("ghcr.io"), "the diagnostic must name the registry that is denied");
+        // The full image reference, not the bare host. A bare "ghcr.io" is both a weaker
+        // assertion — any sentence mentioning the host satisfies it — and something CodeQL
+        // rightly flags as incomplete URL matching, since arbitrary hosts can sit either side of
+        // a substring. Requiring the reference the operator is told to run makes the test say
+        // what it means.
+        ok(script.includes("ghcr.io/osgeo/gdal:ubuntu-small-3.9.2"),
+            "the diagnostic must give the exact image reference to probe, not just the host");
         ok(/not your credentials/i.test(script),
             "a denied pull reads as an auth problem and usually is not");
     });
@@ -520,7 +526,7 @@ describe("a registry failure reads as a registry failure", () => {
         // docker.io/osgeo/gdal is pullable where ghcr.io is not, which makes it an inviting fix.
         // It stopped at GDAL 3.6.3 in March 2023 and is not the same toolchain — repinning to it
         // would trade a bake that cannot run for one that runs on something else.
-        ok(/docker\.io\/osgeo\/gdal/.test(script),
+        ok(script.includes("docker.io/osgeo/gdal"),
             "the obvious wrong workaround must be named, or someone will take it");
         ok(/3\.6\.3/.test(script), "say what the mirror is stuck at, not just that it is stale");
     });
