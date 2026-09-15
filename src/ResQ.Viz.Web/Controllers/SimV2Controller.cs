@@ -316,8 +316,10 @@ public sealed partial class SimV2Controller : ControllerBase
         }
 
         var accepted = validation.ToCommandResult(now);
+        // The asset id is what lets a later command for the same vehicle supersede this one. Passed
+        // only on acceptance: a rejected command was never in flight and supersedes nothing.
         if (!logSession.Complete(
-                accepted, envelope.IdempotencyKey, CommandState.Accepted, now))
+                accepted, envelope.IdempotencyKey, CommandState.Accepted, now, envelope.AssetId))
         {
             return CommandResultBecameStale(room, envelope, now, CommandDecision.Accepted);
         }
