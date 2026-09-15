@@ -1,0 +1,16 @@
+[
+  {
+    "file": "CLAUDE.md",
+    "package": "three",
+    "manifest": "src/ResQ.Viz.Web/package.json",
+    "pattern": "Three\\.js ([0-9]+\\.[0-9]+(?:\\.[0-9]+)?) \\(npm\\)",
+    "note": "The Standards line is the first thing an agent reads about this repo."
+  },
+  {
+    "file": "README.md",
+    "package": "three",
+    "manifest": "src/ResQ.Viz.Web/package.json",
+    "pattern": "Three\\.js[ -]([0-9]+\\.[0-9]+\\.[0-9]+)",
+    "note": "Names the version twice: the shields.io badge and the post-processing note."
+  }
+]
