@@ -290,6 +290,103 @@ public sealed record CommandResult(
     public static CommandResult Progress(
         Guid commandId, DateTimeOffset acceptedAt, double progressPercent, string? message = null) =>
         new(commandId, CommandState.InProgress, acceptedAt, Math.Clamp(progressPercent, 0, 100), message);
+
+    /// <summary>The asset carried the command out.</summary>
+    /// <remarks>
+    /// Progress is pinned to 100 rather than carried from the caller: a command that succeeded and
+    /// reports 94% is a contradiction a client would have to decide how to render.
+    /// </remarks>
+    /// <param name="commandId">Command that finished.</param>
+    /// <param name="acceptedAt">When it was accepted, carried forward from the accepted result.</param>
+    /// <param name="message">Human-readable detail, or null.</param>
+    /// <returns>The terminal result.</returns>
+    public static CommandResult Succeeded(
+        Guid commandId, DateTimeOffset? acceptedAt, string? message = null) =>
+        new(commandId, CommandState.Succeeded, acceptedAt, 100, message);
+
+    /// <summary>The asset began the command and could not finish it.</summary>
+    /// <remarks>
+    /// Distinct from <see cref="Rejected"/>, which means the command never started. A client that
+    /// cannot tell those apart cannot tell a refused instruction from a stuck vehicle, and the two
+    /// call for opposite responses.
+    /// </remarks>
+    /// <param name="commandId">Command that failed.</param>
+    /// <param name="acceptedAt">When it was accepted.</param>
+    /// <param name="reasonCode">Machine-readable cause.</param>
+    /// <param name="message">Human-readable detail.</param>
+    /// <param name="progressPercent">How far it got before failing.</param>
+    /// <returns>The terminal result.</returns>
+    public static CommandResult Failed(
+        Guid commandId,
+        DateTimeOffset? acceptedAt,
+        string reasonCode,
+        string message,
+        double progressPercent = 0) =>
+        new(commandId, CommandState.Failed, acceptedAt,
+            Math.Clamp(progressPercent, 0, 100), message, reasonCode);
+
+    /// <summary>The command was superseded or withdrawn before it finished.</summary>
+    /// <param name="commandId">Command that was cancelled.</param>
+    /// <param name="acceptedAt">When it was accepted.</param>
+    /// <param name="reasonCode">Machine-readable cause.</param>
+    /// <param name="message">Human-readable detail.</param>
+    /// <param name="progressPercent">How far it got before being cancelled.</param>
+    /// <returns>The terminal result.</returns>
+    public static CommandResult Cancelled(
+        Guid commandId,
+        DateTimeOffset? acceptedAt,
+        string reasonCode,
+        string message,
+        double progressPercent = 0) =>
+        new(commandId, CommandState.Cancelled, acceptedAt,
+            Math.Clamp(progressPercent, 0, 100), message, reasonCode);
+
+    /// <summary>The command was accepted but did not finish inside its deadline.</summary>
+    /// <remarks>
+    /// Its own state rather than a <see cref="Failed"/> with a timeout reason, because the two
+    /// answer different questions. A failure is a report from the asset — it tried and could not.
+    /// A timeout is the absence of any report at all, so the asset may still be executing and the
+    /// progress carried here may be stale. An operator deciding whether to re-issue needs that
+    /// distinction; collapsing them would present a silent link as a refusal to move.
+    /// </remarks>
+    /// <param name="commandId">Command that timed out.</param>
+    /// <param name="acceptedAt">When it was accepted.</param>
+    /// <param name="reasonCode">Machine-readable cause.</param>
+    /// <param name="message">Human-readable detail.</param>
+    /// <param name="progressPercent">The last progress seen, which may be stale.</param>
+    /// <returns>The terminal result.</returns>
+    public static CommandResult TimedOut(
+        Guid commandId,
+        DateTimeOffset? acceptedAt,
+        string reasonCode,
+        string message,
+        double progressPercent = 0) =>
+        new(commandId, CommandState.TimedOut, acceptedAt,
+            Math.Clamp(progressPercent, 0, 100), message, reasonCode);
+}
+
+/// <summary>Why a command reached a terminal state other than success.</summary>
+/// <remarks>
+/// Separate from <see cref="CommandRejectionReasons"/> on purpose: those say why a command was
+/// never started, these say why one that started did not finish. Collapsing them would leave a
+/// client unable to tell a refused instruction from an immobilised vehicle.
+/// </remarks>
+public static class CommandTerminalReasons
+{
+    /// <summary>A later command for the same asset replaced this one before it finished.</summary>
+    public const string Superseded = "execution.superseded";
+
+    /// <summary>The asset could not continue — blocked, immobilised, or grounded.</summary>
+    public const string Immobilised = "execution.immobilised";
+
+    /// <summary>The asset was removed, or its world was reset, while the command was in flight.</summary>
+    public const string AssetGone = "execution.assetGone";
+
+    /// <summary>An operator or safety intervention stopped the asset.</summary>
+    public const string Intervened = "execution.intervened";
+
+    /// <summary>The command's deadline passed with no report of it finishing.</summary>
+    public const string Deadline = "execution.deadline";
 }
 
 /// <summary>Stable machine-readable codes explaining why a command was refused.</summary>

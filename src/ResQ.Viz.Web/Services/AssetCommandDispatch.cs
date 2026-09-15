@@ -343,7 +343,8 @@ public sealed class AssetCommandLog
         CommandResult result,
         string idempotencyKey,
         CommandState state,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string? assetId)
     {
         ArgumentNullException.ThrowIfNull(result);
         lock (_gate)
@@ -355,6 +356,37 @@ public sealed class AssetCommandLog
 
             RecordCore(result);
             _ledger.Update(idempotencyKey, state, now);
+
+            // Remember which key this command was claimed under. A completion arriving later from
+            // the asset knows only the command id — it has no idea an idempotency key exists — and
+            // the ledger has to be advanced with the result or a replayed request would be told the
+            // command is still in flight after it has finished.
+            if (!result.IsTerminal)
+            {
+                _keysByCommand[result.CommandId] = idempotencyKey;
+            }
+            else
+            {
+                _keysByCommand.Remove(result.CommandId);
+            }
+
+            // A second command for the same asset ends the first. Without this the superseded one
+            // sits at Accepted for the rest of the session while the vehicle visibly does
+            // something else — the operator's own display would show two live instructions where
+            // only one is being followed.
+            if (!string.IsNullOrEmpty(assetId) && !result.IsTerminal)
+            {
+                if (_inFlightByAsset.TryGetValue(assetId, out var previous)
+                    && previous != result.CommandId)
+                {
+                    SettleCore(
+                        previous, CommandState.Cancelled, now,
+                        CommandTerminalReasons.Superseded,
+                        "A later command for the same asset replaced this one.");
+                }
+
+                _inFlightByAsset[assetId] = result.CommandId;
+            }
             return true;
         }
     }
@@ -404,7 +436,9 @@ public sealed class AssetCommandLog
 
         while (_insertionOrder.Count > MaxTrackedResults)
         {
-            _results.Remove(_insertionOrder.Dequeue());
+            var evicted = _insertionOrder.Dequeue();
+            _results.Remove(evicted);
+            _keysByCommand.Remove(evicted);
         }
     }
 
@@ -412,6 +446,116 @@ public sealed class AssetCommandLog
     /// <param name="commandId">Command to poll.</param>
     /// <param name="result">The stored result on success, otherwise null.</param>
     /// <returns><see langword="true"/> when the command is still tracked.</returns>
+    /// <summary>Advances a command the asset has finished executing to its terminal state.</summary>
+    /// <remarks>
+    /// The missing half of the lifecycle. Before this existed, only <c>Requested</c>,
+    /// <c>Accepted</c> and <c>Rejected</c> were ever assigned: <c>InProgress</c> had no writer at
+    /// all, and all four terminal states appeared exactly once in the codebase — together, inside
+    /// the <c>IsTerminal</c> predicate that tests for them. So a live completion check ran over
+    /// five states of which four could not occur, and "has this finished?" could only ever mean
+    /// "was it rejected?".
+    /// <para>
+    /// Idempotent by design. The asset that raises a completion event may raise it again on a
+    /// later tick, and a command that already reached a terminal state must not be moved out of
+    /// it — a superseded command that then arrives somewhere must stay cancelled.
+    /// </para>
+    /// <para>
+    /// Unknown ids are ignored rather than throwing. Results are evicted after
+    /// <see cref="MaxTrackedResults"/>, so a long-running asset finishing an old command is an
+    /// expected race, not a fault.
+    /// </para>
+    /// </remarks>
+    /// <param name="commandId">Command the asset finished.</param>
+    /// <param name="state">Terminal state to move it to.</param>
+    /// <param name="nowUtc">Wall-clock time of the completion.</param>
+    /// <param name="reasonCode">Machine-readable cause, or null for success.</param>
+    /// <param name="message">Human-readable detail.</param>
+    /// <returns>True when the command moved; false when it was unknown or already terminal.</returns>
+    public bool Settle(
+        Guid commandId,
+        CommandState state,
+        DateTimeOffset nowUtc,
+        string? reasonCode = null,
+        string? message = null)
+    {
+        lock (_gate)
+        {
+            return SettleCore(commandId, state, nowUtc, reasonCode, message);
+        }
+    }
+
+    /// <summary>The body of <see cref="Settle"/>, callable with <c>_gate</c> already held.</summary>
+    /// <remarks>
+    /// Split out because supersession settles the previous command from inside <c>Complete</c>,
+    /// which already owns the lock. Re-entering it would deadlock.
+    /// </remarks>
+    /// <param name="commandId">Command the asset finished.</param>
+    /// <param name="state">Terminal state to move it to.</param>
+    /// <param name="nowUtc">Wall-clock time of the completion.</param>
+    /// <param name="reasonCode">Machine-readable cause, or null for success.</param>
+    /// <param name="message">Human-readable detail.</param>
+    /// <returns>True when the command moved.</returns>
+    private bool SettleCore(
+        Guid commandId,
+        CommandState state,
+        DateTimeOffset nowUtc,
+        string? reasonCode,
+        string? message)
+    {
+        if (!_results.TryGetValue(commandId, out var existing) || existing.IsTerminal)
+        {
+            return false;
+        }
+
+        var settled = state switch
+        {
+            CommandState.Succeeded =>
+                CommandResult.Succeeded(commandId, existing.AcceptedAt, message),
+            CommandState.Failed => CommandResult.Failed(
+                commandId, existing.AcceptedAt,
+                reasonCode ?? CommandTerminalReasons.Immobilised,
+                message ?? "The asset could not complete the command.",
+                existing.ProgressPercent),
+            CommandState.Cancelled => CommandResult.Cancelled(
+                commandId, existing.AcceptedAt,
+                reasonCode ?? CommandTerminalReasons.Superseded,
+                message ?? "The command was superseded before it finished.",
+                existing.ProgressPercent),
+            CommandState.TimedOut => CommandResult.TimedOut(
+                commandId, existing.AcceptedAt,
+                reasonCode ?? CommandTerminalReasons.Deadline,
+                message ?? "The command did not finish within its deadline.",
+                existing.ProgressPercent),
+
+            // Not a terminal state. Refusing rather than recording it keeps this method's
+            // whole contract — "move a command to its end" — true of every call.
+            _ => null,
+        };
+
+        if (settled is null)
+        {
+            return false;
+        }
+
+        RecordCore(settled);
+
+        if (_keysByCommand.Remove(commandId, out var key))
+        {
+            _ledger.Update(key, state, nowUtc);
+        }
+
+        foreach (var (asset, inFlight) in _inFlightByAsset)
+        {
+            if (inFlight == commandId)
+            {
+                _inFlightByAsset.Remove(asset);
+                break;
+            }
+        }
+
+        return true;
+    }
+
     public bool TryGet(Guid commandId, [NotNullWhen(true)] out CommandResult? result)
     {
         lock (_gate)
@@ -425,6 +569,21 @@ public sealed class AssetCommandLog
     /// Matches the lease trail's default window, so the two halves an operator reads side by side
     /// cover comparable ground rather than one silently reaching further back than the other.
     /// </remarks>
+    /// <summary>Idempotency key per in-flight command, so a completion can advance the ledger.</summary>
+    /// <remarks>
+    /// Bounded by the same eviction as the results it parallels: an entry is removed when its
+    /// command reaches a terminal state, and RecordCore's eviction drops the rest. Without that
+    /// second half this map would grow for the lifetime of the room.
+    /// </remarks>
+    private readonly Dictionary<Guid, string> _keysByCommand = [];
+
+    /// <summary>The command each asset is currently executing, so a later one can supersede it.</summary>
+    /// <remarks>
+    /// Cleared when a command settles and when the world is replaced, so it cannot outlive the
+    /// asset it names.
+    /// </remarks>
+    private readonly Dictionary<string, Guid> _inFlightByAsset = [];
+
     private const int MaxDecisionRecords = 256;
 
     private readonly Queue<CommandAuditRecord> _decisions = new();
@@ -563,8 +722,9 @@ internal sealed class AssetCommandLogSession(AssetCommandLog owner, long generat
         CommandResult result,
         string key,
         CommandState state,
-        DateTimeOffset now) =>
-        owner.Complete(generation, result, key, state, now);
+        DateTimeOffset now,
+        string? assetId = null) =>
+        owner.Complete(generation, result, key, state, now, assetId);
 }
 
 /// <summary>A replay lookup paired with its command-log generation validity.</summary>
