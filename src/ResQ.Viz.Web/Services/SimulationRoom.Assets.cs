@@ -405,6 +405,14 @@ public sealed partial class SimulationRoom
     {
         var raised = _assets.DrainEvents();
 
+        // A separate pass, not a branch inside the one below, and deliberately so. A command's
+        // outcome is not an advisory an operator may miss: it is the record of whether the
+        // vehicle did what it was told, and it has to survive the buffer's drop policy entirely.
+        // Interleaved with the cap, "settle only what fits" is one stray condition away — and it
+        // would silently leave a busy session, the one most likely to overflow, as the one where
+        // commands stay at Accepted forever. Two passes make that impossible to express.
+        SettleCompletedCommands(raised);
+
         for (var i = 0; i < raised.Count; i++)
         {
             if (_assetEvents.Count >= MaxBufferedAssetEvents)
@@ -414,6 +422,34 @@ public sealed partial class SimulationRoom
             }
 
             _assetEvents.Enqueue(raised[i]);
+        }
+    }
+
+    /// <summary>Moves every command an asset just finished to its terminal state.</summary>
+    /// <remarks>
+    /// The asset decides the outcome; this only applies it. Ids the log no longer tracks are
+    /// ignored by <see cref="AssetCommandLog.Settle"/> itself, which is what makes a completion
+    /// arriving after a world reset a non-event rather than a fault.
+    /// <para>Must be called with <c>_lock</c> held.</para>
+    /// </remarks>
+    /// <param name="raised">Events drained from the asset world this tick.</param>
+    private void SettleCompletedCommands(IReadOnlyList<AssetEvent> raised)
+    {
+        var nowUtc = DateTimeOffset.UtcNow;
+
+        for (var i = 0; i < raised.Count; i++)
+        {
+            if (raised[i].Completion is not { } completion)
+            {
+                continue;
+            }
+
+            _commands.Settle(
+                completion.CommandId,
+                completion.State,
+                nowUtc,
+                string.IsNullOrEmpty(completion.ReasonCode) ? null : completion.ReasonCode,
+                raised[i].Message);
         }
     }
 
