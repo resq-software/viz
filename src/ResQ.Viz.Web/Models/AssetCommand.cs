@@ -270,6 +270,19 @@ public sealed record CommandResult(
     /// <param name="acceptedAt">Instant validation completed.</param>
     /// <param name="message">Optional operator-facing note.</param>
     /// <returns>An <see cref="CommandState.Accepted"/> result at zero progress.</returns>
+    /// <summary>Forces a caller's progress figure into the range this type documents.</summary>
+    /// <remarks>
+    /// <see cref="Math.Clamp(double, double, double)"/> alone is not enough: it returns
+    /// <see cref="double.NaN"/> unchanged, so a NaN reaching any factory would be stored and
+    /// published as a percentage outside 0–100 — a guarantee stated in the XML docs and, until
+    /// this, not enforced anywhere. NaN maps to 0 because "no progress reported" is the only
+    /// honest reading of a figure that is not a number.
+    /// </remarks>
+    /// <param name="progressPercent">Caller's figure, which may be anything at all.</param>
+    /// <returns>A value in [0, 100].</returns>
+    private static double ClampProgress(double progressPercent) =>
+        double.IsNaN(progressPercent) ? 0 : Math.Clamp(progressPercent, 0, 100);
+
     public static CommandResult Accepted(Guid commandId, DateTimeOffset acceptedAt, string? message = null) =>
         new(commandId, CommandState.Accepted, acceptedAt, 0, message);
 
@@ -289,7 +302,7 @@ public sealed record CommandResult(
     /// <returns>An <see cref="CommandState.InProgress"/> result.</returns>
     public static CommandResult Progress(
         Guid commandId, DateTimeOffset acceptedAt, double progressPercent, string? message = null) =>
-        new(commandId, CommandState.InProgress, acceptedAt, Math.Clamp(progressPercent, 0, 100), message);
+        new(commandId, CommandState.InProgress, acceptedAt, ClampProgress(progressPercent), message);
 
     /// <summary>The asset carried the command out.</summary>
     /// <remarks>
@@ -323,7 +336,7 @@ public sealed record CommandResult(
         string message,
         double progressPercent = 0) =>
         new(commandId, CommandState.Failed, acceptedAt,
-            Math.Clamp(progressPercent, 0, 100), message, reasonCode);
+            ClampProgress(progressPercent), message, reasonCode);
 
     /// <summary>The command was superseded or withdrawn before it finished.</summary>
     /// <param name="commandId">Command that was cancelled.</param>
@@ -339,7 +352,7 @@ public sealed record CommandResult(
         string message,
         double progressPercent = 0) =>
         new(commandId, CommandState.Cancelled, acceptedAt,
-            Math.Clamp(progressPercent, 0, 100), message, reasonCode);
+            ClampProgress(progressPercent), message, reasonCode);
 
     /// <summary>The command was accepted but did not finish inside its deadline.</summary>
     /// <remarks>
@@ -362,7 +375,7 @@ public sealed record CommandResult(
         string message,
         double progressPercent = 0) =>
         new(commandId, CommandState.TimedOut, acceptedAt,
-            Math.Clamp(progressPercent, 0, 100), message, reasonCode);
+            ClampProgress(progressPercent), message, reasonCode);
 }
 
 /// <summary>Why a command reached a terminal state other than success.</summary>

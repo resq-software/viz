@@ -442,10 +442,6 @@ public sealed class AssetCommandLog
         }
     }
 
-    /// <summary>Looks up the latest result for a command.</summary>
-    /// <param name="commandId">Command to poll.</param>
-    /// <param name="result">The stored result on success, otherwise null.</param>
-    /// <returns><see langword="true"/> when the command is still tracked.</returns>
     /// <summary>Advances a command the asset has finished executing to its terminal state.</summary>
     /// <remarks>
     /// The missing half of the lifecycle. Before this existed, only <c>Requested</c>,
@@ -556,6 +552,10 @@ public sealed class AssetCommandLog
         return true;
     }
 
+    /// <summary>Looks up the latest result for a command.</summary>
+    /// <param name="commandId">Command to poll.</param>
+    /// <param name="result">The stored result on success, otherwise null.</param>
+    /// <returns><see langword="true"/> when the command is still tracked.</returns>
     public bool TryGet(Guid commandId, [NotNullWhen(true)] out CommandResult? result)
     {
         lock (_gate)

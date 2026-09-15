@@ -219,4 +219,57 @@ public sealed class CommandLifecycleTests
         log.TryGet(id, out var result).Should().BeTrue();
         result!.State.Should().Be(CommandState.Accepted);
     }
+
+    // ---- the range the XML docs promise ----
+
+    /// <summary>Every factory keeps progress inside the range it documents.</summary>
+    /// <remarks>
+    /// <c>Math.Clamp</c> returns NaN unchanged, so clamping alone never enforced this: a NaN
+    /// handed to any factory was stored and published as a percentage that is not a number. The
+    /// guarantee was written in the docs and checked nowhere — and the terminal factories forward
+    /// whatever the previous result held, so one NaN would travel the whole lifecycle.
+    /// </remarks>
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    [InlineData(-1)]
+    [InlineData(1000)]
+    public void No_Factory_Publishes_Progress_Outside_Its_Documented_Range(double given)
+    {
+        var id = Guid.NewGuid();
+        var at = DateTimeOffset.UnixEpoch;
+
+        CommandResult[] results =
+        [
+            CommandResult.Progress(id, at, given),
+            CommandResult.Failed(id, at, "r", "m", given),
+            CommandResult.Cancelled(id, at, "r", "m", given),
+            CommandResult.TimedOut(id, at, "r", "m", given),
+        ];
+
+        foreach (var result in results)
+        {
+            result.ProgressPercent.Should().BeInRange(
+                0, 100, "{0} documents progress as a percentage", result.State);
+        }
+    }
+
+    /// <summary>A NaN that reaches the log does not travel into the terminal result.</summary>
+    /// <remarks>
+    /// The factories are the only guard, and <c>Settle</c> forwards the stored figure into each
+    /// of them — so this is the path a bad number would actually take.
+    /// </remarks>
+    [Fact]
+    public void A_Nan_Progress_Does_Not_Survive_Into_A_Terminal_Result()
+    {
+        var at = DateTimeOffset.UnixEpoch;
+        var (log, id) = Accepted(at);
+        log.Record(CommandResult.Progress(id, at, double.NaN));
+
+        log.Settle(id, CommandState.Failed, at.AddSeconds(1), "r", "m").Should().BeTrue();
+
+        log.TryGet(id, out var settled).Should().BeTrue();
+        settled!.ProgressPercent.Should().BeInRange(0, 100);
+    }
 }
