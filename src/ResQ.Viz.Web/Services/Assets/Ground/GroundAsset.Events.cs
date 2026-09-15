@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+using System;
+using ResQ.Viz.Web.Models;
+
 namespace ResQ.Viz.Web.Services.Assets.Ground;
 
 // The event half of GroundAsset: observing state transitions once per step and queueing one event
@@ -45,7 +48,11 @@ public sealed partial class GroundAsset
     {
         if (guidance.HasReachedTarget)
         {
-            Raise("ground.targetReached", AssetEventSeverity.Info, "Reached the commanded position.");
+            Raise(
+                "ground.targetReached",
+                AssetEventSeverity.Info,
+                "Reached the commanded position.",
+                TakeCompletion(CommandState.Succeeded, string.Empty));
         }
 
         if (guidance.HasBecomeBlocked)
@@ -110,7 +117,11 @@ public sealed partial class GroundAsset
     private void RaiseBlocked(TraversabilityReason reason) => Raise(
         "ground.blocked",
         AssetEventSeverity.Warning,
-        $"Advisory: route refused ({Traversability.ReasonCode(reason)}).");
+        $"Advisory: route refused ({Traversability.ReasonCode(reason)}).",
+
+        // Blocking drops the navigator's target, so the drive that was in flight will never
+        // arrive. Reporting it as failed is what stops it sitting at Accepted for the session.
+        TakeCompletion(CommandState.Failed, CommandTerminalReasons.Immobilised));
 
     /// <summary>Queues one event stamped with the most recent step's clock.</summary>
     /// <remarks>
@@ -122,7 +133,31 @@ public sealed partial class GroundAsset
     /// <param name="code">Stable machine-readable code; the contract alerting and tests key on.</param>
     /// <param name="severity">How much operator attention the occurrence deserves.</param>
     /// <param name="message">Operator-facing description. Free to be rewritten at any time.</param>
-    private void Raise(string code, AssetEventSeverity severity, string message) =>
+    /// <param name="completion">Set when this occurrence also ends the command in flight.</param>
+    private void Raise(
+        string code,
+        AssetEventSeverity severity,
+        string message,
+        AssetCommandCompletion? completion = null) =>
         _events.Add(new AssetEvent(
-            AssetId, code, severity, message, _simulationTimeSeconds, _tick));
+            AssetId, code, severity, message, _simulationTimeSeconds, _tick, completion));
+
+    /// <summary>Takes the in-flight command, if any, and ends it in <paramref name="state"/>.</summary>
+    /// <remarks>
+    /// Takes rather than reads: the id is cleared here, so one drive produces at most one outcome
+    /// however many events the same step raises.
+    /// </remarks>
+    /// <param name="state">Terminal state the command ended in.</param>
+    /// <param name="reasonCode">Cause, or empty for a success.</param>
+    /// <returns>The completion to stamp, or null when no command was in flight.</returns>
+    private AssetCommandCompletion? TakeCompletion(CommandState state, string reasonCode)
+    {
+        if (_activeCommandId is not { } id)
+        {
+            return null;
+        }
+
+        _activeCommandId = null;
+        return new AssetCommandCompletion(id, state, reasonCode);
+    }
 }

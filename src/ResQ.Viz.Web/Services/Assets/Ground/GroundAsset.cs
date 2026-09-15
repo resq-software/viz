@@ -182,6 +182,13 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     private long _tick = -1;
 
     // Edge-detection state for the transition events raised from Step. Never read by Capture.
+    /// <summary>The drive command still being executed, or null when nothing is in flight.</summary>
+    /// <remarks>
+    /// Set only where a drive target is established and cleared everywhere one is dropped, so a
+    /// later arrival can never be reported against a command that was already abandoned.
+    /// </remarks>
+    private Guid? _activeCommandId;
+
     private bool _wasImmobilised;
     private bool _wasRolloverRisk;
     private bool _lowEnergyLatched;

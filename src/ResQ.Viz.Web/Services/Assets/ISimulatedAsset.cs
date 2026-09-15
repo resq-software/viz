@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Numerics;
 using ResQ.Viz.Web.Models;
 
@@ -316,13 +317,41 @@ public enum AssetEventSeverity
 /// <param name="Message">Operator-facing description of this occurrence.</param>
 /// <param name="SimulationTimeSeconds">Simulation time the event was raised at.</param>
 /// <param name="Tick">World step the event was raised on.</param>
+/// <param name="Completion">
+/// Set when this occurrence also ends the command the asset was executing; null otherwise, which
+/// is the overwhelming majority of events.
+/// </param>
 public sealed record AssetEvent(
     string AssetId,
     string Code,
     AssetEventSeverity Severity,
     string Message,
     double SimulationTimeSeconds,
-    long Tick);
+    long Tick,
+    AssetCommandCompletion? Completion = null);
+
+/// <summary>An asset reporting that the command it was executing has ended.</summary>
+/// <remarks>
+/// The outcome travels on the event rather than being inferred from <see cref="AssetEvent.Code"/>
+/// by the room. A room-side table mapping codes to states would be a second hand-written copy of
+/// a decision the asset has already made, and the two drift the moment either is edited alone —
+/// the failure mode that put <c>hold</c> in the catalog for assets that would then refuse it.
+/// <para>
+/// Only the outcomes an asset alone can observe belong here: arriving, and becoming unable to
+/// arrive. A command replaced by a later one for the same asset is settled by the command log,
+/// which sees both and does not need to ask the vehicle.
+/// </para>
+/// </remarks>
+/// <param name="CommandId">The command that ended, as it was dispatched.</param>
+/// <param name="State">Terminal state it ended in.</param>
+/// <param name="ReasonCode">
+/// Machine-readable cause from <see cref="CommandTerminalReasons"/>; empty for a success, which
+/// needs no explanation.
+/// </param>
+public sealed record AssetCommandCompletion(
+    Guid CommandId,
+    CommandState State,
+    string ReasonCode);
 
 /// <summary>An entity the asset world tracks, commands and publishes.</summary>
 /// <remarks>
