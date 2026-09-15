@@ -118,6 +118,7 @@ public sealed partial class SurfaceAsset
             case AssetCommandKind.Stop:
                 ReleaseEmergencyStop();
                 _navigator.Stop();
+                _activeCommandId = null;
                 return AssetCommandResult.Accepted;
 
             case AssetCommandKind.ResumeAutonomy:
@@ -262,6 +263,10 @@ public sealed partial class SurfaceAsset
         }
 
         _navigator.TransitTo(targetEus, command.SpeedMps);
+
+        // The only command a vessel executes over time, so the only one that can still succeed
+        // or fail after this method returns. Everything else in Apply finishes as it is accepted.
+        _activeCommandId = command.CommandId == Guid.Empty ? null : command.CommandId;
         return AssetCommandResult.Accepted;
     }
 
@@ -335,6 +340,7 @@ public sealed partial class SurfaceAsset
         }
 
         _navigator.SetCourse(course, command.SpeedMps);
+        _activeCommandId = null;
         return AssetCommandResult.Accepted;
     }
 
@@ -539,6 +545,7 @@ public sealed partial class SurfaceAsset
         bool wasEngaged = _navigator.Mode == SurfaceGuidanceMode.EmergencyStopped;
 
         _navigator.EmergencyStop(_positionEus);
+        _activeCommandId = null;
 
         if (Safety.InhibitPropulsionOnEmergencyStop)
         {
