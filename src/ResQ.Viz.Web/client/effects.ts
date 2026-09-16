@@ -4,7 +4,6 @@
 import * as THREE from 'three';
 import { getLogger } from './log';
 import { onTerrainChange, terrainHeight } from './terrain';
-import { prefersReducedMotion } from './reducedMotion';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
 import { resolveMeshLinkPairs } from './types';
 import { LidarScan, type LidarHit } from './webgpu/lidar';
@@ -98,10 +97,13 @@ interface HazardEntry {
     // types they used to be.
     disc:      THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
     rings:     THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
-    sweep:     THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
     crosshair: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
     radius:    number;
-    phase:     number;   // animation phase 0..1 for the sweep expansion
+    /** Zone centre in scene XZ, kept so the entry can be rebuilt when terrain moves. */
+    cx:        number;
+    cz:        number;
+    /** The hazard this was built from, so a terrain change can rebuild it verbatim. */
+    source:    HazardState;
 }
 
 interface LidarEntry {
@@ -128,8 +130,6 @@ interface LidarEntry {
 // interior reference is enough to judge distance against.
 const _ISO_RING_FRACTIONS = [0.55, 1.00] as const;
 
-// One sweep cycle, centre → boundary.
-const _SWEEP_PERIOD_SEC   = 3.6;
 const _CROSSHAIR_TICK_LEN = 0.08;  // tick length as a fraction of radius
 
 // Segments around a ring. Also the number of terrain samples taken to sit it on
@@ -141,7 +141,6 @@ const _RING_SEGMENTS = 96;
 // mesh's own faceting between samples.
 const _FILL_LIFT_M  = 0.25;
 const _RING_LIFT_M  = 0.45;
-const _SWEEP_LIFT_M = 0.55;
 
 /**
  * URL-overridable LiDAR scan params. Read once at module load. The
@@ -256,13 +255,6 @@ export class EffectsManager {
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
 
-    /**
-     * True while sweeps are hidden because the viewer asked for reduced motion.
-     *
-     * Latched so the animation loop is a cheap early return rather than a
-     * per-frame walk setting `visible = false` on meshes that are already hidden.
-     */
-    private _sweepsHidden = false;
     private _trailMaxPositions: number = TRAIL_LENGTH_DEFAULT;
 
     /**
@@ -331,6 +323,17 @@ export class EffectsManager {
             for (const entry of this._lidarEntries.values()) {
                 entry.points.geometry.setDrawRange(0, 0);
             }
+
+            // Hazard geometry has terrain heights baked into its vertices, so a
+            // preset switch or a heightmap install leaves every zone hanging at
+            // the heights of a world that is no longer being drawn. Rebuilt
+            // rather than nudged: the samples are per-vertex, so there is no
+            // offset that could correct them.
+            //
+            // Dropped here and recreated by the next frame's `_updateHazards`,
+            // which already builds an entry for any key it does not hold — so
+            // this is one path, not two.
+            this._rebuildHazards();
         });
     }
 
@@ -516,7 +519,6 @@ export class EffectsManager {
 
     tick(deltaTime: number): void {
         this._time += deltaTime;
-        this._animateHazards();
         this._animateDetections();
     }
 
@@ -583,6 +585,33 @@ export class EffectsManager {
 
     // ─── Hazards ───────────────────────────────────────────────────────────
 
+    /**
+     * Drops every hazard entry so the next frame rebuilds it against current terrain.
+     *
+     * Each entry keeps the `HazardState` it was built from, so nothing has to be
+     * re-derived or waited for: if the frame stream stalls, the zones come back
+     * the moment it resumes, from the same data that drew them.
+     */
+    private _rebuildHazards(): void {
+        for (const entry of this._hazards.values()) {
+            this._disposeHazardEntry(entry);
+        }
+        this._hazards.clear();
+    }
+
+    /** Removes one hazard's meshes from the scene and frees their GPU resources. */
+    private _disposeHazardEntry(entry: HazardEntry): void {
+        this._scene.remove(entry.disc, entry.crosshair, ...entry.rings);
+        entry.disc.geometry.dispose();
+        entry.disc.material.dispose();
+        entry.crosshair.geometry.dispose();
+        entry.crosshair.material.dispose();
+        for (const r of entry.rings) {
+            r.geometry.dispose();
+            r.material.dispose();
+        }
+    }
+
     private _updateHazards(hazards: HazardState[]): void {
         const seenKeys = new Set<string>();
         for (const h of hazards) {
@@ -595,17 +624,7 @@ export class EffectsManager {
         }
         for (const [key, entry] of this._hazards) {
             if (!seenKeys.has(key)) {
-                this._scene.remove(entry.disc, entry.sweep, entry.crosshair, ...entry.rings);
-                entry.disc.geometry.dispose();
-                entry.disc.material.dispose();
-                entry.sweep.geometry.dispose();
-                entry.sweep.material.dispose();
-                entry.crosshair.geometry.dispose();
-                entry.crosshair.material.dispose();
-                for (const r of entry.rings) {
-                    r.geometry.dispose();
-                    r.material.dispose();
-                }
+                this._disposeHazardEntry(entry);
                 this._hazards.delete(key);
             }
         }
@@ -776,20 +795,6 @@ export class EffectsManager {
             rings.push(ring);
         }
 
-        // Sweep — one slow expanding band, and the only thing here that moves.
-        const sweep = new THREE.Mesh(
-            EffectsManager._groundRing(
-                cx, cz, radius, Math.max(0.6, radius * 0.01), _SWEEP_LIFT_M),
-            new THREE.MeshBasicMaterial({
-                color:       typeColor,
-                transparent: true,
-                opacity:     0.0,
-                side:        THREE.DoubleSide,
-                depthWrite:  false,
-            }),
-        );
-        sweep.renderOrder = 6;
-
         // Cardinal crosshair — 4 short radial ticks at N/S/E/W marking the centre.
         const tickLen = radius * _CROSSHAIR_TICK_LEN;
         const verts   = new Float32Array([
@@ -808,56 +813,8 @@ export class EffectsManager {
         crosshair.position.set(cx, groundY + _RING_LIFT_M, cz);
         crosshair.renderOrder = 7;
 
-        this._scene.add(disc, ...rings, sweep, crosshair);
-        return { disc, rings, sweep, crosshair, radius, phase: 0 };
-    }
-
-    private _animateHazards(): void {
-        // Honour the OS setting, as every asset renderer here already does
-        // (GroundRenderer.ts:366, :389; AirRenderer rotor spin). This was the
-        // one animated overlay that ignored it.
-        //
-        // The zone still reads when it is off: the boundary ring, the fill and
-        // the crosshair are all static, so nothing an operator needs is carried
-        // by motion alone.
-        if (prefersReducedMotion()) {
-            if (this._sweepsHidden) return;
-            for (const entry of this._hazards.values()) {
-                entry.sweep.visible = false;
-            }
-            this._sweepsHidden = true;
-            return;
-        }
-
-        if (this._sweepsHidden) {
-            for (const entry of this._hazards.values()) entry.sweep.visible = true;
-            this._sweepsHidden = false;
-        }
-
-        // Phase derived from shared _time (seconds) — dt-correct, runs at a
-        // consistent cadence independent of frame rate. All hazards sweep in
-        // unison, which reads as a coordinated threat display rather than a
-        // chaotic mix of pings.
-        const phase = (this._time % _SWEEP_PERIOD_SEC) / _SWEEP_PERIOD_SEC;
-
-        for (const entry of this._hazards.values()) {
-            entry.phase = phase;
-
-            // The fill no longer breathes.
-            //
-            // It used to run opacity = 0.08 + 0.06*sin(t*2) on every zone at
-            // once. With zones overlapping, the stacked translucent fills
-            // throbbed as one mass and the terrain under them pumped light and
-            // dark — motion that carried no information, on the largest area of
-            // the screen. A hazard's extent is not changing, so nothing about
-            // it should be animated except a deliberate sweep.
-            entry.sweep.scale.setScalar(Math.max(0.001, phase));
-
-            // Ease-out, and dimmer than before: this is an accent on a static
-            // marker, not the marker itself.
-            const fade = (1 - phase) * (1 - phase);
-            entry.sweep.material.opacity = 0.3 * fade;
-        }
+        this._scene.add(disc, ...rings, crosshair);
+        return { disc, rings, crosshair, radius, cx, cz, source: h };
     }
 
     // ─── Detections ────────────────────────────────────────────────────────
