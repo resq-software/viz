@@ -113,6 +113,27 @@ function throttle<A extends unknown[]>(fn: (...args: A) => void, waitMs: number)
     };
 }
 
+/**
+ * Device pixel ratio to render the 3D scene at, capped.
+ *
+ * `setPixelRatio(window.devicePixelRatio)` renders every pixel the display
+ * claims: 4x the work on a 2x laptop, 9x on a 3x phone, and this scene already
+ * carries antialiasing, shadow maps and a post chain. Past 2x the extra samples
+ * are below what the eye resolves on a screen held at arm's length, so the cost
+ * buys nothing — it is the cheapest large win available on high-density
+ * displays, and it is invisible in a headless test where the ratio is 1.
+ *
+ * The minimap clamps the other way (`Math.max(1, …)`) because a sub-1 ratio
+ * there would blur the dots; both ends want bounding.
+ *
+ * @returns A ratio in [1, 2].
+ */
+export function renderPixelRatio(): number {
+    const dpr = window.devicePixelRatio;
+    if (!Number.isFinite(dpr) || dpr <= 0) return 1;
+    return Math.min(Math.max(dpr, 1), 2);
+}
+
 export class Scene {
     readonly scene: THREE.Scene;
     readonly renderer: THREE.WebGLRenderer;
@@ -152,7 +173,7 @@ export class Scene {
 
     constructor(container: HTMLElement) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
-        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setPixelRatio(renderPixelRatio());
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type      = THREE.PCFShadowMap;
@@ -550,6 +571,10 @@ export class Scene {
     private _onResize(): void {
         this._camera.aspect = window.innerWidth / window.innerHeight;
         this._camera.updateProjectionMatrix();
+        // Re-applied, not only set at construction: dragging the window to a
+        // display with a different pixel density changes devicePixelRatio, and
+        // the renderer keeps whatever it was built with until told otherwise.
+        this.renderer.setPixelRatio(renderPixelRatio());
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this._postFx.setSize(window.innerWidth, window.innerHeight);
         for (const fn of this._resizeCallbacks) fn();

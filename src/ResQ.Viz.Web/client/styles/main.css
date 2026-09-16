@@ -170,14 +170,14 @@ button { font-family: inherit; }
 .hud-stat-label {
   font-family: var(--mono);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.14em;
   color: var(--text-faint);
 }
 .hud-stat-value {
   font-family: var(--mono);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.02em;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -210,7 +210,7 @@ button { font-family: inherit; }
 #battery-pct {
   font-family: var(--mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -222,7 +222,7 @@ button { font-family: inherit; }
   gap: 8px;
   font-family: var(--mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--accent);
   background: var(--accent-soft);
@@ -334,7 +334,7 @@ button { font-family: inherit; }
 .section-title {
   font-family: var(--mono);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -524,7 +524,7 @@ input[type='range'] {
   border-radius: var(--radius-token);
   font-family: var(--mono);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -675,7 +675,7 @@ kbd {
   padding: 1px 5px;
   font-family: var(--mono);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text);
   letter-spacing: 0.04em;
   flex-shrink: 0;
@@ -729,7 +729,7 @@ kbd {
 .scn-chip {
   appearance: none; background: transparent; border: 0;
   color: var(--text-muted);
-  font-family: var(--mono); font-size: 9px; font-weight: 600;
+  font-family: var(--mono); font-size: 9px; font-weight: 500;
   letter-spacing: 0.12em; text-transform: uppercase;
   display: inline-flex; align-items: center; gap: 5px;
   min-height: 24px; padding: 0 8px;
@@ -772,7 +772,7 @@ kbd {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; gap: 7px;
   min-height: 18px; padding: 0 8px 0 10px;
-  font-family: var(--mono); font-size: 8.5px; font-weight: 600;
+  font-family: var(--mono); font-size: 8.5px; font-weight: 500;
   letter-spacing: 0.2em; text-transform: uppercase;
   color: var(--text-faint);
   background: var(--surface-3); border-radius: var(--r-1);
@@ -839,7 +839,7 @@ kbd {
    here. */
 .sc-dom { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; }
 .sc-d {
-  font-family: var(--mono); font-size: 7.5px; font-weight: 600;
+  font-family: var(--mono); font-size: 7.5px; font-weight: 500;
   letter-spacing: 0.1em; color: var(--text-faint);
   padding: 1px 3px; border-radius: var(--radius-token);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -849,7 +849,7 @@ kbd {
 .sc-key {
   justify-self: end; display: inline-flex; align-items: center; justify-content: center;
   min-width: 13px; height: 13px;
-  font-family: var(--mono); font-size: 8px; font-weight: 600;
+  font-family: var(--mono); font-size: 8px; font-weight: 500;
   color: var(--text-faint); border-radius: 2px;
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
@@ -982,7 +982,7 @@ body:has(#settings-panel.open) .cockpit { display: none; }
 .settings-section-title {
   font-family: var(--mono);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -1124,7 +1124,7 @@ body.investor-mode canvas { cursor: none; }
   padding: 8px 18px;
   font-family: var(--mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--danger);
@@ -1259,7 +1259,7 @@ body.partitioned .partition-banner {
   padding: 8px 22px;
   font-family: var(--mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text);
@@ -1329,7 +1329,7 @@ body.partitioned .partition-banner {
   padding: 7px 18px;
   font-family: var(--mono);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--text);
@@ -1652,11 +1652,6 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   /* Scene + core HUD are the experience; drop the extra floating widgets. */
   .minimap { display: none; }
 
-  /* Every bottom-left surface spans the full width — the drawer overlays them
-     when open rather than pushing them into a narrow lane. */
-  .event-log,
-  .sensor-stats-overlay { left: 16px; right: 16px; max-width: none; }
-
   #key-hints {
     width: auto;
     inset-inline-start: max(16px, env(safe-area-inset-left));
@@ -1676,6 +1671,22 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   .hud-stat-bat,
   .hud-stat:has(#sim-time),
   .hud-zone-right .hud-toggle-group { display: none; }
+}
+
+/* Below 760 there is no lane left for the bottom-left readouts.
+   The sidebar is 280 px of a 390 px phone and — despite the older comment
+   claiming otherwise — it is NOT off-canvas by default here: measured at 390 px
+   its transform is the identity and it carries no hidden or collapsed state. So
+   giving these surfaces the full width put them UNDER it, and since they sit at
+   z 200 against the sidebar's 100, they covered the fleet list rather than
+   losing to it.
+   Dropped instead, which is what this breakpoint family already does with the
+   minimap and the HUD's low-priority items: the scene and the core HUD are the
+   experience, and a passive pointer-events:none readout is not worth the only
+   column a phone has. Both remain available above 760. */
+@media (max-width: 759px) {
+  .event-log,
+  .sensor-stats-overlay { display: none; }
 }
 
 /* Small phone: the HUD keeps only the wordmark, fleet count, and action buttons
@@ -1722,7 +1733,7 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   color: var(--bg-deep);
   font-family: var(--mono);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
   border-radius: var(--r-1);
   transition: top var(--t-fast) var(--ease);
@@ -1835,9 +1846,20 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
 
 /* WCAG §1.4.6 (advisory): give low-vision users who ask for more contrast a
    brighter dim-text tier and stronger borders. */
+/* A request for MORE contrast has to raise it.
+   This block mapped --text-faint to --muted-foreground, which on this dark
+   ground is DARKER than the --hint it replaces — oklch L 64% against L 68% — so
+   turning the accessibility setting on made faint text harder to read:
+
+       faint on background, normal            2.63:1
+       faint on background, prefers-contrast   2.14:1   <- worse
+
+   Both fail even the 3:1 floor for large and UI text. --text-dim (L 82%) gives
+   6.27:1, which clears AA for body text outright. --line -> --line-strong was
+   already going the right way and is unchanged. */
 @media (prefers-contrast: more) {
   :root {
-    --text-faint: var(--muted-foreground);
+    --text-faint: var(--text-dim);
     --line: var(--line-strong);
   }
 }
