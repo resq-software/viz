@@ -293,4 +293,41 @@ public sealed class TerrainNoiseServiceTests
         act.Should().Throw<JsonException>(
             "the attribute must attach the converter, or the cap only exists in the test");
     }
+
+    /// <summary>A preset switch must not keep sampling the previous preset's baked DEM.</summary>
+    /// <remarks>
+    /// <see cref="TerrainNoiseService.SetPreset"/> replaces only the preset in the state record and
+    /// leaves any installed DEM in place, so after the client bakes a preset — which is the shipped
+    /// default path, and installs the result server-side — switching presets left the server
+    /// clamping ground vehicles to the OLD terrain while the browser drew the new one. Alpine to
+    /// dunes is hundreds of metres apart, which is rovers hanging in mid-air until the next bake
+    /// lands and snaps them down.
+    /// </remarks>
+    [Fact]
+    public void SetPreset_ShouldNotKeepSamplingAPreviousPresetsHeightmap()
+    {
+        var svc = new TerrainNoiseService();
+        svc.SetPreset("alpine");
+
+        // A DEM nothing could mistake for procedural terrain.
+        const float Marker = -1234.5f;
+        var grid = new float[8, 8];
+        for (var r = 0; r < 8; r++)
+        {
+            for (var c = 0; c < 8; c++)
+            {
+                grid[r, c] = Marker;
+            }
+        }
+
+        svc.SetHeightmap(grid, svc.Width, svc.Depth);
+        svc.GetElevation(0, 0).Should().BeApproximately(
+            Marker, 0.5, "the installed DEM is authoritative while it is installed");
+
+        svc.SetPreset("dunes");
+
+        svc.GetElevation(0, 0).Should().NotBeApproximately(
+            Marker, 0.5,
+            "a preset switch must not leave the previous preset's DEM answering elevation queries");
+    }
 }
