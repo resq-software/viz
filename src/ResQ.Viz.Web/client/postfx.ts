@@ -9,6 +9,15 @@ import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
 import { GTAOPass }        from 'three/addons/postprocessing/GTAOPass.js';
 
+/**
+ * Resolution the bloom chain renders at, as a fraction of the viewport.
+ *
+ * Bloom is a blur; sampling it at full resolution pays for detail the blur then
+ * discards. Half means a quarter of the pixels through a second full-scene
+ * render and the whole blur chain.
+ */
+const BLOOM_SCALE = 0.5;
+
 /** Reusable black material used to hide non-emissive objects during bloom pass. */
 const _BLACK = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
@@ -133,11 +142,30 @@ export class PostFx {
 
         // ── Bloom composer ─────────────────────────────────────────────────
         // Renders only emissive objects (everything else is black).
+        // Bloom renders at half resolution.
+        //
+        // It is a blur, so the extra samples are thrown away by the blur itself;
+        // the additive blend upsamples it back and the difference is not
+        // visible. Measured under a software rasteriser, where render cost
+        // dominates, the bloom pass was 42% of the whole frame — 1970 ms
+        // against 1128 ms with it off entirely — because it costs a SECOND
+        // full-scene render plus the blur chain. Quartering its pixels is the
+        // standard way to buy most of that back without losing the effect.
+        //
+        // Gating it on "nothing is emissive" was the other candidate and would
+        // never fire: drone LEDs, ground beacons, surface lights and building
+        // windows all set emissiveIntensity, so a populated scene always has
+        // bloom sources.
         this._bloomComposer = new EffectComposer(renderer);
+        // Applied at construction as well as on resize: EffectComposer sizes its
+        // render targets from the renderer's drawing buffer, so setting only the
+        // pass resolution and the resize path left it full-size until the first
+        // resize — measured as no change at all, which is how this was caught.
+        this._bloomComposer.setSize(width * BLOOM_SCALE, height * BLOOM_SCALE);
         this._bloomComposer.renderToScreen = false;
         this._bloomComposer.addPass(new RenderPass(scene, camera));
         const bloom = new UnrealBloomPass(
-            new THREE.Vector2(width, height),
+            new THREE.Vector2(width * BLOOM_SCALE, height * BLOOM_SCALE),
             0.55,   // strength — can afford higher since only emissives trigger it
             0.6,    // radius   — glow spread
             0.0,    // threshold — 0 catches everything non-black (i.e. emissives after darken)
@@ -228,7 +256,7 @@ export class PostFx {
     }
 
     setSize(width: number, height: number): void {
-        this._bloomComposer.setSize(width, height);
+        this._bloomComposer.setSize(width * BLOOM_SCALE, height * BLOOM_SCALE);
         this._finalComposer.setSize(width, height);
         this._gtaoPass.setSize(width, height);
     }
