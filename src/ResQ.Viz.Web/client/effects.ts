@@ -3,7 +3,8 @@
 
 import * as THREE from 'three';
 import { getLogger } from './log';
-import { onTerrainChange } from './terrain';
+import { onTerrainChange, terrainHeight } from './terrain';
+import { prefersReducedMotion } from './reducedMotion';
 import type { DroneState, HazardState, DetectionState, MeshState, VizFrame } from './types';
 import { resolveMeshLinkPairs } from './types';
 import { LidarScan, type LidarHit } from './webgpu/lidar';
@@ -16,18 +17,63 @@ import type { SensorContext } from './webgpu/sensors';
 
 const log = getLogger('effects');
 
-const HAZARD_COLORS: Record<string, number> = {
-    // Legacy uppercase keys
-    'FIRE':      0xe74c3c,
-    'FLOOD':     0x3498db,
-    'WIND':      0xf1c40f,
-    'TOXIC':     0x9b59b6,
-    // New lowercase keys from appsettings
-    'fire':      0xff3300,
-    'high-wind': 0x00aaff,
-    'flood':     0x3498db,
-    'toxic':     0x9b59b6,
+/**
+ * Zone colour per hazard type.
+ *
+ * Must cover every type the server can publish. It did not: appsettings.json
+ * emits twelve, this mapped four, and the other eight fell through to one amber
+ * fallback — so in `flood-response` the `current` and `debris` zones drew as two
+ * identical orange discs with nothing to tell them apart, over a blue `flood`
+ * disc that happened to be mapped. Grouped by what the operator has to do about
+ * them rather than by hue family, so two zones that call for opposite responses
+ * never land on neighbouring colours.
+ */
+export const HAZARD_COLORS: Record<string, number> = {
+    // Legacy uppercase keys.
+    'FIRE':           0xe74c3c,
+    'FLOOD':          0x3498db,
+    'WIND':           0xf1c40f,
+    'TOXIC':          0x9b59b6,
+
+    // Thermal / combustion — hot end of the wheel.
+    'fire':           0xff3b19,
+    'smoke':          0x8d7f74,
+
+    // Water — blues.
+    'flood':          0x2f86d4,
+    'current':        0x00c2b2,
+    'shoal':          0xffd54a,
+
+    // Air / visibility — desaturated, because these degrade an asset's
+    // capability rather than destroying it.
+    'high-wind':      0x5aa9e6,
+    'low-visibility': 0x9aa4ad,
+
+    // Contamination — violets, kept away from every other family.
+    'toxic':          0x9b59b6,
+    'chemical':       0xb14ae0,
+
+    // Terrain failure.
+    //
+    // Deliberately NOT earth tones, which was the first thing I tried: the
+    // ground in every shipped preset is olive, tan or sand, so a brown zone
+    // marker reads as a smudge in the dirt rather than as an overlay. These
+    // are picked to separate from the terrain first and from each other second.
+    'debris':         0xffb300,
+    'washout':        0xff6d3a,
+    'avalanche':      0xeaf2ff,
+    'crevasse':       0x7c4dff,
 };
+
+/**
+ * The colour for a type that has no entry.
+ *
+ * Kept deliberately ugly. A hazard type added server-side and not added here
+ * draws in magenta rather than blending into the amber family, so the omission
+ * is visible in the first screenshot instead of looking like an ordinary zone —
+ * which is exactly how eight types went unnoticed.
+ */
+export const HAZARD_FALLBACK_COLOR = 0xff00ff;
 
 
 const TRAIL_LENGTH_DEFAULT = 300; // 30 seconds at 10 Hz
@@ -47,9 +93,12 @@ interface DetectionEntry {
 }
 
 interface HazardEntry {
-    disc:      THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
-    rings:     THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>[];
-    sweep:     THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+    // Geometry is built per zone and conformed to the terrain under it, so
+    // these are plain BufferGeometry rather than the parametric Ring/Cylinder
+    // types they used to be.
+    disc:      THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+    rings:     THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[];
+    sweep:     THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
     crosshair: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
     radius:    number;
     phase:     number;   // animation phase 0..1 for the sweep expansion
@@ -71,10 +120,28 @@ interface LidarEntry {
     disposed:     boolean;
 }
 
-// Iso-ring sampling fractions — Palantir-style "ranging rings" at 50/75/100 %.
-const _ISO_RING_FRACTIONS = [0.50, 0.75, 1.00] as const;
-const _SWEEP_PERIOD_SEC   = 2.2;   // one sweep cycle (centre → full radius)
+// Ranging rings, as fractions of the hazard radius.
+//
+// Two, not three. Three rings per zone read as texture rather than as scale the
+// moment zones overlap — `flood-response` alone draws three zones, so nine rings
+// were competing for the same ground. The boundary carries the information; one
+// interior reference is enough to judge distance against.
+const _ISO_RING_FRACTIONS = [0.55, 1.00] as const;
+
+// One sweep cycle, centre → boundary.
+const _SWEEP_PERIOD_SEC   = 3.6;
 const _CROSSHAIR_TICK_LEN = 0.08;  // tick length as a fraction of radius
+
+// Segments around a ring. Also the number of terrain samples taken to sit it on
+// the ground, so it is a cost as well as a smoothness knob.
+const _RING_SEGMENTS = 96;
+
+// How far above the sampled ground each layer floats, in metres. Small and
+// distinct so the layers cannot z-fight, large enough to clear the terrain
+// mesh's own faceting between samples.
+const _FILL_LIFT_M  = 0.25;
+const _RING_LIFT_M  = 0.45;
+const _SWEEP_LIFT_M = 0.55;
 
 /**
  * URL-overridable LiDAR scan params. Read once at module load. The
@@ -188,6 +255,14 @@ export class EffectsManager {
     private readonly _activeDetections = new Map<string, DetectionEntry>();
     private _meshLines: MeshLink[] = [];
     private _time: number = 0;
+
+    /**
+     * True while sweeps are hidden because the viewer asked for reduced motion.
+     *
+     * Latched so the animation loop is a cheap early return rather than a
+     * per-frame walk setting `visible = false` on meshes that are already hidden.
+     */
+    private _sweepsHidden = false;
     private _trailMaxPositions: number = TRAIL_LENGTH_DEFAULT;
 
     /**
@@ -536,83 +611,201 @@ export class EffectsManager {
         }
     }
 
+    /**
+     * Builds a ring that follows the ground instead of cutting through it.
+     *
+     * A flat disc is only honest on flat ground. Every zone in the shipped
+     * scenarios sits on modelled terrain, so a ring at a constant Y buried its
+     * uphill half and floated over its downhill half — on the 420 m
+     * `flood-response` inundation zone that is tens of metres of error at the
+     * rim. Each pair of vertices is lifted to the terrain beneath it, so the
+     * band lies on the surface however the ground rolls.
+     *
+     * @param cx Zone centre, scene X.
+     * @param cz Zone centre, scene Z.
+     * @param rOuter Outer radius in metres.
+     * @param width Band width in metres.
+     * @param lift Height above the sampled ground, in metres.
+     * @returns Geometry in WORLD space — the caller must not offset the mesh.
+     */
+    private static _groundRing(
+        cx: number, cz: number, rOuter: number, width: number, lift: number,
+    ): THREE.BufferGeometry {
+        const rInner = Math.max(0.01, rOuter - width);
+        const verts  = new Float32Array((_RING_SEGMENTS + 1) * 6);
+        const idx: number[] = [];
+
+        for (let i = 0; i <= _RING_SEGMENTS; i++) {
+            const a  = (i / _RING_SEGMENTS) * Math.PI * 2;
+            const ca = Math.cos(a);
+            const sa = Math.sin(a);
+
+            // One sample per pair. Sampling the outer edge and reusing it for
+            // the inner keeps the band from twisting on a steep slope, where
+            // the two edges can genuinely differ by more than the band width.
+            const y = terrainHeight(cx + ca * rOuter, cz + sa * rOuter) + lift;
+            const o = i * 6;
+            verts[o]     = cx + ca * rInner; verts[o + 1] = y; verts[o + 2] = cz + sa * rInner;
+            verts[o + 3] = cx + ca * rOuter; verts[o + 4] = y; verts[o + 5] = cz + sa * rOuter;
+
+            if (i < _RING_SEGMENTS) {
+                const b = i * 2;
+                idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+            }
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+        geo.setIndex(idx);
+        return geo;
+    }
+
+    /**
+     * Builds the area fill: a triangle fan on the terrain, fading toward the centre.
+     *
+     * Two problems with the flat disc this replaces. It cut through the ground
+     * on any slope — the zones are up to 420 m across, so a constant Y is wrong
+     * by tens of metres at the rim. And an even fill reads as a painted patch
+     * that hides the terrain and the assets standing on it; going unlit made
+     * that worse, because the fill stopped being dimmed by the terrain's own
+     * shading along with everything else.
+     *
+     * Alpha ramps from nothing at the centre to full at the rim, so the zone
+     * says "this edge, this area" without burying what is inside it.
+     *
+     * @param cx Zone centre, scene X.
+     * @param cz Zone centre, scene Z.
+     * @param radius Zone radius in metres.
+     * @param lift Height above the sampled ground, in metres.
+     * @returns Geometry in WORLD space, carrying a vec4 colour attribute.
+     */
+    private static _groundDisc(
+        cx: number, cz: number, radius: number, lift: number, color: THREE.Color,
+    ): THREE.BufferGeometry {
+        const n     = _RING_SEGMENTS;
+        const pos   = new Float32Array((n + 2) * 3);
+        const col   = new Float32Array((n + 2) * 4);
+        const idx: number[] = [];
+
+        // Centre vertex, fully transparent.
+        pos[0] = cx; pos[1] = terrainHeight(cx, cz) + lift; pos[2] = cz;
+        col[0] = color.r; col[1] = color.g; col[2] = color.b; col[3] = 0;
+
+        for (let i = 0; i <= n; i++) {
+            const a = (i / n) * Math.PI * 2;
+            const x = cx + Math.cos(a) * radius;
+            const z = cz + Math.sin(a) * radius;
+            const v = i + 1;
+
+            pos[v * 3]     = x;
+            pos[v * 3 + 1] = terrainHeight(x, z) + lift;
+            pos[v * 3 + 2] = z;
+
+            col[v * 4]     = color.r;
+            col[v * 4 + 1] = color.g;
+            col[v * 4 + 2] = color.b;
+            col[v * 4 + 3] = 1;
+
+            if (i < n) idx.push(0, v, v + 1);
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
+        geo.setIndex(idx);
+        return geo;
+    }
+
     private _createHazardEntry(h: HazardState): HazardEntry {
         const radius     = h.radius ?? 30;
-        const typeColor  = HAZARD_COLORS[h.type] ?? 0xff8800;
+        const typeColor  = HAZARD_COLORS[h.type] ?? HAZARD_FALLBACK_COLOR;
         const cx = h.center?.[0] ?? 0;
         const cz = h.center?.[2] ?? 0;
+        const groundY = terrainHeight(cx, cz);
 
-        // Ground marker disc — keeps the low-opacity colour fill so the hazard
-        // reads from overhead. 1.5 m thick so it survives minor z-noise.
-        const discGeo = new THREE.CylinderGeometry(radius, radius, 1.5, 64);
-        const discMat = new THREE.MeshStandardMaterial({
-            color:       typeColor,
-            transparent: true,
-            opacity:     0.15,
-            side:        THREE.DoubleSide,
-            depthWrite:  false,
+        // Area fill.
+        //
+        // Unlit, and much fainter than it was. Unlit because a data overlay
+        // whose colour depends on the sun angle is not reporting a hazard type,
+        // it is reporting the time of day — the old MeshStandardMaterial shifted
+        // hue as the light moved. Fainter because these overlap: three zones at
+        // 0.15 stack into a wash that hides the terrain and the assets standing
+        // on it, which is the opposite of what a zone marker is for. The edge
+        // carries the information; the fill only says "inside".
+        const discGeo = EffectsManager._groundDisc(
+            cx, cz, radius, _FILL_LIFT_M, new THREE.Color(typeColor));
+        const discMat = new THREE.MeshBasicMaterial({
+            transparent:  true,
+            vertexColors: true,   // carries the centre-to-rim alpha ramp
+            opacity:      0.3,    // scales the ramp; rim tops out here
+            side:         THREE.DoubleSide,
+            depthWrite:   false,
         });
         const disc = new THREE.Mesh(discGeo, discMat);
-        disc.position.set(cx, 0.8, cz);
+        // Geometry is already world-space; offsetting would double it.
+        disc.position.set(0, 0, 0);
         disc.renderOrder = 1;
 
-        // Iso-rings — Palantir-style "ranging rings" at 50/75/100 % of radius.
-        // Thinnest at the outer edge so it reads as a hard boundary; inner
-        // rings are subtler grid references.
+        // Ranging rings, laid on the ground rather than floating at a fixed Y.
         const rings: HazardEntry['rings'] = [];
         for (let i = 0; i < _ISO_RING_FRACTIONS.length; i++) {
-            const frac   = _ISO_RING_FRACTIONS[i]!;
-            const rOuter = radius * frac;
-            // Thinner for inner rings, slightly thicker for the boundary.
-            const width  = Math.max(0.5, 0.8 + i * 0.5);
-            const geo    = new THREE.RingGeometry(rOuter - width, rOuter, 64);
-            geo.rotateX(-Math.PI / 2);
+            const frac      = _ISO_RING_FRACTIONS[i]!;
+            const isBoundary = frac === 1.00;
+            const rOuter    = radius * frac;
+
+            // Scale the band with the zone so a 420 m rim is not drawn with the
+            // same hairline as a 35 m one and lost at operator zoom.
+            const width = Math.max(0.6, radius * (isBoundary ? 0.012 : 0.006));
+
+            const geo = EffectsManager._groundRing(
+                cx, cz, rOuter, width, _RING_LIFT_M + i * 0.05);
             const mat = new THREE.MeshBasicMaterial({
                 color:       typeColor,
                 transparent: true,
-                // Outer ring brightest, inner rings fade to grid lines.
-                opacity:     0.35 + i * 0.20,
+                // The boundary is the edge an operator routes around, so it is
+                // the one that reads; the interior ring is a distance
+                // reference and stays quiet.
+                opacity:     isBoundary ? 0.9 : 0.32,
                 side:        THREE.DoubleSide,
                 depthWrite:  false,
             });
             const ring = new THREE.Mesh(geo, mat);
-            ring.position.set(cx, 0.5 + i * 0.02, cz);   // tiny z-lift avoids z-fight
+            // Geometry is already world-space; offsetting would double it.
+            ring.position.set(0, 0, 0);
             ring.renderOrder = 2 + i;
             rings.push(ring);
         }
 
-        // Animated sweep ring — expands from centre to boundary then restarts.
-        // Radar-ping aesthetic; radius advances in _animateHazards().
-        const sweepGeo = new THREE.RingGeometry(0.5, 1.0, 64);
-        sweepGeo.rotateX(-Math.PI / 2);
-        const sweepMat = new THREE.MeshBasicMaterial({
-            color:       typeColor,
-            transparent: true,
-            opacity:     0.0,
-            side:        THREE.DoubleSide,
-            depthWrite:  false,
-        });
-        const sweep = new THREE.Mesh(sweepGeo, sweepMat);
-        sweep.position.set(cx, 0.58, cz);
+        // Sweep — one slow expanding band, and the only thing here that moves.
+        const sweep = new THREE.Mesh(
+            EffectsManager._groundRing(
+                cx, cz, radius, Math.max(0.6, radius * 0.01), _SWEEP_LIFT_M),
+            new THREE.MeshBasicMaterial({
+                color:       typeColor,
+                transparent: true,
+                opacity:     0.0,
+                side:        THREE.DoubleSide,
+                depthWrite:  false,
+            }),
+        );
         sweep.renderOrder = 6;
 
-        // Cardinal crosshair — 4 short radial ticks at N/S/E/W marking the
-        // centre. Keeps the marker readable when the rings are faint.
+        // Cardinal crosshair — 4 short radial ticks at N/S/E/W marking the centre.
         const tickLen = radius * _CROSSHAIR_TICK_LEN;
         const verts   = new Float32Array([
-             0,       0.6,  -tickLen,   0,      0.6,  tickLen,   // N ↔ S
-            -tickLen, 0.6,   0,         tickLen, 0.6, 0,         // W ↔ E
+             0,       0,  -tickLen,   0,       0,  tickLen,   // N ↔ S
+            -tickLen, 0,   0,         tickLen, 0,  0,         // W ↔ E
         ]);
         const crossGeo = new THREE.BufferGeometry();
         crossGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
         const crossMat = new THREE.LineBasicMaterial({
             color:       typeColor,
             transparent: true,
-            opacity:     0.55,
+            opacity:     0.5,
             depthWrite:  false,
         });
         const crosshair = new THREE.LineSegments(crossGeo, crossMat);
-        crosshair.position.set(cx, 0, cz);
+        crosshair.position.set(cx, groundY + _RING_LIFT_M, cz);
         crosshair.renderOrder = 7;
 
         this._scene.add(disc, ...rings, sweep, crosshair);
@@ -620,20 +813,50 @@ export class EffectsManager {
     }
 
     private _animateHazards(): void {
+        // Honour the OS setting, as every asset renderer here already does
+        // (GroundRenderer.ts:366, :389; AirRenderer rotor spin). This was the
+        // one animated overlay that ignored it.
+        //
+        // The zone still reads when it is off: the boundary ring, the fill and
+        // the crosshair are all static, so nothing an operator needs is carried
+        // by motion alone.
+        if (prefersReducedMotion()) {
+            if (this._sweepsHidden) return;
+            for (const entry of this._hazards.values()) {
+                entry.sweep.visible = false;
+            }
+            this._sweepsHidden = true;
+            return;
+        }
+
+        if (this._sweepsHidden) {
+            for (const entry of this._hazards.values()) entry.sweep.visible = true;
+            this._sweepsHidden = false;
+        }
+
         // Phase derived from shared _time (seconds) — dt-correct, runs at a
         // consistent cadence independent of frame rate. All hazards sweep in
         // unison, which reads as a coordinated threat display rather than a
         // chaotic mix of pings.
         const phase = (this._time % _SWEEP_PERIOD_SEC) / _SWEEP_PERIOD_SEC;
-        for (const entry of this._hazards.values()) {
-            entry.disc.material.opacity = 0.08 + 0.06 * Math.sin(this._time * 2);
 
+        for (const entry of this._hazards.values()) {
             entry.phase = phase;
-            const r = 0.5 + phase * (entry.radius - 0.5);
-            entry.sweep.scale.set(r, 1, r);
-            // Quadratic fade — reads as a single expanding pulse rather than
-            // a thick ring stuck at the boundary.
-            entry.sweep.material.opacity = 0.55 * (1 - phase) * (1 - phase);
+
+            // The fill no longer breathes.
+            //
+            // It used to run opacity = 0.08 + 0.06*sin(t*2) on every zone at
+            // once. With zones overlapping, the stacked translucent fills
+            // throbbed as one mass and the terrain under them pumped light and
+            // dark — motion that carried no information, on the largest area of
+            // the screen. A hazard's extent is not changing, so nothing about
+            // it should be animated except a deliberate sweep.
+            entry.sweep.scale.setScalar(Math.max(0.001, phase));
+
+            // Ease-out, and dimmer than before: this is an accent on a static
+            // marker, not the marker itself.
+            const fade = (1 - phase) * (1 - phase);
+            entry.sweep.material.opacity = 0.3 * fade;
         }
     }
 
