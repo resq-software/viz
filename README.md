@@ -24,7 +24,7 @@
   <a href="https://github.com/resq-software/viz/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/resq-software/viz/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/resq-software/viz/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4.svg">
-  <img alt="Three.js 0.185.1" src="https://img.shields.io/badge/Three.js-0.185.1-black.svg">
+  <img alt="Three.js 0.186.0" src="https://img.shields.io/badge/Three.js-0.186.0-black.svg">
   <img alt="SignalR 10.0.11" src="https://img.shields.io/badge/SignalR-10.0.11-512BD4.svg">
 </p>
 
@@ -627,7 +627,7 @@ In the browser, [`app.ts`](src/ResQ.Viz.Web/client/app.ts) starts analytics boot
 
 - **WebGPU sensors.** A deferred boot path CPU-voxelizes `terrainHeight` into a sparse brick map. Its default 128³ grid at 8 m per voxel spans 1,024 m per axis. It is centered on X/Z and begins at ground level on Y, while the rendered terrain spans 4,000 m. `raysOutsideWorld` counts origins beyond that sensor volume. Rays that never enter its AABB can appear as misses. Boot URL parameters `worldGrid`, `voxelScale`, and `worldOriginX/Y/Z` can change the bounds. Compute ray marching powers mesh-link line-of-sight and per-drone 16 × 256 LiDAR scans, and terrain changes rebuild the map. Without WebGPU, or after initialization failure, links retain their unoccluded presentation, LiDAR points stay absent, and the Three.js renderer continues.
 
-- **Post-processing.** Three.js 0.185.1 renders through `WebGLRenderer`. A deferred chunk adds selective emissive bloom, `GTAOPass`, `OutputPass`, and a display-space color grade. While that chunk loads, or if fetch or construction fails, the scene renders directly with ACES filmic tone mapping and the renderer's sRGB output. The current path does not use `SSAOPass`.
+- **Post-processing.** Three.js 0.186.0 renders through `WebGLRenderer`. A deferred chunk adds selective emissive bloom, `GTAOPass`, `OutputPass`, and a display-space color grade. While that chunk loads, or if fetch or construction fails, the scene renders directly with ACES filmic tone mapping and the renderer's sRGB output. The current path does not use `SSAOPass`.
 
 <a id="build"></a>
 <a id="contributor-workflow"></a>
