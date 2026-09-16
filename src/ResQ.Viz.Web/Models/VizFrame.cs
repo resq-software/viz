@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+using ResQ.Viz.Web.Services.Assets;
+
 namespace ResQ.Viz.Web.Models;
 
 /// <summary>Frame broadcast to SignalR clients at 10 Hz.</summary>
@@ -31,7 +33,12 @@ public record VizFrame(
     MeshVizState? Mesh,
     bool Paused = false,
     int Speed = 1,
-    long Tick = 0);
+    long Tick = 0,
+    /// <summary>
+    /// Water-surface elevation in metres, so the client draws its water plane where the
+    /// simulation floats things rather than from a table of its own.
+    /// </summary>
+    double SeaLevelM = SeaLevel.DefaultM);
 
 /// <summary>Per-drone visual state in a VizFrame.</summary>
 /// <remarks>

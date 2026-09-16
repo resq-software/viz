@@ -52,7 +52,7 @@ import { CameraPresets } from './cameraPresets';
 import { applyScenarioEnvironment, skyProfileFor, type CameraPresetKey } from './scenarioEnvironments';
 import { LoadingOverlay } from './loadingOverlay';
 import { tickWind } from './treeSprites';
-import { setHeightmapOverride, setAntiTile, tickTerrainClouds } from './terrain';
+import { setHeightmapOverride, setAntiTile, setServerSeaLevel, tickTerrainClouds } from './terrain';
 import { prefersReducedMotion } from './reducedMotion';
 import { tickWater } from './water';
 import { DownwashFx } from './downwash';
@@ -2544,7 +2544,7 @@ document.addEventListener('resq:scenario-start', (e) => {
             viz.setSkyProfile(skyProfileFor(env));
             _applyPrecipitation(env.precipitation ?? null);
         },
-        switchPreset: (key, waterLevel) => _switchPreset(key, waterLevel),
+        switchPreset: (key) => _switchPreset(key),
         setCamera: (preset: CameraPresetKey, env) => {
             const jump = {
                 survey:   () => cameraPresets.terrainSurvey(env.sunAzimuthDeg),
@@ -2633,6 +2633,11 @@ function _applyFrameConsumers(
     frame: SceneFrame,
     drones: DroneState[],
 ): void {
+    // Before anything that reads terrain: the water level the simulation is using
+    // arrives on the frame, and a scenario's flood only becomes visible when the
+    // client stops consulting its own table and draws where the server floats things.
+    setServerSeaLevel(frame.seaLevelM ?? null);
+
     missionChrome.update(frame.time ?? 0);
     // FPV OSD + cockpit read the selected asset's telemetry through the v1
     // projection, so they no-op for anything that is not an air asset — which is

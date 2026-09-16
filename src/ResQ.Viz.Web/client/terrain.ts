@@ -41,9 +41,35 @@ let _activePresetKey: PresetKey = 'alpine';
  */
 let _waterLevelOverride: number | null = null;
 
-/** Effective water level: scenario override if set, else the preset's own. */
+/**
+ * Effective water level, in metres.
+ *
+ * The server's value when a frame has carried one, otherwise the preset's. The
+ * fallback is for the window before the first frame arrives, not a parallel
+ * source of truth: the scenario water table this used to consult lived only in
+ * the browser, so the simulation floated vessels 3 m below the drawn surface in
+ * `hurricane-melissa` and 21 m below it in `flood-riverine`.
+ */
 export function activeWaterLevel(): number {
-    return _waterLevelOverride ?? _activePreset.waterLevel;
+    return _serverSeaLevel ?? _waterLevelOverride ?? _activePreset.waterLevel;
+}
+
+/** Water level last published by the server, or null before the first frame. */
+let _serverSeaLevel: number | null = null;
+
+/**
+ * Records the water level the simulation is using, from a frame.
+ *
+ * Rebuilds the water mesh when it moves, which is what makes a scenario's flood
+ * visible rather than merely recorded.
+ */
+export function setServerSeaLevel(metres: number | null): void {
+    if (metres !== null && !Number.isFinite(metres)) return;
+    if (metres === _serverSeaLevel) return;
+
+    _serverSeaLevel = metres;
+    WATER_LEVEL = activeWaterLevel();
+    _fireTerrainChange();
 }
 
 export let WATER_LEVEL: number = _activePreset.waterLevel;

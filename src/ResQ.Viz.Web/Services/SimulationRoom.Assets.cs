@@ -75,7 +75,8 @@ public sealed record RoomAssetFrame(
     IReadOnlyList<DroneSnapshot> Drones,
     IReadOnlyList<AgedExternalTrack> Tracks,
     ScenarioSessionState? Scenario = null,
-    string ScenarioKey = "");
+    string ScenarioKey = "",
+    double SeaLevelM = SeaLevel.DefaultM);
 
 // The multi-domain asset surface: everything the v2 API and the v2 frame pipeline need from a
 // room, and nothing the v1 path uses. Split from SimulationRoom.cs the way CommandCatalog and
@@ -159,7 +160,8 @@ public sealed partial class SimulationRoom
                 Assets: _assets.States,
                 Drones: CaptureDroneSnapshots(),
                 Tracks: CaptureTracks().Tracks,
-                ScenarioKey: _scenarioKey);
+                ScenarioKey: _scenarioKey,
+                SeaLevelM: _assets.Environment.SeaLevelM);
         }
     }
 

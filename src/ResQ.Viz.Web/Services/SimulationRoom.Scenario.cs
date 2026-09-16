@@ -16,6 +16,8 @@
 
 using ResQ.Viz.Web.Models;
 
+using ResQ.Viz.Web.Services.Assets;
+
 namespace ResQ.Viz.Web.Services;
 
 // The room-owned scenario publication. Scenario identity and the swarm policy it selects are
@@ -41,6 +43,14 @@ public sealed partial class SimulationRoom
         lock (_lock)
         {
             _scenarioKey = name;
+
+            // A scenario can flood ground its preset leaves dry, and that water is the premise of
+            // the scenario rather than a property of the terrain. Applied here so the simulation
+            // floats vessels on the surface the operator is shown — the client used to raise its
+            // own water plane and tell nobody.
+            _assets.SetSeaLevel(SeaLevel.ForScenario(name, _terrainPreset));
+            _environmentRevision++;
+
             _swarm.SetScenario(name, _assets.Drones.ToList());
             _scenario = new ScenarioSessionState(
                 name,

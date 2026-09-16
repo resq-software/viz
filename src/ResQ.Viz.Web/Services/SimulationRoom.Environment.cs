@@ -67,7 +67,10 @@ public sealed partial class SimulationRoom
             // client's water plane read it from SeaLevel. Moving one without the other is what
             // makes a vessel appear to sail on grass.
             _terrainPreset = key;
-            _assets.SetSeaLevelForPreset(key);
+
+            // Through the scenario, so a preset switch under a running scenario does not discard
+            // the water that scenario is set in.
+            _assets.SetSeaLevel(SeaLevel.ForScenario(_scenarioKey, key));
             _swarm.SetTerrainPreset(key, _terrain, _assets.Drones.ToList());
             _environmentRevision++;
         }
