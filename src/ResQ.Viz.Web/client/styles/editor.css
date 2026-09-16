@@ -82,7 +82,7 @@ body:has(#sidebar.collapsed) .resq-editor[data-layout='dock'] {
   margin: 0;
   font-family: var(--mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-muted);

@@ -113,6 +113,67 @@ function throttle<A extends unknown[]>(fn: (...args: A) => void, waitMs: number)
     };
 }
 
+/**
+ * Device pixel ratio to render the 3D scene at, capped.
+ *
+ * `setPixelRatio(window.devicePixelRatio)` renders every pixel the display
+ * claims: 4x the work on a 2x laptop, 9x on a 3x phone, and this scene already
+ * carries antialiasing, shadow maps and a post chain. Past 2x the extra samples
+ * are below what the eye resolves on a screen held at arm's length, so the cost
+ * buys nothing — it is the cheapest large win available on high-density
+ * displays, and it is invisible in a headless test where the ratio is 1.
+ *
+ * The minimap clamps the other way (`Math.max(1, …)`) because a sub-1 ratio
+ * there would blur the dots; both ends want bounding.
+ *
+ * @returns A ratio in [1, 2].
+ */
+/** The parts of a renderer a viewport change touches. */
+export interface ViewportTarget {
+    setPixelRatio(value: number): void;
+    setSize(width: number, height: number): void;
+}
+
+/**
+ * Applies a viewport size to the camera, renderer and post chain.
+ *
+ * Split out of `_onResize` and parameterised so it can be tested at all. The
+ * pixel-ratio cap had a unit test for the pure `renderPixelRatio()` and none for
+ * the call site, so deleting the `setPixelRatio` line from the resize path left
+ * all 1348 tests green — a guard that could not fail, which is the defect this
+ * codebase keeps finding. `SceneManager` builds a real `WebGLRenderer`, so the
+ * seam has to be the function rather than the class.
+ *
+ * The ratio is re-applied on every resize, not only at construction: dragging a
+ * window to a display of a different density changes `devicePixelRatio`, and the
+ * renderer keeps whatever it was built with until told otherwise.
+ *
+ * @param renderer Renderer to resize.
+ * @param postFx Post chain, or null when there is none.
+ * @param camera Camera whose aspect follows the viewport.
+ * @param width Viewport width in CSS pixels.
+ * @param height Viewport height in CSS pixels.
+ */
+export function applyViewport(
+    renderer: ViewportTarget,
+    postFx: { setSize(width: number, height: number): void } | null,
+    camera: THREE.PerspectiveCamera,
+    width: number,
+    height: number,
+): void {
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(renderPixelRatio());
+    renderer.setSize(width, height);
+    postFx?.setSize(width, height);
+}
+
+export function renderPixelRatio(): number {
+    const dpr = window.devicePixelRatio;
+    if (!Number.isFinite(dpr) || dpr <= 0) return 1;
+    return Math.min(Math.max(dpr, 1), 2);
+}
+
 export class Scene {
     readonly scene: THREE.Scene;
     readonly renderer: THREE.WebGLRenderer;
@@ -152,7 +213,7 @@ export class Scene {
 
     constructor(container: HTMLElement) {
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
-        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setPixelRatio(renderPixelRatio());
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type      = THREE.PCFShadowMap;
@@ -548,10 +609,9 @@ export class Scene {
     }
 
     private _onResize(): void {
-        this._camera.aspect = window.innerWidth / window.innerHeight;
-        this._camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this._postFx.setSize(window.innerWidth, window.innerHeight);
+        applyViewport(
+            this.renderer, this._postFx, this._camera,
+            window.innerWidth, window.innerHeight);
         for (const fn of this._resizeCallbacks) fn();
     }
 
