@@ -51,8 +51,16 @@ public sealed class TerrainNoiseService : ITerrain
     /// <summary>
     /// Switches the active terrain preset.  Valid keys: alpine, ridgeline, coastal, canyon, dunes.
     /// </summary>
+    /// <remarks>
+    /// Drops any installed DEM along with it. A baked heightmap belongs to the preset it was
+    /// baked from, so keeping it across a switch left every elevation query answering with the
+    /// OLD terrain while the client drew the new one — alpine to dunes is hundreds of metres
+    /// apart, which reads as rovers hanging in mid-air until the next bake lands and snaps them
+    /// down. Falling back to the new preset's procedural surface is wrong by a few metres for
+    /// the length of the bake instead of by the distance between two worlds.
+    /// </remarks>
     public void SetPreset(string key) =>
-        _state = _state with { Preset = key.ToLowerInvariant() };
+        _state = new TerrainState(Dem: null, Preset: key.ToLowerInvariant());
 
     /// <summary>
     /// Installs a heightmap override.  Subsequent <see cref="GetElevation"/>
