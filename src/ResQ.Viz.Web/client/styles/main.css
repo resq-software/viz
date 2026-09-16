@@ -82,7 +82,23 @@ button { font-family: inherit; }
   height: var(--effective-hud-h);
   z-index: var(--layer-hud);
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  /* Was `1fr auto 1fr`, which put the two SIDE zones on fr tracks and the centre
+     on a content-sized one — exactly backwards. The side zones hold fixed
+     furniture (wordmark; EDITOR plus five icon buttons ≈ 345px) that cannot
+     shrink, while the centre holds stats that can be shed. At 1250px each fr
+     track resolved to ~320px, so the right zone overflowed its own track by
+     ~25px and, being `justify-self: end`, spilled LEFTWARD across the stats —
+     the "LINK UP" label painting under an icon button. Measured by sweeping
+     widths: overlap from ~1270px down to 925px, up to 5 colliding element pairs
+     near 1000px, and the shed ladder meant to prevent it only began at 900px.
+     Now the side tracks are `auto` (never smaller than their content) and the
+     CENTRE is the flexible one, floored at 0. Overlap becomes impossible by
+     construction; the shed tiers below keep the centre from having to clip.
+     Trade-off: the stats are centred within the leftover lane rather than the
+     viewport, so they drift slightly off true centre as the side zones differ
+     in width. That is the normal way this layout is built, and it is worth far
+     more than pixel-exact centring that collapses into an overlap. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding-inline-start: max(16px, env(safe-area-inset-left));
@@ -98,8 +114,52 @@ button { font-family: inherit; }
 
 .hud-zone { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .hud-zone-left   { justify-self: start; }
-.hud-zone-center { justify-self: center; }
+/* `justify-self: center` sizes a grid item to its CONTENT rather than its track,
+   so once the stats outgrew the lane the zone kept growing and overflowed it
+   symmetrically — measured 3px past both neighbours at 950px even after the
+   track fix above. Stretching the item to fill the track and centring the flex
+   contents inside it gives the same look while making the track a real bound,
+   which `overflow: hidden` can then enforce. */
+.hud-zone-center {
+  justify-self: stretch;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+}
 .hud-zone-right  { justify-self: end; gap: 10px; }
+#hud-stats { min-width: 0; flex-wrap: nowrap; }
+
+/* Progressive shed, in ascending order of what an operator can least afford to
+   lose. Range syntax (`width < N`) rather than `max-width: N-1` + `min-width: N`
+   so there is no fractional dead zone between tiers — browser zoom routinely
+   produces widths like 1279.5px, which a max/min pair matches NEITHER side of.
+   Thresholds come from the width sweep, each tier landing just above where the
+   previous tier's content would start colliding. */
+@media (width < 1280px) {
+  /* Battery meter is the widest single stat (label + bar + percent) and the
+     percent alone survives in the sidebar. Connection keeps its dot; only the
+     word goes. */
+  .hud-stat-bat,
+  #conn-label { display: none; }
+}
+
+@media (width < 1080px) {
+  /* Sim clock and the selected-asset chip: both are mirrored elsewhere in the
+     UI (mission panel, inspector), so the HUD is not the only way to read them. */
+  .hud-stat:has(#sim-time),
+  #hud-selected-drone { display: none; }
+}
+
+@media (width < 1000px) {
+  /* Last tier before the ≤900px block takes over. Measured: without this the
+     centre lane is 427px at 925px wide against ~452px of stats, so #hud-comms
+     ("LINK UP") was overflowing #hud-stats by 25px and getting cut mid-word by
+     the zone's overflow clip. FPS goes rather than LINK: frame rate is a
+     developer diagnostic, whereas the backhaul uplink state is operational and
+     is not mirrored anywhere else in the chrome. (A `max-width: 560px` rule
+     further down also hides FPS; it is now redundant but harmless.) */
+  .hud-stat:has(#fps) { display: none; }
+}
 
 #hud-logo {
   font-family: var(--display);
@@ -126,7 +186,11 @@ button { font-family: inherit; }
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.06em;
-  color: var(--text-muted);
+  /* Sits on the translucent HUD bar, so a bright frame lightens its effective
+     background: --text-muted measured 4.13:1 there, under 1.4.3 AA. The dot
+     beside it carries the same state in colour, but WCAG 1.4.1 means the word
+     has to stand on its own. */
+  color: var(--text-dim);
 }
 .conn-dot {
   width: 6px;
@@ -505,13 +569,23 @@ select,
 }
 .input-row .field-group input { padding: 7px 8px; font-size: 11px; }
 
+/* WCAG 2.2 §2.5.8 Target Size (min 24×24). `height: 4px` here sized the host
+   BOX, not just the rail, so the pointer target was a 4px band. It also
+   outranked `.dvr-scrub`'s own `height: 18px` — `input[type='range']` scores
+   (0,1,1) against that rule's (0,1,0) — so the scrubber's "tall, grabbable hit
+   area" comment described an intent the cascade silently threw away. Measured
+   by hit-testing elementFromPoint up the centre line: the scrubber answered
+   only at dy=0 (±4px landed on the parent bar), and these native-appearance
+   sliders answered across roughly -8..+6.
+   The host is now 24px and the rail is left to the native track, which renders
+   thin and vertically centred under `color-scheme: dark`. The old background
+   faked the rail on the host box and would now paint a 24px slab, so it goes. */
 input[type='range'] {
   width: 100%;
-  height: 4px;
-  margin: 4px 0;
+  height: 24px;
+  margin: 0;
   accent-color: var(--accent);
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 2px;
+  background: transparent;
 }
 
 /* ── Status badges ──────────────────────────────────────────────────────── */
@@ -1361,9 +1435,23 @@ body.partitioned .mc-phase { color: var(--danger); }
   z-index: var(--layer-hud);
   display: flex;
   flex-direction: column;
+  /* Newest entry is appended last (eventLog.ts), so anchor to the bottom: when
+     more rows exist than fit, the OLDEST clip off the top and the newest stay
+     on screen. Without this the overflow clipped the newest away. */
+  justify-content: flex-end;
   gap: 3px;
   max-width: 300px;
-  max-height: 92px;
+  /* Was a flat `max-height: 92px` while eventLog.ts keeps MAX_ROWS = 8. A row's
+     natural height is ~24px (11px/1.45 line + 4px padding each side), so 8 rows
+     need ~213px and only 92px was offered. The rows carried the default
+     `flex-shrink: 1`, so instead of overflowing they all SQUASHED — measured at
+     8px tall against a 20px scrollHeight, which cropped every line to the top
+     third of its glyphs and made the log unreadable at every viewport. `.el-row`
+     is now `flex: 0 0 auto` so rows keep their height and the box clips whole
+     rows instead. The cap is viewport-relative so a short window (phone
+     landscape) gives up rows rather than legibility: ~2 rows at 240px tall,
+     ~3 at 390px, ~7 at 780px and above. */
+  max-height: clamp(52px, 22dvh, 172px);
   overflow: hidden;
   pointer-events: none;
   font-family: var(--mono);
@@ -1394,6 +1482,10 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   backdrop-filter: var(--blur-soft);
   -webkit-backdrop-filter: var(--blur-soft);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  /* Never shrink: the parent is a height-capped flex column, so the default
+     `flex-shrink: 1` squashed every row to a third of its line height rather
+     than letting the container clip. See the .event-log max-height note. */
+  flex: 0 0 auto;
   opacity: 1;
   transform: translateX(0);
   transition: opacity 0.6s ease, transform 0.6s ease;
