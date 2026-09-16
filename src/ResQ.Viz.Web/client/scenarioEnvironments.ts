@@ -68,14 +68,6 @@ export interface ScenarioEnvironment extends SceneEnvironment {
     readonly key: string;
     readonly terrainPreset: PresetKey;
     readonly skyModel: SkyModel;
-    /**
-     * Water plane height override, metres. `undefined` keeps the preset's own
-     * `waterLevel`. Passed as an override rather than mutating the preset: the
-     * `PRESETS` table is frozen and its `cacheKey` contract assumes the height
-     * function is the only thing that varies. Water is a separate mesh
-     * (`terrain.ts:749`), so terrain geometry still hits the cache.
-     */
-    readonly waterLevel?: number;
     readonly defaultCameraPreset: CameraPresetKey;
     /**
      * What falls out of this sky, and how hard.
@@ -117,7 +109,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogColor: 0xd98a55,
         fogDensity: 0.00022,
         toneMappingExposure: 0.95,
-        waterLevel: -15,
         // Framed away from the 285° sun: low sun straight down the barrel
         // silhouettes the ridge and hides the relief the scenario is about.
         defaultCameraPreset: 'survey',
@@ -132,7 +123,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogColor: 0x5c6d78,
         fogDensity: 0.00035,
         toneMappingExposure: 1.15,
-        waterLevel: 6,          // storm surge
         defaultCameraPreset: 'survey',
         precipitation: { kind: 'rain', intensity: 1.0 },
     },
@@ -145,7 +135,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogColor: 0x9aa8ae,
         fogDensity: 0.00012,
         toneMappingExposure: 1.0,
-        waterLevel: 18,         // risen; turbidity deferred (new shader feature)
         defaultCameraPreset: 'survey',
         precipitation: { kind: 'rain', intensity: 0.55 },
     },
@@ -158,7 +147,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogColor: 0xa89c8e,
         fogDensity: 0.00028,
         toneMappingExposure: 1.05,
-        waterLevel: -60,
         defaultCameraPreset: 'survey',
         precipitation: { kind: 'ash', intensity: 0.45 },
     },
@@ -173,7 +161,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         // Deliberately under 1.0: high-albedo snow blows out to flat white under
         // ACES at 1.0, destroying exactly the relief this scenario exists to show.
         toneMappingExposure: 0.85,
-        waterLevel: -3,
         defaultCameraPreset: 'survey',
         precipitation: { kind: 'snow', intensity: 0.8 },
     },
@@ -189,7 +176,6 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
         fogColor: 0xd9b98a,
         fogDensity: 0.00010,
         toneMappingExposure: 1.0,
-        waterLevel: -60,
         defaultCameraPreset: 'survey',
     },
     // ── Multi-domain presets ────────────────────────────────────────────
@@ -199,7 +185,7 @@ export const SCENARIO_ENVIRONMENTS: Readonly<Record<string, ScenarioEnvironment>
     // smoke sky, or a coastal transit running under alpine sun, depending only
     // on what had been selected before it.
     //
-    // None of them overrides `waterLevel`. Their asset positions were surveyed
+    // Their asset positions were surveyed
     // against each preset's own water height — the flood ferries work in 10 m of
     // water and the coastal column holds a channel that never shoals below
     // 5.5 m — so moving the surface under them would strand or sink the fleet
@@ -291,8 +277,14 @@ export function environmentFor(scenarioKey: string): ScenarioEnvironment | null 
 export interface EnvironmentDeps {
     /** Inner seam — applies sun, sky, fog, exposure. */
     applyScene: (env: ScenarioEnvironment) => void;
-    /** Rebuild terrain for a preset, with an optional water-level override. */
-    switchPreset: (key: PresetKey, waterLevel?: number) => void;
+    /**
+     * Rebuild terrain for a preset.
+     *
+     * No water-level argument any more. A scenario's water is the simulation's,
+     * and arrives on the frame as `seaLevelM`; passing one here meant the browser
+     * drew a flood the server had never been told about.
+     */
+    switchPreset: (key: PresetKey) => void;
     /** Jump to a named camera framing. */
     setCamera: (preset: CameraPresetKey, env: ScenarioEnvironment) => void;
     /** True when the operator has manually overridden terrain from the sidebar. */
@@ -317,7 +309,7 @@ export function applyScenarioEnvironment(deps: EnvironmentDeps, scenarioKey: str
     // Terrain first: it is the long pole, and the operator's manual sidebar
     // choice outranks the scenario's.
     if (!deps.isTerrainOverridden()) {
-        deps.switchPreset(env.terrainPreset, env.waterLevel);
+        deps.switchPreset(env.terrainPreset);
     }
     deps.applyScene(env);
     deps.setCamera(env.defaultCameraPreset, env);

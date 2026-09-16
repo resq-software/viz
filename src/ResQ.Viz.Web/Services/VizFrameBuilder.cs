@@ -18,6 +18,8 @@ using System.Numerics;
 using Microsoft.Extensions.Configuration;
 using ResQ.Viz.Web.Models;
 
+using ResQ.Viz.Web.Services.Assets;
+
 namespace ResQ.Viz.Web.Services;
 
 /// <summary>Builds a <see cref="VizFrame"/> from simulation state.</summary>
@@ -131,7 +133,8 @@ public sealed class VizFrameBuilder
         bool paused = false,
         int speed = 1,
         long tick = 0,
-        string scenarioKey = "")
+        string scenarioKey = "",
+        double seaLevelM = SeaLevel.DefaultM)
     {
         var droneStates = drones
             .Select(d => new DroneVizState(d.Id, d.Position, d.Rotation, d.Velocity, d.Battery, d.Status, d.Armed, d.Vendor))
@@ -147,7 +150,8 @@ public sealed class VizFrameBuilder
             Mesh: mesh,
             Paused: paused,
             Speed: speed,
-            Tick: tick);
+            Tick: tick,
+            SeaLevelM: seaLevelM);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

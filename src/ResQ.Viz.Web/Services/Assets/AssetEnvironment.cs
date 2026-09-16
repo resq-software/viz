@@ -166,6 +166,30 @@ public static class SeaLevel
         "dunes" => DunesM,
         _ => AlpineM,
     };
+
+    /// <summary>Water-surface elevation for a scenario, which may raise it above its preset's.</summary>
+    /// <remarks>
+    /// Two scenarios flood ground their preset leaves dry, and the water they are set in is the
+    /// premise of the scenario rather than a property of the terrain. They were previously stated
+    /// only in the client's own scenario table, so the browser drew water the simulation had never
+    /// been told about: a vessel spawned in <c>flood-riverine</c> floated 21 m below the surface it
+    /// appeared to be on, and 3 m below in <c>hurricane-melissa</c>.
+    /// <para>
+    /// Only genuine overrides are listed. The client's table also restated four scenarios' preset
+    /// levels verbatim, which is how two tables drift — those derive from
+    /// <see cref="ForPreset"/> here and are pinned by test rather than written down twice.
+    /// </para>
+    /// </remarks>
+    /// <param name="scenarioKey">Configured scenario name, or null when none is running.</param>
+    /// <param name="presetKey">Terrain preset the scenario runs on.</param>
+    /// <returns>Water-surface elevation in metres.</returns>
+    public static double ForScenario(string? scenarioKey, string? presetKey) =>
+        scenarioKey?.ToLowerInvariant() switch
+        {
+            "hurricane-melissa" => 6.0,    // storm surge
+            "flood-riverine" => 18.0,      // risen river
+            _ => ForPreset(presetKey),
+        };
 }
 
 /// <summary>The environment as one asset sees it at one point, for one step.</summary>

@@ -134,6 +134,15 @@ export interface VizFrame {
     speed?:      number;
     /** Total world steps advanced since the last reset. */
     tick?:       number;
+    /**
+     * Water-surface elevation in metres, as the simulation uses it.
+     *
+     * Authoritative. The client used to hold its own per-preset and per-scenario
+     * water tables, so `hurricane-melissa` drew water 3 m above where the server
+     * floated things and `flood-riverine` 21 m above — a vessel spawned in either
+     * sat below the surface it appeared to be on.
+     */
+    seaLevelM?:  number;
 }
 
 // ── v2 wire primitives ──────────────────────────────────────────────────────

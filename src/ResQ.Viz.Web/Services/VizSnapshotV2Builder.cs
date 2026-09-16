@@ -70,7 +70,8 @@ public static class VizSnapshotV2Builder
             capture.Transport.Paused,
             capture.Transport.Speed,
             capture.Transport.Tick,
-            capture.ScenarioKey);
+            capture.ScenarioKey,
+            capture.SeaLevelM);
     }
 
     /// <summary>Builds the v2 frame for a capture, reusing the v1 frame already built from it.</summary>
