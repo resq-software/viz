@@ -43,7 +43,7 @@ git submodule update --init --recursive          # Init SDK submodule
 
 ## Standards
 - .NET 10, ASP.NET Core
-- Frontend: TypeScript 7 + Vite 8, Three.js 0.186 (npm), `@microsoft/signalr` 10 (npm; lazy-loaded chunk — see `client/app.ts`) — no CDN
+- Frontend: TypeScript 7 + Vite 8, Three.js 0.185 (npm), `@microsoft/signalr` 10 (npm; lazy-loaded chunk — see `client/app.ts`) — no CDN
 - Tests: xUnit + FluentAssertions
 - All C# files: Apache-2.0 license header, XML doc comments on public APIs
 
