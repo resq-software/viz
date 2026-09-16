@@ -347,11 +347,49 @@ jobs:
     # `uses:` still fails.
     uses: $/.github/workflows/licence-gate.yml
 
+  # ── Documented dependency versions ──────────────────────────────────
+  # A version printed in a document is a claim about the build. Until this job
+  # existed nothing evaluated those claims, and the three.js 0.185 → 0.186 bump
+  # left three documents naming the old version: a README badge, a README
+  # paragraph, and the Standards line in CLAUDE.md that every agent reads first.
+  # One was fixed by hand, review caught the second, and the third only turned
+  # up on a sweep.
+  #
+  # Node 22 runs the TypeScript checker directly via `--experimental-strip-types`,
+  # matching the licence gate. That strips types WITHOUT checking them, so the
+  # unit tests run first and are the only thing standing between a typo and a
+  # gate that throws at runtime instead of reporting drift.
+  docs:
+    name: doc versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # This job uploads nothing, so there is no artifact to pack a token
+          # into today — but every other checkout in this repo sets it, and the
+          # step that turns a harmless job into a leaking one is an `upload-artifact`
+          # somebody adds later without re-reading this line (zizmor: artipacked).
+          # Reading the docs needs no credentials either way.
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Unit-test the checker
+        run: node --experimental-strip-types --test tools/docs/check-doc-versions.test.ts
+
+      - name: Check documented versions against package.json
+        run: node --experimental-strip-types tools/docs/check-doc-versions.ts
+
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
     name: required
     runs-on: ubuntu-latest
-    needs: [gates, client, client-budget, browser, licences]
+    needs: [gates, client, client-budget, browser, licences, docs]
     permissions: {}    # pure aggregator: only reads needs.*.result env vars
     if: always()
     steps:
@@ -362,13 +400,16 @@ jobs:
           BUDGET:  ${{ needs.client-budget.result }}
           BROWSER: ${{ needs.browser.result }}
           LICENCES: ${{ needs.licences.result }}
+          DOCS:    ${{ needs.docs.result }}
         run: |
           set -eu
-          # `skipped` passes for the four below because each skips only as a CONSEQUENCE of an
-          # upstream failure that is itself named here — browser needs [gates, client-budget],
-          # client-budget needs client — so the real failure is already reported. `licences` is
-          # different: it has no `needs:`, so nothing else would report its absence. A skipped
-          # licence gate must fail this job, or the hole this call was added to close reopens.
+          # `skipped` passes for the four `ok` jobs because each skips only as a CONSEQUENCE of
+          # an upstream failure that is itself named here — browser needs [gates, client-budget],
+          # client-budget needs client — so the real failure is already reported. `licences` and
+          # `docs` are different: neither has a `needs:`, so nothing else would report their
+          # absence. A skipped one of those must fail this job, or the hole this call was added
+          # to close reopens. Adding a job to `needs:` without adding a line below leaves it
+          # reporting into nothing, which is the same hole wearing a different hat.
           ok()     { case "$1" in success|skipped|"") return 0;; *) return 1;; esac; }
           strict() { case "$1" in success) return 0;; *) return 1;; esac; }
           fail=0
@@ -377,5 +418,6 @@ jobs:
           ok "$BUDGET"       || { echo "::error::client-budget=$BUDGET"; fail=1; }
           ok "$BROWSER"      || { echo "::error::browser=$BROWSER";      fail=1; }
           strict "$LICENCES" || { echo "::error::licences=$LICENCES";    fail=1; }
+          strict "$DOCS"     || { echo "::error::docs=$DOCS";            fail=1; }
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER licences=$LICENCES"
+          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER licences=$LICENCES docs=$DOCS"
