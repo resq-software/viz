@@ -128,6 +128,46 @@ function throttle<A extends unknown[]>(fn: (...args: A) => void, waitMs: number)
  *
  * @returns A ratio in [1, 2].
  */
+/** The parts of a renderer a viewport change touches. */
+export interface ViewportTarget {
+    setPixelRatio(value: number): void;
+    setSize(width: number, height: number): void;
+}
+
+/**
+ * Applies a viewport size to the camera, renderer and post chain.
+ *
+ * Split out of `_onResize` and parameterised so it can be tested at all. The
+ * pixel-ratio cap had a unit test for the pure `renderPixelRatio()` and none for
+ * the call site, so deleting the `setPixelRatio` line from the resize path left
+ * all 1348 tests green — a guard that could not fail, which is the defect this
+ * codebase keeps finding. `SceneManager` builds a real `WebGLRenderer`, so the
+ * seam has to be the function rather than the class.
+ *
+ * The ratio is re-applied on every resize, not only at construction: dragging a
+ * window to a display of a different density changes `devicePixelRatio`, and the
+ * renderer keeps whatever it was built with until told otherwise.
+ *
+ * @param renderer Renderer to resize.
+ * @param postFx Post chain, or null when there is none.
+ * @param camera Camera whose aspect follows the viewport.
+ * @param width Viewport width in CSS pixels.
+ * @param height Viewport height in CSS pixels.
+ */
+export function applyViewport(
+    renderer: ViewportTarget,
+    postFx: { setSize(width: number, height: number): void } | null,
+    camera: THREE.PerspectiveCamera,
+    width: number,
+    height: number,
+): void {
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(renderPixelRatio());
+    renderer.setSize(width, height);
+    postFx?.setSize(width, height);
+}
+
 export function renderPixelRatio(): number {
     const dpr = window.devicePixelRatio;
     if (!Number.isFinite(dpr) || dpr <= 0) return 1;
@@ -569,14 +609,9 @@ export class Scene {
     }
 
     private _onResize(): void {
-        this._camera.aspect = window.innerWidth / window.innerHeight;
-        this._camera.updateProjectionMatrix();
-        // Re-applied, not only set at construction: dragging the window to a
-        // display with a different pixel density changes devicePixelRatio, and
-        // the renderer keeps whatever it was built with until told otherwise.
-        this.renderer.setPixelRatio(renderPixelRatio());
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this._postFx.setSize(window.innerWidth, window.innerHeight);
+        applyViewport(
+            this.renderer, this._postFx, this._camera,
+            window.innerWidth, window.innerHeight);
         for (const fn of this._resizeCallbacks) fn();
     }
 

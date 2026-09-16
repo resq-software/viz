@@ -10,7 +10,9 @@
 
 import { describe, expect, it, afterEach } from 'vitest';
 
-import { renderPixelRatio } from '../scene';
+import * as THREE from 'three';
+
+import { applyViewport, renderPixelRatio } from '../scene';
 
 const real = window.devicePixelRatio;
 
@@ -52,5 +54,63 @@ describe('renderPixelRatio', () => {
             setDpr(bad);
             expect(renderPixelRatio()).toBe(1);
         }
+    });
+});
+
+describe('applyViewport', () => {
+    /** Records what a resize would have sent to the renderer. */
+    function fakeRenderer() {
+        const calls: { ratio: number[]; size: Array<[number, number]> } = { ratio: [], size: [] };
+        return {
+            calls,
+            setPixelRatio: (v: number) => calls.ratio.push(v),
+            setSize: (w: number, h: number) => calls.size.push([w, h]),
+        };
+    }
+
+    it('RE-APPLIES the capped ratio on every resize', () => {
+        // The regression this exists for: the cap had a unit test for the pure
+        // function and none for the call site, so deleting the setPixelRatio
+        // line from the resize path left all 1348 tests green. Dragging a window
+        // between displays of different density is the case that breaks.
+        setDpr(3);
+        const r = fakeRenderer();
+        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+
+        applyViewport(r, null, cam, 1600, 900);
+
+        expect(r.calls.ratio).toEqual([2]);
+        expect(r.calls.size).toEqual([[1600, 900]]);
+    });
+
+    it('tracks a ratio that changes between resizes', () => {
+        const r = fakeRenderer();
+        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+
+        setDpr(1);
+        applyViewport(r, null, cam, 800, 600);
+        setDpr(3);
+        applyViewport(r, null, cam, 800, 600);
+
+        expect(r.calls.ratio).toEqual([1, 2]);
+    });
+
+    it('updates the camera aspect to match', () => {
+        const r = fakeRenderer();
+        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+
+        applyViewport(r, null, cam, 1600, 800);
+
+        expect(cam.aspect).toBeCloseTo(2, 5);
+    });
+
+    it('resizes the post chain when there is one', () => {
+        const r = fakeRenderer();
+        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+        const seen: Array<[number, number]> = [];
+
+        applyViewport(r, { setSize: (w, h) => seen.push([w, h]) }, cam, 1024, 768);
+
+        expect(seen).toEqual([[1024, 768]]);
     });
 });
