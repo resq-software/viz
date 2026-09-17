@@ -42,9 +42,11 @@
   --foreground:       oklch(96.19% 0.0109 274.89);
   --muted-foreground: oklch(64.00% 0.0535 266.82);
   /* Lightness carries extra headroom (was 61.50%): these dim tiers sit on
-     TRANSLUCENT panels (--surface-1, 0.55α) over a bright 3D scene, so the
-     effective background lightens over pale terrain. 68% clears ~5.9:1 on card
-     (vs a bare 4.55:1) so it stays >=4.5 AA even with the glass show-through. */
+     TRANSLUCENT panels (--surface-1) over a bright 3D scene, so the effective
+     background lightens over pale terrain. 68% clears ~5.9:1 on card (vs a bare
+     4.55:1). Note the headroom alone was NOT enough while --surface-1 sat at
+     0.55α — measured over a daylight scene it still only reached 2.51:1. It
+     holds (4.80:1) now that the panel alpha carries its share; see below. */
   --hint:             oklch(68.00% 0.0478 269.20);
   --mono-fg:          oklch(68.62% 0.0471 261.10);
 
@@ -57,6 +59,12 @@
   --destructive:        oklch(58.50% 0.1877 24.72);   /* converges with primary red */
 
   --info:               oklch(64.20% 0.1560 252.61);  /* Signal Blue — selection / info */
+  /* The blue counterpart to --primary-text. --info is a fill/border tone; used
+     as TEXT it measured 4.46:1 on --info-soft (the selected-chip treatment),
+     0.04 under 1.4.3 AA. The palette had a text-safe red and no text-safe blue,
+     so every "selected" label reached for the fill tone. 72% L clears 5.4:1
+     there and stays recognisably the same hue. */
+  --info-text:          oklch(72.00% 0.1560 252.61);
   --info-soft:          oklch(64.20% 0.1560 252.61 / 0.16);
   --info-glow:          oklch(64.20% 0.1560 252.61 / 0.45);
 
@@ -92,7 +100,16 @@
      through the chrome (functional, not decorative). */
   --bg:           var(--background);
   --bg-deep:      var(--background-deep);
-  --surface-1:    oklch(19.72% 0.0231 268.80 / 0.55);
+  /* 0.55 read as glass only while the scene behind it stayed dark. Compositing
+     this panel over the measured scene (p99 luminance 0.387, sampled from a
+     daylight flood-response frame) put every dim text tier far under AA:
+     --text-muted 2.15:1, --hint 2.51:1, --text 6.49:1. backdrop-filter blurs
+     but does not darken, so it cannot recover any of that. 0.84 is the lowest
+     alpha at which --hint (4.80), --mono-fg (4.93) and --primary-text (4.77)
+     all clear 4.5:1 over that backdrop while the scene still reads through.
+     --text-muted cannot be rescued by ANY alpha below ~0.92, so it is no
+     longer used for meaningful text on these panels — see assets.css. */
+  --surface-1:    oklch(19.72% 0.0231 268.80 / 0.84);
   --surface-2:    oklch(20.80% 0.0262 269.00 / 0.80);
   --surface-3:    oklch(22.90% 0.0302 269.75 / 0.94);
   --inset:        oklch(100% 0 0 / 0.04);

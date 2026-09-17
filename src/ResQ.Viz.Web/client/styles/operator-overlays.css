@@ -353,10 +353,17 @@ body.fpv-mode .cam-mode-pill { display: none; }
   color: var(--text-muted);
 }
 
-.dvr-scrub {
+/* Selector carries the type+attribute so it outranks the global
+   `input[type='range']` rule in main.css (0,2,1 vs 0,1,1). As a bare
+   `.dvr-scrub` (0,1,0) it lost, and this height — the whole point of the
+   "grabbable hit area" — never applied: the scrubber hit-tested as a 4px band.
+   24px is the WCAG 2.2 §2.5.8 floor. This one needs the explicit height because
+   `appearance: none` (below) makes the custom thumb paint outside the host box
+   without hit-testing there, so unlike a native slider the box IS the target. */
+input[type='range'].dvr-scrub {
   flex: 1 1 auto;
   min-width: 0;
-  height: 18px; /* tall, grabbable hit area */
+  height: 24px;
   margin: 0;
   cursor: pointer;
   -webkit-appearance: none;
@@ -457,7 +464,11 @@ body.fpv-mode .cam-mode-pill { display: none; }
 }
 
 .dvr-live.is-live {
-  color: var(--danger);
+  /* `--danger` is the 58.5%-L fill/border red; as 10px TEXT it measured 3.51:1
+     against this bar — under WCAG 1.4.3 AA (4.5:1). `--primary-text` is the
+     same hue lifted to 70% L and exists for exactly this case (see tokens.css).
+     The border keeps the saturated fill red — 1.4.11 only asks 3:1 of it. */
+  color: var(--primary-text);
   border-color: var(--danger);
 }
 

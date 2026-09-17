@@ -241,7 +241,14 @@ describe('rendered shell contracts', () => {
     const operator = read('../styles/operator.css');
 
     const dvrSource = read('../editor/dvr.ts');
-    expect(effectiveProperty(overlays, '.dvr-scrub', 'min-width', 390)).toBe('0');
+    // The scrubber's selector carries the type+attribute deliberately. As a bare
+    // `.dvr-scrub` (0,1,0) it lost to main.css's `input[type='range']` (0,1,1),
+    // which silently overrode its height — the control hit-tested as a 4px band
+    // while its own rule said 18px and called that "grabbable". The height is
+    // asserted here so that regression cannot come back quietly.
+    const scrub = "input[type='range'].dvr-scrub";
+    expect(effectiveProperty(overlays, scrub, 'min-width', 390)).toBe('0');
+    expect(effectiveProperty(overlays, scrub, 'height', 390)).toBe('24px');
     for (const width of [390, 700]) {
       for (const lowPriority of ['.dvr-rec', '.dvr-tostart', '.dvr-speed']) {
         expect(effectiveProperty(overlays, lowPriority, 'display', width), `${lowPriority} at ${width}px`)

@@ -188,6 +188,12 @@
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  /* .hud-action sets --text-muted, which is right for its icon-only siblings:
+     those are non-text under WCAG 1.4.11 and only owe 3:1 (they measure 4.13:1
+     against a bright frame). This button is a WORD, so 1.4.3 asks 4.5:1 of it
+     and the same 4.13:1 fails. Lifted here rather than on .hud-action so the
+     icon row keeps its deliberately recessive weight. */
+  color: var(--text-dim);
 }
 
 #btn-editor-toggle[aria-disabled="true"] {

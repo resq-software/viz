@@ -18,6 +18,29 @@ import { GTAOPass }        from 'three/addons/postprocessing/GTAOPass.js';
  */
 const BLOOM_SCALE = 0.5;
 
+/**
+ * True for scene objects that draw but are not meshes.
+ *
+ * `Sprite`, `Line`, `LineSegments`, `LineLoop` and `Points`. The bloom pass
+ * darkens meshes by swapping in a black material; none of these have a material
+ * the same trick works on, so they are hidden for that pass instead and drawn
+ * normally by the final composer.
+ *
+ * Deliberately a flag check rather than `instanceof`: three.js sets these on the
+ * prototype, and an `instanceof` against a bundled copy of three fails when a
+ * dependency pulls in its own.
+ *
+ * @param obj Scene object being traversed.
+ * @returns True when it should be hidden for the bloom pass.
+ */
+function _isNonMeshDrawable(obj: THREE.Object3D): boolean {
+    const o = obj as THREE.Object3D & {
+        isSprite?: boolean; isLine?: boolean; isPoints?: boolean;
+    };
+    // isLine covers Line, LineSegments and LineLoop — the subclasses set it too.
+    return o.isSprite === true || o.isLine === true || o.isPoints === true;
+}
+
 /** Reusable black material used to hide non-emissive objects during bloom pass. */
 const _BLACK = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
@@ -129,7 +152,13 @@ export class PostFx {
     private readonly _darkened = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
     // Sprites hidden during the bloom pass so HUD labels aren't additively
     // doubled (washed/blurred) by the blend. Restored after the bloom render.
-    private readonly _hiddenSprites: THREE.Sprite[] = [];
+    /**
+     * Non-mesh drawables hidden for the bloom pass, restored immediately after.
+     *
+     * Named for sprites because that is all it used to hold; it now carries
+     * lines and points as well.
+     */
+    private readonly _hiddenSprites: THREE.Object3D[] = [];
 
     constructor(
         renderer: THREE.WebGLRenderer,
@@ -218,11 +247,26 @@ export class PostFx {
 
         // 1. Darken all non-emissive meshes to isolate emissive bloom sources
         this._scene.traverse(obj => {
-            // Sprites (id labels) aren't meshes, so the darken pass below skips
-            // them — they'd render at full colour into the bloom target and the
-            // additive blend would double them, washing the text out. Hide them
-            // for the bloom render; the final composer still draws them once.
-            if ((obj as THREE.Sprite).isSprite) {
+            // Anything drawable that is NOT a mesh is hidden for this pass.
+            //
+            // Sprites were always handled — id labels would otherwise render at
+            // full colour into the bloom target and the additive blend would
+            // double them, washing the text out. Lines and points were not, and
+            // they fell through the `isMesh` return below into the bloom render
+            // at full brightness. With `threshold: 0` that means every one of
+            // them glows: trails, mesh links, hazard crosshairs and ranging
+            // rings, LiDAR point clouds, the editor grid. Twenty-one such
+            // objects are constructed across this client.
+            //
+            // That made the threshold comment false — it only "catches
+            // emissives after darken" if the darken is complete — and made the
+            // bloom load depend on where the camera points, since the amount of
+            // line geometry on screen varies with the view.
+            //
+            // Hidden rather than blackened because a line's material has no
+            // emissive channel to zero, and swapping materials on shared
+            // line/point materials would leak across objects that share one.
+            if (_isNonMeshDrawable(obj)) {
                 if (obj.visible) {
                     obj.visible = false;
                     this._hiddenSprites.push(obj as THREE.Sprite);
