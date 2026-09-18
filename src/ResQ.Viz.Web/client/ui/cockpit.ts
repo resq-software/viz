@@ -16,6 +16,8 @@
 import * as THREE from 'three';
 
 import './cockpit.css';
+import type { AssetDomainState } from '../assets/types';
+import { isGroundDomainState, isSurfaceDomainState } from '../assets/types';
 import type { DroneState } from '../types';
 import { isDroneReady } from '../types';
 import {
@@ -31,6 +33,11 @@ import {
     type SpeedBand,
     type VsiInstrument,
 } from './instruments';
+import {
+    createCompassRose,
+    createDepthGauge,
+    createTiltIndicator,
+} from './vehicleInstruments';
 
 const RAD_TO_DEG = 180 / Math.PI;
 /** Metres/second → feet/minute, for the VSI dial (which reads in fpm). */
@@ -69,9 +76,17 @@ export class Cockpit {
     private readonly _fwd = new THREE.Vector3();
     private readonly _right = new THREE.Vector3();
 
+    private readonly _tilt: ReturnType<typeof createTiltIndicator>;
+    private readonly _rose: ReturnType<typeof createCompassRose>;
+    private readonly _depth: ReturnType<typeof createDepthGauge>;
+    private readonly _airRow: HTMLDivElement;
+    private readonly _groundRow: HTMLDivElement;
+    private readonly _surfaceRow: HTMLDivElement;
+
     private _hasDrone = false;
     private _enabled = false;
     private _hiddenByMode = false;
+    private _domain: AssetDomainState | null = null;
 
     constructor() {
         this._root = document.createElement('section');
@@ -89,9 +104,13 @@ export class Cockpit {
         });
         this._vsi = createVerticalSpeedIndicator({ maxRate: 2000 });
 
-        const row = document.createElement('div');
-        row.className = 'cockpit-row';
-        row.append(
+        this._tilt = createTiltIndicator();
+        this._rose = createCompassRose();
+        this._depth = createDepthGauge();
+
+        this._airRow = document.createElement('div');
+        this._airRow.className = 'cockpit-row';
+        this._airRow.append(
             cell('ATTITUDE', this._attitude.el),
             cell('HEADING', this._heading.el),
             cell('ALTIMETER', this._altimeter.el),
@@ -99,17 +118,54 @@ export class Cockpit {
             cell('VSI', this._vsi.el),
         );
 
-        this._root.append(row);
+        // A rover has no attitude ball and a vessel has no altimeter; showing air
+        // instruments for either was the reason selecting one showed nothing at all.
+        this._groundRow = document.createElement('div');
+        this._groundRow.className = 'cockpit-row';
+        this._groundRow.append(cell('TILT / ROLLOVER', this._tilt.el));
+
+        this._surfaceRow = document.createElement('div');
+        this._surfaceRow.className = 'cockpit-row';
+        this._surfaceRow.append(
+            cell('COMPASS', this._rose.el),
+            cell('DEPTH', this._depth.el),
+        );
+
+        this._root.append(this._airRow, this._groundRow, this._surfaceRow);
         document.body.appendChild(this._root);
     }
 
     /** Drive the cockpit from the selected drone. Only renders when the operator
      *  has toggled it on AND a drone is selected — otherwise it stays hidden so
      *  it never covers the other console surfaces. */
-    update(drone: DroneState | null): void {
-        this._hasDrone = !!(drone && isDroneReady(drone));
+    update(drone: DroneState | null, domain?: AssetDomainState | null): void {
+        // A ground or surface asset has no v1 drone projection at all — the air
+        // path is the only one that produces one — so presence is either.
+        this._domain = domain ?? null;
+        this._hasDrone = !!(drone && isDroneReady(drone)) || this._domain !== null;
         this._apply();
-        if (!this._enabled || !this._hasDrone || this._hiddenByMode || !drone) return;
+        if (!this._enabled || !this._hasDrone || this._hiddenByMode) return;
+
+        if (isGroundDomainState(this._domain)) {
+            this._tilt.update(
+                this._domain.rollRad, this._domain.pitchRad, this._domain.rolloverRisk);
+            return;
+        }
+
+        if (isSurfaceDomainState(this._domain)) {
+            this._rose.update(
+                this._domain.headingRad,
+                this._domain.courseOverGroundRad,
+                this._domain.speedOverGroundMps);
+            this._depth.update(
+                this._domain.waterDepthM,
+                this._domain.draftM,
+                this._domain.underKeelClearanceM,
+                this._domain.hasUnsafeUnderKeelClearance);
+            return;
+        }
+
+        if (!drone) return;
 
         // Attitude from the body axes — convention-independent.
         this._q.set(drone.rot[0], drone.rot[1], drone.rot[2], drone.rot[3]);
@@ -147,5 +203,13 @@ export class Cockpit {
     private _apply(): void {
         const showing = this._enabled && this._hasDrone && !this._hiddenByMode;
         this._root.classList.toggle('hidden', !showing);
+
+        // Exactly one row at a time: the instruments are domain-specific, and an
+        // altimeter beside a depth gauge invites reading one as the other.
+        const ground = isGroundDomainState(this._domain);
+        const surface = isSurfaceDomainState(this._domain);
+        this._airRow.hidden = ground || surface;
+        this._groundRow.hidden = !ground;
+        this._surfaceRow.hidden = !surface;
     }
 }

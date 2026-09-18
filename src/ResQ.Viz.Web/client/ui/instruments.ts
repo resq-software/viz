@@ -12,116 +12,30 @@
 // update() mutates only the dynamic nodes (transform attributes, hand/needle
 // endpoints, digital text, and the live aria-label). All colors stay design
 // tokens from styles/tokens.css; sizing/positioning is left to external CSS.
+//
+// Ground and surface faces live in ./vehicleInstruments.ts; the geometry and
+// DOM helpers both families share live in ./instrumentPrimitives.ts.
 
-//#region Shared dial geometry (ported from lib/instrument-dial)
-
-/** Square SVG user-space edge shared by every instrument. */
-const INSTRUMENT_VIEW = 200;
-/** Centre of the instrument in user space. */
-const INSTRUMENT_CENTER = INSTRUMENT_VIEW / 2;
-/** Local alias for the shared centre. */
-const CENTER = INSTRUMENT_CENTER;
-
-/** A point in instrument user space. */
-interface Point {
-	readonly x: number;
-	readonly y: number;
-}
-
-/** Coerce a possibly-undefined / non-finite input to a finite number. */
-function toFinite(value: number | undefined, fallback = 0): number {
-	return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-/** Clamp `value` into the inclusive `[min, max]` range. */
-function clamp(value: number, min: number, max: number): number {
-	return Math.min(max, Math.max(min, value));
-}
-
-/** Point on a circle centred on the instrument, at `angleDeg` clockwise from top. */
-function polar(angleDeg: number, radius: number): Point {
-	const rad = (angleDeg * Math.PI) / 180;
-	return { x: CENTER + radius * Math.sin(rad), y: CENTER - radius * Math.cos(rad) };
-}
-
-/** SVG path string for an arc between two angles at a given radius. */
-function describeArc(radius: number, startAngle: number, endAngle: number): string {
-	const start = polar(startAngle, radius);
-	const end = polar(endAngle, radius);
-	const largeArc = Math.abs(endAngle - startAngle) > 180 ? 1 : 0;
-	const sweep = endAngle >= startAngle ? 1 : 0;
-	return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} ${sweep} ${end.x} ${end.y}`;
-}
-
-/** Map a scale `value` (clamped to `[min, max]`) to an angle over `sweep` degrees. */
-function valueToAngle(value: number, min: number, max: number, startAngle: number, sweep: number): number {
-	const span = max - min;
-	const fraction = span === 0 ? 0 : (clamp(value, min, max) - min) / span;
-	return startAngle + fraction * sweep;
-}
-
-/** Evenly spaced scale values from `min` to `max` inclusive across `divisions` intervals. */
-function linearTicks(min: number, max: number, divisions: number): number[] {
-	const safe = Math.max(1, Math.round(divisions));
-	return Array.from({ length: safe + 1 }, (_unused, index) => min + ((max - min) * index) / safe);
-}
-
-//#endregion
-
-//#region SVG DOM helpers
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** Attribute bag for {@link svgEl}; values are stringified via `setAttribute`. */
-type SvgAttrs = Record<string, string | number>;
-
-/** Create a namespaced SVG element and apply the given attributes. */
-function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: SvgAttrs): SVGElementTagNameMap[K] {
-	const el = document.createElementNS(SVG_NS, tag);
-	for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value));
-	return el;
-}
-
-/** Create an SVG `<text>` node with `content` as its text child. */
-function svgText(attrs: SvgAttrs, content: string): SVGTextElement {
-	const el = svgEl('text', attrs);
-	el.textContent = content;
-	return el;
-}
-
-/** Shared attributes for every monospace dial label / number. */
-function labelAttrs(size: number, anchor: string, x: number, y: number): SvgAttrs {
-	return { class: 'font-mono', 'dominant-baseline': 'middle', 'font-size': size, 'text-anchor': anchor, x, y };
-}
-
-/** Mutate a `<line>`'s endpoints in place (dynamic hand / needle updates). */
-function setLine(el: SVGLineElement, from: Point, to: Point): void {
-	el.setAttribute('x1', String(from.x));
-	el.setAttribute('y1', String(from.y));
-	el.setAttribute('x2', String(to.x));
-	el.setAttribute('y2', String(to.y));
-}
-
-/** A stationary hub/needle line anchored at the centre, endpoints set later. */
-function centredLine(stroke: string, width: number): SVGLineElement {
-	return svgEl('line', { stroke, 'stroke-linecap': 'round', 'stroke-width': width, x1: CENTER, x2: CENTER, y1: CENTER, y2: CENTER });
-}
-
-/** Build the wrapper `<div class="instrument instrument--*">` plus its `<svg>`. */
-function createRoot(modifier: string, ariaLabel: string): { el: HTMLDivElement; svg: SVGSVGElement } {
-	const el = document.createElement('div');
-	el.className = `instrument instrument--${modifier}`;
-	el.setAttribute('role', 'img');
-	el.setAttribute('aria-label', ariaLabel);
-	const svg = svgEl('svg', { viewBox: `0 0 ${INSTRUMENT_VIEW} ${INSTRUMENT_VIEW}` });
-	svg.setAttribute('aria-hidden', 'true');
-	svg.style.width = '100%';
-	svg.style.height = '100%';
-	el.appendChild(svg);
-	return { el, svg };
-}
-
-//#endregion
+import {
+	CENTER,
+	INSTRUMENT_VIEW,
+	type Point,
+	type SvgAttrs,
+	centredLine,
+	clamp,
+	createRoot,
+	describeArc,
+	labelAttrs,
+	linearTicks,
+	normalizeHeading,
+	polar,
+	positiveMod,
+	setLine,
+	svgEl,
+	svgText,
+	toFinite,
+	valueToAngle,
+} from './instrumentPrimitives';
 
 //#region Label builders (ported aria-label sentences)
 
@@ -158,16 +72,6 @@ function vsiLabel(rounded: number): string {
 /** Wrap a roll angle into the (−180, 180] range so 190° reads as −170°. */
 function normalizeRoll(value: number): number {
 	return ((((value + 180) % 360) + 360) % 360) - 180;
-}
-
-/** Wrap a heading into the [0, 360) range. */
-function normalizeHeading(value: number): number {
-	return ((value % 360) + 360) % 360;
-}
-
-/** Non-negative remainder, so negative altitudes still map onto the dial. */
-function positiveMod(value: number, modulus: number): number {
-	return ((value % modulus) + modulus) % modulus;
 }
 
 /** Format a thousands label without a trailing `.0`. */
