@@ -56,9 +56,16 @@ git submodule update --init --recursive          # Init SDK submodule
 
 ## The SDK submodule pin
 
-`lib/dotnet-sdk` is pinned to **`a3f8b89` on `release/0.6.x`**, three commits past the `v0.6.0`
-tag. Those three commits (#85–#87) added drone attitude, the explicit yaw command, and landing
-recovery. **No tag contains them.** Do not "tidy" the pin onto a tag.
+`lib/dotnet-sdk` is pinned to **`d04b489` on `release/0.6.x`**, four commits past the `v0.6.0`
+tag. Those commits (#85–#87, #101) added drone attitude, the explicit yaw command, landing
+recovery, and the forward-pitch sign fix. **No tag contains them.** Do not "tidy" the pin onto a
+tag.
+
+#101 is worth knowing about before trusting drone attitude: the model's pitch term was negated,
+so a drone under way rode 17 degrees nose-UP — front high, rear rotors low. Both this repo's
+`SdkFlightContractTests` and the SDK's own test asserted `Math.Abs(pitch) > 0.01`, which a
+nose-up drone satisfies as well as a correct one, so it went unnoticed. Both now assert the
+rotated forward basis vector dips below the horizon.
 
 The SDK's `main` has since restructured: `ResQ.Simulation.Engine`, `ResQ.Mavlink`,
 `ResQ.Mavlink.Dialect` and `ResQ.Mavlink.Mesh` **do not exist there**. All four are project
