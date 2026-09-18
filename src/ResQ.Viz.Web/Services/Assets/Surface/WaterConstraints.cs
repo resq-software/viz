@@ -85,6 +85,7 @@ public static class WaterConstraints
         WaterBlockReason.MarginalDepth => "water.caution.shallow",
         WaterBlockReason.ZoneSpeedLimit => "water.caution.zone",
         WaterBlockReason.NoWaterData => "water.unknown.no-data",
+        WaterBlockReason.SetExceedsPropulsion => "water.blocked.set",
         _ => "water.clear",
     };
 

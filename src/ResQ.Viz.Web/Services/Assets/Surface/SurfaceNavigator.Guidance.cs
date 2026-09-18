@@ -214,10 +214,10 @@ public sealed partial class SurfaceNavigator
             return Outcome(SurfaceSetpoint.Drift, hasReachedTarget: true);
         }
 
-        double bearing = CoordinateFrames.BearingFromEusVector(
-            new Vector3(
-                (float)(_targetEus.X - state.EastM), 0f, (float)(_targetEus.Z - state.SouthM)),
-            state.HeadingRad);
+        var toTarget = new Vector3(
+            (float)(_targetEus.X - state.EastM), 0f, (float)(_targetEus.Z - state.SouthM));
+
+        double bearing = CoordinateFrames.BearingFromEusVector(toTarget, state.HeadingRad);
 
         double error = ShortestTurnRad(bearing, state.HeadingRad);
 
@@ -225,10 +225,62 @@ public sealed partial class SurfaceNavigator
         // v covers v * tau_u. Inverted, it is the fastest speed from which this hull can still
         // stop inside its arrival tolerance without going astern.
         double coast = Math.Max(0.0, distance - ArrivalToleranceM) / _profile.SurgeTimeConstantSec;
-        double speed = Math.Min(Math.Min(_cruiseSpeedMps, input.SpeedCeilingMps), coast);
+        double available = Math.Min(_cruiseSpeedMps, input.SpeedCeilingMps);
+
+        // The set has to be taken out of the speed command, and this is the only law that does
+        // it. `coast` is a closure rate OVER THE GROUND, but SurfaceSetpoint.SurgeMps is
+        // water-relative: the drift is added downstream, in the same step, by the integrator.
+        // Commanding the closure rate as surge therefore under-delivers by exactly the set's
+        // component along the track, and the vessel settles where the two balance — at
+        // ArrivalToleranceM + tau_u * setAlongTrack, short of its target, with way on and
+        // nothing left to reduce the range. That is a permanent stall: `distance` stops
+        // falling, so `coast` stops falling, so the surge command never changes again.
+        //
+        // Subtracting it is the speed-axis counterpart of the crab angle a line-of-sight law
+        // takes out of the heading. The heading needs no equivalent here because YawFor closes
+        // on the live bearing to the target and so absorbs the cross-track component already;
+        // it is only the along-track component that no other term accounts for.
+        double setAlongTrack = AlongTrackComponent(input.PassiveDriftEus, toTarget);
+        double required = coast - setAlongTrack;
+
+        // A set that no throttle setting can stem. Not the same as a saturated command: this is
+        // the case where the best achievable closure is zero or negative, so the range can only
+        // grow. Reporting it is the whole point — the alternative, which is what shipped, is a
+        // vessel that holds station on the spot forever with mode `transit` and execution
+        // `Executing`, and an operator with no way to tell that from a long passage.
+        if (available + setAlongTrack <= MinClosureRateMps)
+        {
+            ClearTask();
+            BlockingReason = WaterBlockReason.SetExceedsPropulsion;
+            Mode = SurfaceGuidanceMode.Blocked;
+            return Outcome(SurfaceSetpoint.Drift, hasBecomeBlocked: true);
+        }
+
+        double speed = Math.Min(available, Math.Max(0.0, required));
         double alignment = Math.Max(MinManoeuvreSpeedFraction, Math.Cos(error));
 
         return Outcome(new SurfaceSetpoint(speed * alignment, YawFor(error)));
+    }
+
+    /// <summary>Component of a scene-frame velocity along a track, in metres per second.</summary>
+    /// <remarks>
+    /// Positive when the velocity carries the vessel toward the far end of <paramref name="track"/>,
+    /// negative when it sets the vessel back down it. A degenerate track contributes nothing
+    /// rather than a NaN: a zero-length track means the vessel is on its target and the caller
+    /// has already returned.
+    /// </remarks>
+    /// <param name="velocityEus">Velocity in the scene frame, in metres per second.</param>
+    /// <param name="track">Vector from the vessel to the far end of the leg, in the scene frame.</param>
+    /// <returns>The signed along-track component.</returns>
+    private static double AlongTrackComponent(Vector3 velocityEus, Vector3 track)
+    {
+        float length = track.Length();
+        if (length <= float.Epsilon)
+        {
+            return 0.0;
+        }
+
+        return ((velocityEus.X * track.X) + (velocityEus.Z * track.Z)) / length;
     }
 
     /// <summary>Runs the course-hold law.</summary>

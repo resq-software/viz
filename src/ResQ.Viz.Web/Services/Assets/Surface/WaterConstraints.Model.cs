@@ -74,6 +74,19 @@ public enum WaterBlockReason
 
     /// <summary>The environment reported no usable water data for this point.</summary>
     NoWaterData,
+
+    /// <summary>
+    /// The water is navigable, but the set through it exceeds what this hull can stem: at full
+    /// throttle the best achievable closure along the leg is zero or negative.
+    /// </summary>
+    /// <remarks>
+    /// The only member that is a property of the hull as well as the water, and it earns its
+    /// place here because it is refused for the same reason and reported through the same
+    /// channel: the passage cannot be made. Unlike the depth members it is not a property of a
+    /// point, so nothing evaluating a single position returns it — it comes only from the
+    /// transit law, which is the only code that knows both the leg and the propulsion left.
+    /// </remarks>
+    SetExceedsPropulsion,
 }
 
 /// <summary>One evaluated point of water, for one hull.</summary>
