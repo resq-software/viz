@@ -211,6 +211,21 @@ public sealed partial class GroundNavigator
     /// <summary>Why the route was refused, or <see cref="TraversabilityReason.None"/>.</summary>
     public TraversabilityReason BlockingReason { get; private set; } = TraversabilityReason.None;
 
+    /// <summary>Which way the vehicle intends to move next: −1 astern, +1 ahead.</summary>
+    /// <remarks>
+    /// Needed because a stopped vehicle has no direction of travel to read off its speed, and the
+    /// probes that decide what is in the way are laid off along one. Inferring it from the mode
+    /// alone misses a manual command: a negative <see cref="SetManualControl"/> speed stays in
+    /// <see cref="GroundGuidanceMode.Manual"/> rather than entering
+    /// <see cref="GroundGuidanceMode.Reversing"/>, so a vehicle at rest about to be driven
+    /// backwards would be probed forwards — refusing nothing behind it and detecting nothing
+    /// behind it either.
+    /// </remarks>
+    public double CommandedTravelSign =>
+        Mode == GroundGuidanceMode.Reversing || (Mode == GroundGuidanceMode.Manual && _manualSpeedMps < 0.0)
+            ? -1.0
+            : 1.0;
+
     /// <summary>Whether a vehicle ahead — not the ground — is what is holding this one at rest.</summary>
     /// <remarks>
     /// A level, not an edge: it is true for as long as the obstruction is there, and the owning

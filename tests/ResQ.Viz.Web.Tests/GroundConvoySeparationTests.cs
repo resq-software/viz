@@ -186,6 +186,111 @@ public sealed class GroundConvoySeparationTests
             before + 1.0, "nor should it have backed away from something it can see");
     }
 
+    // ─── Which way "ahead" is, and when a hold is over ──────────────────────
+
+    /// <summary>A vehicle about to be driven backwards probes backwards, even at a standstill.</summary>
+    /// <remarks>
+    /// Raised in review, and real. A stopped vehicle has no direction of travel to read off its
+    /// speed, so the probes that decide what is in the way fall back on intent — and inferring
+    /// intent from the guidance mode alone misses the manual case: a negative
+    /// <c>SetManualControl</c> speed stays in <c>Manual</c> rather than entering <c>Reversing</c>.
+    /// A rover at rest with reverse on the controls was therefore probed <em>forwards</em>: it
+    /// would neither refuse the water behind it nor see the vehicle behind it, and reverse into
+    /// either. The same one decision feeds the terrain probe, so this was already true of ground
+    /// before it was true of vehicles.
+    /// <para>
+    /// Asserted on the navigator rather than end to end, and deliberately so: manual control has
+    /// no command surface today — <c>ApplySetSteering</c> rejects with
+    /// <c>command.steering.unavailable</c> because no wire field carries a road-wheel angle — so
+    /// nothing outside this assembly can put a rover into manual reverse. The dedicated
+    /// <c>Reverse</c> command enters its own mode, which the previous expression already handled.
+    /// This is therefore a latent trap closed ahead of the manual-control command that would
+    /// spring it, not a live defect, and it is worth saying so rather than implying otherwise.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_Vehicle_Commanded_Astern_Reports_Astern_As_Its_Travel_Direction()
+    {
+        var navigator = new GroundNavigator(Profile);
+
+        navigator.CommandedTravelSign.Should().Be(1.0, "idle means ahead");
+
+        navigator.SetManualControl(speedMps: -1.5, steeringAngleRad: 0.0);
+        navigator.CommandedTravelSign.Should().Be(
+            -1.0, "the controls are asking for astern, whatever mode that leaves the navigator in");
+
+        navigator.SetManualControl(speedMps: 1.5, steeringAngleRad: 0.0);
+        navigator.CommandedTravelSign.Should().Be(1.0);
+
+        navigator.Reverse(1.0);
+        navigator.CommandedTravelSign.Should().Be(-1.0, "and the dedicated reverse mode still does");
+    }
+
+    /// <summary>A hold does not outlive the step it was measured in.</summary>
+    /// <remarks>
+    /// Also raised in review. The level was set after the early returns, so a vehicle that was
+    /// holding for another and then went idle, was immobilised, or had its ground refused kept
+    /// the hold latched — and because the event is edge-triggered off the level, the matching
+    /// <c>ground.holdingForVehicle.cleared</c> never fired. An operator would be left with a
+    /// vehicle reported as waiting for traffic that had actually stopped for something else.
+    /// </remarks>
+    [Fact]
+    public void A_Hold_Clears_When_The_Vehicle_Stops_For_Another_Reason()
+    {
+        var navigator = new GroundNavigator(Profile);
+        var state = GroundMotionState.AtRest(eastM: 0.0, southM: 0.0, headingRad: 0.0);
+        var contact = FlatContact();
+
+        navigator.DriveTo(NorthOf(100.0));
+        navigator.Sample(in state, new GroundGuidanceInput(contact, PeerGapM: 0.0));
+        navigator.IsHoldingForPeer.Should().BeTrue("a vehicle is sitting on its standoff");
+
+        navigator.Hold();
+        navigator.Sample(in state, new GroundGuidanceInput(contact, PeerGapM: 0.0));
+
+        navigator.IsHoldingForPeer.Should().BeFalse(
+            "it is stopped because it was told to, not because of the vehicle in front");
+    }
+
+    /// <summary>Arriving is not holding, even with a vehicle parked on the target.</summary>
+    /// <remarks>
+    /// The other half of the same correction. A target set just short of another vehicle reaches
+    /// its arrival tolerance on the same call the peer ceiling zeroes the speed, and reporting
+    /// both a completed task and a traffic hold for one step is how an event log stops being
+    /// readable.
+    /// </remarks>
+    [Fact]
+    public void Arriving_Is_Not_Reported_As_Holding()
+    {
+        var navigator = new GroundNavigator(Profile);
+        var state = GroundMotionState.AtRest(eastM: 0.0, southM: 0.0, headingRad: 0.0);
+
+        navigator.DriveTo(NorthOf(0.5));
+        var outcome = navigator.Sample(
+            in state, new GroundGuidanceInput(FlatContact(), PeerGapM: 0.0));
+
+        outcome.HasReachedTarget.Should().BeTrue("the target is inside the arrival tolerance");
+        navigator.IsHoldingForPeer.Should().BeFalse();
+    }
+
+    /// <summary>Level, dry, traversable ground, so nothing but the peer can stop the vehicle.</summary>
+    /// <returns>A resolved contact on the plateau.</returns>
+    private static TerrainContactState FlatContact()
+    {
+        var ground = new Plateau();
+
+        var contact = TerrainContact.Resolve(
+            Vector3.Zero,
+            headingRad: 0.0,
+            Profile,
+            ground.Sample(Vector3.Zero, GroundContactGeometry.NormalSpacingM(Profile)),
+            deltaSeconds: 0.0,
+            TerrainNormalFilter.Uninitialised).Contact;
+
+        contact.IsImmobilised.Should().BeFalse("the fixture must not stop the vehicle itself");
+        return contact;
+    }
+
     /// <summary>Every vehicle class with both a ground motion model and an asset descriptor.</summary>
     /// <remarks>
     /// Derived rather than listed, so a rover class added later is covered without anyone

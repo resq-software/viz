@@ -583,7 +583,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         // before it has picked up any speed to infer a direction from.
         double sign = _motion.ForwardSpeedMps != 0.0
             ? (double)Math.Sign(_motion.ForwardSpeedMps)
-            : _navigator.Mode == GroundGuidanceMode.Reversing ? -1.0 : 1.0;
+            : _navigator.CommandedTravelSign;
 
         double travelHeading = sign >= 0.0
             ? _motion.HeadingRad

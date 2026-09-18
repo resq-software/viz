@@ -63,6 +63,11 @@ public sealed partial class GroundNavigator
     /// <returns>The setpoint to integrate, and any transition this call made.</returns>
     public GroundGuidanceOutcome Sample(in GroundMotionState state, in GroundGuidanceInput input)
     {
+        // Cleared first, so no path out of this method can leave a hold latched from a previous
+        // step. Every early return below is a state in which the vehicle is stopped for a reason
+        // that is not the vehicle in front of it.
+        IsHoldingForPeer = false;
+
         if (Mode is GroundGuidanceMode.Idle or GroundGuidanceMode.Holding
             or GroundGuidanceMode.Parked or GroundGuidanceMode.Blocked
             or GroundGuidanceMode.EmergencyStopped)
@@ -96,14 +101,25 @@ public sealed partial class GroundNavigator
             return Outcome(GroundSetpoint.Stop, hasBecomeBlocked: true);
         }
 
-        double ceiling = Math.Min(
-            Math.Max(0.0, input.Contact.SafeSpeedMps), PeerCeilingMps(input.PeerGapM));
+        double peerCeiling = PeerCeilingMps(input.PeerGapM);
+        double ceiling = Math.Min(Math.Max(0.0, input.Contact.SafeSpeedMps), peerCeiling);
 
-        IsHoldingForPeer = ceiling <= 0.0 && input.Contact.SafeSpeedMps > 0.0;
+        // Judged on the peer ceiling alone, not on the combined one: ground that has already
+        // stopped the vehicle is reported by the immobilisation arm above, and attributing that
+        // to the vehicle in front would send an operator looking for the wrong thing.
+        bool heldByPeer = peerCeiling <= 0.0 && input.Contact.SafeSpeedMps > 0.0;
 
-        return IsOperatorRecovery(Mode)
+        var outcome = IsOperatorRecovery(Mode)
             ? Outcome(ManualSetpoint(ceiling))
             : DrivingOutcome(in state, ceiling);
+
+        // Set from the finished outcome rather than before it. A call that arrives at its target
+        // in the same step has finished its task, not stopped for traffic, and every early return
+        // above has already cleared the level — so a vehicle that goes idle, is immobilised or is
+        // refused its ground cannot leave a stale hold latched and never raise the cleared event.
+        IsHoldingForPeer = heldByPeer && !outcome.HasReachedTarget;
+
+        return outcome;
     }
 
     /// <summary>Speed ceiling imposed by the nearest vehicle in the corridor ahead.</summary>
