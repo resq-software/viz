@@ -95,6 +95,21 @@ public sealed partial class GroundAsset
                     : "Advisory: cross-slope back inside the platform's operational limit.");
         }
 
+        // Held by another vehicle rather than by the ground. Edge-triggered off the navigator's
+        // level, so one hold raises one event however long it lasts. Info, not a warning: the
+        // vehicle is doing the right thing and will free itself, which is exactly what separates
+        // it from `ground.immobilised` directly above.
+        if (_navigator.IsHoldingForPeer != _wasHoldingForPeer)
+        {
+            _wasHoldingForPeer = _navigator.IsHoldingForPeer;
+            Raise(
+                _wasHoldingForPeer ? "ground.holdingForVehicle" : "ground.holdingForVehicle.cleared",
+                AssetEventSeverity.Info,
+                _wasHoldingForPeer
+                    ? "Holding: a vehicle is stopped inside this one's stopping distance."
+                    : "The vehicle ahead is clear; resuming.");
+        }
+
         // Latched with hysteresis, not level-triggered: see the remarks.
         double percent = EnergyPercent;
 

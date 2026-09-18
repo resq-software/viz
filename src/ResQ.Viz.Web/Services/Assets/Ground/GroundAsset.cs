@@ -122,6 +122,13 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// </remarks>
     private const double LookaheadReactionSteps = 2.0;
 
+    /// <summary>Multiple of the standoff the peer probe always reaches, however slowly the vehicle moves.</summary>
+    /// <remarks>
+    /// Two, so that a vehicle sitting on its standoff still sees the vehicle it is sitting behind
+    /// with room to spare, and so that one settling into the standoff never crosses out of range.
+    /// </remarks>
+    private const double PeerReachFloorStandoffs = 2.0;
+
     /// <summary>Horizontal distance below which a step is not attributed to travel, in metres.</summary>
     /// <remarks>
     /// A collision requires the vehicle to have gone somewhere. Positions are single-precision
@@ -191,6 +198,9 @@ public sealed partial class GroundAsset : IStepDrivenAsset
 
     private bool _wasImmobilised;
     private bool _wasRolloverRisk;
+
+    /// <summary>Whether a vehicle ahead was holding this one at the end of the previous step.</summary>
+    private bool _wasHoldingForPeer;
     private bool _lowEnergyLatched;
 
     /// <summary>Places a rover on the terrain and prepares it to be stepped.</summary>
@@ -340,7 +350,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         // what stops the rest of this method reading the resulting elevation jump as travel.
         RebaselineIfEnvironmentChanged(context.Environment);
 
-        var guidance = _navigator.Sample(in _motion, BuildGuidanceInput(delta));
+        var guidance = _navigator.Sample(in _motion, BuildGuidanceInput(delta, context.Peers));
 
         // The emergency stop overrides guidance rather than being expressed through it, so a
         // latched stop survives anything that reached the navigator by another route.
@@ -552,7 +562,8 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// </remarks>
     /// <param name="deltaSeconds">Timestep in seconds, used only for the reaction allowance.</param>
     /// <returns>The contact under the vehicle, plus the look-ahead verdict where one was taken.</returns>
-    private GroundGuidanceInput BuildGuidanceInput(double deltaSeconds)
+    private GroundGuidanceInput BuildGuidanceInput(
+        double deltaSeconds, IReadOnlyList<PeerPose> peers)
     {
         if (_navigator.Mode is not (GroundGuidanceMode.Driving or GroundGuidanceMode.Reversing
             or GroundGuidanceMode.Manual))
@@ -579,7 +590,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         // before it has picked up any speed to infer a direction from.
         double sign = _motion.ForwardSpeedMps != 0.0
             ? (double)Math.Sign(_motion.ForwardSpeedMps)
-            : _navigator.Mode == GroundGuidanceMode.Reversing ? -1.0 : 1.0;
+            : _navigator.CommandedTravelSign;
 
         double travelHeading = sign >= 0.0
             ? _motion.HeadingRad
@@ -593,7 +604,31 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         var ahead = _environment.Sample(probe, GroundContactGeometry.NormalSpacingM(_profile));
         var verdict = Traversability.Evaluate(_profile, ahead, travelHeading);
 
-        return new GroundGuidanceInput(_contact, verdict.Class, verdict.Reason);
+        // The same reach, against the vehicles instead of the ground. `reach` is already this
+        // platform's stopping distance — footprint, reaction over the steps a commanded change
+        // takes to reach the wheels, and the braking term under the traction it actually has —
+        // so a peer inside it is one this vehicle could not stop short of if it kept going. It
+        // was only ever laid off at the terrain; nothing read the peer poses at all, so two
+        // rovers closed to interpenetration without either of them slowing.
+        // Floored, and the floor is load-bearing. `reach` is a stopping distance, so it collapses
+        // to nothing as the vehicle slows — which is precisely when the vehicle in front matters
+        // most. A vehicle holding at the standoff with a reach shorter than that standoff loses
+        // sight of what it is stopped for, the ceiling lifts, it accelerates, the peer comes back
+        // into range, and it oscillates its way into contact one step at a time. Measured: a
+        // tracked rover parked at a 0.94 m gap dropped its peer for one step and took off at
+        // 0.156 m/s. The probe therefore always reaches twice the standoff, whatever the speed.
+        double peerReach = Math.Max(reach, PeerReachFloorStandoffs * GroundNavigator.PeerStandoffM);
+
+        var peer = PeerSeparation.NearestAhead(
+            peers, AssetId, AssetDomain.Ground, _positionEus,
+            _profile.FootprintRadiusM, travelHeading, peerReach);
+
+        return new GroundGuidanceInput(
+            _contact,
+            verdict.Class,
+            verdict.Reason,
+            peer.GapM,
+            LookaheadReactionSteps * Math.Max(0.0, deltaSeconds));
     }
 
     /// <summary>Draws one step's energy from the pack.</summary>
