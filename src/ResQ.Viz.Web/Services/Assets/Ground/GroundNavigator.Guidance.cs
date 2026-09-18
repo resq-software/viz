@@ -101,7 +101,8 @@ public sealed partial class GroundNavigator
             return Outcome(GroundSetpoint.Stop, hasBecomeBlocked: true);
         }
 
-        double peerCeiling = PeerCeilingMps(input.PeerGapM);
+        double peerCeiling = PeerCeilingMps(
+            input.PeerGapM, input.Contact.TractionCoefficient, input.ReactionSeconds);
         double ceiling = Math.Min(Math.Max(0.0, input.Contact.SafeSpeedMps), peerCeiling);
 
         // Judged on the peer ceiling alone, not on the combined one: ground that has already
@@ -142,17 +143,38 @@ public sealed partial class GroundNavigator
     /// </para>
     /// </remarks>
     /// <param name="gapM">Clear ground ahead in metres, both footprints already removed.</param>
+    /// <param name="tractionCoefficient">Grip under the wheels, which is what the drivetrain will actually brake against.</param>
+    /// <param name="reactionSeconds">Delay before a commanded change reaches the wheels, in seconds.</param>
     /// <returns>The permitted speed in metres per second. Zero at or inside the standoff.</returns>
-    private double PeerCeilingMps(double gapM)
+    private double PeerCeilingMps(double gapM, double tractionCoefficient, double reactionSeconds)
     {
         if (double.IsPositiveInfinity(gapM))
         {
             return double.PositiveInfinity;
         }
 
-        return Math.Sqrt(
-            2.0 * _profile.MaxBrakingMps2 * ApproachBrakingFraction
-            * Math.Max(0.0, gapM - PeerStandoffM));
+        double room = Math.Max(0.0, gapM - PeerStandoffM);
+
+        // The braking rate the drivetrain will really achieve, not the one the profile declares.
+        // Both integrators decelerate at MaxBrakingMps2 * traction, and a surface can put traction
+        // below any fixed fraction — wet vegetation reaches 0.5625 — so a ceiling assuming a fixed
+        // fraction hands back a speed the vehicle cannot stop from and lets it cross the standoff.
+        double braking = _profile.MaxBrakingMps2
+            * Math.Clamp(tractionCoefficient, GroundConditions.MinTractionCoefficient, 1.0);
+
+        if (braking <= 0.0)
+        {
+            return 0.0;
+        }
+
+        // Invert the stopping distance rather than the braking term alone:
+        //     room = v * reaction + v^2 / (2 * braking)
+        // whose positive root is the fastest speed that still stops inside `room` including the
+        // ground covered before the command reaches the wheels. With no reaction delay this
+        // reduces exactly to sqrt(2 * braking * room), which is the form the target approach uses.
+        double lag = Math.Max(0.0, reactionSeconds) * braking;
+
+        return Math.Sqrt((lag * lag) + (2.0 * braking * room)) - lag;
     }
 
     /// <summary>Runs the autonomous guidance law against the assigned target.</summary>

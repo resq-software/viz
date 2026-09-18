@@ -186,6 +186,35 @@ public sealed class GroundConvoySeparationTests
             before + 1.0, "nor should it have backed away from something it can see");
     }
 
+    /// <summary>On ground that cannot deliver the declared braking, it still stops in time.</summary>
+    /// <remarks>
+    /// Raised in review, and the sharpest of the findings. The ceiling was the same closed form
+    /// the target approach uses, which assumes braking at a fixed fraction of the profile's
+    /// declared rate. Both integrators actually decelerate at <c>MaxBrakingMps2 * traction</c>,
+    /// and the surface table reaches 0.5625 on wet vegetation — below that fixed fraction. The
+    /// ceiling therefore handed back a speed the vehicle could not stop from, and the extra
+    /// detection range bought by the reaction allowance does not help, because it only finds the
+    /// peer sooner; it does not change what the vehicle was permitted to be doing when it did.
+    /// <para>
+    /// The ceiling now inverts the whole stopping distance — reaction travel included — against
+    /// the traction the drivetrain will really brake at.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void On_Slippery_Ground_It_Still_Stops_Before_The_Vehicle_Ahead()
+    {
+        var convoy = new Convoy(slippery: true);
+        convoy.Follower.Apply(DriveTo(FollowerId, NorthOf(StartSeparationM + 40.0)))
+            .IsAccepted.Should().BeTrue();
+
+        convoy.Run(seconds: 180.0);
+
+        convoy.GapM.Should().BeGreaterThan(
+            0.0,
+            "the ceiling has to be solved against the braking the wheels can deliver, not the "
+            + "braking the profile declares");
+    }
+
     // ─── Which way "ahead" is, and when a hold is over ──────────────────────
 
     /// <summary>A vehicle about to be driven backwards probes backwards, even at a standstill.</summary>
@@ -273,6 +302,80 @@ public sealed class GroundConvoySeparationTests
         navigator.IsHoldingForPeer.Should().BeFalse();
     }
 
+    /// <summary>The permitted speed fits the stopping distance the wheels can actually deliver.</summary>
+    /// <remarks>
+    /// Asserted against the formula rather than through a convoy, deliberately. The convoy cases
+    /// cannot distinguish this: the standoff is a whole metre and the error is about seven per
+    /// cent of the room, so an over-permissive ceiling still stops the vehicle before contact and
+    /// every behavioural assertion passes either way. That would leave the correction
+    /// unfalsifiable — so the test is on the quantity that is actually wrong.
+    /// <para>
+    /// The vehicle must be commanded no faster than a speed whose full stopping distance — the
+    /// ground covered before the command reaches the wheels, plus the braking run at
+    /// <c>MaxBrakingMps2 * traction</c> — fits inside the room it has. Wet vegetation puts
+    /// traction at 0.5625, below the fixed fraction the ceiling previously assumed.
+    /// </para>
+    /// <para>
+    /// The room is small on purpose. The first version of this test used four metres, where the
+    /// cruise speed binds long before the peer ceiling does — so it passed against every wrong
+    /// formula too. Half a metre puts the ceiling at about 1 m/s, well inside cruise, which is
+    /// the only regime in which this quantity is the one being measured.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_Permitted_Speed_Fits_The_Braking_The_Wheels_Can_Deliver()
+    {
+        const double roomM = 0.5;
+        const double reactionSeconds = 0.2;
+
+        var contact = SlipperyContact();
+        var navigator = new GroundNavigator(Profile);
+        var state = GroundMotionState.AtRest(eastM: 0.0, southM: 0.0, headingRad: 0.0);
+
+        // Far enough that the arrival law never binds: only the peer ceiling is under test.
+        navigator.DriveTo(NorthOf(500.0));
+
+        var outcome = navigator.Sample(in state, new GroundGuidanceInput(
+            contact,
+            PeerGapM: GroundNavigator.PeerStandoffM + roomM,
+            ReactionSeconds: reactionSeconds));
+
+        double braking = Profile.MaxBrakingMps2 * contact.TractionCoefficient;
+        double speed = Math.Abs(outcome.Setpoint.SpeedMps);
+        double stoppingDistance = (speed * reactionSeconds) + ((speed * speed) / (2.0 * braking));
+
+        contact.TractionCoefficient.Should().BeLessThan(
+            0.6, "the case only bites where grip is below the fraction the old ceiling assumed");
+        speed.Should().BePositive("a vehicle still clear of its standoff may move");
+        speed.Should().BeLessThan(
+            Profile.MaxForwardSpeedMps,
+            "the peer ceiling has to be the binding constraint here, or this asserts nothing "
+            + "about it — at a large gap the cruise speed binds first and the formula is untested");
+
+        stoppingDistance.Should().BeLessThanOrEqualTo(
+            roomM + 1e-9,
+            "the ceiling has to be solved against the braking the wheels deliver and has to "
+            + "include the ground covered before the command reaches them");
+    }
+
+    /// <summary>Wet vegetation: the worst grip the surface table offers, at 0.5625.</summary>
+    /// <returns>A resolved contact on slippery but traversable ground.</returns>
+    private static TerrainContactState SlipperyContact()
+    {
+        var ground = new Plateau { Material = SurfaceType.Vegetation, Precipitation = 1.0 };
+
+        var contact = TerrainContact.Resolve(
+            Vector3.Zero,
+            headingRad: 0.0,
+            Profile,
+            ground.Sample(Vector3.Zero, GroundContactGeometry.NormalSpacingM(Profile)),
+            deltaSeconds: 0.0,
+            TerrainNormalFilter.Uninitialised).Contact;
+
+        contact.IsImmobilised.Should().BeFalse("slippery, but still drivable");
+        return contact;
+    }
+
     /// <summary>Level, dry, traversable ground, so nothing but the peer can stop the vehicle.</summary>
     /// <returns>A resolved contact on the plateau.</returns>
     private static TerrainContactState FlatContact()
@@ -349,7 +452,7 @@ public sealed class GroundConvoySeparationTests
     private sealed class Convoy
     {
         private readonly Random _random = new(RandomSeed);
-        private readonly Plateau _ground = new();
+        private readonly Plateau _ground;
         private readonly GroundAsset? _lead;
         private readonly List<AssetEvent> _followerEvents = [];
 
@@ -357,8 +460,13 @@ public sealed class GroundConvoySeparationTests
             bool withLead = true,
             double leadOffsetEastM = 0.0,
             VehicleClass vehicleClass = VehicleClass.TrackedRover,
-            bool atStandoff = false)
+            bool atStandoff = false,
+            bool slippery = false)
         {
+            _ground = slippery
+                ? new Plateau { Material = SurfaceType.Vegetation, Precipitation = 1.0 }
+                : new Plateau();
+
             _vehicleClass = vehicleClass;
             _profile = GroundProfile.ForVehicleClass(vehicleClass)
                 ?? throw new InvalidOperationException($"{vehicleClass} has no ground motion model.");
@@ -477,6 +585,12 @@ public sealed class GroundConvoySeparationTests
     /// </remarks>
     private sealed class Plateau : IEnvironmentSampler
     {
+        /// <summary>Material under the wheels. Vegetation plus rain is the worst grip the table offers.</summary>
+        public SurfaceType Material { get; init; } = SurfaceType.BareGround;
+
+        /// <summary>Rainfall fraction, which derates the surface's traction.</summary>
+        public double Precipitation { get; init; }
+
         public double SeaLevelM => PlateauElevationM - 100.0;
 
         public IWindField Wind { get; } = new NoWind();
@@ -489,11 +603,11 @@ public sealed class GroundConvoySeparationTests
             PositionEus: positionEus,
             WindEus: Vector3.Zero,
             Visibility: 1.0,
-            Precipitation: 0.0,
+            Precipitation: Precipitation,
             SurfaceCurrentEus: Vector3.Zero,
             TerrainElevationM: PlateauElevationM,
             TerrainNormalEus: Vector3.UnitY,
-            SurfaceMaterial: SurfaceType.BareGround,
+            SurfaceMaterial: Material,
             WaterSurfaceElevationM: null,
             BathymetricElevationM: null,
             Zones: []);

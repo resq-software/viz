@@ -122,6 +122,13 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// </remarks>
     private const double LookaheadReactionSteps = 2.0;
 
+    /// <summary>Multiple of the standoff the peer probe always reaches, however slowly the vehicle moves.</summary>
+    /// <remarks>
+    /// Two, so that a vehicle sitting on its standoff still sees the vehicle it is sitting behind
+    /// with room to spare, and so that one settling into the standoff never crosses out of range.
+    /// </remarks>
+    private const double PeerReachFloorStandoffs = 2.0;
+
     /// <summary>Horizontal distance below which a step is not attributed to travel, in metres.</summary>
     /// <remarks>
     /// A collision requires the vehicle to have gone somewhere. Positions are single-precision
@@ -603,19 +610,25 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         // so a peer inside it is one this vehicle could not stop short of if it kept going. It
         // was only ever laid off at the terrain; nothing read the peer poses at all, so two
         // rovers closed to interpenetration without either of them slowing.
-        // NearestAhead measures its reach as a gap, so this reach means the same thing the
-        // returned value does. That is what keeps a vehicle at rest able to see the one it is
-        // holding station behind: `reach` collapses toward the footprint as speed falls, and a
-        // reach measured centre-to-centre would drop the peer out of the corridor exactly when
-        // this vehicle stopped — lifting the ceiling, letting it creep forward, and oscillating
-        // it into the contact this prevents. Every spawnable platform's footprint exceeds the
-        // standoff, so the gap reach at rest covers it; GroundConvoySeparationTests asserts that
-        // over the profiles rather than leaving it to hold by luck.
+        // Floored, and the floor is load-bearing. `reach` is a stopping distance, so it collapses
+        // to nothing as the vehicle slows — which is precisely when the vehicle in front matters
+        // most. A vehicle holding at the standoff with a reach shorter than that standoff loses
+        // sight of what it is stopped for, the ceiling lifts, it accelerates, the peer comes back
+        // into range, and it oscillates its way into contact one step at a time. Measured: a
+        // tracked rover parked at a 0.94 m gap dropped its peer for one step and took off at
+        // 0.156 m/s. The probe therefore always reaches twice the standoff, whatever the speed.
+        double peerReach = Math.Max(reach, PeerReachFloorStandoffs * GroundNavigator.PeerStandoffM);
+
         var peer = PeerSeparation.NearestAhead(
             peers, AssetId, AssetDomain.Ground, _positionEus,
-            _profile.FootprintRadiusM, travelHeading, reach);
+            _profile.FootprintRadiusM, travelHeading, peerReach);
 
-        return new GroundGuidanceInput(_contact, verdict.Class, verdict.Reason, peer.GapM);
+        return new GroundGuidanceInput(
+            _contact,
+            verdict.Class,
+            verdict.Reason,
+            peer.GapM,
+            LookaheadReactionSteps * Math.Max(0.0, deltaSeconds));
     }
 
     /// <summary>Draws one step's energy from the pack.</summary>
