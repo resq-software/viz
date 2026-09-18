@@ -288,9 +288,18 @@ export interface TiltInstrument {
  *   `rollLimitRad` / `pitchLimitRad`, so combined tilt (the case that actually
  *   tips a vehicle) reads at a glance against the dashed limit ring.
  * - The **ring** fills with `rolloverRisk` exactly as the simulation reported
- *   it. That figure folds in centre of mass, speed and terrain, so it is *not*
- *   recomputed here from roll and a limit — the two can legitimately disagree,
- *   and the server's answer is the one that escalates the colour.
+ *   it, and is the only thing that escalates the colour. It is *not* recomputed
+ *   here, so the dot and the ring can disagree — see the note on the bands.
+ *
+ * The bands are not free parameters. The server scales risk against an inferred
+ * static stability angle that is the platform's declared cross-slope limit
+ * divided by a fixed operational margin, so risk reaches exactly that margin at
+ * the declared limit — the same instant the server raises a critical fault,
+ * emits an alert and cuts the speed ceiling. CAUTION_RISK is therefore that
+ * margin and nothing else: a lower value cries wolf inside the envelope, a
+ * higher one stays green while the vehicle is already being derated.
+ * ALERT_RISK is 1.0 because that is where risk saturates — the inferred tipping
+ * angle itself. A contract test pins both against the server constants.
  *
  * Escalation is colour (success → warning → destructive), ring fill, and at or
  * past the limit a halo around the dot. The halo pulses only inside a
@@ -316,9 +325,24 @@ export function createTiltIndicator(opts: { rollLimitRad?: number; pitchLimitRad
 	const LIMIT_CIRCUMFERENCE = 2 * Math.PI * LIMIT_RADIUS;
 	/** Fraction beyond the limit that still renders inside the box. */
 	const MAX_FRACTION = 1.4;
-	/** Advisory risk at which the face turns amber. */
-	const CAUTION_RISK = 0.66;
-	/** Advisory risk at which the face turns red and the halo appears. */
+	/**
+	 * Risk at which the face turns amber.
+	 *
+	 * This is the server's `GroundContactGeometry.OperationalCrossSlopeMargin`,
+	 * not a taste decision. Risk is `|crossSlope| / (declaredLimit / margin)`, so
+	 * at the declared limit it is exactly `margin` — and that is the tick on
+	 * which the server raises a critical rollover fault, emits an alert event and
+	 * derates the speed ceiling to a quarter. Any higher value leaves the gauge
+	 * green through a band where the vehicle is already being slowed for the
+	 * reason this instrument exists to show.
+	 */
+	const CAUTION_RISK = 0.6;
+	/**
+	 * Risk at which the face turns red and the halo appears.
+	 *
+	 * 1.0 is where the server clamps: the inferred static tipping angle. Past
+	 * this the vehicle is not being advised, it is over.
+	 */
 	const ALERT_RISK = 1;
 	const CROSSHAIR = 68;
 	const DOT_RADIUS = 6;
