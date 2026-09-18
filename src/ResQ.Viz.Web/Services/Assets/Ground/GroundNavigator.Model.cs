@@ -67,10 +67,12 @@ public enum GroundGuidanceMode
 /// <param name="Contact">Terrain contact resolved at the vehicle's current position.</param>
 /// <param name="AheadClass">Traversability of the probed point ahead, along the direction of travel.</param>
 /// <param name="AheadReason">Why that point got its classification. Reported verbatim when it blocks.</param>
+/// <param name="PeerGapM">Clear ground to the nearest vehicle in the corridor ahead, in metres. Infinite when none.</param>
 public readonly record struct GroundGuidanceInput(
     TerrainContactState Contact,
     TraversabilityClass AheadClass = TraversabilityClass.Traversable,
-    TraversabilityReason AheadReason = TraversabilityReason.None);
+    TraversabilityReason AheadReason = TraversabilityReason.None,
+    double PeerGapM = double.PositiveInfinity);
 
 /// <summary>The setpoint the navigator produced, and the transitions it made producing it.</summary>
 /// <remarks>

@@ -191,6 +191,9 @@ public sealed partial class GroundAsset : IStepDrivenAsset
 
     private bool _wasImmobilised;
     private bool _wasRolloverRisk;
+
+    /// <summary>Whether a vehicle ahead was holding this one at the end of the previous step.</summary>
+    private bool _wasHoldingForPeer;
     private bool _lowEnergyLatched;
 
     /// <summary>Places a rover on the terrain and prepares it to be stepped.</summary>
@@ -340,7 +343,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         // what stops the rest of this method reading the resulting elevation jump as travel.
         RebaselineIfEnvironmentChanged(context.Environment);
 
-        var guidance = _navigator.Sample(in _motion, BuildGuidanceInput(delta));
+        var guidance = _navigator.Sample(in _motion, BuildGuidanceInput(delta, context.Peers));
 
         // The emergency stop overrides guidance rather than being expressed through it, so a
         // latched stop survives anything that reached the navigator by another route.
@@ -552,7 +555,8 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// </remarks>
     /// <param name="deltaSeconds">Timestep in seconds, used only for the reaction allowance.</param>
     /// <returns>The contact under the vehicle, plus the look-ahead verdict where one was taken.</returns>
-    private GroundGuidanceInput BuildGuidanceInput(double deltaSeconds)
+    private GroundGuidanceInput BuildGuidanceInput(
+        double deltaSeconds, IReadOnlyList<PeerPose> peers)
     {
         if (_navigator.Mode is not (GroundGuidanceMode.Driving or GroundGuidanceMode.Reversing
             or GroundGuidanceMode.Manual))
@@ -593,7 +597,25 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         var ahead = _environment.Sample(probe, GroundContactGeometry.NormalSpacingM(_profile));
         var verdict = Traversability.Evaluate(_profile, ahead, travelHeading);
 
-        return new GroundGuidanceInput(_contact, verdict.Class, verdict.Reason);
+        // The same reach, against the vehicles instead of the ground. `reach` is already this
+        // platform's stopping distance — footprint, reaction over the steps a commanded change
+        // takes to reach the wheels, and the braking term under the traction it actually has —
+        // so a peer inside it is one this vehicle could not stop short of if it kept going. It
+        // was only ever laid off at the terrain; nothing read the peer poses at all, so two
+        // rovers closed to interpenetration without either of them slowing.
+        // NearestAhead measures its reach as a gap, so this reach means the same thing the
+        // returned value does. That is what keeps a vehicle at rest able to see the one it is
+        // holding station behind: `reach` collapses toward the footprint as speed falls, and a
+        // reach measured centre-to-centre would drop the peer out of the corridor exactly when
+        // this vehicle stopped — lifting the ceiling, letting it creep forward, and oscillating
+        // it into the contact this prevents. Every spawnable platform's footprint exceeds the
+        // standoff, so the gap reach at rest covers it; GroundConvoySeparationTests asserts that
+        // over the profiles rather than leaving it to hold by luck.
+        var peer = PeerSeparation.NearestAhead(
+            peers, AssetId, AssetDomain.Ground, _positionEus,
+            _profile.FootprintRadiusM, travelHeading, reach);
+
+        return new GroundGuidanceInput(_contact, verdict.Class, verdict.Reason, peer.GapM);
     }
 
     /// <summary>Draws one step's energy from the pack.</summary>

@@ -96,11 +96,47 @@ public sealed partial class GroundNavigator
             return Outcome(GroundSetpoint.Stop, hasBecomeBlocked: true);
         }
 
-        double ceiling = Math.Max(0.0, input.Contact.SafeSpeedMps);
+        double ceiling = Math.Min(
+            Math.Max(0.0, input.Contact.SafeSpeedMps), PeerCeilingMps(input.PeerGapM));
+
+        IsHoldingForPeer = ceiling <= 0.0 && input.Contact.SafeSpeedMps > 0.0;
 
         return IsOperatorRecovery(Mode)
             ? Outcome(ManualSetpoint(ceiling))
             : DrivingOutcome(in state, ceiling);
+    }
+
+    /// <summary>Speed ceiling imposed by the nearest vehicle in the corridor ahead.</summary>
+    /// <remarks>
+    /// The same closed form the target approach uses, against the gap instead of the range to
+    /// run: the fastest speed from which this platform can still stop with
+    /// <see cref="PeerStandoffM"/> to spare. It degrades rather than switches — a vehicle a long
+    /// way behind another is not slowed at all, one closing is slowed smoothly, and one at the
+    /// standoff is held — so there is no threshold for two vehicles to chatter across.
+    /// <para>
+    /// This is a protective stop, not a refusal: the task is left assigned and the mode is left
+    /// alone, so the vehicle resumes by itself when the obstruction moves. Latching
+    /// <see cref="GroundGuidanceMode.Blocked"/> here would end both vehicles' commands the first
+    /// time two of them met, which is a worse failure than the one being fixed.
+    /// </para>
+    /// <para>
+    /// Folded into the ceiling rather than applied inside the autonomous law, because the
+    /// ceiling is also what binds a manual input. An operator driving into the back of another
+    /// vehicle is the case this most needs to hold for.
+    /// </para>
+    /// </remarks>
+    /// <param name="gapM">Clear ground ahead in metres, both footprints already removed.</param>
+    /// <returns>The permitted speed in metres per second. Zero at or inside the standoff.</returns>
+    private double PeerCeilingMps(double gapM)
+    {
+        if (double.IsPositiveInfinity(gapM))
+        {
+            return double.PositiveInfinity;
+        }
+
+        return Math.Sqrt(
+            2.0 * _profile.MaxBrakingMps2 * ApproachBrakingFraction
+            * Math.Max(0.0, gapM - PeerStandoffM));
     }
 
     /// <summary>Runs the autonomous guidance law against the assigned target.</summary>
