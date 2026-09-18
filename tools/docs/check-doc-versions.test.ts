@@ -126,13 +126,18 @@ describe("checkClaim", () => {
 });
 
 /** Runs the real checker against a scratch tree. */
-function run(claims: unknown, files: Record<string, string>): { status: number; out: string } {
+function run(
+    claims: unknown,
+    files: Record<string, string>,
+    prepare?: (dir: string) => void,
+): { status: number; out: string } {
     const dir = mkdtempSync(join(tmpdir(), "docver-"));
     for (const [rel, body] of Object.entries(files)) {
         const full = join(dir, rel);
         mkdirSync(dirname(full), { recursive: true });
         writeFileSync(full, body);
     }
+    prepare?.(dir);
     const claimsPath = join(dir, "claims.json");
     writeFileSync(claimsPath, JSON.stringify(claims));
     const r = spawnSync(
@@ -141,6 +146,19 @@ function run(claims: unknown, files: Record<string, string>): { status: number; 
         { encoding: "utf8" },
     );
     return { status: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
+}
+
+const GITLINK = "0123456789abcdef0123456789abcdef01234567";
+
+/** Adds a stage-0 submodule gitlink without checking the submodule out. */
+function stageGitlink(dir: string, sha = GITLINK): void {
+    for (const args of [
+        ["init", "--quiet"],
+        ["update-index", "--add", "--cacheinfo", `160000,${sha},lib/dotnet-sdk`],
+    ]) {
+        const r = spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+        strictEqual(r.status, 0, `${r.stdout}${r.stderr}`);
+    }
 }
 
 describe("the checker as CI runs it", () => {
@@ -172,6 +190,43 @@ describe("the checker as CI runs it", () => {
         const r = run([{ ...CLAIM, file: "GONE.md" }], files);
         strictEqual(r.status, 1, r.out);
         ok(r.out.includes("document-missing"), r.out);
+    });
+});
+
+describe("documented dotnet-sdk submodule pin", () => {
+    const files = {
+        "package.json": JSON.stringify(MANIFEST),
+        "DOC.md": "Three.js 0.186.0 is used here.",
+    };
+
+    const runWithGitlink = (claude: string) => run(
+        [CLAIM],
+        { ...files, "CLAUDE.md": claude },
+        stageGitlink,
+    );
+
+    it("matches a documented short SHA against the stage-0 index gitlink", () => {
+        // No lib/dotnet-sdk worktree exists: this can only pass if the checker reads the index.
+        const r = runWithGitlink(`The SDK is pinned to **\`${GITLINK.slice(0, 12)}\`**.`);
+        strictEqual(r.status, 0, r.out);
+    });
+
+    it("reports a stale documented pin", () => {
+        const r = runWithGitlink("The SDK is pinned to **`abcdef0`**.");
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("submodule-pin-drifted"), r.out);
+    });
+
+    it("reports a missing documented pin", () => {
+        const r = runWithGitlink("The SDK has a documented revision.");
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("claim-matches-nothing"), r.out);
+    });
+
+    it("reports a malformed documented pin", () => {
+        const r = runWithGitlink("The SDK is pinned to **`not-a-sha`**.");
+        strictEqual(r.status, 1, r.out);
+        ok(r.out.includes("claim-matches-nothing"), r.out);
     });
 });
 

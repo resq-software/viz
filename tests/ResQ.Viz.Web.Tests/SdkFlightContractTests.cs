@@ -101,6 +101,22 @@ public sealed class SdkFlightContractTests
         Math.Abs(pitch).Should().BeGreaterThan(0.01,
             "a drone under way must pitch — a flat orientation means attitude integration is gone");
         model.State.Velocity.Length().Should().BeGreaterThan(1f, "it should actually be moving");
+
+        // DIRECTION, which the magnitude check above cannot see.
+        //
+        // `Math.Abs` was the whole assertion here, and a drone pitching the wrong way satisfied
+        // it exactly as well as a correct one. The model shipped with its pitch term negated:
+        // at 15 m/s the nose rode 17 degrees ABOVE the horizon, front high and rear rotors low,
+        // and this test stayed green through all of it. Fixed upstream in dotnet-sdk#101; the
+        // guard is widened here so the consumer notices if it ever comes back.
+        //
+        // Read off the rotated basis vector rather than the Euler angle, so a change of
+        // convention that still leaves the drone visually wrong cannot satisfy it.
+        var forward = Vector3.Transform(new Vector3(0f, 0f, 1f), q);
+        forward.Y.Should().BeLessThan(
+            -0.05f,
+            "a multirotor tips its disc INTO the direction of travel, so the nose drops as it "
+            + "accelerates; a positive Y is the nose riding high");
     }
 
     /// <summary>Every command type that is not <c>Land</c>, so the name's "any" is honest.</summary>

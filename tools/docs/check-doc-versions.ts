@@ -25,6 +25,7 @@
 // Usage:
 //   node --experimental-strip-types tools/docs/check-doc-versions.ts [--claims P] [--root P]
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
@@ -174,6 +175,60 @@ export function checkClaim(
   return problems;
 }
 
+/**
+ * Checks that the commit CLAUDE.md names for a submodule is the commit actually checked out.
+ *
+ * CLAUDE.md states the `lib/dotnet-sdk` pin as a short SHA and explains at length why it is that
+ * commit and not a tag, so it reads as authoritative. Nothing verified it: bumping the pin for
+ * dotnet-sdk#101 left the document naming the superseded commit, and the only thing that caught
+ * it was remembering to look. A stated SHA is a claim about the build exactly as a stated
+ * version is.
+ *
+ * Read from the git index rather than from `lib/dotnet-sdk/.git`, so it is correct in a fresh
+ * clone where the submodule has not been initialised.
+ *
+ * @param root Repository root.
+ * @returns Problems found; empty when the document agrees.
+ */
+function checkSubmodulePins(root: string): Problem[] {
+  const doc = "CLAUDE.md";
+  const path = "lib/dotnet-sdk";
+  const docPath = resolve(root, doc);
+  if (!existsSync(docPath)) return [];
+
+  let actual: string;
+  try {
+    // The INDEX, not HEAD: it reflects what is about to be committed, so a bump and its
+    // documentation can be staged together without the check failing in between. In CI, where
+    // the tree is a fresh checkout, the two are identical.
+    const out = execFileSync("git", ["ls-files", "-s", path], { cwd: root, encoding: "utf8" });
+    const m = /^160000\s+([0-9a-f]{40})\s/.exec(out);
+    if (!m) {
+      return [{ code: "submodule-not-in-index", file: doc,
+                message: `git ls-files reported no gitlink for '${path}'.` }];
+    }
+    actual = m[1]!;
+  } catch {
+    // Silence here is the failure mode this whole file exists to avoid.
+    return [{ code: "submodule-unreadable", file: doc,
+              message: `could not read the '${path}' pin from the git index.` }];
+  }
+
+  const stated = [...readFileSync(docPath, "utf8")
+    .matchAll(/pinned to \*\*`([0-9a-f]{7,40})`/g)].map(m => m[1]!);
+
+  if (stated.length === 0) {
+    return [{ code: "claim-matches-nothing", file: doc,
+              message: "no submodule pin is stated; the wording moved or the section went." }];
+  }
+
+  return stated.filter(sha => !actual.startsWith(sha)).map(sha => ({
+    code: "submodule-pin-drifted",
+    file: doc,
+    message: `says the ${path} pin is ${sha}, but the index has ${actual.slice(0, sha.length)}.`,
+  }));
+}
+
 function main(): void {
   const claims = readJson(CLAIMS_PATH);
   if (!Array.isArray(claims)) {
@@ -211,8 +266,10 @@ function main(): void {
     );
   }
 
+  problems.push(...checkSubmodulePins(ROOT));
+
   if (problems.length) {
-    console.error("Documented versions that do not match package.json:");
+    console.error("Documented claims that do not match the build:");
     for (const p of problems) console.error(`  ERROR  ${p.code}  ${p.file}: ${p.message}`);
     console.error(`\n${problems.length} problem(s). Doc version check FAILED.`);
     process.exit(1);
