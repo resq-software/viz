@@ -63,6 +63,11 @@ public sealed partial class SurfaceNavigator
     public SurfaceGuidanceOutcome Sample(
         in SurfaceMotionState state, in SurfaceGuidanceInput input)
     {
+        // Cleared on entry so no path out of this method can leave it latched from a previous
+        // step: only the course-hold law sets it, and a vessel that has left that law is no
+        // longer being held off a course it asked for.
+        IsCourseUnreachable = false;
+
         if (Mode == SurfaceGuidanceMode.EmergencyStopped)
         {
             RemainingDistanceM = 0.0;
@@ -292,13 +297,83 @@ public sealed partial class SurfaceNavigator
     {
         RemainingDistanceM = 0.0;
 
+        double speed = Math.Min(_cruiseSpeedMps, input.SpeedCeilingMps);
+        double steered = ReachableCourseRad(
+            _commandedCourseRad, speed, input.PassiveDriftEus, input.Velocities.CourseOverGroundRad);
+
         // The error is closed against the course actually being made good, not against the
         // heading. With no way on there is no course, and SurfaceVelocities falls the value back
         // to the heading, which is the only sensible thing to steer from at a standstill.
-        double error = ShortestTurnRad(_commandedCourseRad, input.Velocities.CourseOverGroundRad);
-        double speed = Math.Min(_cruiseSpeedMps, input.SpeedCeilingMps);
+        double error = ShortestTurnRad(steered, input.Velocities.CourseOverGroundRad);
 
         return Outcome(new SurfaceSetpoint(speed, YawFor(error)));
+    }
+
+    /// <summary>The commanded course, or the nearest one the set actually permits.</summary>
+    /// <remarks>
+    /// Ground velocity is water-relative velocity plus the set, so the reachable ground tracks are
+    /// a disc of radius <c>speed</c> centred on the set. While the set is the slower of the two
+    /// that disc contains the origin and every bearing is reachable. Once the set is the faster,
+    /// the disc no longer contains the origin and the reachable courses collapse to a cone about
+    /// the set's own direction, of half-angle
+    /// <code>
+    ///     asin(speed / driftSpeed)
+    /// </code>
+    /// A course outside that cone has no fixed point at all, and closing a proportional loop on
+    /// it turns the hull forever: the error never changes sign, so the vessel rotates, reports
+    /// mode `course` and execution `Executing`, and is measured spinning through seven and a half
+    /// revolutions in a quarter of an hour while its health reads `Nominal.`.
+    /// <para>
+    /// Clamping to the edge of the cone is the honest answer: it is the closest course the vessel
+    /// can actually make good, it is stable, and <see cref="IsCourseUnreachable"/> says the
+    /// commanded one was refused so an operator is told rather than left watching a pirouette.
+    /// </para>
+    /// </remarks>
+    /// <param name="courseRad">Course the operator asked for, radians clockwise from true north.</param>
+    /// <param name="speedMps">Speed through the water the law is permitted to command.</param>
+    /// <param name="driftEus">Velocity an unpowered hull makes good here, in the scene frame.</param>
+    /// <param name="madeGoodRad">Course currently being made good, used only to break an exact tie.</param>
+    /// <returns>A course the vessel can hold.</returns>
+    private double ReachableCourseRad(
+        double courseRad, double speedMps, Vector3 driftEus, double madeGoodRad)
+    {
+        double driftSpeed = CoordinateFrames.SpeedOverGround(driftEus);
+
+        // The set is the slower of the two, so the reachable disc covers every bearing.
+        if (driftSpeed <= speedMps)
+        {
+            IsCourseUnreachable = false;
+            return courseRad;
+        }
+
+        double driftBearing = CoordinateFrames.BearingFromEusVector(driftEus, courseRad);
+        double halfAngle = Math.Asin(Math.Clamp(speedMps / driftSpeed, 0.0, 1.0));
+        double offAxis = ShortestTurnRad(courseRad, driftBearing);
+
+        if (Math.Abs(offAxis) <= halfAngle)
+        {
+            IsCourseUnreachable = false;
+            return courseRad;
+        }
+
+        IsCourseUnreachable = true;
+
+        double lower = CoordinateFrames.NormalizeAngle(driftBearing - halfAngle);
+        double upper = CoordinateFrames.NormalizeAngle(driftBearing + halfAngle);
+
+        // Dead against the set, both edges are exactly as near the commanded course and the sign
+        // of the error is a convention rather than a fact. Break toward the course already being
+        // made good, so a vessel a few degrees from one edge does not turn most of a circle to
+        // reach the other — which would look, and cost, exactly like the spin this replaces.
+        if (Math.Abs(Math.Abs(offAxis) - Math.PI) <= AntipodalToleranceRad)
+        {
+            return Math.Abs(ShortestTurnRad(lower, madeGoodRad))
+                <= Math.Abs(ShortestTurnRad(upper, madeGoodRad))
+                ? lower
+                : upper;
+        }
+
+        return offAxis > 0.0 ? upper : lower;
     }
 
     /// <summary>Rate of turn to command for a heading or course error.</summary>
