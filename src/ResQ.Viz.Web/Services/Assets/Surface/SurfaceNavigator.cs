@@ -81,6 +81,16 @@ public sealed partial class SurfaceNavigator
     /// </remarks>
     private const double MinManoeuvreSpeedFraction = 0.35;
 
+    /// <summary>Slowest ground closure the transit law will still call progress, in metres per second.</summary>
+    /// <remarks>
+    /// Below this a leg is not slow, it is not happening: at 0.05 m/s a 100 m passage takes over
+    /// half an hour, and every value under it is a vessel holding station on a set it cannot
+    /// stem. The threshold is compared against the best closure the hull could achieve at full
+    /// throttle, never against what it is currently making, so a vessel merely accelerating or
+    /// turning onto its leg is never mistaken for one that is stuck.
+    /// </remarks>
+    private const double MinClosureRateMps = 0.05;
+
     private readonly SurfaceProfile _profile;
 
     private Vector3 _targetEus;
