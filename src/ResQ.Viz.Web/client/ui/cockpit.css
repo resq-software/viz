@@ -77,12 +77,46 @@
    explicit round clip to match them. */
 .instrument--attitude { border-radius: 50%; overflow: hidden; }
 
+/* Ground and surface instruments are read, not glanced at.
+   The five flight dials encode their state in the geometry — a needle angle, a
+   horizon line — and their numbers merely confirm it, so 64px works. The tilt
+   plot, compass rose and depth tape each carry three numeric readouts that ARE
+   the reading: rollover risk, under-keel clearance, course-vs-heading drift.
+   Every instrument shares a 200-unit viewBox, so the box width alone sets the
+   rendered type size (a 15-unit readout is 15 × width / 200 px). At 64px that
+   is 4.8px. These get a wider box, which the row can afford: the air row shows
+   five dials, the ground row one, the surface row two.
+   Placed BEFORE the responsive block below for the reason that block states
+   about ordering at equal specificity. */
+.instrument--tilt,
+.instrument--compass-rose,
+.instrument--depth {
+  width: 128px;
+  height: 128px;
+}
+
+/* Rollover alarm pulse.
+   Lives here rather than in an injected <style> element: an inline SVG <style>
+   is document-scoped, so a per-instance one is duplicated once per instrument
+   and this is where .instrument rules already live. */
+.instrument--tilt .tilt-alert { opacity: 0.9; }
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes tilt-alert-pulse {
+    0%, 100% { opacity: 0.25; }
+    50%      { opacity: 1; }
+  }
+
+  .instrument--tilt .tilt-alert { animation: tilt-alert-pulse 1.1s ease-in-out infinite; }
+}
+
 /* Cockpit responsive rules — these MUST come after the base .cockpit /
    .instrument rules above; at equal specificity the later rule wins, so placing
    them before the base rules would be a no-op. */
 @media (max-width: 1280px) {
   .cockpit { right: 236px; }            /* wind compass hidden → widen the lane */
   .instrument { width: 52px; height: 52px; }
+  .instrument--tilt, .instrument--compass-rose, .instrument--depth { width: 112px; height: 112px; }
   .cockpit-row { gap: 9px; }
 }
 @media (max-width: 1080px) {
@@ -90,8 +124,10 @@
      the scene, lifted above the event log so it doesn't cover it. */
   .cockpit { left: 12px; right: 12px; bottom: calc(var(--dvr-h) + 118px); }
   .instrument { width: 48px; height: 48px; }
+  .instrument--tilt, .instrument--compass-rose, .instrument--depth { width: 104px; height: 104px; }
 }
 @media (max-width: 720px) {
   .cockpit-row { padding: 7px 9px; gap: 8px; }
   .instrument { width: 44px; height: 44px; }
+  .instrument--tilt, .instrument--compass-rose, .instrument--depth { width: 96px; height: 96px; }
 }

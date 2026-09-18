@@ -2645,7 +2645,15 @@ function _applyFrameConsumers(
     const _selId = droneManager.selectedId;
     const _selDrone = _selId ? (drones.find((d) => d.id === _selId) ?? null) : null;
     fpvOsd?.update(_selDrone, frame.time ?? 0);
-    cockpit?.update(_selDrone);
+    // The cockpit also takes the selected asset's DOMAIN state, which is the only
+    // place a rover's rollover risk or a vessel's under-keel clearance lives. Without
+    // it the panel had nothing to show for anything that was not a drone — the v1
+    // projection carries air assets only, which is why selecting a rover showed
+    // an empty cockpit rather than its instruments.
+    const _selAsset = _selId
+        ? (frame.assets ?? []).find((a) => a.view.id === _selId) ?? null
+        : null;
+    cockpit?.update(_selDrone, _selAsset?.view.domainState ?? null);
     effectsMgr.update(frame);
     // Feed the fire hazards to the smoke plumes (center = ground position).
     const fires: SmokeSource[] = (frame.hazards ?? [])
