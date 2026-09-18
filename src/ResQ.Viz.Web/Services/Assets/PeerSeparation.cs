@@ -26,6 +26,14 @@ namespace ResQ.Viz.Web.Services.Assets;
 /// means the footprints already overlap, which is a state the simulation can reach — an asset
 /// spawned on top of another, or two that closed faster than one step could arrest — and which a
 /// consumer must be able to see rather than have clamped away.
+/// <para>
+/// That holds for a peer whose centre is <em>ahead</em>. An overlap whose centre is astern, or
+/// exactly underneath, is reported as no contact at all, and deliberately: every consumer treats
+/// a gap at or below its standoff as a full stop, so reporting one would hold the vehicle still
+/// with the one direction that separates the two — forward — inhibited. That is the dead asset
+/// the recovery arm of <c>GroundNavigator.Sample</c> exists to prevent, arrived at from the other
+/// side. A vehicle wearing another on its back bumper should drive out from under it.
+/// </para>
 /// </remarks>
 /// <param name="AssetId">Identifier of the peer, empty when there is none.</param>
 /// <param name="GapM">Clear distance along the direction of travel, in metres. Infinite when there is no peer.</param>
@@ -112,6 +120,9 @@ public static class PeerSeparation
             double deltaX = peer.PositionEus.X - selfPositionEus.X;
             double deltaZ = peer.PositionEus.Z - selfPositionEus.Z;
 
+            // Astern, or exactly underneath. Skipped even when the footprints overlap: see the
+            // remarks on PeerContact. Braking for something behind would hold the vehicle inside
+            // it with the only separating direction inhibited.
             double along = (deltaX * aheadX) + (deltaZ * aheadZ);
             if (along <= 0.0)
             {

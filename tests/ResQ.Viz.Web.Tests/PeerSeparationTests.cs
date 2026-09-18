@@ -190,6 +190,41 @@ public sealed class PeerSeparationTests
         Look([Peer(NorthOf(1.0))]).GapM.Should().BeApproximately(1.0 - (2.0 * Footprint), 1e-9);
     }
 
+    /// <summary>An overlap that is astern is not reported, and that is the point.</summary>
+    /// <remarks>
+    /// Raised in review as a gap in the overlap contract, and it is a real asymmetry — but closing
+    /// it the obvious way introduces a worse bug. Every consumer treats a gap at or below its
+    /// standoff as a full stop, and a negative gap is far below it, so reporting a peer behind the
+    /// vehicle would hold it still with the one direction that separates the two — forward —
+    /// inhibited. Autonomous guidance has no reverse; only an operator recovery does. The vehicle
+    /// would sit inside the other one until a human noticed.
+    /// <para>
+    /// A vehicle wearing another on its back bumper should drive out from under it, so an astern
+    /// overlap is not a contact. The two cases below are the ones that would change behaviour if
+    /// someone made <c>along &lt;= 0</c> conditional on the footprints being clear.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void An_Overlap_That_Is_Astern_Is_Not_A_Contact()
+    {
+        // Centres coincident: two assets spawned on the same point.
+        Look([Peer(Vector3.Zero)]).Exists.Should().BeFalse();
+
+        // Deep overlap, centre just astern.
+        Look([Peer(NorthOf(-0.25))]).Exists.Should().BeFalse();
+    }
+
+    /// <summary>An overlap that is ahead still is, so the vehicle stops rather than driving deeper.</summary>
+    /// <remarks>The complement, and the reason the asymmetry above is a choice rather than an oversight.</remarks>
+    [Fact]
+    public void An_Overlap_That_Is_Ahead_Is_A_Contact()
+    {
+        var contact = Look([Peer(NorthOf(0.25))]);
+
+        contact.Exists.Should().BeTrue();
+        contact.GapM.Should().BeNegative("the footprints are well inside one another");
+    }
+
     /// <summary>An empty world, a zero reach and a nonsense reach all report nothing.</summary>
     [Fact]
     public void Degenerate_Inputs_Report_Nothing()
