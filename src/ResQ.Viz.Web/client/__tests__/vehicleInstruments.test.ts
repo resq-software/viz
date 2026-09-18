@@ -45,6 +45,47 @@ describe('tilt indicator: alarm state survives attitude dropout', () => {
     });
 });
 
+describe('tilt indicator: the amber band starts where the server starts worrying', () => {
+    // The server scales rolloverRisk against an inferred tipping angle equal to the
+    // platform's declared cross-slope limit divided by a fixed operational margin of
+    // 0.6. So at the declared limit — the tick where it raises a CRITICAL rollover
+    // fault, emits an alert event and cuts the speed ceiling to a quarter — risk is
+    // exactly 0.60. The gauge shipped with its amber band starting at 0.66, which
+    // left a window where the vehicle was being derated for rollover while the
+    // instrument built to show rollover was green.
+    //
+    // groundRolloverContract.test.ts pins 0.6 against the C# constant itself, so these
+    // two tests fail together if either side moves.
+
+    it('is already amber at the declared operating limit', () => {
+        const tilt = createTiltIndicator();
+
+        tilt.update(0.31, 0.02, 0.6);
+
+        expect(tilt.el.getAttribute('data-state')).toBe('caution');
+    });
+
+    it('is still green just inside it', () => {
+        const tilt = createTiltIndicator();
+
+        tilt.update(0.30, 0.02, 0.59);
+
+        expect(tilt.el.getAttribute('data-state')).toBe('nominal');
+    });
+
+    it('does not reach red until risk saturates at the tipping angle', () => {
+        // Red is not a second warning. 1.0 is where the server clamps: the inferred
+        // static tipping angle, past which the vehicle is over rather than advised.
+        const tilt = createTiltIndicator();
+
+        tilt.update(0.5, 0.02, 0.99);
+        expect(tilt.el.getAttribute('data-state')).toBe('caution');
+
+        tilt.update(0.5, 0.02, 1.0);
+        expect(tilt.el.getAttribute('data-state')).toBe('limit');
+    });
+});
+
 describe('tilt indicator: a corrupt reading is not a safe reading', () => {
     it('treats a negative rollover risk as unknown, not as zero', () => {
         // Clamping a negative to 0 rendered it as "RISK 0%" in the success colour with
