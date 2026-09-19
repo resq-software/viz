@@ -346,6 +346,58 @@ const PARAMETER_SPECS: ReadonlyMap<string, ParameterSpec> = new Map([
   }],
 ]);
 
+/** Decimal places `step` implies — used to clear float drift after arithmetic. */
+function stepDecimals(step: number): number {
+  const text = String(step);
+  const dot = text.indexOf('.');
+  return dot < 0 ? 0 : Math.min(6, text.length - dot - 1);
+}
+
+/**
+ * A published bound moved ONTO the step grid, inward.
+ *
+ * HTML anchors a number input's step grid at `min`, so a fractional `min` makes
+ * every round value invalid: the altitude field advertised
+ * `min="-19987.68658705976"` (a ±20km sentinel carrying the raw terrain
+ * elevation) with `step="1"`, and 76 m therefore reported `stepMismatch`.
+ *
+ * Rounds inward — min up, max down — so tidying the grid can only ever narrow
+ * what the control accepts, never admit a value the asset would refuse.
+ *
+ * @param bound - The raw bound.
+ * @param step - The control's step.
+ * @param edge - Which end of the range `bound` is.
+ * @returns The bound on the grid.
+ */
+export function tightenBound(bound: number, step: number, edge: 'min' | 'max'): number {
+  if (!Number.isFinite(bound) || !(step > 0)) return bound;
+  const onGrid = edge === 'min'
+    ? Math.ceil(bound / step) * step
+    : Math.floor(bound / step) * step;
+  return Number(onGrid.toFixed(stepDecimals(step)));
+}
+
+/**
+ * The nearest value on the step grid, clamped into the bounds.
+ *
+ * A prefilled value has to satisfy the control's own constraints; `Speed`
+ * arrived as 14.32523727135825 against `step="0.5"` and shipped `:invalid`.
+ *
+ * @param value - The value to place.
+ * @param step - The control's step.
+ * @param min - Lower bound, already tightened, or null when unbounded.
+ * @param max - Upper bound, already tightened, or null when unbounded.
+ * @returns A value on the grid and within the bounds.
+ */
+export function snapToStep(value: number, step: number, min: number | null, max: number | null): number {
+  if (!Number.isFinite(value) || !(step > 0)) return value;
+  const decimals = stepDecimals(step);
+  let snapped = Number((Math.round(value / step) * step).toFixed(decimals));
+  if (min !== null && Number.isFinite(min) && snapped < min) snapped = min;
+  if (max !== null && Number.isFinite(max) && snapped > max) snapped = max;
+  return snapped;
+}
+
 /** Supported parameter metadata, or null for every unknown/prototype-like key. */
 export function parameterSpec(key: string): ParameterSpec | null {
   return PARAMETER_SPECS.get(key) ?? null;

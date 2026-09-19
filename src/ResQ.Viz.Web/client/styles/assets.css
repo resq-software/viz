@@ -83,6 +83,13 @@
   max-height: min(70dvh, 720px, calc(100dvh - var(--effective-hud-h) - 52px - var(--effective-dvr-h) - 260px));
   background: var(--surface-2);
   border-radius: var(--r-3);
+  /* The panel is a height-capped flex column, so something has to clip. Without
+     this its children simply painted past the bottom edge: measured at 1280x800
+     — an ordinary laptop — 8 descendants escaped, the "Set altitude" button by
+     42px and the capability footer by 73px, straight over the transport bar.
+     A bounding-box sweep cannot see that, because the PANEL was inside the
+     viewport the whole time; only its contents were not. */
+  overflow: hidden;
   box-shadow: var(--ring), var(--shadow-2);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
@@ -91,6 +98,7 @@
 }
 
 .ap-head {
+  flex: none;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -115,7 +123,13 @@
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  /* --hint, not --text-muted. tokens.css records that --text-muted clears 4.5:1
+     at no alpha below ~0.92 and says it is therefore no longer used for meaningful
+     text on these panels — naming this file. It still was, at ten sites: key
+     labels, the Emergency/Failsafe badge, command advisories and the filter
+     counts. Measured on --surface-2 at 0.84 over the scene backdrop tokens.css
+     cites: --text-muted 4.04, --hint 4.79. */
+  color: var(--hint);
   padding: 2px 6px;
   border-radius: var(--radius-token);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -132,7 +146,7 @@
 }
 
 /* Operational state. Text is the fact; the tint is reinforcement. */
-.ap-badge { background: oklch(100% 0 0 / 0.05); color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--border); }
+.ap-badge { background: oklch(100% 0 0 / 0.05); color: var(--hint); box-shadow: inset 0 0 0 1px var(--border); }
 .ap-badge[data-state="3"],
 .ap-badge[data-state="4"] { background: var(--success-soft); color: var(--success); box-shadow: inset 0 0 0 1px var(--success-soft); }
 .ap-badge[data-state="5"],
@@ -140,13 +154,15 @@
 .ap-badge[data-state="7"] { background: var(--warning-soft); color: var(--warning); box-shadow: inset 0 0 0 1px var(--warning-soft); }
 .ap-badge[data-state="8"],
 .ap-badge[data-state="9"] { background: var(--primary-soft); color: var(--primary-text); box-shadow: inset 0 0 0 1px var(--primary-glow); }
-.ap-badge[data-state="track"] { background: var(--info-soft); color: var(--info); box-shadow: inset 0 0 0 1px var(--info-glow); }
+/* --info-text, not --info: the tint below is --info-soft and the fill tone on it
+   measures 4.08:1. The neighbouring states already use their text-safe variants. */
+.ap-badge[data-state="track"] { background: var(--info-soft); color: var(--info-text); box-shadow: inset 0 0 0 1px var(--info-glow); }
 
 .ap-close {
   appearance: none;
   background: transparent;
   border: 0;
-  color: var(--text-muted);
+  color: var(--hint);
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
@@ -164,6 +180,12 @@
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
 .ap-body {
+  /* `min-height: 0` is the load-bearing line. A flex item defaults to
+     `min-height: auto`, which refuses to shrink below its content — so this
+     scroller never scrolled; it stayed full height and pushed .ap-foot out of
+     the panel instead. `overflow-y: auto` alone cannot do anything about that. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 4px 14px 10px;
@@ -196,7 +218,7 @@
 
 .ap-row dt {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--hint);
   overflow-wrap: anywhere;
 }
 
@@ -226,6 +248,17 @@
 /* ── Commands ───────────────────────────────────────────────────────────── */
 
 .ap-foot {
+  /* The commands get priority over the data above them, but `flex: none` was too
+     strong: this block is 402px of buttons, and in a 210px panel at 1440x620 it
+     simply overflowed a container that now clips — measured 6 commands clipped
+     away entirely, Set speed, Takeoff, Land, Set altitude and Loiter among them.
+     Unreachable is worse than cramped. So it shrinks and scrolls like the body,
+     capped so it can never starve the data pane to nothing either. */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 62%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-top: 1px solid var(--line);
   padding: 10px 14px 12px;
   display: flex;
@@ -233,7 +266,7 @@
   gap: 8px;
 }
 
-.ap-cmd-note { font-size: 11px; color: var(--text-muted); }
+.ap-cmd-note { font-size: 11px; color: var(--hint); }
 
 .ap-cmds { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -245,6 +278,40 @@
 }
 
 .ap-cmd-btn { padding: 6px 10px; font-size: 10px; }
+
+/* Round-trip time, beside the controls. Tone-coded because the number alone does
+   not tell an operator whether they should be commanding: >=900ms is the spec's
+   own example of a link that changes the answer. Colour is not the only channel —
+   the value is always spelled out. */
+.ap-cmd-latency {
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: var(--text-3xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ap-cmd-latency[data-tone='warn'] { color: var(--warning); }
+.ap-cmd-latency[data-tone='crit'] { color: var(--primary-text); }
+
+/* Destructive commands are press-and-hold (VEHICLE_DASHBOARDS.md §4.7): a dialog
+   trains people to click through, a hold cannot. The fill is the operator's only
+   evidence that the press is registering, so it is feedback rather than
+   decoration — it stays under prefers-reduced-motion, where suppressing it would
+   leave the control looking dead while it is in fact arming. */
+.ap-cmd-btn.is-guarded { position: relative; overflow: hidden; }
+.ap-cmd-label { position: relative; }
+.ap-cmd-hold {
+  position: absolute;
+  inset: 0;
+  background: var(--primary-soft);
+  /* Scales rather than resizes: a width animation here would be a per-frame
+     layout property, which the style guide forbids. */
+  transform-origin: left center;
+  transform: scaleX(var(--hold-progress, 0));
+  pointer-events: none;
+}
+.ap-cmd-btn[data-holding='true'] { box-shadow: inset 0 0 0 1px var(--danger); }
 
 /* Blocked, not removed: the control keeps its place in the tab order so a
    keyboard operator does not lose focus when an asset goes stale, and the
@@ -332,10 +399,18 @@ select.ap-field-input { width: auto; }
   flex: 1;
   font-family: var(--mono);
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--hint);
 }
 
-.af-clear { padding: 4px 8px; font-size: 9px; }
+/* Measured 46.6x20 — under the 24px target floor. Padding alone cannot fix it
+   without moving the label, so the height is set directly and the text centred. */
+.af-clear {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 9px;
+}
 
 .af-domain-tabs {
   display: grid;
@@ -377,7 +452,14 @@ select.ap-field-input { width: auto; }
 .af-domain-tab-count { color: var(--text-faint); }
 
 .af-expanded summary {
-  color: var(--text-muted);
+  /* Measured 189x12.6 — a disclosure control half the WCAG 2.2 §2.5.8 minimum,
+     and the 44px floor that would have caught it only exists below 760px. The
+     glyph stays 9px; the box grows around it, so nothing moves visually except
+     the row's own height. */
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--hint);
   cursor: pointer;
   font-family: var(--mono);
   font-size: 9px;
@@ -385,7 +467,16 @@ select.ap-field-input { width: auto; }
   text-transform: uppercase;
 }
 
-.af-facets { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+/* The `display: flex` here overrides how a closed <details> hides its own
+   content, so all 12 facet chips were laid out and painted while MORE FILTERS
+   was collapsed — measured 242px of content hanging out of a 24px disclosure,
+   overlapping the search field and the roster beneath it. They were invisible
+   only because those siblings come later and paint opaque over them, and
+   Chromium still refused them focus; nothing covers them if the roster is short
+   or empty. Scoping the override to the open state removes the phantom layout
+   rather than relying on something else to hide it. */
+.af-expanded[open] .af-facets { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+.af-expanded:not([open]) .af-facets { display: none; }
 
 /* A real <fieldset>/<legend>, so the group is named in the accessibility tree
    without a hand-rolled aria-labelledby. The legend stays in normal flow — UAs
@@ -424,14 +515,16 @@ select.ap-field-input { width: auto; }
    announced — as well as by the tint. */
 .af-chip:has(.af-chip-input:checked) {
   background: var(--info-soft);
-  color: var(--info);
+  /* Fill tone on its own tint measures 4.08:1; --info-text is the same hue
+     lifted for 1.4.3 AA. The ring keeps the saturated tone. */
+  color: var(--info-text);
   box-shadow: inset 0 0 0 1px var(--info-glow);
 }
 .af-chip:has(.af-chip-input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .af-chip-input { accent-color: var(--accent); margin: 0; }
 
-.af-chip-count { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+.af-chip-count { font-family: var(--mono); font-size: 10px; color: var(--hint); }
 
 /* A value with nothing behind it right now stays selectable but recedes. */
 .af-chip.is-empty { opacity: 0.5; }
@@ -496,7 +589,7 @@ select.ap-field-input { width: auto; }
 
 .ar-count {
   min-width: 2ch;
-  color: var(--text-muted);
+  color: var(--hint);
   text-align: right;
 }
 
@@ -528,7 +621,12 @@ select.ap-field-input { width: auto; }
 
 .ar-row:hover { background: oklch(100% 0 0 / 0.06); box-shadow: var(--ring-strong); }
 .ar-row.is-selected { background: var(--info-soft); box-shadow: inset 0 0 0 1px var(--info-glow); }
-.ar-domain { grid-area: domain; color: var(--info); font: 500 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+/* Was 8px — the smallest type in the console and below any legible floor, on a
+   badge that carries the asset's domain (AIR / GROUND / SURFACE). 10px is still
+   subordinate to the 11px asset name beside it, so the row's hierarchy holds.
+   Colour moves to the text-safe blue for the same reason .af-domain-tab did:
+   --info is a fill tone and does not clear AA as small text. */
+.ar-domain { grid-area: domain; color: var(--info-text); font: 500 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
 .ar-name { grid-area: name; min-width: 0; overflow: hidden; color: var(--text); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 /* These rows ride a translucent panel over the 3D scene, so their effective
    background moves with the camera. Against a fixed backdrop at the p99
@@ -544,7 +642,7 @@ select.ap-field-input { width: auto; }
 
 .ar-empty {
   margin: 6px 0 0;
-  color: var(--text-muted);
+  color: var(--hint);
   font-size: 11px;
   line-height: 1.4;
 }
@@ -573,7 +671,39 @@ select.ap-field-input { width: auto; }
 
 /* The mini-map is dropped at this width (main.css), so the corner is free
    again and the panel drops back to sitting just above the transport bar. */
-@media (min-width: 760px) and (max-width: 1099px) {
+/* The base max-height reserves 260px for the mini-map's footprint and 52px for
+   the camera-mode pill, on top of both bars: it resolves to `100dvh - 410px`,
+   which is 0 at a 410px-tall viewport and negative below. Below 560px tall the
+   height ladder in main.css hides the mini-map and the sensor-stats overlay, so
+   those reservations are held for surfaces that are not on screen. Measured
+   before this rule: 104px of usable panel at 1440x500. Declared here rather
+   than in main.css because assets.css loads later and would otherwise win at
+   equal specificity. */
+@media (height < 560px) {
+  .asset-panel {
+    bottom: calc(var(--effective-dvr-h) + 14px);
+    /* Releases the mini-map's 260px — it IS shed at this height — but keeps the
+       camera-mode pill's 52px, because the pill is not. Releasing both is what
+       let the panel grow up underneath it: measured at 1440x520 the pill
+       [1319,56,1424,83] covered the panel [1064,58,1424,466] by 105x25, which is
+       exactly where the close button sits. Reserving the pill again puts the
+       panel's top at 110 and leaves the control clear. */
+    max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 28px - 52px);
+  }
+
+  /* The compass shares the panel's bottom anchor AND sits inside its column, so
+     with the sheet open the two hold the same region at the same z-index (150) —
+     paint order arbitrates, and both take pointer events. Measured at 1440x520:
+     #wind-compass [1100,354,1200,466] lies entirely within .asset-panel
+     [1064,58,1424,466].
+     Retired only while the sheet is open, not outright: with no sheet there is
+     room for it and the wind reading is the only one on screen. That is a
+     narrower call than the mini-map's, which goes unconditionally above because
+     it costs 260px whether or not anything is selected. */
+  body:has(.asset-panel:not([hidden])) #wind-compass { display: none; }
+}
+
+@media (760px <= width < 1100px) {
   .asset-panel {
     left: max(var(--gutter), env(safe-area-inset-left));
     right: max(var(--gutter), env(safe-area-inset-right));
@@ -583,7 +713,7 @@ select.ap-field-input { width: auto; }
   }
 }
 
-@media (max-width: 759px) {
+@media (width < 760px) {
   .af-domain-tab,
   .ar-row,
   .ar-search,
@@ -591,6 +721,21 @@ select.ap-field-input { width: auto; }
     min-height: 44px;
   }
 
+  /* Flex-wrap over mixed intrinsic widths produced a ragged stack. Measured at
+     390px: five rows filling 253, 213, 228, 301 and 69 of 330px, with Loiter
+     alone on the last at 21% — and a plain 54px button sharing a row with a
+     114px block carrying its own label, input and datum select.
+     A command that carries a field is a block, not a chip: it takes the width.
+     The plain actions pair up in even columns beneath, which also makes each of
+     them a wider touch target than it was. */
+  .ap-cmds {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+
+  .ap-cmd:has(.ap-field) { grid-column: 1 / -1; }
+
   .asset-panel {
     left: max(var(--gutter), env(safe-area-inset-left));
     right: max(var(--gutter), env(safe-area-inset-right));
@@ -600,11 +745,3 @@ select.ap-field-input { width: auto; }
   }
 }
 
-@media (max-width: 720px) {
-  .asset-panel {
-    left: max(var(--gutter), env(safe-area-inset-left));
-    right: max(var(--gutter), env(safe-area-inset-right));
-    width: auto;
-    max-height: min(70dvh, calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 30px));
-  }
-}

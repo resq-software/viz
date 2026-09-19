@@ -121,6 +121,16 @@ export class EditorWorkspace {
     /** Rail state captured on the way into the full-screen branch, or null when
      *  the branch does not currently hold the rail. */
     private _railBefore: boolean | null = null;
+    /** True once entry focus has been placed for the current full-screen spell.
+     *  `sync()` runs on every `resize`, so without this the entry focus was
+     *  re-applied on each one: measured at 900px with the workspace open, a 1px
+     *  viewport change moved focus off #hud-settings-toggle and into
+     *  .resq-editor-close. Dragging a window edge or rotating a tablet would do
+     *  the same — an unexpected change of context (WCAG 3.2.x), and it fights
+     *  anyone working outside the editor while it is open. Reset when the
+     *  workspace closes or leaves the full-screen branch, so a genuine entry
+     *  still focuses. */
+    private _entryFocused = false;
 
     constructor(ports: EditorWorkspacePorts, authoring: EditorAuthoringPorts) {
         this._ports = ports;
@@ -172,9 +182,17 @@ export class EditorWorkspace {
         this._applyRailLock(open && this.layout === 'fullscreen');
         if (open) {
             void this._ensureAuthoring();
-            this._focusEntry();
+            if (this.layout === 'fullscreen') {
+                if (!this._entryFocused) {
+                    this._focusEntry();
+                    this._entryFocused = true;
+                }
+            } else {
+                this._entryFocused = false;
+            }
             return;
         }
+        this._entryFocused = false;
         // Move handles are scene objects, not editor DOM: closing the workspace
         // would otherwise leave grab handles floating over the world with the
         // panel that owns their on/off state withdrawn.
