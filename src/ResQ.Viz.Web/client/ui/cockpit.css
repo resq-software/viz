@@ -17,7 +17,7 @@
      band edges clear both clusters at every width without over-constraining. */
   left: calc(var(--sidebar-w) + 316px);
   right: 336px;
-  bottom: calc(var(--dvr-h) + 16px);
+  bottom: calc(var(--effective-dvr-h) + 16px);
   z-index: var(--layer-hud);
   display: flex;
   justify-content: center;
@@ -57,7 +57,8 @@
 }
 .cockpit-cap {
   font-family: var(--mono);
-  font-size: 7.5px;
+  /* was 7.5px — instrument captions are read at console distance. */
+  font-size: var(--text-2xs);
   font-weight: 500;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -119,10 +120,10 @@
   .instrument--tilt, .instrument--compass-rose, .instrument--depth { width: 112px; height: 112px; }
   .cockpit-row { gap: 9px; }
 }
-@media (max-width: 1080px) {
+@media (width < 1081px) {
   /* Lane too tight beside the sidebar — float the opt-in cockpit centred over
      the scene, lifted above the event log so it doesn't cover it. */
-  .cockpit { left: 12px; right: 12px; bottom: calc(var(--dvr-h) + 118px); }
+  .cockpit { left: 12px; right: 12px; bottom: calc(var(--effective-dvr-h) + 118px); }
   .instrument { width: 48px; height: 48px; }
   .instrument--tilt, .instrument--compass-rose, .instrument--depth { width: 104px; height: 104px; }
 }

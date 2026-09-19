@@ -61,6 +61,19 @@ function value(doc: Document, id: string): string | null {
 
 beforeEach(() => installHudFixture(document));
 
+
+/**
+ * The battery bar is driven by a 0..1 `--battery-fill` scalar consumed by
+ * `transform: scaleX(...)`, not by `style.width` — animating width is a layout
+ * property and the style guide forbids doing that per-frame, and this bar is
+ * rewritten from the 10 Hz frame stream. The semantics these tests guard are
+ * unchanged: '0' is an EMPTY bar, never a full one, which is the whole point of
+ * the unmetered-power case below.
+ */
+function batteryFill(): string | undefined {
+  return document.getElementById('battery-fill')?.style.getPropertyValue('--battery-fill');
+}
+
 describe('v2 mixed-domain HUD', () => {
   it('counts the complete inventory and averages only reported Air power', () => {
     const hud = new Hud(document);
@@ -107,7 +120,7 @@ describe('v2 mixed-domain HUD', () => {
     ]);
 
     expect(value(document, 'battery-pct')).toBe('0%');
-    expect(document.getElementById('battery-fill')?.style.width).toBe('0%');
+    expect(batteryFill()).toBe('0');
     expect(document.getElementById('battery-fill')?.className).toBe('crit');
   });
 
@@ -120,7 +133,7 @@ describe('v2 mixed-domain HUD', () => {
     ]);
 
     expect(value(document, 'battery-pct')).toBe('--%');
-    expect(document.getElementById('battery-fill')?.style.width).toBe('0%');
+    expect(batteryFill()).toBe('0');
     expect(document.getElementById('battery-fill')?.className).toBe('');
   });
 
@@ -178,11 +191,11 @@ describe('HUD mode and compatibility paths', () => {
     expect(value(document, 'drone-count')).toBe('2');
     expect(value(document, 'sim-time')).toBe('12.3s');
     expect(value(document, 'battery-pct')).toBe('50%');
-    expect(document.getElementById('battery-fill')?.style.width).toBe('50%');
+    expect(batteryFill()).toBe('0.5');
 
     hud.updateDrones(0, 0, []);
     expect(value(document, 'battery-pct')).toBe('--%');
-    expect(document.getElementById('battery-fill')?.style.width).toBe('100%');
+    expect(batteryFill()).toBe('1');
   });
 
   it('uses domain-neutral selected copy in v2 and keeps the piloting hint legacy-only', () => {

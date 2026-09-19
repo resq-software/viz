@@ -146,7 +146,7 @@
 }
 
 .advanced-status.is-error {
-  color: var(--danger);
+  color: var(--primary-text);
 }
 
 .advanced-status[hidden] {

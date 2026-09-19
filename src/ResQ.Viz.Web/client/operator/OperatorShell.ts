@@ -147,11 +147,18 @@ export class OperatorShell {
     this._advancedExpanded = this._elements.advanced.open;
     this.setBootStatus('connecting');
     this.setMode('booting');
-    this.setRailOpen(true);
+    const compactEditor = doc.defaultView?.matchMedia('(width < 760px)');
+
+    // Below 760px the sidebar is `width: min(100vw, var(--sidebar-w))`, i.e. it
+    // covers the viewport rather than sharing it — measured at 320px it left a
+    // ~40px strip of the 3D scene the console exists to show. Above 760px it
+    // still shares the width usefully (a drawer on tablet, a column at the rail
+    // tier), so only the compact tier starts closed; the operator opens it
+    // deliberately there, exactly as they already must for the editor.
+    this.setRailOpen(!compactEditor?.matches);
     this.setContextOpen(false);
     this.setEditorOpen(false);
 
-    const compactEditor = doc.defaultView?.matchMedia('(max-width: 759px)');
     if (compactEditor) {
       const applyEditorAvailability = (): void => this._setEditorAvailable(!compactEditor.matches);
       applyEditorAvailability();

@@ -164,15 +164,17 @@
                     <span class="hud-stat-label" aria-hidden="true">SFC</span>
                     <span class="hud-stat-value" id="surface-count">0</span>
                 </div>
-                <div class="hud-stat" title="Render rate">
+                <!-- data-shed ranks: the lane, not the viewport, decides these. See the
+                     @container block in main.css. Rank order is least-valuable first. -->
+                <div class="hud-stat" data-shed="l3" title="Render rate">
                     <span class="hud-stat-label">FPS</span>
                     <span class="hud-stat-value" id="fps">--</span>
                 </div>
-                <div class="hud-stat" title="Simulation time">
+                <div class="hud-stat" data-shed="l2" title="Simulation time">
                     <span class="hud-stat-label">T+</span>
                     <span class="hud-stat-value" id="sim-time">0.0s</span>
                 </div>
-                <div id="hud-battery-stat" class="hud-stat hud-stat-bat" title="Fleet battery average">
+                <div id="hud-battery-stat" class="hud-stat hud-stat-bat" data-shed="l1" title="Fleet battery average">
                     <span class="hud-stat-label">BAT</span>
                     <div id="battery-track"><div id="battery-fill"></div></div>
                     <span class="hud-stat-value" id="battery-pct">--%</span>
@@ -188,6 +190,13 @@
         </div>
 
         <div class="hud-zone hud-zone-right">
+            <!-- Always mounted, never behind a tab, first in the right zone's tab
+                 order (VEHICLE_DASHBOARDS.md §4.7). It is press-and-hold, and the
+                 shed ladder below must never retire it: see the estop rule in
+                 main.css. Shift+Escape focuses it from anywhere. -->
+            <button id="hud-estop" class="hud-estop" type="button"
+                    aria-disabled="true" aria-label="Emergency stop — no asset selected"
+                    title="No asset selected"><span class="ap-cmd-hold" aria-hidden="true"></span><span class="hud-estop-label">E-STOP</span></button>
             <div id="hud-selected-drone" class="hud-selected hidden" title=""><span id="hud-selected-asset"></span></div>
             <div class="hud-toggle-group" role="group" aria-label="Layer visibility">
                 <button id="hud-vel-toggle"    class="hud-toggle"        type="button" aria-label="Velocity vectors" aria-pressed="false" title="Velocity vectors (V)"><span aria-hidden="true">&#x21D2;</span></button>
@@ -415,9 +424,18 @@
     </aside>
 
     <!-- Body-level operator layers must not inherit the rail's transform. -->
-    <div id="operator-context-layer" class="operator-layer operator-context-layer"></div>
-    <div id="operator-modal-layer" class="operator-layer operator-modal-layer"></div>
+    <!-- Editor before context, and the order is the tab order, not the paint order.
+         Both layers are position:fixed with an explicit z-index (--layer-editor 180
+         over --layer-context 150), so moving them here changes nothing visually.
+         It changes where the keyboard goes: measured at 1440x900 with the dock
+         open, focus ran rail (x 16-220) -> context (x 1078-1388, hard right) ->
+         editor (x 541, back to the middle). The editor column sits left of the
+         context panel, so it is tabbed first.
+         The modal layer is order-independent — showModal() puts it in the top
+         layer — so it stays between them. -->
     <div id="operator-editor-layer" class="operator-layer operator-editor-layer" hidden inert aria-hidden="true"></div>
+    <div id="operator-modal-layer" class="operator-layer operator-modal-layer"></div>
+    <div id="operator-context-layer" class="operator-layer operator-context-layer"></div>
 
     <!-- Wind compass -->
     <div id="wind-compass">

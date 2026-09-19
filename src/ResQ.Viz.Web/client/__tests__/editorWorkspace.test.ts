@@ -43,7 +43,7 @@ const FRAME = {
   drones: [{ id: 'd1', pos: [0, 10, 0], vel: [0, 0, 0], status: 'flying', armed: true }],
 } as unknown as SceneFrame;
 
-/** One knob drives both `innerWidth` and the shell's own `(max-width: 759px)`. */
+/** One knob drives both `innerWidth` and the shell's own `(width < 760px)`. */
 let viewportWidth = 1200;
 
 function installViewport(): void {
@@ -55,8 +55,20 @@ function installViewport(): void {
     const listeners: Array<() => void> = [];
     const list = {
       get matches() {
+        // Understands both the legacy and the range form. Returning false for
+        // anything unparsed is what made this mock silently disagree with the
+        // shell the moment the query moved to `(width < 760px)`: the shell asked
+        // a question the mock could not read, got "no", and reported the editor
+        // as available at 759px.
         const max = /\(max-width:\s*(\d+)px\)/.exec(query);
-        return max ? viewportWidth <= Number(max[1]) : false;
+        if (max) return viewportWidth <= Number(max[1]);
+        const min = /\(min-width:\s*(\d+)px\)/.exec(query);
+        if (min) return viewportWidth >= Number(min[1]);
+        const lt = /width\s*<\s*(\d+)px/.exec(query);
+        if (lt) return viewportWidth < Number(lt[1]);
+        const gte = /width\s*>=\s*(\d+)px/.exec(query);
+        if (gte) return viewportWidth >= Number(gte[1]);
+        throw new Error(`matchMedia mock: unparsed query ${JSON.stringify(query)}`);
       },
       media: query,
       onchange: null,
@@ -220,11 +232,11 @@ describe('editorLayoutFor', () => {
     // toggle that opens nothing.
     expect(EDITOR_MIN_WIDTH).toBe(760);
     expect(EDITOR_DOCK_MIN_WIDTH).toBe(1100);
-    expect(read('../operator/OperatorShell.ts')).toContain('(max-width: 759px)');
+    expect(read('../operator/OperatorShell.ts')).toContain('(width < 760px)');
     expect(read('../styles/editor.css'))
-      .toMatch(/@media \(max-width: 759px\)[\s\S]*?\.resq-editor[\s\S]*?display:\s*none/);
+      .toMatch(/@media \(width < 760px\)[\s\S]*?\.resq-editor[\s\S]*?display:\s*none/);
     expect(read('../styles/operator.css'))
-      .toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?\.operator-editor-layer/);
+      .toMatch(/@media \(760px <= width < 1100px\)[\s\S]*?\.operator-editor-layer/);
   });
 
   it('maps the three shell widths onto the three Editor layouts', () => {
@@ -333,6 +345,49 @@ describe('EditorWorkspace at desktop width', () => {
 });
 
 describe('EditorWorkspace at medium width', () => {
+  it('does not re-steal focus on every resize while it is open', async () => {
+    viewportWidth = 900;
+    const h = (active = harness());
+    await h.clickToggle();
+    expect(h.workspace.layout).toBe('fullscreen');
+    // Entry focus lands inside the workspace, which is the intended behaviour.
+    expect(h.mount.contains(document.activeElement)).toBe(true);
+
+    // The operator moves focus back out to the top bar and keeps working there.
+    // Any focusable control outside the editor mount will do; the rail toggle
+    // lives in the top bar and stays reachable while the workspace is open.
+    const outside = document.getElementById('btn-sidebar-toggle') as HTMLButtonElement;
+    outside.focus();
+    expect(document.activeElement).toBe(outside);
+
+    // `sync()` is bound to `resize`, so anything that resizes the viewport —
+    // dragging a window edge, rotating a tablet, a browser bar collapsing —
+    // used to re-run entry focus and yank the caret into .resq-editor-close.
+    // Measured in a real browser at 900px: a 1px change moved focus off
+    // #hud-settings-toggle. Three events, because the bug reproduced on every one.
+    for (let i = 0; i < 3; i += 1) {
+      window.dispatchEvent(new Event('resize'));
+      await flush(h.workspace);
+      expect(document.activeElement, `focus moved on resize #${i + 1}`).toBe(outside);
+    }
+  });
+
+  it('still focuses its entry when reopened after a close', async () => {
+    viewportWidth = 900;
+    const h = (active = harness());
+    await h.clickToggle();
+    expect(h.mount.contains(document.activeElement)).toBe(true);
+
+    await h.clickToggle();
+    expect(h.shell.editorOpen).toBe(false);
+    const outside = document.getElementById('btn-sidebar-toggle') as HTMLButtonElement;
+    outside.focus();
+
+    // Gating entry focus to the transition must not gate it away permanently.
+    await h.clickToggle();
+    expect(h.mount.contains(document.activeElement)).toBe(true);
+  });
+
   it('takes the screen, inerts the rail and context, and focuses its close control', async () => {
     viewportWidth = 900;
     const h = (active = harness());
@@ -415,7 +470,18 @@ describe('EditorWorkspace below the desktop threshold', () => {
     expect(h.shell.editorOpen).toBe(false);
     expect(h.mount.hidden).toBe(true);
     expect(h.workspace.surfaces).toBeNull();
-    expect(h.rail.hidden).toBe(false);
+
+    // Below 760px the sidebar covers the viewport rather than sharing it, so the
+    // shell now starts it closed and the operator opens it deliberately. What
+    // matters for this test is that refusing the editor does not strand them:
+    // the rail is closed, but its toggle is present, enabled and advertises that
+    // it is collapsed — so it is reachable rather than merely gone.
+    expect(h.rail.hidden).toBe(true);
+    const railToggle = document.getElementById('btn-sidebar-toggle') as HTMLButtonElement;
+    expect(railToggle).not.toBeNull();
+    expect(railToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(railToggle.getAttribute('aria-controls')).toBe('sidebar');
+    expect(railToggle.hasAttribute('disabled')).toBe(false);
   });
 });
 
