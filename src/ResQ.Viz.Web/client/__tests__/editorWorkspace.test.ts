@@ -471,15 +471,13 @@ describe('EditorWorkspace below the desktop threshold', () => {
     expect(h.mount.hidden).toBe(true);
     expect(h.workspace.surfaces).toBeNull();
 
-    // Below 760px the sidebar covers the viewport rather than sharing it, so the
-    // shell now starts it closed and the operator opens it deliberately. What
-    // matters for this test is that refusing the editor does not strand them:
-    // the rail is closed, but its toggle is present, enabled and advertises that
-    // it is collapsed — so it is reachable rather than merely gone.
-    expect(h.rail.hidden).toBe(true);
+    // Refusing the editor must not strand the operator. The rail stays open —
+    // the fleet list is the landing content at this width — and its toggle is
+    // present, enabled, and advertises the state it is actually in.
+    expect(h.rail.hidden).toBe(false);
     const railToggle = document.getElementById('btn-sidebar-toggle') as HTMLButtonElement;
     expect(railToggle).not.toBeNull();
-    expect(railToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(railToggle.getAttribute('aria-expanded')).toBe('true');
     expect(railToggle.getAttribute('aria-controls')).toBe('sidebar');
     expect(railToggle.hasAttribute('disabled')).toBe(false);
   });

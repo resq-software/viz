@@ -149,13 +149,14 @@ export class OperatorShell {
     this.setMode('booting');
     const compactEditor = doc.defaultView?.matchMedia('(width < 760px)');
 
-    // Below 760px the sidebar is `width: min(100vw, var(--sidebar-w))`, i.e. it
-    // covers the viewport rather than sharing it — measured at 320px it left a
-    // ~40px strip of the 3D scene the console exists to show. Above 760px it
-    // still shares the width usefully (a drawer on tablet, a column at the rail
-    // tier), so only the compact tier starts closed; the operator opens it
-    // deliberately there, exactly as they already must for the editor.
-    this.setRailOpen(!compactEditor?.matches);
+    // Open at every width, compact included. Starting the compact tier closed
+    // was tried — the rail is `width: min(100vw, var(--sidebar-w))` there, and at
+    // 320px it leaves only a ~40px strip of scene — but it breaks the flow the
+    // console is built around: the fleet list IS the landing content on a phone,
+    // selecting from it closes the rail and opens the context sheet. Closed on
+    // load lands the operator on a bare scene with no list and no indication
+    // there is one. `e2e/operator-console.spec.ts` pins that flow.
+    this.setRailOpen(true);
     this.setContextOpen(false);
     this.setEditorOpen(false);
 
