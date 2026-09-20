@@ -84,7 +84,7 @@ public sealed partial class SurfaceAsset
             Twist: twist,
             OperationalState: ResolveOperationalState(),
             Mode: ModeToken,
-            Power: BuildPower(percent),
+            Power: _battery.ToPowerState(),
             Health: _faultOnsets.Stamp(BuildHealth(percent, context.SourceTime), context.SourceTime),
             Link: new LinkState(
                 Transport: LinkTransport.Loopback,
@@ -233,28 +233,6 @@ public sealed partial class SurfaceAsset
     /// </remarks>
     /// <param name="percentRemaining">Remaining charge as a percentage.</param>
     /// <returns>The power state to publish.</returns>
-    private PowerState BuildPower(double percentRemaining)
-    {
-        TimeSpan? endurance = _drawWatts > 0.0
-            ? TimeSpan.FromHours(_energyWh / _drawWatts)
-            : null;
-
-        return new PowerState(
-            Sources:
-            [
-                new PowerSource(
-                    SourceId: "pack-a",
-                    Kind: PowerSourceKind.Battery,
-                    PercentRemaining: percentRemaining,
-                    RemainingEnergyWh: _energyWh,
-                    RemainingTime: endurance,
-                    DrawWatts: _drawWatts),
-            ],
-            PercentRemaining: percentRemaining,
-            RemainingEnergyWh: _energyWh,
-            RemainingTime: endurance);
-    }
-
     /// <summary>Overall and component-level health.</summary>
     /// <remarks>
     /// Four independent conditions, rolled up to the worst. Being aground outranks the rest

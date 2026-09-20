@@ -122,7 +122,6 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private const double LowEnergyPercent = 20.0;
 
     /// <summary>Seconds in an hour, for turning a power draw into a state-of-charge change.</summary>
-    private const double SecondsPerHour = 3600.0;
 
     /// <summary>Furthest ahead the navigability probe ever looks, in metres.</summary>
     /// <remarks>
@@ -202,7 +201,6 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     /// <summary>This vessel's event queue, bounded because a pinned hull used to fill it.</summary>
     private readonly AssetEventLedger _events;
     private readonly Vector3 _basePositionEus;
-    private readonly double _capacityWh;
 
     /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
     private readonly FaultOnsetLedger _faultOnsets = new();
@@ -217,8 +215,6 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private Vector3 _passiveDriftEus;
     private double _waterSurfaceElevationM;
     private double _speedCeilingMps;
-    private double _energyWh;
-    private double _drawWatts = HotelPowerW;
     private ulong _sequence;
 
     // The most recent step's clock, so a command that arrives between steps can stamp the event
@@ -234,6 +230,9 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private Guid? _activeCommandId;
 
     /// <summary>Whether the commanded course was outside the set's reach at the previous step.</summary>
+    /// <summary>This vessel's pack. The draw is computed here; the accounting is not.</summary>
+    private readonly AssetBattery _battery;
+
     private Latch _courseUnreachable;
 
     private bool _wasAground;
@@ -309,8 +308,7 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
             .DeadInTheWater(spawnPositionEus.X, spawnPositionEus.Z, headingRad)
             .Validated(nameof(headingRad));
 
-        _capacityWh = PackEnergyWhPerKg * _profile.DisplacementKg;
-        _energyWh = _capacityWh;
+        _battery = new AssetBattery(PackEnergyWhPerKg * _profile.DisplacementKg, HotelPowerW);
 
         Adopt(SampleHere());
         _basePositionEus = _positionEus;
@@ -913,11 +911,12 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
             ? Math.Abs(_motion.SpeedThroughWaterMps) / _profile.MaxSpeedMps
             : 0.0;
 
-        _drawWatts = HotelPowerW + (rated * fraction * fraction * fraction);
-        _energyWh = Math.Max(0.0, _energyWh - (_drawWatts * deltaSeconds / SecondsPerHour));
+        // The domain computes the draw; the pack accounts for it. The cube law and the speed it
+        // is taken at — through the water, not over the ground — belong here: a rover's draw is a
+        // tractive load, and merging the two would bill one platform with the other's physics.
+        _battery.Drain(HotelPowerW + (rated * fraction * fraction * fraction), deltaSeconds);
     }
 
     /// <summary>Remaining pack charge as a percentage.</summary>
-    private double EnergyPercent =>
-        _capacityWh > 0.0 ? Math.Clamp(100.0 * _energyWh / _capacityWh, 0.0, 100.0) : 0.0;
+    private double EnergyPercent => _battery.PercentRemaining;
 }
