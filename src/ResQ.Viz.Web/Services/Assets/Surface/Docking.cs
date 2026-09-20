@@ -140,8 +140,8 @@ public sealed record DockingPlan(
     /// Three lengths is 19.5 m on the shipped vessel, comfortably outside its 12 m minimum
     /// turning radius. Shorter converges faster and weaves; longer is placid and can run out of
     /// approach before it has closed the line. Measured across the full heading sweep at four
-    /// initial ranges; see <c>SurfaceDockingApproachTests</c>, which fails if this is retuned
-    /// into a value that stops the sweep mooring.
+    /// initial ranges; the cases are in <c>SurfaceDockingHardeningTests.Approach.cs</c>, and
+    /// they fail if this is retuned into a value that stops the sweep mooring.
     /// </remarks>
     public const double LookaheadLengths = 3.0;
 
