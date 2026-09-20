@@ -84,8 +84,8 @@ public sealed partial class AirAsset : ISimulatedAsset
     // Transition tracking for event raising, guarded by _lastObservedTick so capturing twice
     // within one tick cannot raise an event twice — capture must be idempotent per tick.
     private long _lastObservedTick = -1;
-    private bool _wasLanded;
-    private bool _lowBatteryLatched;
+    private Latch _landed;
+    private Latch _lowBattery;
     private double _lastHeadingRad;
 
     /// <summary>Wraps a drone the SDK world already owns.</summary>
@@ -114,7 +114,12 @@ public sealed partial class AirAsset : ISimulatedAsset
         _drone = drone;
         Descriptor = descriptor;
         _events = AssetEventLedger.Unbounded(descriptor.AssetId);
-        _wasLanded = drone.FlightModel.HasLanded;
+
+        // Seeded from the flight model rather than low, and the reason was never written down:
+        // a drone already on the ground when the asset is built has not just landed. The seed is
+        // only observable for such a drone — nothing the world spawns starts landed — which is
+        // why it took a rebuilt asset over a landed drone to test it at all.
+        _landed = Latch.SeededAt(drone.FlightModel.HasLanded);
     }
 
     /// <inheritdoc />
@@ -266,10 +271,8 @@ public sealed partial class AirAsset : ISimulatedAsset
             DomainState: domain);
     }
     /// <inheritdoc />
-    public IReadOnlyList<AssetEvent> DrainEvents()
-    {
-        return _events.Drain();
-    }
+    public IReadOnlyList<AssetEvent> DrainEvents() => _events.Drain();
+
     /// <summary>
     /// Splits a flight model's single stored velocity into the two distinct quantities the wire
     /// carries: velocity over the ground, and velocity relative to the air mass.
@@ -368,28 +371,27 @@ public sealed partial class AirAsset : ISimulatedAsset
         // here, from the capture context, rather than in a step it does not have.
         _events.Advance(context.SimulationTimeSeconds, context.Tick);
 
-        if (landed != _wasLanded)
+        _landed = _landed.Observe(landed, out var touchdown);
+
+        if (touchdown != LatchEdge.Unchanged)
         {
+            bool down = touchdown == LatchEdge.Rose;
             _events.Raise(
-                landed ? "air.landed" : "air.airborne",
+                down ? "air.landed" : "air.airborne",
                 AssetEventSeverity.Info,
-                landed ? "Drone has landed." : "Drone has left the ground.");
-            _wasLanded = landed;
+                down ? "Drone has landed." : "Drone has left the ground.");
         }
 
         // Latched rather than level-triggered: a battery sitting on the threshold would
         // otherwise emit an event every tick and bury everything else in the log.
-        if (batteryPercent < LowBatteryPercent && !_lowBatteryLatched)
+        _lowBattery = _lowBattery.Observe(batteryPercent < LowBatteryPercent, out var battery);
+
+        if (battery == LatchEdge.Rose)
         {
-            _lowBatteryLatched = true;
             _events.Raise(
                 "air.batteryLow",
                 AssetEventSeverity.Warning,
                 "Battery below the return-to-base reserve.");
-        }
-        else if (batteryPercent >= LowBatteryPercent)
-        {
-            _lowBatteryLatched = false;
         }
     }
 }

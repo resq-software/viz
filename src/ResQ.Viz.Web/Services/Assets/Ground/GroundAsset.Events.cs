@@ -73,62 +73,64 @@ public sealed partial class GroundAsset
             RaiseBlocked(TraversabilityReason.StepHeightExceeded);
         }
 
-        if (_contact.IsImmobilised != _wasImmobilised)
+        _immobilised = _immobilised.Observe(_contact.IsImmobilised, out var immobilised);
+
+        if (immobilised != LatchEdge.Unchanged)
         {
-            _wasImmobilised = _contact.IsImmobilised;
+            bool stuck = immobilised == LatchEdge.Rose;
             Raise(
-                _wasImmobilised ? "ground.immobilised" : "ground.mobile",
-                _wasImmobilised ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
-                _wasImmobilised
+                stuck ? "ground.immobilised" : "ground.mobile",
+                stuck ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
+                stuck
                     ? $"Advisory: cannot make progress here ({_contact.LimitReason})."
                     : "Advisory: mobility recovered.");
         }
 
-        if (_contact.HasRolloverRisk != _wasRolloverRisk)
+        _rolloverRisk = _rolloverRisk.Observe(_contact.HasRolloverRisk, out var rollover);
+
+        if (rollover != LatchEdge.Unchanged)
         {
-            _wasRolloverRisk = _contact.HasRolloverRisk;
+            bool leaning = rollover == LatchEdge.Rose;
             Raise(
-                _wasRolloverRisk ? "ground.rolloverRisk" : "ground.rolloverRisk.cleared",
-                _wasRolloverRisk ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
-                _wasRolloverRisk
+                leaning ? "ground.rolloverRisk" : "ground.rolloverRisk.cleared",
+                leaning ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
+                leaning
                     ? "Advisory: cross-slope is past the platform's operational limit."
                     : "Advisory: cross-slope back inside the platform's operational limit.");
         }
 
-        // Held by another vehicle rather than by the ground. Edge-triggered off the navigator's
-        // level, so one hold raises one event however long it lasts. Info, not a warning: the
-        // vehicle is doing the right thing and will free itself, which is exactly what separates
-        // it from `ground.immobilised` directly above.
+        // Held by another vehicle rather than by the ground. Info, not a warning: the vehicle is
+        // doing the right thing and will free itself, which is exactly what separates it from
+        // `ground.immobilised` directly above.
         //
         // The cleared message says only that the hold ended, and deliberately. The level also
         // clears when the vehicle goes idle, arrives, is immobilised or has its ground refused —
         // in which case the one in front may still be sitting there and nothing is resuming.
         // Promising a resumption the vehicle is not making is worse than saying less.
-        if (_navigator.IsHoldingForPeer != _wasHoldingForPeer)
+        _holdingForPeer = _holdingForPeer.Observe(_navigator.IsHoldingForPeer, out var holding);
+
+        if (holding != LatchEdge.Unchanged)
         {
-            _wasHoldingForPeer = _navigator.IsHoldingForPeer;
+            bool held = holding == LatchEdge.Rose;
             Raise(
-                _wasHoldingForPeer ? "ground.holdingForVehicle" : "ground.holdingForVehicle.cleared",
+                held ? "ground.holdingForVehicle" : "ground.holdingForVehicle.cleared",
                 AssetEventSeverity.Info,
-                _wasHoldingForPeer
+                held
                     ? "Holding: a vehicle is stopped inside this one's stopping distance."
                     : "No longer holding for a vehicle ahead.");
         }
 
-        // Latched with hysteresis, not level-triggered: see the remarks.
-        double percent = EnergyPercent;
+        // Latched rather than level-triggered: a pack sitting on the threshold would otherwise
+        // emit an event every tick and bury everything else in the log. One threshold, not two —
+        // this is a latch, not the hysteresis band the drift detector has.
+        _lowEnergy = _lowEnergy.Observe(EnergyPercent < LowEnergyPercent, out var energy);
 
-        if (percent < LowEnergyPercent && !_lowEnergyLatched)
+        if (energy == LatchEdge.Rose)
         {
-            _lowEnergyLatched = true;
             Raise(
                 "ground.energyLow",
                 AssetEventSeverity.Warning,
                 "Battery below the return-to-base reserve.");
-        }
-        else if (percent >= LowEnergyPercent)
-        {
-            _lowEnergyLatched = false;
         }
     }
 
