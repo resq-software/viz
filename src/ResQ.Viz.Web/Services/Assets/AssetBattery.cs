@@ -85,10 +85,40 @@ public sealed class AssetBattery
     /// </remarks>
     /// <param name="drawWatts">What the asset is drawing over this step, in watts.</param>
     /// <param name="deltaSeconds">Timestep in seconds.</param>
+    /// <exception cref="ArgumentOutOfRangeException">Either argument is negative or not finite.</exception>
     public void Drain(double drawWatts, double deltaSeconds)
     {
+        // Validated rather than clamped, and refusing rather than absorbing. A negative draw is
+        // not a small error: it runs the subtraction backwards and charges the pack, so an hour
+        // at minus a kilowatt puts 1,100 Wh into a hundred-watt-hour pack and the asset reports
+        // more energy than it can hold. A non-finite one is worse — Math.Max propagates NaN, so
+        // the charge never recovers and every later percentage, endurance and low-energy
+        // comparison is poisoned by one bad step.
+        //
+        // Throwing is safe here in a way it was not before: an asset whose domain computes a
+        // nonsense draw now faults alone, because AssetWorld.StepDomain contains it. Silently
+        // clamping would leave the broken arithmetic running and reporting plausible numbers.
+        //
+        // If charging is ever modelled it gets its own method. A negative draw is not a charge,
+        // it is a sign error wearing one.
+        ThrowIfNotDrainable(drawWatts, nameof(drawWatts));
+        ThrowIfNotDrainable(deltaSeconds, nameof(deltaSeconds));
+
         DrawWatts = drawWatts;
         _storedWh = Math.Max(0.0, _storedWh - (drawWatts * deltaSeconds / SecondsPerHour));
+    }
+
+    /// <summary>Refuses a value that cannot take part in the accounting.</summary>
+    /// <param name="value">Value to check.</param>
+    /// <param name="name">Parameter name to report.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The value is negative or not finite.</exception>
+    private static void ThrowIfNotDrainable(double value, string name)
+    {
+        if (!double.IsFinite(value) || value < 0.0)
+        {
+            throw new ArgumentOutOfRangeException(
+                name, value, "A pack drains over a non-negative, finite interval at a non-negative, finite draw.");
+        }
     }
 
     /// <summary>Projects the pack onto the wire model.</summary>

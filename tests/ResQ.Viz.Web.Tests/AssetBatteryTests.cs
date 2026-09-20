@@ -152,6 +152,47 @@ public sealed class AssetBatteryTests
         new AssetBattery(0.0, 0.0).PercentRemaining.Should().Be(0.0);
     }
 
+    /// <summary>A pack cannot be charged by draining it backwards.</summary>
+    /// <remarks>
+    /// Raised in review, and not a small error: the subtraction runs the other way, so an hour
+    /// at minus a kilowatt puts 1,100 Wh into a hundred-watt-hour pack and the asset reports
+    /// more energy than it can physically hold. If charging is ever modelled it gets its own
+    /// method — a negative draw is a sign error wearing one.
+    /// </remarks>
+    [Fact]
+    public void A_Negative_Draw_Is_Refused_Rather_Than_Charging_The_Pack()
+    {
+        var battery = new AssetBattery(100.0, 0.0);
+
+        var charging = () => battery.Drain(drawWatts: -1000.0, deltaSeconds: Hour);
+
+        charging.Should().Throw<ArgumentOutOfRangeException>();
+        battery.StoredWh.Should().Be(100.0, "a refused drain changes nothing");
+    }
+
+    /// <summary>A non-finite draw or interval is refused before it poisons the charge.</summary>
+    /// <remarks>
+    /// Worse than the negative case, because it does not recover: <c>Math.Max</c> propagates NaN,
+    /// so one bad step leaves every later percentage, endurance and low-energy comparison
+    /// meaningless. Refusing faults the one asset, which the step bulkhead contains; clamping
+    /// would leave the broken arithmetic running and reporting plausible numbers.
+    /// </remarks>
+    [Theory]
+    [InlineData(double.NaN, 1.0)]
+    [InlineData(double.PositiveInfinity, 1.0)]
+    [InlineData(10.0, double.NaN)]
+    [InlineData(10.0, -1.0)]
+    public void A_Non_Finite_Or_Negative_Interval_Is_Refused(double drawWatts, double deltaSeconds)
+    {
+        var battery = new AssetBattery(100.0, 0.0);
+
+        var bad = () => battery.Drain(drawWatts, deltaSeconds);
+
+        bad.Should().Throw<ArgumentOutOfRangeException>();
+        battery.StoredWh.Should().Be(100.0);
+        battery.PercentRemaining.Should().Be(100.0);
+    }
+
     /// <summary>Nonsense construction is refused.</summary>
     [Fact]
     public void A_Pack_Refuses_Negative_Or_Non_Finite_Construction()
