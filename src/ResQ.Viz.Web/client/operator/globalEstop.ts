@@ -82,9 +82,16 @@ export function mountGlobalEstop(options: GlobalEstopOptions): GlobalEstopHandle
             const wasArmed = armed;
             armed = null;
             hold.cancel();
+            // Two different situations, and only one of them can be acted on by
+            // holding again. With nothing selected this control is aria-disabled
+            // and the arm-time guard refuses to start, so "hold again" would be
+            // an instruction the console will not honour.
             announce(
-                `Emergency stop cancelled: selection moved off ${wasArmed} while you were holding. `
-                + `Hold again to stop ${next ?? 'an asset'}.`,
+                next === null
+                    ? `Emergency stop cancelled: ${wasArmed} is no longer selected. `
+                      + 'Select an asset, then hold again.'
+                    : `Emergency stop cancelled: selection moved off ${wasArmed} while you were `
+                      + `holding. Hold again to stop ${next}.`,
             );
         }
         target = next;

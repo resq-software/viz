@@ -55,8 +55,12 @@ describe('shell-level emergency stop', () => {
   it('abandons a hold that is already running when the control starts refusing', async () => {
     const { button, selection } = mount();
     const issue = vi.fn();
+    const announced: string[] = [];
     selection.set('asset', 'fr-ferry-1');
-    mountGlobalEstop({ button, selection, issue: issue as never, holdMs: 40 });
+    mountGlobalEstop({
+      button, selection, issue: issue as never, holdMs: 40,
+      announce: (m) => announced.push(m),
+    });
 
     button.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     expect(button.hasAttribute('data-holding')).toBe(true);
@@ -66,6 +70,12 @@ describe('shell-level emergency stop', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(button.getAttribute('aria-disabled')).toBe('true');
     expect(button.hasAttribute('data-holding'), 'the hold died with the target').toBe(false);
+
+    // And it asks for something that can actually be done. "Hold again" would be
+    // impossible here: with nothing selected the control refuses to arm at all.
+    const said = announced.join(' ');
+    expect(said).toMatch(/select an asset/i);
+    expect(said, 'does not ask for a hold the guard will refuse').not.toMatch(/hold again to stop/i);
 
     await new Promise((r) => setTimeout(r, 60));
     expect(issue).not.toHaveBeenCalled();
