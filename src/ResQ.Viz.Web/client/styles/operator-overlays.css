@@ -29,7 +29,7 @@
 /* ── Camera mode pill (FREE / CHASE / FPV) ───────────────────────────────── */
 .cam-mode-pill {
   position: fixed;
-  top: calc(var(--hud-h) + 12px);
+  top: calc(var(--effective-hud-h) + 12px);
   right: 16px;
   z-index: var(--layer-hud);
   padding: 5px 12px;
@@ -48,12 +48,12 @@
 }
 
 .cam-mode-pill[data-mode='chase'] { color: var(--accent); border-color: var(--accent); }
-.cam-mode-pill[data-mode='fpv']   { color: var(--danger); border-color: var(--danger); }
+.cam-mode-pill[data-mode='fpv']   { color: var(--primary-text); border-color: var(--danger); }
 
 /* ── FPV onboard OSD (real-FPV-style heads-up overlay) ───────────────────── */
 .fpv-osd {
   position: fixed;
-  inset: var(--hud-h) 0 var(--dvr-h) 0; /* the canvas viewport, clear of the bars */
+  inset: var(--effective-hud-h) 0 var(--effective-dvr-h) 0; /* the canvas viewport, clear of the bars */
   z-index: var(--layer-hud);
   pointer-events: none;
   font-family: var(--mono);
@@ -146,7 +146,7 @@
 .fpv-bc  { bottom: 22px; left: 50%; transform: translateX(-50%); flex-direction: column; align-items: center; gap: 2px; }
 
 .fpv-armed { font-size: 24px; font-weight: 800; letter-spacing: 0.18em; color: var(--accent); }
-.fpv-armed:not(.is-armed) { color: var(--danger); }
+.fpv-armed:not(.is-armed) { color: var(--primary-text); }
 .fpv-id   { font-size: 12px; opacity: 0.85; letter-spacing: 0.1em; }
 
 .fpv-batrow { display: flex; align-items: baseline; gap: 8px; }
@@ -155,10 +155,19 @@
   width: 92px;
   height: 5px;
   border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 2px;
+  border-radius: var(--radius-token);
   overflow: hidden;
 }
-.fpv-bat-fill { height: 100%; width: 100%; background: var(--accent); transition: width var(--t-mid); }
+/* Scaled, not resized — see #battery-fill in main.css. Also written on every
+   frame without an equality guard. */
+.fpv-bat-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transform: scaleX(var(--battery-fill, 1));
+  transition: transform var(--t-mid);
+}
 .fpv-bat-fill.is-low { background: var(--danger); }
 
 .fpv-hdg { font-size: 20px; font-weight: 700; letter-spacing: 0.08em; }
@@ -200,7 +209,7 @@ body.fpv-mode .cam-mode-pill { display: none; }
   /* Stacked directly above the minimap (bottom: dvr-h+14, ~214px tall) so the
      two sensor views group at the bottom-right and can never overlap — a centred
      top:50% dropped into the minimap on shorter viewports. */
-  bottom: calc(var(--dvr-h) + 244px);
+  bottom: calc(var(--effective-dvr-h) + 244px);
   z-index: var(--layer-hud);
   width: 272px;
   border-radius: var(--r-2);
@@ -286,7 +295,12 @@ body.fpv-mode .cam-mode-pill { display: none; }
   gap: 6px;
   font-weight: 700;
   letter-spacing: 0.14em;
-  color: var(--text-muted);
+  /* --mono-fg, not --text-muted: the bar is mono throughout, and tokens.css
+     records that --text-muted clears 4.5:1 at no alpha below ~0.92 and is
+     therefore not for meaningful text. REC, the clock, reset and the LIVE pill
+     are all meaningful. Measured on --surface-2 at 0.84: --text-muted 4.09,
+     --mono-fg 4.86. */
+  color: var(--mono-fg);
 }
 
 .dvr-rec::before {
@@ -334,6 +348,21 @@ body.fpv-mode .cam-mode-pill { display: none; }
   transition: background var(--t-mid), color var(--t-mid), border-color var(--t-mid);
 }
 
+/* A refused control must LOOK refused. The reset button carried `disabled` and
+   an explanatory aria-label but no appearance at all — nothing styles :disabled
+   on .dvr-btn — so during replay it drew exactly like the enabled one.
+   Desaturated rather than faded to near-nothing: this still has to be readable
+   enough to find, and the glyph keeps 3:1 against the bar. */
+.dvr-btn[aria-disabled='true'] {
+  color: var(--hint);
+  cursor: not-allowed;
+}
+
+.dvr-btn[aria-disabled='true']:hover {
+  background: transparent;
+  color: var(--hint);
+}
+
 .dvr-btn:hover {
   background: var(--inset);
   color: var(--text);
@@ -345,12 +374,13 @@ body.fpv-mode .cam-mode-pill { display: none; }
 }
 
 .dvr-play {
-  color: var(--accent);
+  /* --accent measured 4.05 on this bar; --info-text is the text-safe same hue. */
+  color: var(--info-text);
   font-size: 15px;
 }
 
 .dvr-reset {
-  color: var(--text-muted);
+  color: var(--mono-fg);
 }
 
 /* Selector carries the type+attribute so it outranks the global
@@ -438,7 +468,7 @@ input[type='range'].dvr-scrub {
   flex: none;
   min-width: 78px;
   text-align: right;
-  color: var(--text-muted);
+  color: var(--mono-fg);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
 }
@@ -449,7 +479,7 @@ input[type='range'].dvr-scrub {
   border: 1px solid var(--line);
   border-radius: var(--r-2);
   background: var(--inset);
-  color: var(--text-muted);
+  color: var(--mono-fg);
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 500;
@@ -466,10 +496,21 @@ input[type='range'].dvr-scrub {
 .dvr-live.is-live {
   /* `--danger` is the 58.5%-L fill/border red; as 10px TEXT it measured 3.51:1
      against this bar — under WCAG 1.4.3 AA (4.5:1). `--primary-text` is the
-     same hue lifted to 70% L and exists for exactly this case (see tokens.css).
+     same hue lifted to 75% L and exists for exactly this case (see tokens.css).
      The border keeps the saturated fill red — 1.4.11 only asks 3:1 of it. */
   color: var(--primary-text);
   border-color: var(--danger);
+}
+
+/* Hover AT the live edge. `.dvr-live:hover` above is the same specificity as
+   `.dvr-live.is-live` and comes first, so `.is-live` re-declaring both colour and
+   border simply beat it — and since dvr.ts creates the pill as
+   `class="dvr-live is-live"`, that is its ordinary state. Hovering LIVE produced
+   no visual change whatsoever.
+   This lightens rather than switching hue, so the pill still reads as live. */
+.dvr-live.is-live:hover {
+  color: var(--text);
+  border-color: var(--primary-text);
 }
 
 .dvr-live:focus-visible {
@@ -483,7 +524,7 @@ input[type='range'].dvr-scrub {
 
 /* Tablet / phone: retire the onboard FPV PiP; the timeline spans the full width
    (the sidebar is a drawer overlay here, not a layout participant). */
-@media (max-width: 1099px) {
+@media (width < 1100px) {
   .resq-pip { display: none; }
   .resq-dvr {
     left: 0;
@@ -498,7 +539,7 @@ input[type='range'].dvr-scrub {
 /* Compact: fold the timeline down to the core transport so it never overflows.
    Jump-to-start remains available through the scrubber; speed and REC are
    lower-priority than play, step, reset, time and the live-edge control. */
-@media (max-width: 759px) {
+@media (width < 760px) {
   .dvr-rec,
   .dvr-tostart,
   .dvr-speed { display: none; }
@@ -515,8 +556,25 @@ input[type='range'].dvr-scrub {
   }
 }
 
-/* When the sidebar collapses, the full-width timeline bar reclaims the freed
-   column. Reacts to the sidebar's own class so it survives regardless of
-   stylesheet load order. */
-.resq-dvr { transition: left var(--t-mid) var(--ease); }
-body:has(#sidebar.collapsed) .resq-dvr { left: 0; }
+/* When the rail stops holding the left column, the timeline bar reclaims it.
+   Every way the rail can leave has to be listed here, because the bar's inset is
+   the ONLY thing covering the bottom-left corner at width >= 1100 — miss one and
+   that corner is bare WebGL canvas, which is exactly what happened.
+   Keyed on `.collapsed` alone it missed both immersive modes, whose whole point
+   is a clean full-bleed view: measured at 1440x900 with body.fpv-mode and again
+   with body.investor-mode, #sidebar computed `display: none` while .resq-dvr
+   stayed at `left: 320px` and elementsFromPoint(8, 892) returned CANVAS.
+   `chromeTiling.test.ts` enumerates the rules that hide #sidebar and fails if one
+   of them has no matching entry here, so a fourth way cannot reintroduce it. */
+/* No transition on `left`. The rail it moves with CANNOT animate — OperatorShell
+   toggles it with the `hidden` attribute and operator.css makes that
+   `display: none !important`, so the rail pops. Measured: closing and reopening
+   the rail, the sidebar was at its final position in the very first frame at
+   every sample (0/40/90/150/400ms) while this bar was still at left:0 — a 320x46
+   frame of opaque bar over the rail's bottom-left corner, which is bare canvas
+   the moment the two disagree. Animating one of a pair is worse than animating
+   neither, and `left` is a layout property besides: it relayouts the whole
+   fixed-position chrome each frame over a live WebGL canvas. */
+body:has(#sidebar.collapsed) .resq-dvr,
+body.fpv-mode .resq-dvr,
+body.investor-mode .resq-dvr { left: 0; }

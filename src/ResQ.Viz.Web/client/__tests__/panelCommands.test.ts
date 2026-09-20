@@ -28,14 +28,16 @@ vi.mock('../reducedMotion', () => ({ prefersReducedMotion: () => motion.reduced 
 import { AssetPanel } from '../assets/AssetPanel';
 import type { AssetPanelOptions, PanelSubject } from '../assets/AssetPanel';
 import {
-  MIN_AIR_TARGET_CLEARANCE_M,
-  TargetAltitudePolicy,
   altitudeBoundsM,
+  MIN_AIR_TARGET_CLEARANCE_M,
   postAssetCommand,
+  snapToStep,
   surfaceElevationUnderAssetM,
   targetAltitudeM,
+  TargetAltitudePolicy,
   targetAltitudePolicy,
   targetForAsset,
+  tightenBound,
 } from '../assets/panelCommands';
 import type {
   AssetCapabilitiesReport,
@@ -431,6 +433,31 @@ describe('AssetPanel altitude field', () => {
       reason: mount.querySelector(`${scope} .ap-cmd-reason`)?.textContent ?? '',
     };
   }
+
+  // The panel may tidy its OWN prefill onto the step grid. It may not tidy the
+  // operator's. Snapping also clamps into range, so applying it to typed input
+  // turns a refusal into a silent substitution — 19950 m against a 19900 m
+  // ceiling commanded as 19900 rather than refused. Being told no and being
+  // obeyed differently are not the same answer.
+  it('tidies its own prefill onto the step grid but never the operator\'s value', async () => {
+    const { panel, mount } = mountPanel({ loadCapabilities: async () => report([setAltitude]) });
+    const subject: PanelSubject = { kind: 'asset', view: view() };
+    await show(panel, subject);
+
+    const { input } = altitudeControls(mount);
+    // Whatever it prefilled, it sits on the grid its own step defines.
+    expect(input.step).toBe('1');
+    expect(Number(input.value) % Number(input.step), `prefill ${input.value} is off the grid`).toBe(0);
+    expect(input.checkValidity(), 'the field is not born :invalid').toBe(true);
+
+    // An off-grid value the operator typed survives untouched, even across the
+    // re-render that republishes the bounds.
+    input.value = '101.5';
+    panel.render(subject, NOW_MS);
+    expect(altitudeControls(mount).input.value).toBe('101.5');
+
+    panel.dispose();
+  });
 
   it('bounds the typed value against the datum beside it, not against a fixed envelope', async () => {
     const { panel, mount } = mountPanel({ loadCapabilities: async () => report([setAltitude]) });
@@ -993,5 +1020,62 @@ describe('postAssetCommand', () => {
     if (outcome.accepted) throw new Error('expected a failure');
     if (!('failure' in outcome)) throw new Error('expected a transport failure');
     expect(outcome.failure.kind).toBe('network');
+  });
+});
+
+// A number input's constraints are not decoration: the browser evaluates them.
+// Both command fields shipped `:invalid`. Speed prefilled 14.32523727135825
+// against step="0.5"; Altitude 76 against min="-19987.68658705976", because HTML
+// anchors the step grid at `min` and the +/-20km sentinel carried a raw terrain
+// elevation. checkValidity() was false on both the moment they rendered.
+describe('step grid', () => {
+  describe('tightenBound', () => {
+    it('moves a bound inward onto the grid, never outward', () => {
+      // min rises, so the control cannot come to accept below the true minimum.
+      expect(tightenBound(-19987.68658705976, 1, 'min')).toBe(-19987);
+      expect(tightenBound(0.2, 0.5, 'min')).toBe(0.5);
+      // max falls, so it cannot come to accept above the true maximum.
+      expect(tightenBound(20012.31341294024, 1, 'max')).toBe(20012);
+      expect(tightenBound(17.9, 0.5, 'max')).toBe(17.5);
+    });
+
+    it('leaves a bound already on the grid alone', () => {
+      expect(tightenBound(0, 0.5, 'min')).toBe(0);
+      expect(tightenBound(18, 0.5, 'max')).toBe(18);
+    });
+
+    it('passes through what it cannot place', () => {
+      expect(tightenBound(Number.POSITIVE_INFINITY, 1, 'max')).toBe(Number.POSITIVE_INFINITY);
+      expect(tightenBound(5, 0, 'min')).toBe(5);
+    });
+  });
+
+  describe('snapToStep', () => {
+    it('places a value on the nearest grid point', () => {
+      expect(snapToStep(14.32523727135825, 0.5, 0, 18)).toBe(14.5);
+      expect(snapToStep(14.9, 0.5, 0, 18)).toBe(15);
+      expect(snapToStep(76.4, 1, -19987, 20012)).toBe(76);
+    });
+
+    it('does not drift on decimal steps', () => {
+      // A 0.1 grid is where naive arithmetic yields 14.700000000000001 and the
+      // field reports a mismatch against the value it was just given.
+      expect(snapToStep(14.68, 0.1, 0, 20)).toBe(14.7);
+      expect(snapToStep(0.30000000000000004, 0.1, 0, 1)).toBe(0.3);
+    });
+
+    it('clamps into the bounds rather than leaving the range', () => {
+      expect(snapToStep(19.9, 0.5, 0, 18)).toBe(18);
+      expect(snapToStep(-3, 0.5, 0, 18)).toBe(0);
+    });
+
+    it('tolerates an unbounded side', () => {
+      expect(snapToStep(14.3, 0.5, null, null)).toBe(14.5);
+    });
+
+    it('passes through what it cannot place', () => {
+      expect(snapToStep(Number.NaN, 0.5, 0, 18)).toBeNaN();
+      expect(snapToStep(7, 0, 0, 18)).toBe(7);
+    });
   });
 });

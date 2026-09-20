@@ -916,6 +916,52 @@ describe('AssetPanel commands', () => {
     panel.dispose();
   });
 
+  // A number input's constraints are evaluated by the browser, so a field whose
+  // own prefill violates them ships `:invalid`. Speed arrived as
+  // 14.32523727135825 against step="0.5".
+  it('prefills a speed that satisfies the field\'s own step', async () => {
+    const hull: AssetCapabilitiesReport = {
+      ...report([command({ kind: 'setSpeed', requiredParameters: ['speed'] })]),
+      motion: { ...MOTION, minSpeedMps: 0, maxSpeedMps: 18 },
+    };
+    const { panel, mount } = mountPanel({ loadCapabilities: async () => hull });
+    // An asset moving at a speed no stepper could ever land on.
+    const moving = view({ domainState: { ...AIR_STATE, groundSpeedMps: 14.32523727135825 } });
+    await show(panel, { kind: 'asset', view: moving });
+
+    const input = mount.querySelector<HTMLInputElement>('[data-kind="setSpeed"] .ap-field-input')!;
+    expect(input.step).toBe('0.5');
+    expect(input.value, 'prefill sits on the step grid').toBe('14.5');
+    expect(input.validity.stepMismatch, 'no step mismatch').toBe(false);
+    expect(input.checkValidity(), 'the field is not born :invalid').toBe(true);
+    panel.dispose();
+  });
+
+  // HTML anchors the step grid at `min`, so a fractional bound invalidates every
+  // round value in the field. The altitude envelope is built from the terrain
+  // elevation under the asset, which is fractional in general — here 100.3.
+  it('publishes altitude bounds on the grid so round altitudes stay valid', async () => {
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async () => report([command({ kind: 'setAltitude', requiredParameters: ['altitude'] })]),
+    });
+    await show(panel, { kind: 'asset', view: view({ domainState: AIR_STATE }) });
+
+    const input = mount.querySelector<HTMLInputElement>('[data-kind="setAltitude"] input.ap-field-input')!;
+    expect(input.step).toBe('1');
+    // Whole numbers, not 100.3 +/- 20000.
+    expect(Number.isInteger(Number(input.min)), `min ${input.min} is off the grid`).toBe(true);
+    expect(Number.isInteger(Number(input.max)), `max ${input.max} is off the grid`).toBe(true);
+    // Tightened INWARD, so rounding onto the grid can only ever narrow what the
+    // control accepts. The raw envelope for a 100.3 m elevation is
+    // [-20100.3, 19899.7]; on the grid that is [-20100, 19899].
+    expect(Number(input.min), 'min rounded up, never down').toBeGreaterThanOrEqual(-20_100.3);
+    expect(Number(input.max), 'max rounded down, never up').toBeLessThanOrEqual(19_899.7);
+    expect(input.min).toBe('-20100');
+    expect(input.max).toBe('19899');
+    expect(input.checkValidity(), 'the field is not born :invalid').toBe(true);
+    panel.dispose();
+  });
+
   it('pairs an altitude with the datum it is measured against', async () => {
     const { panel, mount } = mountPanel({
       loadCapabilities: async () => report([command({ kind: 'setAltitude', requiredParameters: ['altitude'] })]),
@@ -1467,5 +1513,178 @@ describe('mixed-fleet filtering and counting', () => {
       ['usv-2', 'domain-surface'],
     ]);
     panel.dispose();
+  });
+});
+
+// ── Destructive commands are press-and-hold, never one press ────────────────
+
+describe('AssetPanel guards destructive commands with a hold', () => {
+  /** Drives the hold the way a pointer does, then lets rAF advance past it. */
+  async function pressAndHold(button: HTMLElement, ms: number): Promise<void> {
+    button.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, ms));
+    // happy-dom drives rAF from timers; one more turn lets the final frame land.
+    await settle();
+  }
+
+  it('does not issue an emergency stop on a plain click', async () => {
+    const issueCommand = vi.fn(async () => ({
+      accepted: true as const, message: 'Emergency stop accepted.', result: { state: CommandState.Accepted } as never,
+    }));
+    const { panel, mount } = mountPanel({
+      issueCommand,
+      holdMs: 40,
+      loadCapabilities: async () => report([command({ kind: 'emergencyStop', statePolicy: 'Always' })]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    const button = mount.querySelector<HTMLButtonElement>('[data-kind="emergencyStop"] .ap-cmd-btn');
+    expect(button, 'emergency stop control should render').not.toBeNull();
+
+    // The whole point of §4.7: a single press must not be able to stop a vehicle.
+    button?.click();
+    await settle();
+    expect(issueCommand).not.toHaveBeenCalled();
+  });
+
+  it('issues it once the press is held', async () => {
+    // Parameters declared so the recorded call is typed and the request body can
+    // be asserted, not just the call count.
+    const issueCommand = vi.fn(async (_assetId: string, _request: { kind: string }) => ({
+      accepted: true as const, message: 'Emergency stop accepted.', result: { state: CommandState.Accepted } as never,
+    }));
+    const { panel, mount } = mountPanel({
+      issueCommand,
+      holdMs: 40,
+      loadCapabilities: async () => report([command({ kind: 'emergencyStop', statePolicy: 'Always' })]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    const button = mount.querySelector<HTMLButtonElement>('[data-kind="emergencyStop"] .ap-cmd-btn');
+    await pressAndHold(button as HTMLElement, 120);
+    expect(issueCommand).toHaveBeenCalledTimes(1);
+    // The request body is the second argument; typed loosely because the mock is
+    // declared without a signature.
+    expect(issueCommand.mock.calls[0]?.[1]?.kind).toBe('emergencyStop');
+  });
+
+  it('abandons the command when the press is released early', async () => {
+    const issueCommand = vi.fn(async () => ({
+      accepted: true as const, message: 'ok', result: { state: CommandState.Accepted } as never,
+    }));
+    const { panel, mount } = mountPanel({
+      issueCommand,
+      holdMs: 200,
+      loadCapabilities: async () => report([command({ kind: 'emergencyStop', statePolicy: 'Always' })]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    const button = mount.querySelector<HTMLButtonElement>('[data-kind="emergencyStop"] .ap-cmd-btn');
+    button?.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 30));
+    button?.dispatchEvent(new Event('pointerup', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 260));
+    await settle();
+    expect(issueCommand).not.toHaveBeenCalled();
+  });
+
+  it('leaves non-destructive commands on a single press', async () => {
+    const issueCommand = vi.fn(async () => ({
+      accepted: true as const, message: 'Hold accepted.', result: { state: CommandState.Accepted } as never,
+    }));
+    const { panel, mount } = mountPanel({
+      issueCommand,
+      loadCapabilities: async () => report([command({ kind: 'hold', statePolicy: 'Always' })]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    // Guarding everything would be its own failure: the guard has to mean
+    // something, so ordinary commands must stay one press.
+    mount.querySelector<HTMLButtonElement>('[data-kind="hold"] .ap-cmd-btn')?.click();
+    await settle();
+    expect(issueCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('says in the accessible name that the control must be held', async () => {
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async () => report([command({ kind: 'emergencyStop', statePolicy: 'Always' })]),
+    });
+    await show(panel, { kind: 'asset', view: view() });
+
+    const button = mount.querySelector<HTMLButtonElement>('[data-kind="emergencyStop"] .ap-cmd-btn');
+    expect(button?.getAttribute('aria-label')).toMatch(/hold to confirm/i);
+  });
+});
+
+// ── Link RTT sits beside the controls, not only in a card ───────────────────
+
+describe('AssetPanel shows link latency next to the commands', () => {
+  /** The smallest AssetState the panel's cards will render: the health, link and
+   *  power groups all read from it, so a link-only stub throws in healthCard. */
+  function withLatency(latencyMs: number | null): PanelSubject {
+    return {
+      kind: 'asset',
+      view: view(),
+      state: {
+        health: { overall: 0, summary: '', components: [], faults: [] },
+        link: {
+          transport: 0, isConnected: true, latencyMs, packetLossRatio: null,
+          signalDbm: null, signalQuality: null, meshPath: [], lastHeardAt: null,
+        },
+        power: null,
+      } as never,
+    };
+  }
+
+  async function latencyLine(subject: PanelSubject): Promise<HTMLElement | null> {
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async () => report([command({ kind: 'hold', statePolicy: 'Always' })]),
+    });
+    await show(panel, subject);
+    return mount.querySelector<HTMLElement>('.ap-cmd-latency');
+  }
+
+  // A track has no command link and so no RTT. The track path cleared the
+  // commands and the retry line but not this one, so the number measured for the
+  // previously selected ASSET stayed on screen beside an observed contact — and a
+  // stale RTT beside a subject that has none reads as "the link is fine".
+  it('drops the latency line when the panel switches to a track', async () => {
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async () => report([command({ kind: 'hold', statePolicy: 'Always' })]),
+    });
+    await show(panel, withLatency(42));
+    const line = mount.querySelector<HTMLElement>('.ap-cmd-latency')!;
+    expect(line.hidden).toBe(false);
+    expect(line.textContent).toMatch(/42\s*ms/);
+
+    panel.render({ kind: 'track', track: track() }, NOW_MS);
+
+    expect(line.hidden, 'the RTT line is gone for a track').toBe(true);
+    expect(line.textContent, 'and carries no stale number').toBe('');
+    panel.dispose();
+  });
+
+  it('states the round-trip time where the operator is about to press', async () => {
+    const line = await latencyLine(withLatency(42));
+    expect(line?.hidden).toBe(false);
+    expect(line?.textContent).toMatch(/42\s*ms/);
+  });
+
+  it('calls an unknown link unknown rather than showing nothing', async () => {
+    // Silence would read as a healthy link; §4.7 makes the RTT part of the
+    // decision to command at all, so its absence has to be visible.
+    const line = await latencyLine(withLatency(null));
+    expect(line?.hidden).toBe(false);
+    expect(line?.textContent).toMatch(/unknown/i);
+    expect(line?.dataset['tone']).toBe('unknown');
+  });
+
+  it('escalates tone as the link degrades, without relying on colour alone', async () => {
+    expect((await latencyLine(withLatency(80)))?.dataset['tone']).toBe('ok');
+    expect((await latencyLine(withLatency(500)))?.dataset['tone']).toBe('warn');
+    // The spec's own example of a link that changes whether to command at all.
+    const bad = await latencyLine(withLatency(900));
+    expect(bad?.dataset['tone']).toBe('crit');
+    expect(bad?.textContent).toMatch(/900\s*ms/);
   });
 });

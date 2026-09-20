@@ -292,15 +292,24 @@ describe('Dvr mode transitions', () => {
         recorder.capture(v1(2));
         const { modes, reset } = mount(recorder);
         const button = document.querySelector<HTMLButtonElement>('.dvr-reset')!;
-        expect(button.disabled).toBe(false);
+        expect(button.getAttribute('aria-disabled')).toBe('false');
 
         scrubTo(0);
 
         // Reset restarts the SERVER, not the clip. Advertised must equal
         // accepted: the gate refuses it in replay, so the button must not
         // present itself as pressable.
+        //
+        // `aria-disabled`, not `disabled`. `disabled` removed the button from the
+        // tab order, so the aria-label explaining WHY it refuses — the one thing a
+        // keyboard operator needs — could never be reached. The refusal is
+        // enforced in the click handler instead, which is what the click below
+        // actually proves; with `disabled` the browser suppressed the event and
+        // the assertion passed without any refusal logic existing at all.
         expect(modes).toEqual([false]);
-        expect(button.disabled).toBe(true);
+        expect(button.getAttribute('aria-disabled')).toBe('true');
+        expect(button.disabled, 'stays focusable so its reason is reachable').toBe(false);
+        expect(button.getAttribute('aria-label')).toMatch(/unavailable during replay/);
         button.click();
         expect(reset).not.toHaveBeenCalled();
 

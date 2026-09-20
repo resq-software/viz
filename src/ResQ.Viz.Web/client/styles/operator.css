@@ -135,7 +135,7 @@
 }
 
 .operator-resource-error {
-  color: var(--danger);
+  color: var(--primary-text);
 }
 
 .operator-mission-actions {
@@ -236,11 +236,23 @@ body.investor-mode .operator-editor-layer {
   box-shadow: 0 0 0 4px var(--info-soft);
 }
 
-@media (min-width: 1100px) {
+@media (width >= 1100px) {
+  /* The rail reaches the floor here, and that is the ONLY band where it does.
+     Above 1100 the sidebar is a layout participant holding the left column, and
+     `.resq-dvr` starts at `left: var(--sidebar-w)` so the bar never crosses into
+     it — so whatever the rail does not cover, nothing does.
+     It used to stop at `var(--effective-dvr-h)`, deferring to a bar that was
+     already deferring to it, and the 320x46 corner where the two surfaces meet
+     showed bare WebGL canvas: `elementsFromPoint(8, height - 8)` returned
+     CANVAS, with chrome immediately above it and to its right.
+     Below 1100 the bar goes full width and the rail becomes an overlay drawer,
+     so there the rail MUST keep clearing it or it would cover the transport —
+     which is why the other two bands still read `var(--effective-dvr-h)` and
+     must not be "made consistent" with this one. */
   #sidebar {
     top: var(--effective-hud-h);
-    bottom: var(--effective-dvr-h);
-    min-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h));
+    bottom: 0;
+    min-height: calc(100dvh - var(--effective-hud-h));
     padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
 
@@ -250,7 +262,7 @@ body.investor-mode .operator-editor-layer {
   }
 }
 
-@media (min-width: 760px) and (max-width: 1099px) {
+@media (760px <= width < 1100px) {
   #sidebar {
     top: var(--effective-hud-h);
     bottom: var(--effective-dvr-h);
@@ -276,7 +288,7 @@ body.investor-mode .operator-editor-layer {
   }
 }
 
-@media (max-width: 759px) {
+@media (width < 760px) {
   #sidebar {
     width: min(100vw, var(--sidebar-w));
     top: var(--effective-hud-h);
@@ -308,7 +320,7 @@ body.investor-mode .operator-editor-layer {
   .operator-context-layer a[href],
   .resq-dvr button,
   .resq-dvr input[type="range"] {
-    min-height: 44px;
+    min-height: var(--control-min);
   }
 
   #sidebar button,
@@ -322,7 +334,7 @@ body.investor-mode .operator-editor-layer {
   }
 
   .resq-dvr button {
-    height: 44px;
+    height: var(--control-min);
   }
 
   #hud-top {
@@ -351,8 +363,8 @@ body.investor-mode .operator-editor-layer {
 
   #btn-editor-toggle,
   #btn-sidebar-toggle {
-    min-height: 44px;
-    height: 44px;
+    min-height: var(--control-min);
+    height: var(--control-min);
   }
 
   #btn-sidebar-toggle {
