@@ -30,7 +30,11 @@
   </ItemGroup>
 
   <!--
-    NpmInstall: reinstalls only when package.json changes (keyed on lockfile).
+    NpmInstall: reinstalls when either package.json or the lockfile changes. Both, because the
+                lockfile is the one that moves on its own — an `npm update` or a bot bumping a
+                transitive dependency rewrites package-lock.json and leaves package.json alone.
+                Keying only on package.json left that case installing nothing while ViteBuild,
+                which does list the lockfile, rebuilt against the stale node_modules.
 
     ViteBuild:  Release-only production build of the client (skipped in Debug, where
                 `dotnet run` proxies the Vite dev server). Three things it must get right:
@@ -52,7 +56,7 @@
         reliably forces a rebuild, and inputs cover the config that affects the output, not just
         the client sources.
   -->
-  <Target Name="NpmInstall" BeforeTargets="Build" Inputs="package.json" Outputs="node_modules\.package-lock.json">
+  <Target Name="NpmInstall" BeforeTargets="Build" Inputs="package.json;package-lock.json" Outputs="node_modules\.package-lock.json">
     <Exec Command="npm install" />
   </Target>
 
@@ -60,11 +64,25 @@
     Self-heal: the incremental stamp lives in obj/ and cannot observe an externally-emptied
     wwwroot (it is gitignored build output). If the built output is missing or partial, drop
     the stamp so ViteBuild's up-to-date check re-runs it instead of trusting a stale stamp.
+
+    "Partial" means the assets directory is EMPTY, not merely absent. Testing Exists() alone
+    missed the case that actually happens — a wwwroot whose index.html and assets directory
+    both survive while the hashed files under them do not — and that is the state which
+    publishes an index.html referencing assets that 404. One glob is enough to see it.
+
+    It does not verify each file index.html names. Doing that means emitting Vite's manifest
+    and parsing it here on every Release build, to guard build output that `dotnet clean` or
+    removing obj/ already regenerates, against a partial deletion nothing in this workflow
+    performs. The empty check covers what a failed or interrupted build leaves behind; the
+    reasoning for stopping there is on PR #271.
   -->
-  <Target Name="ViteBuildStale"
-          BeforeTargets="ViteBuild"
-          Condition="'$(Configuration)' == 'Release' And (!Exists('wwwroot\index.html') Or !Exists('wwwroot\assets'))">
-    <Delete Files="$(IntermediateOutputPath)vite.build.stamp" />
+  <Target Name="ViteBuildStale" BeforeTargets="ViteBuild" Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <ViteBuiltAsset Include="wwwroot\assets\**\*" />
+    </ItemGroup>
+
+    <Delete Files="$(IntermediateOutputPath)vite.build.stamp"
+            Condition="!Exists('wwwroot\index.html') Or '@(ViteBuiltAsset)' == ''" />
   </Target>
 
   <Target Name="ViteBuild"
