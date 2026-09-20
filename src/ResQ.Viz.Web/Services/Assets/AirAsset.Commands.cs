@@ -47,17 +47,26 @@ public sealed partial class AirAsset
     /// </remarks>
     public AssetCommandResult Apply(in SimulatedAssetCommand command)
     {
-        if (!string.Equals(command.AssetId, AssetId, StringComparison.Ordinal))
+        // Two of the gate's four arguments record positions this domain holds deliberately, and
+        // both differ from the other two domains.
+        //
+        // No domain table, by choice: the catalog's own rule rather than a restatement of it —
+        // an asset must accept exactly the set its capability report advertises, and a second
+        // hand-written table drifts from the first the moment either is edited alone. Ground and
+        // surface take the opposite view, as defence in depth against the v1 adapter, and both
+        // arguments are on the record.
+        //
+        // Never latched, because this domain has no latch to read: an emergency stop here is a
+        // command the SDK executes as a hover, not a state the asset holds. That is why the
+        // argument is a constant rather than a property.
+        if (AssetCommandGate.Screen(
+                in command,
+                AssetId,
+                Descriptor.Capabilities,
+                isEmergencyStopped: false,
+                static _ => null) is { } refusal)
         {
-            return AssetCommandResult.Rejected("command.assetMismatch");
-        }
-
-        // The catalog's own rule rather than a restatement of it: an asset must accept exactly
-        // the set its capability report advertises, and a second hand-written table drifts from
-        // the first the moment either is edited alone.
-        if (!command.IsSatisfiedBy(Descriptor.Capabilities))
-        {
-            return AssetCommandResult.Rejected("capability.missing");
+            return AssetCommandResult.Rejected(refusal);
         }
 
         var position = _drone.FlightModel.State.Position;
@@ -73,7 +82,7 @@ public sealed partial class AirAsset
         {
             case AssetCommandKind.GoTo:
                 {
-                    if (ResolveTarget(command.Target, out var target) is { } rejection)
+                    if (AssetCommandGate.ResolveTarget(command.Target, out var target) is { } rejection)
                     {
                         return AssetCommandResult.Rejected(rejection);
                     }
@@ -144,7 +153,7 @@ public sealed partial class AirAsset
                         return Untracked(FlightCommand.Hover(yaw));
                     }
 
-                    if (ResolveTarget(command.Target, out var centre) is { } rejection)
+                    if (AssetCommandGate.ResolveTarget(command.Target, out var centre) is { } rejection)
                     {
                         return AssetCommandResult.Rejected(rejection);
                     }
@@ -314,32 +323,4 @@ public sealed partial class AirAsset
         return null;
     }
 
-    /// <summary>Resolves a command target into a scene-frame position.</summary>
-    /// <remarks>
-    /// Only the scene frame is accepted. Converting from NED or ENU needs a shared origin, and
-    /// guessing one is how a waypoint ends up mirrored about the map; that conversion belongs in
-    /// the translation layer, where the origin is known.
-    /// </remarks>
-    /// <param name="pose">Target pose from the command, possibly null.</param>
-    /// <param name="target">Resolved scene-frame position when the return value is null.</param>
-    /// <returns>A machine-readable rejection token, or null when the target is usable.</returns>
-    private static string? ResolveTarget(FramedPose? pose, out Vector3 target)
-    {
-        target = Vector3.Zero;
-
-        if (!CoordinateFrames.TryValidate(pose, out string? error))
-        {
-            // The validator always supplies a token on failure; the coalesce keeps the
-            // nullable analysis honest without suppressing it.
-            return error ?? "command.target.invalid";
-        }
-
-        if (pose is not { Frame: CoordinateFrame.LocalEus })
-        {
-            return "command.target.frame";
-        }
-
-        target = pose.Position;
-        return null;
-    }
 }
