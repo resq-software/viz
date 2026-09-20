@@ -55,26 +55,14 @@ public sealed partial class GroundAsset
     /// </remarks>
     public AssetCommandResult Apply(in SimulatedAssetCommand command)
     {
-        if (!string.Equals(command.AssetId, AssetId, StringComparison.Ordinal))
+        if (AssetCommandGate.Screen(
+                in command,
+                AssetId,
+                Descriptor.Capabilities,
+                IsEmergencyStopped,
+                RejectByDomain) is { } refusal)
         {
-            return AssetCommandResult.Rejected("command.assetMismatch");
-        }
-
-        if (RejectByDomain(command.Kind) is { } wrongDomain)
-        {
-            return AssetCommandResult.Rejected(wrongDomain);
-        }
-
-        // The catalog's own rule rather than a restatement of it: a second hand-written table
-        // drifts from the first the moment either is edited alone.
-        if (!command.IsSatisfiedBy(Descriptor.Capabilities))
-        {
-            return AssetCommandResult.Rejected("capability.missing");
-        }
-
-        if (IsEmergencyStopped && !IsEmergencyRelease(command.Kind))
-        {
-            return AssetCommandResult.Rejected("asset.emergencyStopped");
+            return AssetCommandResult.Rejected(refusal);
         }
 
         switch (command.Kind)
@@ -157,53 +145,12 @@ public sealed partial class GroundAsset
         _ => null,
     };
 
-    /// <summary>Whether a command is one of the three that may reach a disarmed rover.</summary>
-    /// <remarks>
-    /// A repeated emergency stop is included so re-issuing one is never refused. Refusing to stop
-    /// something because it is already stopping is exactly backwards, and it is the same reasoning
-    /// that makes the stop commands ungated in the catalog.
-    /// </remarks>
-    /// <param name="kind">Translated command kind.</param>
-    /// <returns><see langword="true"/> when the command may execute while the latch is set.</returns>
-    private static bool IsEmergencyRelease(AssetCommandKind kind) =>
-        kind is AssetCommandKind.Stop or AssetCommandKind.ResumeAutonomy
-            or AssetCommandKind.EmergencyStop;
-
-    /// <summary>Resolves a command target into a scene-frame position.</summary>
-    /// <remarks>
-    /// Only the scene frame is accepted. Converting from NED or ENU needs a shared origin, and
-    /// guessing one is how a waypoint ends up mirrored about the map; that conversion belongs in
-    /// the translation layer, where the origin is known.
-    /// </remarks>
-    /// <param name="pose">Target pose from the command, possibly null.</param>
-    /// <param name="target">Resolved scene-frame position when the return value is null.</param>
-    /// <returns>A machine-readable rejection token, or null when the target is usable.</returns>
-    private static string? ResolveTarget(FramedPose? pose, out Vector3 target)
-    {
-        target = Vector3.Zero;
-
-        if (!CoordinateFrames.TryValidate(pose, out string? error))
-        {
-            // The validator always supplies a token on failure; the coalesce keeps the nullable
-            // analysis honest without suppressing it.
-            return error ?? "command.target.invalid";
-        }
-
-        if (pose is not { Frame: CoordinateFrame.LocalEus })
-        {
-            return "command.target.frame";
-        }
-
-        target = pose.Position;
-        return null;
-    }
-
     /// <summary>Sends the rover to the command's target, if it is one the platform may reach.</summary>
     /// <param name="command">Command carrying the target and an optional cruise speed.</param>
     /// <returns>Acceptance, or a rejection naming why the target was refused.</returns>
     private AssetCommandResult ApplyDriveTo(in SimulatedAssetCommand command)
     {
-        if (ResolveTarget(command.Target, out var target) is { } rejection)
+        if (AssetCommandGate.ResolveTarget(command.Target, out var target) is { } rejection)
         {
             return AssetCommandResult.Rejected(rejection);
         }
@@ -283,14 +230,9 @@ public sealed partial class GroundAsset
     /// <returns>Acceptance, or a rejection naming the fault in the requested speed.</returns>
     private AssetCommandResult ApplySetSpeed(in SimulatedAssetCommand command)
     {
-        if (command.SpeedMps is not { } speed || !double.IsFinite(speed))
+        if (AssetCommandGate.ValidateSpeed(in command, out double speed) is { } refusal)
         {
-            return AssetCommandResult.Rejected("command.speed.missing");
-        }
-
-        if (speed <= 0.0)
-        {
-            return AssetCommandResult.Rejected("command.speed.outOfRange");
+            return AssetCommandResult.Rejected(refusal);
         }
 
         _navigator.SetCruiseSpeed(speed);
