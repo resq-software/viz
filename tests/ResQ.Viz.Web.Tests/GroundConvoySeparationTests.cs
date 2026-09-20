@@ -255,6 +255,42 @@ public sealed class GroundConvoySeparationTests
         navigator.CommandedTravelSign.Should().Be(-1.0, "and the dedicated reverse mode still does");
     }
 
+    /// <summary>A vehicle nobody asked to move is not being held by traffic.</summary>
+    /// <remarks>
+    /// Raised in review. A hold says the vehicle in front is what is stopping this one, which is
+    /// only true if this one would otherwise be moving. An operator holding the controls at zero
+    /// is already stopped, so reporting a traffic hold invents an advisory — and its matching
+    /// cleared event — about a vehicle nobody asked to move.
+    /// <para>
+    /// Unreachable today, and worth saying so rather than implying otherwise:
+    /// <c>SetManualControl</c> has no production caller, and <c>Reverse</c> falls back to the
+    /// profile's maximum whenever it is given zero or nothing, so no command can produce an
+    /// operator mode with zero longitudinal intent. The autonomous arm is the reachable half —
+    /// a mode still <c>Driving</c> with the target already cleared — and the same predicate
+    /// covers both.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_Vehicle_Commanded_To_Stand_Still_Is_Not_Held_By_Traffic()
+    {
+        var navigator = new GroundNavigator(Profile);
+        var state = GroundMotionState.AtRest(eastM: 0.0, southM: 0.0, headingRad: 0.0);
+        var contact = FlatContact();
+        var onTheStandoff = new GroundGuidanceInput(contact, PeerGapM: 0.0);
+
+        navigator.SetManualControl(speedMps: 0.0, steeringAngleRad: 0.0);
+        navigator.Sample(in state, in onTheStandoff);
+
+        navigator.IsHoldingForPeer.Should().BeFalse(
+            "it is stopped because the controls are at zero, not because of the vehicle ahead");
+
+        navigator.SetManualControl(speedMps: 1.0, steeringAngleRad: 0.0);
+        navigator.Sample(in state, in onTheStandoff);
+
+        navigator.IsHoldingForPeer.Should().BeTrue(
+            "now it is asking to move and the vehicle ahead is what refuses it");
+    }
+
     /// <summary>A hold does not outlive the step it was measured in.</summary>
     /// <remarks>
     /// Also raised in review. The level was set after the early returns, so a vehicle that was

@@ -105,10 +105,19 @@ public sealed partial class GroundNavigator
             input.PeerGapM, input.Contact.TractionCoefficient, input.ReactionSeconds);
         double ceiling = Math.Min(Math.Max(0.0, input.Contact.SafeSpeedMps), peerCeiling);
 
+        // A hold says the vehicle in front is what is stopping this one, which is only true if
+        // this one would otherwise be moving. An operator holding the controls at zero, or an
+        // autonomous mode with no target, is already stopped: attributing that to traffic
+        // invents an advisory — and its matching cleared event — about a vehicle nobody asked
+        // to move.
+        bool wantsToMove = IsOperatorRecovery(Mode) ? _manualSpeedMps != 0.0 : _hasTarget;
+
         // Judged on the peer ceiling alone, not on the combined one: ground that has already
         // stopped the vehicle is reported by the immobilisation arm above, and attributing that
         // to the vehicle in front would send an operator looking for the wrong thing.
-        bool heldByPeer = peerCeiling <= 0.0 && input.Contact.SafeSpeedMps > 0.0;
+        bool heldByPeer = wantsToMove
+            && peerCeiling <= 0.0
+            && input.Contact.SafeSpeedMps > 0.0;
 
         var outcome = IsOperatorRecovery(Mode)
             ? Outcome(ManualSetpoint(ceiling))
