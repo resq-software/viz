@@ -39,6 +39,15 @@ export interface HoldOptions {
 export interface HoldHandle {
     /** Detaches every listener and cancels any hold in flight. */
     destroy(): void;
+    /**
+     * Abandons a hold in flight, as though the operator had released.
+     *
+     * For the caller that knows something the button cannot see — the emergency
+     * stop learns from its selection store the instant its target changes, and
+     * must not let the operator keep pressing against an asset it is no longer
+     * willing to stop.
+     */
+    cancel(): void;
     /** True while a hold is running — exposed for tests and re-render guards. */
     readonly holding: boolean;
 }
@@ -88,8 +97,20 @@ export function holdToConfirm(button: HTMLElement, options: HoldOptions): HoldHa
         raf = view?.requestAnimationFrame(tick) ?? 0;
     }
 
+    /** A control that is refusing may not be armed. */
+    function refusing(): boolean {
+        return button.getAttribute('aria-disabled') === 'true';
+    }
+
     function start(): void {
         if (holding) return;
+        // Checked at ARM time, not only at confirm. Both callers re-check before
+        // acting, but availability can flip from blocked to allowed during the
+        // hold — the asset panel recomputes it on every stream frame — and the
+        // confirm-time check then passes for a hold the operator began against a
+        // control that was visibly refusing. Whatever they were agreeing to, it
+        // was not this.
+        if (refusing()) return;
         holding = true;
         startedAt = now();
         button.setAttribute('data-holding', 'true');
@@ -132,6 +153,14 @@ export function holdToConfirm(button: HTMLElement, options: HoldOptions): HoldHa
     /** Losing focus mid-hold abandons it: the operator is no longer on the control. */
     const onBlur = (): void => stop(true);
 
+    // And if the control starts refusing DURING a hold, the hold dies with it.
+    // Without this the operator keeps pressing against a button that has already
+    // changed its mind, and finds out only when the confirm is refused.
+    const watchDisabled = view && typeof view.MutationObserver === 'function'
+        ? new view.MutationObserver(() => { if (holding && refusing()) stop(true); })
+        : null;
+    watchDisabled?.observe(button, { attributes: true, attributeFilter: ['aria-disabled'] });
+
     button.addEventListener('pointerdown', onPointerDown);
     button.addEventListener('pointerup', onPointerEnd);
     button.addEventListener('pointercancel', onPointerEnd);
@@ -142,8 +171,10 @@ export function holdToConfirm(button: HTMLElement, options: HoldOptions): HoldHa
 
     return {
         get holding(): boolean { return holding; },
+        cancel(): void { stop(true); },
         destroy(): void {
             stop(false);
+            watchDisabled?.disconnect();
             button.removeEventListener('pointerdown', onPointerDown);
             button.removeEventListener('pointerup', onPointerEnd);
             button.removeEventListener('pointercancel', onPointerEnd);

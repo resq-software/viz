@@ -1089,6 +1089,13 @@ export class AssetPanel {
     this._view = null;
     this._forgetReport();
     this._clearCommands();
+    // The round-trip time belongs to the subject that measured it. Left standing
+    // across a change it describes the previous one — and a track has no command
+    // link at all, so an asset's RTT beside an observed contact reads as "the
+    // link is fine" about a thing that has none. Cleared here rather than on the
+    // track path so every transition drops it, not just asset-to-track.
+    this._commandLatency.textContent = '';
+    this._commandLatency.hidden = true;
     return true;
   }
 

@@ -1644,6 +1644,26 @@ describe('AssetPanel shows link latency next to the commands', () => {
     return mount.querySelector<HTMLElement>('.ap-cmd-latency');
   }
 
+  // A track has no command link and so no RTT. The track path cleared the
+  // commands and the retry line but not this one, so the number measured for the
+  // previously selected ASSET stayed on screen beside an observed contact — and a
+  // stale RTT beside a subject that has none reads as "the link is fine".
+  it('drops the latency line when the panel switches to a track', async () => {
+    const { panel, mount } = mountPanel({
+      loadCapabilities: async () => report([command({ kind: 'hold', statePolicy: 'Always' })]),
+    });
+    await show(panel, withLatency(42));
+    const line = mount.querySelector<HTMLElement>('.ap-cmd-latency')!;
+    expect(line.hidden).toBe(false);
+    expect(line.textContent).toMatch(/42\s*ms/);
+
+    panel.render({ kind: 'track', track: track() }, NOW_MS);
+
+    expect(line.hidden, 'the RTT line is gone for a track').toBe(true);
+    expect(line.textContent, 'and carries no stale number').toBe('');
+    panel.dispose();
+  });
+
   it('states the round-trip time where the operator is about to press', async () => {
     const line = await latencyLine(withLatency(42));
     expect(line?.hidden).toBe(false);

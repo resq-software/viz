@@ -40,7 +40,13 @@ function sheets(): { name: string; css: string }[] {
       errors.push(`${name}: ${(err as Error).message}`);
     }
   }
-  if (out.length === 0) throw new Error(`no stylesheets readable — the check would vacuously pass:\n${errors.join('\n')}`);
+  // ANY unreadable sheet fails, not only all of them. Tolerating one meant a
+  // renamed or deleted stylesheet dropped silently out of the sweep and every
+  // check below still passed — reporting "no dead zones" about a file it never
+  // opened, which is the exact shape of failure this suite exists to catch.
+  if (errors.length > 0) throw new Error(`stylesheet(s) unreadable — the check would be partial:\n${errors.join('\n')}`);
+  const empty = out.filter((sheet) => sheet.css.trim().length === 0).map((sheet) => sheet.name);
+  if (empty.length > 0) throw new Error(`stylesheet(s) read empty — the check would pass vacuously: ${empty.join(', ')}`);
   return out;
 }
 
@@ -88,6 +94,28 @@ describe('breakpoint system', () => {
         for (const m of prelude.matchAll(/(\d+)px\s*<=\s*width/g)) {
           const px = Number(m[1] ?? NaN);
           minima.set(px, [...(minima.get(px) ?? []), `${name}  @media${prelude}`]);
+        }
+        // Range-form UPPER bounds, which were missing entirely — so a pair like
+        // `(width < 760px)` against `(width >= 761px)` left the same fractional
+        // hole as the legacy form and this sweep could not see it.
+        //
+        // Keyed by N, exactly like `max-width: N`, because the gap test below is
+        // the same for both: a hole exists iff some minimum sits ABOVE the
+        // maximum's number, and inclusivity does not change that.
+        //   `max-width: N` + `min-width: N`   -> (..N] u [N..)  = no hole
+        //   `max-width: N` + `min-width: N+1` -> (..N] u [N+1..) = (N, N+1)
+        //   `width < N`    + `width >= N`     -> (..N) u [N..)  = no hole
+        //   `width < N`    + `min-width: N+1` -> (..N) u [N+1..) = [N, N+1)
+        // Keying this form at N - 1 instead — an earlier attempt at "the largest
+        // integer it covers" — reported (759,760), (1080,1081) and (1099,1100)
+        // as holes when each is a correctly complementary range pair.
+        for (const m of prelude.matchAll(/width\s*<\s*(\d+)px/g)) {
+          const px = Number(m[1] ?? NaN);
+          maxima.set(px, [...(maxima.get(px) ?? []), `${name}  @media${prelude}`]);
+        }
+        for (const m of prelude.matchAll(/width\s*<=\s*(\d+)px/g)) {
+          const px = Number(m[1] ?? NaN);
+          maxima.set(px, [...(maxima.get(px) ?? []), `${name}  @media${prelude}`]);
         }
       }
     }

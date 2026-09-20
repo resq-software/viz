@@ -65,11 +65,29 @@ export function mountGlobalEstop(options: GlobalEstopOptions): GlobalEstopHandle
     const announce = options.announce ?? ((message: string): void => { log.info(message); });
 
     let target: string | null = null;
+    /** The asset the CURRENT hold was begun against, or null when not holding. */
+    let armed: string | null = null;
     let busy = false;
 
     function applySelection(): void {
         const current = selection.current;
-        target = current && current.kind === 'asset' ? current.id : null;
+        const next = current && current.kind === 'asset' ? current.id : null;
+        // If a hold is armed against something else, end it HERE — the instant
+        // the target moves — not at the far end of the hold. The subscriber knows
+        // immediately; letting the operator keep pressing for the rest of the
+        // 800ms while believing they are stopping a vehicle is the part of this
+        // defect that actually costs time, and on this control time is the whole
+        // point. Announced now, so they can re-arm against what they meant.
+        if (armed !== null && next !== armed) {
+            const wasArmed = armed;
+            armed = null;
+            hold.cancel();
+            announce(
+                `Emergency stop cancelled: selection moved off ${wasArmed} while you were holding. `
+                + `Hold again to stop ${next ?? 'an asset'}.`,
+            );
+        }
+        target = next;
         const enabled = target !== null && !busy;
         // aria-disabled rather than `disabled`: the control keeps its place in the
         // tab order, so a keyboard operator reaching for it in an emergency finds
@@ -86,13 +104,8 @@ export function mountGlobalEstop(options: GlobalEstopOptions): GlobalEstopHandle
         );
     }
 
-    async function fire(): Promise<void> {
+    async function fire(assetId: string): Promise<void> {
         if (busy) return;
-        const assetId = target;
-        if (!assetId) {
-            announce(`Emergency stop unavailable: ${NO_TARGET.toLowerCase()}.`);
-            return;
-        }
         busy = true;
         applySelection();
         try {
@@ -116,16 +129,48 @@ export function mountGlobalEstop(options: GlobalEstopOptions): GlobalEstopHandle
     const hold: HoldHandle = holdToConfirm(button, {
         holdMs: options.holdMs,
         onStart: () => {
-            if (target) announce('Hold to confirm emergency stop.');
+            // Bind the target to the hold, not to the clock. `target` is mutable
+            // and `selection.subscribe` rewrites it, so read only at confirm an
+            // operator who armed this against drone A would stop drone B.
+            //
+            // It takes a CONCURRENT second input, not a stream frame: the v2
+            // reconcile only re-kinds the same id or clears the selection, and
+            // clearing drives aria-disabled true, which confirm already refuses
+            // on. What reaches it is a second finger tapping a roster row while
+            // the first holds the button (pointer capture suppresses nothing
+            // there), or the bracket-cycle shortcut during a mouse hold on
+            // browsers where mousedown does not focus a button. Narrow, and this
+            // is the control where narrow is not an argument.
+            armed = target;
+            if (armed) announce('Hold to confirm emergency stop.');
         },
-        onCancel: () => announce('Emergency stop cancelled.'),
+        onCancel: () => {
+            armed = null;
+            announce('Emergency stop cancelled.');
+        },
         onProgress: (fraction) => button.style.setProperty('--hold-progress', String(fraction)),
         onConfirm: () => {
+            const assetId = armed;
+            armed = null;
             if (button.getAttribute('aria-disabled') === 'true') {
                 announce(`Emergency stop unavailable: ${(target ? 'in flight' : NO_TARGET).toLowerCase()}.`);
                 return;
             }
-            void fire();
+            if (assetId === null) {
+                announce(`Emergency stop unavailable: ${NO_TARGET.toLowerCase()}.`);
+                return;
+            }
+            // Refuse rather than guess. Acting on the armed asset would command
+            // something the control no longer names; acting on the current one
+            // would command something the operator never armed. Neither is what
+            // they asked for, so it says what happened and makes them re-arm.
+            // Backstop. `applySelection` cancels the hold the moment the target
+            // moves, so reaching here means a swap the subscriber did not see.
+            if (assetId !== target) {
+                announce('Emergency stop cancelled: the selection changed while you were holding.');
+                return;
+            }
+            void fire(assetId);
         },
     });
 
@@ -149,6 +194,7 @@ export function mountGlobalEstop(options: GlobalEstopOptions): GlobalEstopHandle
     return {
         get target(): string | null { return target; },
         destroy(): void {
+            armed = null;
             hold.destroy();
             unsubscribe();
             doc.removeEventListener('keydown', onKey);

@@ -26,6 +26,103 @@ async function hold(button: HTMLElement, ms: number): Promise<void> {
 describe('shell-level emergency stop', () => {
   beforeEach(() => { document.body.innerHTML = ''; });
 
+  // holdToConfirm used to arm on any press and leave the aria-disabled check to
+  // confirm time. Both callers do re-check there, but availability can flip from
+  // blocked to allowed DURING the hold — the asset panel recomputes it on every
+  // stream frame — and the confirm check then passes for a hold begun against a
+  // control that was visibly refusing.
+  it('does not arm at all while it is refusing', async () => {
+    const { button, selection } = mount();
+    const issue = vi.fn();
+    const announced: string[] = [];
+    mountGlobalEstop({
+      button, selection, issue: issue as never, holdMs: 30,
+      announce: (m) => announced.push(m),
+    });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+
+    button.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+    // Not merely "does not fire" — it never begins. A progress fill and a "hold
+    // to confirm" prompt on a control that will refuse is a promise it cannot keep.
+    expect(button.hasAttribute('data-holding')).toBe(false);
+    expect(announced.join(' ')).not.toMatch(/hold to confirm/i);
+
+    await new Promise((r) => setTimeout(r, 60));
+    expect(issue).not.toHaveBeenCalled();
+  });
+
+  it('abandons a hold that is already running when the control starts refusing', async () => {
+    const { button, selection } = mount();
+    const issue = vi.fn();
+    selection.set('asset', 'fr-ferry-1');
+    mountGlobalEstop({ button, selection, issue: issue as never, holdMs: 40 });
+
+    button.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    expect(button.hasAttribute('data-holding')).toBe(true);
+
+    // The asset goes away under the operator's finger.
+    selection.clear();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.hasAttribute('data-holding'), 'the hold died with the target').toBe(false);
+
+    await new Promise((r) => setTimeout(r, 60));
+    expect(issue).not.toHaveBeenCalled();
+  });
+
+  // The defect this guards: `target` is mutable and `selection.subscribe` rewrites
+  // it from anywhere — a stream frame, a map click, a keyboard shortcut. `fire()`
+  // read it at CONFIRM time, so an operator who armed the stop against one asset
+  // and looked away for the length of the hold would stop a different one.
+  it('refuses when the selection changes while the operator is holding', async () => {
+    const { button, selection } = mount();
+    const issue = vi.fn(async () => ({ accepted: true, message: 'Emergency stop accepted.' }));
+    const announced: string[] = [];
+    selection.set('asset', 'fr-ferry-1');
+    mountGlobalEstop({
+      button, selection, issue: issue as never, holdMs: 40,
+      announce: (m) => announced.push(m),
+    });
+
+    // Arm against ferry-1, and let the world move under it mid-hold.
+    button.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(button.hasAttribute('data-holding')).toBe(true);
+
+    selection.set('asset', 'fr-mapper-n');
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Cancelled AT THE SWAP, not 800ms later at the confirm. The operator finds
+    // out while their finger is still down, not after waiting out a hold that was
+    // never going to fire.
+    expect(button.hasAttribute('data-holding'), 'the hold ended immediately').toBe(false);
+    expect(announced.join(' ')).toMatch(/cancelled/i);
+    expect(announced.join(' '), 'names what it was armed against').toMatch(/fr-ferry-1/);
+    expect(announced.join(' '), 'and what to re-arm against').toMatch(/fr-mapper-n/);
+
+    // And nothing is stopped: not the asset it no longer names, not the one the
+    // operator never armed.
+    await new Promise((r) => setTimeout(r, 60));
+    expect(issue).not.toHaveBeenCalled();
+  });
+
+  it('stops the asset it was armed against when the selection holds still', async () => {
+    const { button, selection } = mount();
+    // Typed with its real parameters: an argless `vi.fn` infers a zero-length
+    // call tuple, so reading `calls[0][0]` is a compile error `tsc --noEmit`
+    // catches even though vitest runs it happily.
+    const issue = vi.fn(async (_assetId: string, _body: unknown) =>
+      ({ accepted: true, message: 'Emergency stop accepted.' }));
+    selection.set('asset', 'fr-ferry-1');
+    mountGlobalEstop({ button, selection, issue: issue as never, holdMs: 40 });
+
+    await hold(button, 80);
+
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect(issue.mock.calls[0]?.[0]).toBe('fr-ferry-1');
+  });
+
   it('refuses in place, naming the reason, when nothing is selected', async () => {
     const { button, selection } = mount();
     const issue = vi.fn();
