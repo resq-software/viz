@@ -124,6 +124,21 @@ public enum AssetCapability : ulong
     PivotTurn = 1UL << 6,
 
     /// <summary>Can actively hold a position against wind or current.</summary>
+    /// <remarks>
+    /// Cross-domain, and deliberately worded without a medium: a multirotor holding against wind
+    /// is this, a rover holding a spot is this for free, and a single-screw hull below steerage
+    /// way is not. Three of the five shipped classes declare it and the vessel does not.
+    /// <para>
+    /// The <c>stationKeep</c> <em>command</em> is narrower than the capability, and the two are
+    /// easy to read as one thing. The command is registered <c>SurfaceOnly</c> because asking to
+    /// pin a point is only a distinct order where holding one is a fight — air and ground already
+    /// have <c>hold</c>, which is the domain-neutral "stop making mission progress" order and
+    /// which those domains satisfy by the same manoeuvre they would use here. So a multirotor
+    /// declaring this capability and still refusing <c>stationKeep</c> is correct, not a
+    /// contradiction: the capability says what the platform can do, the catalog says which order
+    /// is worth giving it.
+    /// </para>
+    /// </remarks>
     StationKeep = 1UL << 7,
 
     /// <summary>Can dock to and undock from a fixed or floating station.</summary>

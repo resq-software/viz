@@ -372,6 +372,21 @@ public static partial class CommandCatalog
                 requiresTarget: true, requiresFreshPosition: true),
             Def(CommandKinds.SetCourse, AssetCapability.ManualControl, domains: SurfaceOnly,
                 requiredParameters: [CommandParameters.Course]),
+            // SurfaceOnly although air and ground classes declare the capability too, which reads
+            // as an inconsistency until you separate the two. AssetCapability.StationKeep is a
+            // platform fact — can this thing hold a point — and air and ground can. This row is
+            // an order, and for them the order already exists: hold, above, is the domain-neutral
+            // "stop making mission progress" command and a drone satisfies it by hovering, which
+            // is the identical manoeuvre. A second row meaning the same thing would put a second
+            // button on the same control, differing only in carrying a target the air executor
+            // discards.
+            //
+            // So this row is reachable by nothing today: no shipped hull declares the capability
+            // (see AssetProfiles.CapabilitiesFor, where the vessel's omission is the point), and
+            // the domains that declare it are not listed. That is dormancy, not the followRoute
+            // defect above — the law behind it is complete and tested against a thruster-equipped
+            // profile, and SurfaceProfile.CanStationKeep names the one change that wakes it. The
+            // row stays so that hull arrives to a command already advertised.
             Def(CommandKinds.StationKeep, AssetCapability.StationKeep, domains: SurfaceOnly,
                 targets: CommandTargetKinds.Point | CommandTargetKinds.Geo, requiresFreshPosition: true),
             // Dock takes a berth as a POSITION. The Asset shape used to be advertised here and
