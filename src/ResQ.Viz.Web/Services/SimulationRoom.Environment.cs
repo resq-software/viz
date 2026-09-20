@@ -116,5 +116,6 @@ public sealed partial class SimulationRoom
         new(_terrain, _weather, new AssetWorldOptions(
             Simulation: new SimulationConfig(),
             WorldEpochUtc: CreatedAtUtc,
-            SeaLevelM: SeaLevel.ForPreset(_terrainPreset)));
+            SeaLevelM: SeaLevel.ForPreset(_terrainPreset),
+            Logger: _logger));
 }

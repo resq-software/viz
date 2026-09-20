@@ -16,6 +16,7 @@
 
 using System.Collections.ObjectModel;
 using System.Numerics;
+using Microsoft.Extensions.Logging;
 using ResQ.Simulation.Engine.Core;
 using ResQ.Simulation.Engine.Entities;
 using ResQ.Simulation.Engine.Environment;
@@ -90,6 +91,17 @@ public sealed partial class AssetWorld
     private readonly ReadOnlyCollection<PeerPose> _peerPoseView;
     private readonly Random _random;
     private readonly SimulationWorld _flight;
+    private readonly ILogger? _logger;
+
+    /// <summary>Assets whose step threw, and which are therefore no longer stepped.</summary>
+    /// <remarks>
+    /// A bulkhead, not a recovery. An asset that threw has state nobody can reason about, so it
+    /// stops being integrated rather than being retried into the same exception sixty times a
+    /// second. It keeps being captured — as <see cref="OperationalState.Faulted"/> — because an
+    /// operator needs to see a broken vehicle where it stopped, and it keeps its pose in the
+    /// frozen peer buffer, because the vehicles around it still have to avoid the wreck.
+    /// </remarks>
+    private readonly HashSet<string> _faulted = new(StringComparer.Ordinal);
 
     /// <summary>Creates a world over a terrain and a weather system.</summary>
     /// <param name="terrain">Terrain shared with the room and the SDK world.</param>
@@ -109,6 +121,7 @@ public sealed partial class AssetWorld
             terrain, new WeatherWindField(weather), _options.SeaLevelM, _options.Zones);
         _random = new Random(config.Seed ^ AssetSeedSalt);
         _peerPoseView = new ReadOnlyCollection<PeerPose>(_peerPoses);
+        _logger = _options.Logger;
         WorldEpochUtc = _options.WorldEpochUtc ?? DateTimeOffset.UnixEpoch;
     }
 
@@ -167,6 +180,10 @@ public sealed partial class AssetWorld
         }
     }
 
+    /// <summary>Identifiers of assets that faulted and are no longer being stepped.</summary>
+    /// <remarks>Ordinal, and stable for the life of the world unless the asset is removed.</remarks>
+    public IReadOnlyCollection<string> FaultedAssetIds => _faulted;
+
     /// <summary>Captures every asset's current state, in spawn order.</summary>
     /// <remarks>
     /// The only place a wall clock is read. Capturing advances nothing, so reading this twice
@@ -180,11 +197,31 @@ public sealed partial class AssetWorld
             var result = new AssetState[_ordered.Count];
             for (var i = 0; i < _ordered.Count; i++)
             {
-                result[i] = _ordered[i].Capture(in context);
+                result[i] = CaptureAsset(_ordered[i], in context);
             }
 
             return result;
         }
+    }
+
+    /// <summary>Captures one asset, reporting a faulted one as faulted whatever it says.</summary>
+    /// <remarks>
+    /// The asset does not know it faulted — it threw out of its own step and its projection is
+    /// whatever its last complete step left behind. The world knows, so the world says so. Both
+    /// capture paths go through here for that reason: an asset reported Active while the world
+    /// has stopped stepping it is worse than one reported broken, because it looks like a
+    /// vehicle that has merely stopped moving.
+    /// </remarks>
+    /// <param name="asset">Asset to capture.</param>
+    /// <param name="context">Capture context for this tick.</param>
+    /// <returns>The asset's state, with the operational state overridden when it has faulted.</returns>
+    private AssetState CaptureAsset(ISimulatedAsset asset, in AssetCaptureContext context)
+    {
+        var state = asset.Capture(in context);
+
+        return _faulted.Count == 0 || !_faulted.Contains(asset.AssetId)
+            ? state
+            : state with { OperationalState = OperationalState.Faulted };
     }
 
     /// <summary>Moves the water surface to match a terrain preset.</summary>
@@ -275,6 +312,9 @@ public sealed partial class AssetWorld
 
         _byId.Remove(assetId);
         _ordered.Remove(asset);
+
+        // Or an id reused by a later spawn inherits the fault and is never stepped.
+        _faulted.Remove(assetId);
 
         if (asset is IStepDrivenAsset stepDriven)
         {
