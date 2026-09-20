@@ -152,13 +152,13 @@ public sealed partial class GroundAsset : IStepDrivenAsset
 
     private static readonly FaultCode[] NoFaults = [];
     private static readonly ComponentHealth[] NoComponents = [];
-    private static readonly AssetEvent[] NoEvents = [];
 
     private readonly IGroundDynamics _dynamics;
     private readonly GroundProfile _profile;
     private readonly GroundNavigator _navigator;
     private readonly IEnvironmentSampler _environment;
-    private readonly List<AssetEvent> _events = [];
+    /// <summary>This vehicle's event queue. Unbounded: see <see cref="AssetEventLedger.Unbounded"/>.</summary>
+    private readonly AssetEventLedger _events;
     private readonly Vector3 _basePositionEus;
     private readonly double _capacityWh;
 
@@ -178,8 +178,6 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     // The most recent step's clock, so a command that arrives between steps can stamp the event
     // it raises. Nothing has been integrated since, so that is the honest instant to attribute
     // it to — and an asset has no clock of its own to reach for instead.
-    private double _simulationTimeSeconds;
-    private long _tick = -1;
 
     // Edge-detection state for the transition events raised from Step. Never read by Capture.
     /// <summary>The drive command still being executed, or null when nothing is in flight.</summary>
@@ -232,6 +230,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         }
 
         Descriptor = descriptor;
+        _events = AssetEventLedger.Unbounded(descriptor.AssetId);
         _dynamics = dynamics;
         _profile = dynamics.Profile;
         _environment = environment;
@@ -408,8 +407,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
 
         ConsumeEnergy(delta);
 
-        _simulationTimeSeconds = context.SimulationTimeSeconds;
-        _tick = context.Tick;
+        _events.Advance(context.SimulationTimeSeconds, context.Tick);
 
         RaiseStepEvents(in guidance, in collision, blockedByCollision);
 
