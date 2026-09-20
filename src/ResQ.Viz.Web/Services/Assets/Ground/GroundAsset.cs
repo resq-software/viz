@@ -94,7 +94,6 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     private const double LowEnergyPercent = 20.0;
 
     /// <summary>Seconds in an hour, for turning a power draw into a state-of-charge change.</summary>
-    private const double SecondsPerHour = 3600.0;
 
     /// <summary>Fraction of distance travelled that accumulates as odometry error on ideal ground.</summary>
     /// <remarks>
@@ -167,7 +166,6 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// <summary>This vehicle's event queue. Unbounded: see <see cref="AssetEventLedger.Unbounded"/>.</summary>
     private readonly AssetEventLedger _events;
     private readonly Vector3 _basePositionEus;
-    private readonly double _capacityWh;
 
     /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
     private readonly FaultOnsetLedger _faultOnsets = new();
@@ -178,8 +176,6 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     private EnvironmentSample _sample;
     private Vector3 _positionEus;
     private Vector3 _groundVelocityEus;
-    private double _energyWh;
-    private double _drawWatts = IdlePowerW;
     private ulong _sequence;
 
     // The most recent step's clock, so a command that arrives between steps can stamp the event
@@ -193,6 +189,9 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// later arrival can never be reported against a command that was already abandoned.
     /// </remarks>
     private Guid? _activeCommandId;
+
+    /// <summary>This vehicle's pack. The draw is computed here; the accounting is not.</summary>
+    private readonly AssetBattery _battery;
 
     private Latch _immobilised;
     private Latch _rolloverRisk;
@@ -251,8 +250,7 @@ public sealed partial class GroundAsset : IStepDrivenAsset
             .AtRest(spawnPositionEus.X, spawnPositionEus.Z, headingRad)
             .Validated(nameof(headingRad));
 
-        _capacityWh = PackEnergyWhPerKg * _profile.MassKg;
-        _energyWh = _capacityWh;
+        _battery = new AssetBattery(PackEnergyWhPerKg * _profile.MassKg, IdlePowerW);
 
         // A provisional height, so the first environment sample has a wind-sampling altitude.
         // Settle immediately replaces it with the contact solver's answer.
@@ -645,11 +643,12 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         double grade = weight * Math.Sin(_contact.GradeRad);
         double tractive = Math.Max(0.0, rolling + grade);
 
-        _drawWatts = IdlePowerW + (tractive * speed / DrivetrainEfficiency);
-        _energyWh = Math.Max(0.0, _energyWh - (_drawWatts * deltaSeconds / SecondsPerHour));
+        // The domain computes the draw; the pack accounts for it. The formula is a tractive
+        // load and belongs here — a vessel's is a cube law about rated propulsion, and merging
+        // the two would bill one platform with the other's physics.
+        _battery.Drain(IdlePowerW + (tractive * speed / DrivetrainEfficiency), deltaSeconds);
     }
 
     /// <summary>Remaining pack charge as a percentage.</summary>
-    private double EnergyPercent =>
-        _capacityWh > 0.0 ? Math.Clamp(100.0 * _energyWh / _capacityWh, 0.0, 100.0) : 0.0;
+    private double EnergyPercent => _battery.PercentRemaining;
 }
