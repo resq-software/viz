@@ -73,10 +73,10 @@ public sealed partial class AirAsset : ISimulatedAsset
 
     private static readonly FaultCode[] NoFaults = [];
     private static readonly ComponentHealth[] NoComponents = [];
-    private static readonly AssetEvent[] NoEvents = [];
 
     private readonly SimulatedDrone _drone;
-    private readonly List<AssetEvent> _events = [];
+    /// <summary>This drone's event queue. Unbounded: see <see cref="AssetEventLedger.Unbounded"/>.</summary>
+    private readonly AssetEventLedger _events;
 
     /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
     private readonly FaultOnsetLedger _faultOnsets = new();
@@ -113,10 +113,12 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         _drone = drone;
         Descriptor = descriptor;
+        _events = AssetEventLedger.Unbounded(descriptor.AssetId);
+
         // Seeded from the flight model rather than low, and the reason was never written down:
-        // a drone spawning on the pad is the ordinary case, not an anomaly. Seeding low would put
-        // a spurious air.landed into every drone's log on its first capture — which no test would
-        // catch, because none exercises it.
+        // a drone already on the ground when the asset is built has not just landed. The seed is
+        // only observable for such a drone — nothing the world spawns starts landed — which is
+        // why it took a rebuilt asset over a landed drone to test it at all.
         _landed = Latch.SeededAt(drone.FlightModel.HasLanded);
     }
 
@@ -269,17 +271,8 @@ public sealed partial class AirAsset : ISimulatedAsset
             DomainState: domain);
     }
     /// <inheritdoc />
-    public IReadOnlyList<AssetEvent> DrainEvents()
-    {
-        if (_events.Count == 0)
-        {
-            return NoEvents;
-        }
+    public IReadOnlyList<AssetEvent> DrainEvents() => _events.Drain();
 
-        var drained = _events.ToArray();
-        _events.Clear();
-        return drained;
-    }
     /// <summary>
     /// Splits a flight model's single stored velocity into the two distinct quantities the wire
     /// carries: velocity over the ground, and velocity relative to the air mass.
@@ -372,18 +365,21 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         _lastObservedTick = context.Tick;
 
+        // Air is the one domain that raises from capture rather than from a step — documented on
+        // ISimulatedAsset.Capture and deliberate, because the SDK owns this drone's integration
+        // and there is no step of ours to hang it off. The ledger's clock is therefore advanced
+        // here, from the capture context, rather than in a step it does not have.
+        _events.Advance(context.SimulationTimeSeconds, context.Tick);
+
         _landed = _landed.Observe(landed, out var touchdown);
 
         if (touchdown != LatchEdge.Unchanged)
         {
             bool down = touchdown == LatchEdge.Rose;
-            _events.Add(new AssetEvent(
-                AssetId,
+            _events.Raise(
                 down ? "air.landed" : "air.airborne",
                 AssetEventSeverity.Info,
-                down ? "Drone has landed." : "Drone has left the ground.",
-                context.SimulationTimeSeconds,
-                context.Tick));
+                down ? "Drone has landed." : "Drone has left the ground.");
         }
 
         // Latched rather than level-triggered: a battery sitting on the threshold would
@@ -392,13 +388,10 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         if (battery == LatchEdge.Rose)
         {
-            _events.Add(new AssetEvent(
-                AssetId,
+            _events.Raise(
                 "air.batteryLow",
                 AssetEventSeverity.Warning,
-                "Battery below the return-to-base reserve.",
-                context.SimulationTimeSeconds,
-                context.Tick));
+                "Battery below the return-to-base reserve.");
         }
     }
 }

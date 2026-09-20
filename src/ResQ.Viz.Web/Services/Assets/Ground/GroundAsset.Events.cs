@@ -140,8 +140,7 @@ public sealed partial class GroundAsset
         AssetEventSeverity severity,
         string message,
         AssetCommandCompletion? completion = null) =>
-        _events.Add(new AssetEvent(
-            AssetId, code, severity, message, _simulationTimeSeconds, _tick, completion));
+        _events.Raise(code, severity, message, completion);
 
     /// <summary>Takes the in-flight command, if any, and ends it in <paramref name="state"/>.</summary>
     /// <remarks>

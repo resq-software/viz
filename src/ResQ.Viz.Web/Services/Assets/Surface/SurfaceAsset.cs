@@ -192,7 +192,6 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
 
     private static readonly FaultCode[] NoFaults = [];
     private static readonly ComponentHealth[] NoComponents = [];
-    private static readonly AssetEvent[] NoEvents = [];
 
     private readonly ISurfaceDynamics _dynamics;
     private readonly SurfaceProfile _profile;
@@ -200,7 +199,8 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private readonly SurfaceNavigator _navigator;
     private readonly IEnvironmentSampler _environment;
     private readonly WaveModel _waves;
-    private readonly List<AssetEvent> _events = [];
+    /// <summary>This vessel's event queue, bounded because a pinned hull used to fill it.</summary>
+    private readonly AssetEventLedger _events;
     private readonly Vector3 _basePositionEus;
     private readonly double _capacityWh;
 
@@ -220,13 +220,10 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private double _energyWh;
     private double _drawWatts = HotelPowerW;
     private ulong _sequence;
-    private int _droppedEvents;
 
     // The most recent step's clock, so a command that arrives between steps can stamp the event
     // it raises. Nothing has been integrated since, so that is the honest instant to attribute
     // it to — and an asset has no clock of its own to reach for instead.
-    private double _simulationTimeSeconds;
-    private long _tick = -1;
 
     // Edge-detection state for the transition events raised from Step. Never read by Capture.
     /// <summary>The transit command still being executed, or null when nothing is in flight.</summary>
@@ -298,6 +295,8 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
         }
 
         Descriptor = descriptor;
+        _events = AssetEventLedger.Bounded(
+            descriptor.AssetId, MaxQueuedEvents, EventsDroppedCode);
         _dynamics = dynamics;
         _profile = dynamics.Profile;
         _environment = environment;
@@ -545,8 +544,7 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
 
         ConsumeEnergy(delta);
 
-        _simulationTimeSeconds = context.SimulationTimeSeconds;
-        _tick = context.Tick;
+        _events.Advance(context.SimulationTimeSeconds, context.Tick);
 
         RaiseStepEvents(in guidance, in contact, blockedByContact, worldChanged);
 
