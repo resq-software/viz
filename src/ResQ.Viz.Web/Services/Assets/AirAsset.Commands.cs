@@ -166,10 +166,26 @@ public sealed partial class AirAsset
 
             // A multirotor stops by holding position: there is no other way for it to remain
             // aloft, which is exactly the asymmetry the capability model exists to express.
+            //
+            // stationKeep is deliberately NOT in this list, although a multirotor declares
+            // AssetCapability.StationKeep and could fly the manoeuvre. This domain keeps no
+            // hand-written table of foreign commands, on the argument recorded at the gate
+            // above: the catalog is the one rule, and a second copy drifts. A case here for a
+            // command the catalog registers SurfaceOnly IS that drift — and it was not inert.
+            // Because the capability gate passes (a multirotor really does declare the bit) and
+            // this domain passes no domain table, the switch was the last gate, so a v1-adapter
+            // command built without the v2 validator was accepted. The row carries a Point/Geo
+            // target and the hover below discards it, so "hold station at P" flew as a hover
+            // wherever the drone already was: the same silent substitution that had land
+            // advertise a target it threw away.
+            //
+            // Falling through to command.unsupported is the honest answer while the catalog
+            // says this command is not ours. Restore the case in the commit that widens the
+            // catalog row to air, and give it TrackWaypoint rather than Hover so the target it
+            // advertises is the one it flies.
             case AssetCommandKind.Stop:
             case AssetCommandKind.EmergencyStop:
             case AssetCommandKind.Hold:
-            case AssetCommandKind.StationKeep:
                 return Untracked(FlightCommand.Hover(yaw));
 
             // A cruise speed is a standing setpoint rather than a manoeuvre, so it governs the
