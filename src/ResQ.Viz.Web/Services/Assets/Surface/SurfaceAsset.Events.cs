@@ -77,7 +77,7 @@ public sealed partial class SurfaceAsset
     // Trailing-edge state for the shoreline contact. Held here rather than beside the other
     // edge-detection fields because it is read and written by nothing but the event pass, and a
     // latch that only one pass touches is one nothing else can quietly start depending on.
-    private bool _shorelineContactLatched;
+    private Latch _shorelineContact;
 
     /// <summary>Whether the vessel is currently being held against the edge of navigable water.</summary>
     /// <remarks>
@@ -89,7 +89,7 @@ public sealed partial class SurfaceAsset
     /// stopped by an edge until the first step a move of its own is allowed through again, which is
     /// also the step <see cref="ContactClearedCode"/> is raised on.
     /// </remarks>
-    public bool IsInShorelineContact => _shorelineContactLatched;
+    public bool IsInShorelineContact => _shorelineContact.IsHigh;
 
     /// <inheritdoc />
     /// <remarks>
@@ -195,13 +195,16 @@ public sealed partial class SurfaceAsset
         // Edge-triggered off the navigator's level, so one episode raises one advisory however
         // long the set holds. Deliberately not a completion: the command is still running, on the
         // closest course the vessel can actually make good.
-        if (_navigator.IsCourseUnreachable != _wasCourseUnreachable)
+        _courseUnreachable = _courseUnreachable.Observe(
+            _navigator.IsCourseUnreachable, out var course);
+
+        if (course != LatchEdge.Unchanged)
         {
-            _wasCourseUnreachable = _navigator.IsCourseUnreachable;
+            bool refused = course == LatchEdge.Rose;
             Raise(
-                _wasCourseUnreachable ? CourseUnreachableCode : CourseReachableCode,
-                _wasCourseUnreachable ? AssetEventSeverity.Warning : AssetEventSeverity.Info,
-                _wasCourseUnreachable
+                refused ? CourseUnreachableCode : CourseReachableCode,
+                refused ? AssetEventSeverity.Warning : AssetEventSeverity.Info,
+                refused
                     ? "Advisory: the set exceeds the speed through the water, so the commanded "
                         + "course cannot be made good. Steering the nearest course that can be."
                     : "The commanded course is back within reach.");
@@ -239,16 +242,16 @@ public sealed partial class SurfaceAsset
     /// <param name="contact">Edge met while moving this step, or <see cref="ShorelineContact.None"/>.</param>
     private void RaiseShorelineContactEvents(in ShorelineContact contact)
     {
+        _shorelineContact = _shorelineContact.Observe(contact.HasContacted, out var pinned);
+
         if (contact.HasContacted)
         {
-            if (_shorelineContactLatched)
+            if (pinned == LatchEdge.Unchanged)
             {
                 // Still pinned. The condition is published on IsInShorelineContact and the
                 // clearance band raises its own transitions; nothing here has changed.
                 return;
             }
-
-            _shorelineContactLatched = true;
 
             Raise(
                 contact.Code ?? ShorelineContact.ShorelineCode,
@@ -259,12 +262,10 @@ public sealed partial class SurfaceAsset
             return;
         }
 
-        if (!_shorelineContactLatched)
+        if (pinned != LatchEdge.Fell)
         {
             return;
         }
-
-        _shorelineContactLatched = false;
 
         Raise(
             ContactClearedCode,
@@ -573,22 +574,22 @@ public sealed partial class SurfaceAsset
         }
     }
 
-    /// <summary>Raises the low-energy warning, latched with hysteresis.</summary>
+    /// <summary>Raises the low-energy warning, once per crossing.</summary>
+    /// <remarks>
+    /// Latched rather than level-triggered: a pack sitting on the threshold would otherwise emit
+    /// an event every tick and bury everything else in the log. One threshold, not two — this is
+    /// a latch, not the hysteresis band <see cref="RaiseDriftEvents"/> has.
+    /// </remarks>
     private void RaiseEnergyEvents()
     {
-        double percent = EnergyPercent;
+        _lowEnergy = _lowEnergy.Observe(EnergyPercent < LowEnergyPercent, out var energy);
 
-        if (percent < LowEnergyPercent && !_lowEnergyLatched)
+        if (energy == LatchEdge.Rose)
         {
-            _lowEnergyLatched = true;
             Raise(
                 EnergyLowCode,
                 AssetEventSeverity.Warning,
                 "Battery below the return-to-base reserve.");
-        }
-        else if (percent >= LowEnergyPercent)
-        {
-            _lowEnergyLatched = false;
         }
     }
 

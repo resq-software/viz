@@ -84,8 +84,8 @@ public sealed partial class AirAsset : ISimulatedAsset
     // Transition tracking for event raising, guarded by _lastObservedTick so capturing twice
     // within one tick cannot raise an event twice — capture must be idempotent per tick.
     private long _lastObservedTick = -1;
-    private bool _wasLanded;
-    private bool _lowBatteryLatched;
+    private Latch _landed;
+    private Latch _lowBattery;
     private double _lastHeadingRad;
 
     /// <summary>Wraps a drone the SDK world already owns.</summary>
@@ -113,7 +113,11 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         _drone = drone;
         Descriptor = descriptor;
-        _wasLanded = drone.FlightModel.HasLanded;
+        // Seeded from the flight model rather than low, and the reason was never written down:
+        // a drone spawning on the pad is the ordinary case, not an anomaly. Seeding low would put
+        // a spurious air.landed into every drone's log on its first capture — which no test would
+        // catch, because none exercises it.
+        _landed = Latch.SeededAt(drone.FlightModel.HasLanded);
     }
 
     /// <inheritdoc />
@@ -368,23 +372,26 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         _lastObservedTick = context.Tick;
 
-        if (landed != _wasLanded)
+        _landed = _landed.Observe(landed, out var touchdown);
+
+        if (touchdown != LatchEdge.Unchanged)
         {
+            bool down = touchdown == LatchEdge.Rose;
             _events.Add(new AssetEvent(
                 AssetId,
-                landed ? "air.landed" : "air.airborne",
+                down ? "air.landed" : "air.airborne",
                 AssetEventSeverity.Info,
-                landed ? "Drone has landed." : "Drone has left the ground.",
+                down ? "Drone has landed." : "Drone has left the ground.",
                 context.SimulationTimeSeconds,
                 context.Tick));
-            _wasLanded = landed;
         }
 
         // Latched rather than level-triggered: a battery sitting on the threshold would
         // otherwise emit an event every tick and bury everything else in the log.
-        if (batteryPercent < LowBatteryPercent && !_lowBatteryLatched)
+        _lowBattery = _lowBattery.Observe(batteryPercent < LowBatteryPercent, out var battery);
+
+        if (battery == LatchEdge.Rose)
         {
-            _lowBatteryLatched = true;
             _events.Add(new AssetEvent(
                 AssetId,
                 "air.batteryLow",
@@ -392,10 +399,6 @@ public sealed partial class AirAsset : ISimulatedAsset
                 "Battery below the return-to-base reserve.",
                 context.SimulationTimeSeconds,
                 context.Tick));
-        }
-        else if (batteryPercent >= LowBatteryPercent)
-        {
-            _lowBatteryLatched = false;
         }
     }
 }

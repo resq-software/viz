@@ -73,42 +73,43 @@ public sealed partial class GroundAsset
             RaiseBlocked(TraversabilityReason.StepHeightExceeded);
         }
 
-        if (_contact.IsImmobilised != _wasImmobilised)
+        _immobilised = _immobilised.Observe(_contact.IsImmobilised, out var immobilised);
+
+        if (immobilised != LatchEdge.Unchanged)
         {
-            _wasImmobilised = _contact.IsImmobilised;
+            bool stuck = immobilised == LatchEdge.Rose;
             Raise(
-                _wasImmobilised ? "ground.immobilised" : "ground.mobile",
-                _wasImmobilised ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
-                _wasImmobilised
+                stuck ? "ground.immobilised" : "ground.mobile",
+                stuck ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
+                stuck
                     ? $"Advisory: cannot make progress here ({_contact.LimitReason})."
                     : "Advisory: mobility recovered.");
         }
 
-        if (_contact.HasRolloverRisk != _wasRolloverRisk)
+        _rolloverRisk = _rolloverRisk.Observe(_contact.HasRolloverRisk, out var rollover);
+
+        if (rollover != LatchEdge.Unchanged)
         {
-            _wasRolloverRisk = _contact.HasRolloverRisk;
+            bool leaning = rollover == LatchEdge.Rose;
             Raise(
-                _wasRolloverRisk ? "ground.rolloverRisk" : "ground.rolloverRisk.cleared",
-                _wasRolloverRisk ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
-                _wasRolloverRisk
+                leaning ? "ground.rolloverRisk" : "ground.rolloverRisk.cleared",
+                leaning ? AssetEventSeverity.Alert : AssetEventSeverity.Info,
+                leaning
                     ? "Advisory: cross-slope is past the platform's operational limit."
                     : "Advisory: cross-slope back inside the platform's operational limit.");
         }
 
-        // Latched with hysteresis, not level-triggered: see the remarks.
-        double percent = EnergyPercent;
+        // Latched rather than level-triggered: a pack sitting on the threshold would otherwise
+        // emit an event every tick and bury everything else in the log. One threshold, not two —
+        // this is a latch, not the hysteresis band the drift detector has.
+        _lowEnergy = _lowEnergy.Observe(EnergyPercent < LowEnergyPercent, out var energy);
 
-        if (percent < LowEnergyPercent && !_lowEnergyLatched)
+        if (energy == LatchEdge.Rose)
         {
-            _lowEnergyLatched = true;
             Raise(
                 "ground.energyLow",
                 AssetEventSeverity.Warning,
                 "Battery below the return-to-base reserve.");
-        }
-        else if (percent >= LowEnergyPercent)
-        {
-            _lowEnergyLatched = false;
         }
     }
 

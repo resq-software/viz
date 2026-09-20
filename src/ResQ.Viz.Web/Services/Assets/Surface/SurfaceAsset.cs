@@ -237,11 +237,11 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     private Guid? _activeCommandId;
 
     /// <summary>Whether the commanded course was outside the set's reach at the previous step.</summary>
-    private bool _wasCourseUnreachable;
+    private Latch _courseUnreachable;
 
     private bool _wasAground;
     private bool _wasUnsafeClearance;
-    private bool _lowEnergyLatched;
+    private Latch _lowEnergy;
     private bool _driftLatched;
     private StationKeepPhase _wasStationKeepPhase = StationKeepPhase.Disengaged;
     private DockingPhase _wasDockingPhase = DockingPhase.Inactive;
