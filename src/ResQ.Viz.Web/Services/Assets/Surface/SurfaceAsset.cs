@@ -236,6 +236,9 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     /// </remarks>
     private Guid? _activeCommandId;
 
+    /// <summary>Whether the commanded course was outside the set's reach at the previous step.</summary>
+    private bool _wasCourseUnreachable;
+
     private bool _wasAground;
     private bool _wasUnsafeClearance;
     private bool _lowEnergyLatched;

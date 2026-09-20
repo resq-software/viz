@@ -72,6 +72,16 @@ public sealed partial class SurfaceNavigator
     /// </remarks>
     private const double HeadingGainPerSec = 0.6;
 
+    /// <summary>How near to a half turn counts as dead against the set, in radians.</summary>
+    /// <remarks>
+    /// Within this band the two edges of the reachable cone are equally near the commanded course,
+    /// so which one the sign of the error names is a convention rather than a fact, and the tie is
+    /// broken toward the course already being made good instead. One degree: wide enough that
+    /// floating point cannot land inside it by accident, narrow enough that a course meaningfully
+    /// to one side is still honoured as such.
+    /// </remarks>
+    private const double AntipodalToleranceRad = Math.PI / 180.0;
+
     /// <summary>Fraction of the commanded speed kept while turning hardest.</summary>
     /// <remarks>
     /// Without a floor, <c>cos(error)</c> reaches zero at ninety degrees and goes negative
@@ -185,6 +195,16 @@ public sealed partial class SurfaceNavigator
     /// <summary>Course over ground being steered, in radians clockwise from true north.</summary>
     /// <remarks>Meaningful only in <see cref="SurfaceGuidanceMode.Steering"/>.</remarks>
     public double CommandedCourseRad => _commandedCourseRad;
+
+    /// <summary>Whether the commanded course is outside what the set permits, and is being clamped.</summary>
+    /// <remarks>
+    /// A level, not an edge: true for as long as the set holds the course out of reach, so the
+    /// owning asset compares it against the previous step's and reports one advisory per episode.
+    /// Not a block — the vessel is still under way on the nearest course it can make good, which
+    /// is the useful thing to be doing while an operator decides whether to change the route,
+    /// wait for the tide, or accept the track.
+    /// </remarks>
+    public bool IsCourseUnreachable { get; private set; }
 
     /// <summary>Why the water was refused, or <see cref="WaterBlockReason.None"/>.</summary>
     public WaterBlockReason BlockingReason { get; private set; } = WaterBlockReason.None;
