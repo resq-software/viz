@@ -212,7 +212,12 @@ export class TelemetryStrip {
         row.id.textContent = d.id;
 
         const battery = Math.max(0, Math.min(100, d.battery ?? 100));
-        row.batFill.style.width = `${battery}%`;
+        // Scalar for `scaleX`. Guarded: this runs for every drone on every frame,
+        // and an unconditional write restarted the transition at 10 Hz.
+        const fill = String(battery / 100);
+        if (row.batFill.style.getPropertyValue('--battery-fill') !== fill) {
+            row.batFill.style.setProperty('--battery-fill', fill);
+        }
         row.batFill.className = battery < 15 ? 'ts-bat-fill crit'
                               : battery < 30 ? 'ts-bat-fill warn'
                               : 'ts-bat-fill';

@@ -337,23 +337,21 @@ export const SCHEMAS: Readonly<Record<SelectionKind, KindSchema>> = {
     asset: defineSchema<SceneAsset>({
         title: 'Asset',
         resolve: (id, frame) => assetById(frame?.assets, id),
+        // Nine fields that the operator's asset panel already carries — domain,
+        // class, agency, fleet, state, mode, power, position and velocity — used
+        // to be repeated here. With the editor docked and an asset selected,
+        // both panels are on screen at once and described the same vehicle
+        // twice; measured at 1653x1142 that was 22 surfaces up simultaneously
+        // with `fr-ferry-1` named in five of them. The asset panel is the
+        // canonical detail surface: verified open, with all nine fields, at
+        // 1653/1440/1280/1024/900 on selection, so nothing here became
+        // unreachable. What stays is what only the editor shows.
         fields: [
-            { label: 'domain', value: a => domainLabel(a.view.domain) },
-            { label: 'class', value: a => vehicleClassLabel(a.view.vehicleClass) },
-            { label: 'agency', value: a => fmtStr(a.descriptor.agencyId ?? undefined) },
-            { label: 'fleet', value: a => fmtStr(a.descriptor.fleetId ?? undefined) },
-            { label: 'state', value: a => operationalStateLabel(a.view.operationalState) },
-            { label: 'mode', value: a => fmtStr(a.view.mode) },
             { label: 'freshness', value: a => fmtFreshness(a) },
-            // Null power is an unmetered supply — a tether, shore power — and is
-            // shown as absent rather than as a flat pack.
-            { label: 'power', value: a => fmtPct(a.view.powerPercent ?? undefined) },
             { label: 'health', value: a => fmtHealth(a) },
             { label: 'link', value: a => fmtLink(a) },
             { label: 'on link loss', value: a => fmtLinkLoss(a) },
             { label: 'mission', value: a => fmtMission(a) },
-            { label: 'position', value: a => fmtVec(a.view.position) },
-            { label: 'velocity', value: a => fmtVec(a.view.velocity) },
             { label: 'speed', value: a => fmtMag(a.view.velocity) },
             // Heading and course over ground are separate rows because they
             // genuinely diverge — in wind, in a cross-current, and whenever a

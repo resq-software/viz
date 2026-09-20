@@ -588,6 +588,6 @@ body.editor-collapsed .resq-dock-panels,
    so, so nothing here should ever be on screen. This is the belt to that
    braces: a stylesheet that somehow arrives while the layer is open must not
    paint a column across a phone. */
-@media (max-width: 759px) {
+@media (width < 760px) {
   .resq-editor { display: none; }
 }

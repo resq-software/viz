@@ -34,7 +34,17 @@ function mockEditorMedia(initiallyCompact: boolean): { setCompact(value: boolean
   let compact = initiallyCompact;
   const listeners: Array<() => void> = [];
   vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
-    get matches() { return query === '(max-width: 759px)' && compact; },
+    get matches() {
+      // The shell asks two questions now: whether it is compact (editor
+      // availability) and whether it is at the rail tier (whether the sidebar
+      // is a column or a drawer). Answering only the first left the rail query
+      // reading false, so the sidebar started collapsed in every test here.
+      // Compact implies "not the rail tier"; otherwise these tests model a
+      // desktop viewport, where the rail is a column and starts open.
+      if (query === '(width < 760px)') return compact;
+      if (query === '(width >= 1100px)') return !compact;
+      return false;
+    },
     media: query,
     onchange: null,
     addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => {
@@ -725,7 +735,10 @@ describe('the shipped operator shell contract', () => {
     const mappings: ReadonlyArray<readonly [string, string, string]> = [
       [main, '#scene-container', '--layer-scene'],
       [main, '#sidebar', '--layer-rail'],
-      [main, '.settings-panel', '--layer-context'],
+      // Settings moved up from --layer-context: at 150 it opened INSIDE the
+      // opaque fullscreen editor (180) and was laid out, marked open, and never
+      // visible — elementsFromPoint at its own centre returned `resq-editor`.
+      [main, '.settings-panel', '--layer-popover'],
       [assets, '.asset-panel', '--layer-context'],
       [operator, '.operator-editor-layer', '--layer-editor'],
       [main, '#hud-top', '--layer-hud'],
@@ -763,15 +776,15 @@ describe('the shipped operator shell contract', () => {
   it('defines the approved compact phone interaction and HUD contract', () => {
     const operator = read('../styles/operator.css');
 
-    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?\.operator-primary-actions \.btn[\s\S]*?min-height:\s*44px/);
-    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#sidebar button[\s\S]*?\.operator-context-layer button[\s\S]*?min-height:\s*44px/);
-    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#btn-editor-toggle[\s\S]*?#btn-sidebar-toggle[\s\S]*?min-height:\s*44px/);
-    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?\.hud-zone-center[\s\S]*?display:\s*none/);
+    expect(operator).toMatch(/@media \(width < 760px\)[\s\S]*?\.operator-primary-actions \.btn[\s\S]*?min-height:\s*var\(--control-min\)/);
+    expect(operator).toMatch(/@media \(width < 760px\)[\s\S]*?#sidebar button[\s\S]*?\.operator-context-layer button[\s\S]*?min-height:\s*var\(--control-min\)/);
+    expect(operator).toMatch(/@media \(width < 760px\)[\s\S]*?#btn-editor-toggle[\s\S]*?#btn-sidebar-toggle[\s\S]*?min-height:\s*var\(--control-min\)/);
+    expect(operator).toMatch(/@media \(width < 760px\)[\s\S]*?\.hud-zone-center[\s\S]*?display:\s*none/);
     for (const id of ['hud-cockpit-toggle', 'hud-hints-toggle', 'hud-settings-toggle']) {
-      expect(operator).toMatch(new RegExp(`@media \\(max-width: 759px\\)[\\s\\S]*?#${id}[\\s\\S]*?display:\\s*none`));
+      expect(operator).toMatch(new RegExp(`@media \\(width < 760px\\)[\\s\\S]*?#${id}[\\s\\S]*?display:\\s*none`));
     }
     expect(operator).toMatch(/#btn-editor-toggle\[aria-disabled="true"\][\s\S]*?cursor:\s*not-allowed/);
-    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?#hud-top[\s\S]*?overflow:\s*hidden/);
+    expect(operator).toMatch(/@media \(width < 760px\)[\s\S]*?#hud-top[\s\S]*?overflow:\s*hidden/);
   });
 
   it('uses the matching logical safe-area inset on each compact HUD edge', () => {
@@ -789,18 +802,18 @@ describe('the shipped operator shell contract', () => {
     const overlays = read('../styles/operator-overlays.css');
     const assets = read('../styles/assets.css');
 
-    expect(operator).toMatch(/@media \(min-width: 1100px\)[\s\S]*?#sidebar[\s\S]*?\.operator-context-layer/);
-    expect(operator).toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?#sidebar[\s\S]*?transform:\s*translateX\(-100%\)[\s\S]*?\.operator-context-layer[\s\S]*?\.operator-editor-layer/);
-    expect(main).toMatch(/@media \(max-width: 1099px\)[\s\S]*?#scene-container[\s\S]*?left:\s*0/);
-    expect(overlays).toMatch(/@media \(max-width: 1099px\)[\s\S]*?\.resq-dvr[\s\S]*?left:\s*0/);
+    expect(operator).toMatch(/@media \(width >= 1100px\)[\s\S]*?#sidebar[\s\S]*?\.operator-context-layer/);
+    expect(operator).toMatch(/@media \(760px <= width < 1100px\)[\s\S]*?#sidebar[\s\S]*?transform:\s*translateX\(-100%\)[\s\S]*?\.operator-context-layer[\s\S]*?\.operator-editor-layer/);
+    expect(main).toMatch(/@media \(width < 1100px\)[\s\S]*?#scene-container[\s\S]*?left:\s*0/);
+    expect(overlays).toMatch(/@media \(width < 1100px\)[\s\S]*?\.resq-dvr[\s\S]*?left:\s*0/);
     // Between 760px and 1,099px the Editor is a full-screen workspace, so the
     // dock is *inside* it and must render: hiding it at 1,099px (as it was when
     // the dock floated over the scene) would leave the hierarchy and inspector
     // unreachable at exactly the width the workspace was designed for. The
     // authoring column is withheld only where the Editor itself is unavailable.
-    expect(editor).toMatch(/@media \(max-width: 759px\)[\s\S]*?\.resq-editor[\s\S]*?display:\s*none/);
-    expect(editor).not.toMatch(/@media \(max-width: 1099px\)/);
-    expect(assets).toMatch(/@media \(min-width: 760px\) and \(max-width: 1099px\)[\s\S]*?\.asset-panel[\s\S]*?left:/);
+    expect(editor).toMatch(/@media \(width < 760px\)[\s\S]*?\.resq-editor[\s\S]*?display:\s*none/);
+    expect(editor).not.toMatch(/@media \(width < 1100px\)/);
+    expect(assets).toMatch(/@media \(760px <= width < 1100px\)[\s\S]*?\.asset-panel[\s\S]*?left:/);
   });
 
   it('reserves effective safe-area HUD and DVR extents throughout the shell', () => {
@@ -829,7 +842,12 @@ describe('the shipped operator shell contract', () => {
       '.operator-context-layer a[href]', '.resq-dvr button', '.resq-dvr input[type="range"]',
       '#sidebar label:has(input[type="checkbox"], input[type="radio"])',
     ]) expect(operator, selector).toContain(selector);
-    expect(operator).toMatch(/@media \(max-width: 759px\)[\s\S]*?min-height:\s*44px/);
-    expect(operator).toMatch(/\.resq-dvr button[\s\S]*?min-width:\s*44px[\s\S]*?height:\s*44px/);
+    // The floor is a token now, because pinned at 44px it outgrew the very bars
+    // it sits in: measured at 390x380 the transport buttons hung 5px below the
+    // viewport floor and the HUD toggles 7px past the HUD. The token follows the
+    // height ladder down — so assert the indirection here, and the floor's actual
+    // values in designTokens.test.ts.
+    expect(operator).toMatch(/@media \(width < 760px\)[\s\S]*?min-height:\s*var\(--control-min\)/);
+    expect(operator).toMatch(/\.resq-dvr button[\s\S]*?min-width:\s*44px[\s\S]*?height:\s*var\(--control-min\)/);
   });
 });

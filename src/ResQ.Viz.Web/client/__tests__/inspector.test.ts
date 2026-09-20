@@ -339,9 +339,16 @@ describe('asset and contact schemas', () => {
         expect(fieldMap('asset', 'air-1')['freshness']).toBe('Fresh · 0s');
     });
 
-    it('renders an unmetered pack as absent, never as a flat one', () => {
-        expect(fieldMap('asset', 'usv-1')['power']).toBe(DASH);
-        expect(fieldMap('asset', 'air-1')['power']).toBe('55%');
+    // `power` no longer appears here: the operator's asset panel is the canonical
+    // detail surface and already carries it, so the editor inspector stopped
+    // repeating the nine fields both panels showed. The unmetered-pack rule is
+    // safety-relevant — a tether or shore supply must not read as a flat battery
+    // — so the guard moved to the surface that now renders it, in
+    // panelCards.test.ts. This assertion stays only to prove the field really is
+    // gone from here rather than silently still present.
+    it('leaves power to the operator panel rather than repeating it', () => {
+        expect(fieldMap('asset', 'usv-1')['power']).toBeUndefined();
+        expect(fieldMap('asset', 'air-1')['power']).toBeUndefined();
     });
 
     it('summarises health with the count of raised faults', () => {

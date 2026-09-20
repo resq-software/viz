@@ -51,6 +51,17 @@ public sealed partial class SurfaceAsset
     /// <summary>Event code raised when a commanded position is reached.</summary>
     public const string TargetReachedCode = "surface.targetReached";
 
+    /// <summary>Event code raised when the set puts the commanded course out of reach.</summary>
+    /// <remarks>
+    /// Not a refusal: the vessel keeps the way on and holds the nearest course it can make good.
+    /// An advisory, because the remedy is an operator's — change the route, wait for the tide, or
+    /// accept the track being made — and none of those is something the vessel can pick.
+    /// </remarks>
+    public const string CourseUnreachableCode = "surface.course.unreachable";
+
+    /// <summary>Event code raised when the commanded course comes back within reach.</summary>
+    public const string CourseReachableCode = "surface.course.unreachable.cleared";
+
     /// <summary>Event code raised when an unpowered vessel starts making way over the ground.</summary>
     public const string DriftingCode = "surface.drifting";
 
@@ -179,6 +190,21 @@ public sealed partial class SurfaceAsset
         if (guidance.HasBecomeBlocked)
         {
             RaiseBlocked(guidance.BlockingReason);
+        }
+
+        // Edge-triggered off the navigator's level, so one episode raises one advisory however
+        // long the set holds. Deliberately not a completion: the command is still running, on the
+        // closest course the vessel can actually make good.
+        if (_navigator.IsCourseUnreachable != _wasCourseUnreachable)
+        {
+            _wasCourseUnreachable = _navigator.IsCourseUnreachable;
+            Raise(
+                _wasCourseUnreachable ? CourseUnreachableCode : CourseReachableCode,
+                _wasCourseUnreachable ? AssetEventSeverity.Warning : AssetEventSeverity.Info,
+                _wasCourseUnreachable
+                    ? "Advisory: the set exceeds the speed through the water, so the commanded "
+                        + "course cannot be made good. Steering the nearest course that can be."
+                    : "The commanded course is back within reach.");
         }
 
         RaiseShorelineContactEvents(in contact);

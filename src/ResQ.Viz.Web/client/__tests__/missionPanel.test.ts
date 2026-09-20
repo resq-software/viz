@@ -108,7 +108,11 @@ describe('MissionPanel', () => {
     const css = readFileSync(resolve(process.cwd(), 'client/styles/operator.css'), 'utf8');
     expect(css).toMatch(/\.operator-mission-meta\s*\{[\s\S]*?font-variant-numeric:\s*tabular-nums/);
     expect(css).toMatch(/\.operator-mission-actions\s*\{[\s\S]*?grid-template-columns/);
-    expect(css).toMatch(/\.operator-resource-error\s*\{[\s\S]*?color:\s*var\(--danger\)/);
+    // --primary-text, not --danger. --danger is the 58.5%-L fill/border tone and
+    // measures under 4.5:1 as text; --primary-text is the same hue lifted for
+    // exactly this use. The error must still READ as an error, which is why this
+    // asserts the red text token rather than merely "some colour".
+    expect(css).toMatch(/\.operator-resource-error\s*\{[\s\S]*?color:\s*var\(--primary-text\)/);
   });
 
   it('renders scenario-relative elapsed time, running state, and speed', () => {
