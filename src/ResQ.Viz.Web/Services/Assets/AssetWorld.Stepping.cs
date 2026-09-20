@@ -269,7 +269,7 @@ public sealed partial class AssetWorld
         {
             var observed = _safeActions.Observe(
                 asset,
-                asset.Capture(in context),
+                CaptureAsset(asset, in context),
                 _environment.Sample(
                     asset.PositionEus, asset.Descriptor.Dimensions.FootprintRadiusM),
                 SimulationTimeSeconds);
@@ -314,6 +314,11 @@ public sealed partial class AssetWorld
         {
             var asset = assets[i];
 
+            if (_faulted.Count > 0 && _faulted.Contains(asset.AssetId))
+            {
+                continue;
+            }
+
             // Sampling per asset, at its pre-step position, is the impure half of the step. The
             // asset receives a value and integrates from it, which is what lets its arithmetic
             // be exercised with literals and no world at all.
@@ -328,7 +333,54 @@ public sealed partial class AssetWorld
                 Peers: _peerPoseView,
                 Random: _random);
 
+            StepOne(asset, in context);
+        }
+    }
+
+    /// <summary>Steps one asset, containing a throw to that asset.</summary>
+    /// <remarks>
+    /// The bulkhead. Without it a single asset's exception leaves <see cref="Step"/>, leaves
+    /// <c>SimulationRoom.Tick</c>, and reaches <c>SimulationManager.ExecuteAsync</c>, whose only
+    /// catch is <see cref="OperationCanceledException"/> — so the hosted service faults and, under
+    /// the default <c>BackgroundServiceExceptionBehavior.StopHost</c>, the process exits. One
+    /// vehicle's arithmetic error takes every room on the host with it.
+    /// <para>
+    /// Catching broadly is deliberate here and is the one place in this layer it is. The
+    /// alternative is enumerating what an integrator might throw, which is the list that is
+    /// wrong exactly when it matters. <see cref="OperationCanceledException"/> is not caught:
+    /// it means the host is shutting down and it belongs to the caller.
+    /// </para>
+    /// <para>
+    /// The asset is not retried. Its state is whatever a half-finished step left behind, so
+    /// stepping it again asks the same broken arithmetic the same question sixty times a second
+    /// and fills the log with it. It stays in the registry, keeps being captured as faulted, and
+    /// keeps its pose in the peer buffer so the vehicles around it still avoid the wreck.
+    /// </para>
+    /// </remarks>
+    /// <param name="asset">Asset to step.</param>
+    /// <param name="context">Context for this step.</param>
+    private void StepOne(IStepDrivenAsset asset, in AssetStepContext context)
+    {
+        try
+        {
             asset.Step(in context);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _faulted.Add(asset.AssetId);
+
+            _logger?.LogError(
+                ex,
+                "Asset {AssetId} ({Domain}) threw during step at tick {Tick}, simulation time "
+                + "{SimulationTime:F3}s. It is now faulted and will not be stepped again.",
+                asset.AssetId,
+                asset.Domain,
+                context.Tick,
+                context.SimulationTimeSeconds);
         }
     }
 }

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+using Microsoft.Extensions.Logging;
 using ResQ.Simulation.Engine.Core;
 using ResQ.Viz.Web.Models;
 
@@ -35,10 +36,17 @@ namespace ResQ.Viz.Web.Services.Assets;
 /// <param name="Origin">Local origin the scene frame is anchored to, or null when unanchored.</param>
 /// <param name="SeaLevelM">Initial water-surface elevation in metres; see <see cref="SeaLevel"/>.</param>
 /// <param name="Zones">Zone source for the environment sampler, or null for none.</param>
+/// <param name="Logger">
+/// Where a faulted asset is reported. Null keeps a bare world silent, which is what the
+/// determinism suites want; a room passes its own logger. Nothing else in this layer logs —
+/// a step is a pure function of its context, and the one thing worth saying is that an asset
+/// stopped being one.
+/// </param>
 public sealed record AssetWorldOptions(
     SimulationConfig? Simulation = null,
     DateTimeOffset? WorldEpochUtc = null,
     TimeProvider? WallClock = null,
     LocalOrigin? Origin = null,
     double SeaLevelM = SeaLevel.DefaultM,
-    IZoneSource? Zones = null);
+    IZoneSource? Zones = null,
+    ILogger? Logger = null);
