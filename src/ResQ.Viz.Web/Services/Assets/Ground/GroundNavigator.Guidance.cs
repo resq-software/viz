@@ -63,6 +63,11 @@ public sealed partial class GroundNavigator
     /// <returns>The setpoint to integrate, and any transition this call made.</returns>
     public GroundGuidanceOutcome Sample(in GroundMotionState state, in GroundGuidanceInput input)
     {
+        // Cleared first, so no path out of this method can leave a hold latched from a previous
+        // step. Every early return below is a state in which the vehicle is stopped for a reason
+        // that is not the vehicle in front of it.
+        IsHoldingForPeer = false;
+
         if (Mode is GroundGuidanceMode.Idle or GroundGuidanceMode.Holding
             or GroundGuidanceMode.Parked or GroundGuidanceMode.Blocked
             or GroundGuidanceMode.EmergencyStopped)
@@ -96,11 +101,89 @@ public sealed partial class GroundNavigator
             return Outcome(GroundSetpoint.Stop, hasBecomeBlocked: true);
         }
 
-        double ceiling = Math.Max(0.0, input.Contact.SafeSpeedMps);
+        double peerCeiling = PeerCeilingMps(
+            input.PeerGapM, input.Contact.TractionCoefficient, input.ReactionSeconds);
+        double ceiling = Math.Min(Math.Max(0.0, input.Contact.SafeSpeedMps), peerCeiling);
 
-        return IsOperatorRecovery(Mode)
+        // A hold says the vehicle in front is what is stopping this one, which is only true if
+        // this one would otherwise be moving. An operator holding the controls at zero, or an
+        // autonomous mode with no target, is already stopped: attributing that to traffic
+        // invents an advisory — and its matching cleared event — about a vehicle nobody asked
+        // to move.
+        bool wantsToMove = IsOperatorRecovery(Mode) ? _manualSpeedMps != 0.0 : _hasTarget;
+
+        // Judged on the peer ceiling alone, not on the combined one: ground that has already
+        // stopped the vehicle is reported by the immobilisation arm above, and attributing that
+        // to the vehicle in front would send an operator looking for the wrong thing.
+        bool heldByPeer = wantsToMove
+            && peerCeiling <= 0.0
+            && input.Contact.SafeSpeedMps > 0.0;
+
+        var outcome = IsOperatorRecovery(Mode)
             ? Outcome(ManualSetpoint(ceiling))
             : DrivingOutcome(in state, ceiling);
+
+        // Set from the finished outcome rather than before it. A call that arrives at its target
+        // in the same step has finished its task, not stopped for traffic, and every early return
+        // above has already cleared the level — so a vehicle that goes idle, is immobilised or is
+        // refused its ground cannot leave a stale hold latched and never raise the cleared event.
+        IsHoldingForPeer = heldByPeer && !outcome.HasReachedTarget;
+
+        return outcome;
+    }
+
+    /// <summary>Speed ceiling imposed by the nearest vehicle in the corridor ahead.</summary>
+    /// <remarks>
+    /// The same closed form the target approach uses, against the gap instead of the range to
+    /// run: the fastest speed from which this platform can still stop with
+    /// <see cref="PeerStandoffM"/> to spare. It degrades rather than switches — a vehicle a long
+    /// way behind another is not slowed at all, one closing is slowed smoothly, and one at the
+    /// standoff is held — so there is no threshold for two vehicles to chatter across.
+    /// <para>
+    /// This is a protective stop, not a refusal: the task is left assigned and the mode is left
+    /// alone, so the vehicle resumes by itself when the obstruction moves. Latching
+    /// <see cref="GroundGuidanceMode.Blocked"/> here would end both vehicles' commands the first
+    /// time two of them met, which is a worse failure than the one being fixed.
+    /// </para>
+    /// <para>
+    /// Folded into the ceiling rather than applied inside the autonomous law, because the
+    /// ceiling is also what binds a manual input. An operator driving into the back of another
+    /// vehicle is the case this most needs to hold for.
+    /// </para>
+    /// </remarks>
+    /// <param name="gapM">Clear ground ahead in metres, both footprints already removed.</param>
+    /// <param name="tractionCoefficient">Grip under the wheels, which is what the drivetrain will actually brake against.</param>
+    /// <param name="reactionSeconds">Delay before a commanded change reaches the wheels, in seconds.</param>
+    /// <returns>The permitted speed in metres per second. Zero at or inside the standoff.</returns>
+    private double PeerCeilingMps(double gapM, double tractionCoefficient, double reactionSeconds)
+    {
+        if (double.IsPositiveInfinity(gapM))
+        {
+            return double.PositiveInfinity;
+        }
+
+        double room = Math.Max(0.0, gapM - PeerStandoffM);
+
+        // The braking rate the drivetrain will really achieve, not the one the profile declares.
+        // Both integrators decelerate at MaxBrakingMps2 * traction, and a surface can put traction
+        // below any fixed fraction — wet vegetation reaches 0.5625 — so a ceiling assuming a fixed
+        // fraction hands back a speed the vehicle cannot stop from and lets it cross the standoff.
+        double braking = _profile.MaxBrakingMps2
+            * Math.Clamp(tractionCoefficient, GroundConditions.MinTractionCoefficient, 1.0);
+
+        if (braking <= 0.0)
+        {
+            return 0.0;
+        }
+
+        // Invert the stopping distance rather than the braking term alone:
+        //     room = v * reaction + v^2 / (2 * braking)
+        // whose positive root is the fastest speed that still stops inside `room` including the
+        // ground covered before the command reaches the wheels. With no reaction delay this
+        // reduces exactly to sqrt(2 * braking * room), which is the form the target approach uses.
+        double lag = Math.Max(0.0, reactionSeconds) * braking;
+
+        return Math.Sqrt((lag * lag) + (2.0 * braking * room)) - lag;
     }
 
     /// <summary>Runs the autonomous guidance law against the assigned target.</summary>

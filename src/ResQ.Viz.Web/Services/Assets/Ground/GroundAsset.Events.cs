@@ -99,6 +99,27 @@ public sealed partial class GroundAsset
                     : "Advisory: cross-slope back inside the platform's operational limit.");
         }
 
+        // Held by another vehicle rather than by the ground. Info, not a warning: the vehicle is
+        // doing the right thing and will free itself, which is exactly what separates it from
+        // `ground.immobilised` directly above.
+        //
+        // The cleared message says only that the hold ended, and deliberately. The level also
+        // clears when the vehicle goes idle, arrives, is immobilised or has its ground refused —
+        // in which case the one in front may still be sitting there and nothing is resuming.
+        // Promising a resumption the vehicle is not making is worse than saying less.
+        _holdingForPeer = _holdingForPeer.Observe(_navigator.IsHoldingForPeer, out var holding);
+
+        if (holding != LatchEdge.Unchanged)
+        {
+            bool held = holding == LatchEdge.Rose;
+            Raise(
+                held ? "ground.holdingForVehicle" : "ground.holdingForVehicle.cleared",
+                AssetEventSeverity.Info,
+                held
+                    ? "Holding: a vehicle is stopped inside this one's stopping distance."
+                    : "No longer holding for a vehicle ahead.");
+        }
+
         // Latched rather than level-triggered: a pack sitting on the threshold would otherwise
         // emit an event every tick and bury everything else in the log. One threshold, not two —
         // this is a latch, not the hysteresis band the drift detector has.
