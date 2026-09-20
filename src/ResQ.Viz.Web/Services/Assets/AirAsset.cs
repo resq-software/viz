@@ -73,10 +73,10 @@ public sealed partial class AirAsset : ISimulatedAsset
 
     private static readonly FaultCode[] NoFaults = [];
     private static readonly ComponentHealth[] NoComponents = [];
-    private static readonly AssetEvent[] NoEvents = [];
 
     private readonly SimulatedDrone _drone;
-    private readonly List<AssetEvent> _events = [];
+    /// <summary>This drone's event queue. Unbounded: see <see cref="AssetEventLedger.Unbounded"/>.</summary>
+    private readonly AssetEventLedger _events;
 
     /// <summary>Onset memory so a standing fault reports when it started, not when it was seen.</summary>
     private readonly FaultOnsetLedger _faultOnsets = new();
@@ -113,6 +113,7 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         _drone = drone;
         Descriptor = descriptor;
+        _events = AssetEventLedger.Unbounded(descriptor.AssetId);
         _wasLanded = drone.FlightModel.HasLanded;
     }
 
@@ -267,14 +268,7 @@ public sealed partial class AirAsset : ISimulatedAsset
     /// <inheritdoc />
     public IReadOnlyList<AssetEvent> DrainEvents()
     {
-        if (_events.Count == 0)
-        {
-            return NoEvents;
-        }
-
-        var drained = _events.ToArray();
-        _events.Clear();
-        return drained;
+        return _events.Drain();
     }
     /// <summary>
     /// Splits a flight model's single stored velocity into the two distinct quantities the wire
@@ -368,15 +362,18 @@ public sealed partial class AirAsset : ISimulatedAsset
 
         _lastObservedTick = context.Tick;
 
+        // Air is the one domain that raises from capture rather than from a step — documented on
+        // ISimulatedAsset.Capture and deliberate, because the SDK owns this drone's integration
+        // and there is no step of ours to hang it off. The ledger's clock is therefore advanced
+        // here, from the capture context, rather than in a step it does not have.
+        _events.Advance(context.SimulationTimeSeconds, context.Tick);
+
         if (landed != _wasLanded)
         {
-            _events.Add(new AssetEvent(
-                AssetId,
+            _events.Raise(
                 landed ? "air.landed" : "air.airborne",
                 AssetEventSeverity.Info,
-                landed ? "Drone has landed." : "Drone has left the ground.",
-                context.SimulationTimeSeconds,
-                context.Tick));
+                landed ? "Drone has landed." : "Drone has left the ground.");
             _wasLanded = landed;
         }
 
@@ -385,13 +382,10 @@ public sealed partial class AirAsset : ISimulatedAsset
         if (batteryPercent < LowBatteryPercent && !_lowBatteryLatched)
         {
             _lowBatteryLatched = true;
-            _events.Add(new AssetEvent(
-                AssetId,
+            _events.Raise(
                 "air.batteryLow",
                 AssetEventSeverity.Warning,
-                "Battery below the return-to-base reserve.",
-                context.SimulationTimeSeconds,
-                context.Tick));
+                "Battery below the return-to-base reserve.");
         }
         else if (batteryPercent >= LowBatteryPercent)
         {

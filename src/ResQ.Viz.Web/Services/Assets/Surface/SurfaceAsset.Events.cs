@@ -98,30 +98,7 @@ public sealed partial class SurfaceAsset
     /// so and the counter resets — so a stalled consumer learns that it missed something rather
     /// than silently receiving a partial history.
     /// </remarks>
-    public IReadOnlyList<AssetEvent> DrainEvents()
-    {
-        if (_events.Count == 0 && _droppedEvents == 0)
-        {
-            return NoEvents;
-        }
-
-        if (_droppedEvents > 0)
-        {
-            int dropped = _droppedEvents;
-            _droppedEvents = 0;
-            _events.Add(new AssetEvent(
-                AssetId,
-                EventsDroppedCode,
-                AssetEventSeverity.Warning,
-                $"{dropped} event(s) were dropped because nothing drained this asset's queue.",
-                _simulationTimeSeconds,
-                _tick));
-        }
-
-        var drained = _events.ToArray();
-        _events.Clear();
-        return drained;
-    }
+    public IReadOnlyList<AssetEvent> DrainEvents() => _events.Drain();
 
     /// <summary>Raises an event for every transition this step observed, and for nothing else.</summary>
     /// <remarks>
@@ -644,15 +621,6 @@ public sealed partial class SurfaceAsset
         string code,
         AssetEventSeverity severity,
         string message,
-        AssetCommandCompletion? completion = null)
-    {
-        if (_events.Count >= MaxQueuedEvents)
-        {
-            _droppedEvents++;
-            return;
-        }
-
-        _events.Add(new AssetEvent(
-            AssetId, code, severity, message, _simulationTimeSeconds, _tick, completion));
-    }
+        AssetCommandCompletion? completion = null) =>
+        _events.Raise(code, severity, message, completion);
 }
