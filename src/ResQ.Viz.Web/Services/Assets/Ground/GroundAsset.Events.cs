@@ -99,6 +99,11 @@ public sealed partial class GroundAsset
         // level, so one hold raises one event however long it lasts. Info, not a warning: the
         // vehicle is doing the right thing and will free itself, which is exactly what separates
         // it from `ground.immobilised` directly above.
+        //
+        // The cleared message says only that the hold ended, and deliberately. The level also
+        // clears when the vehicle goes idle, arrives, is immobilised or has its ground refused —
+        // in which case the one in front may still be sitting there and nothing is resuming.
+        // Promising a resumption the vehicle is not making is worse than saying less.
         if (_navigator.IsHoldingForPeer != _wasHoldingForPeer)
         {
             _wasHoldingForPeer = _navigator.IsHoldingForPeer;
@@ -107,7 +112,7 @@ public sealed partial class GroundAsset
                 AssetEventSeverity.Info,
                 _wasHoldingForPeer
                     ? "Holding: a vehicle is stopped inside this one's stopping distance."
-                    : "The vehicle ahead is clear; resuming.");
+                    : "No longer holding for a vehicle ahead.");
         }
 
         // Latched with hysteresis, not level-triggered: see the remarks.
