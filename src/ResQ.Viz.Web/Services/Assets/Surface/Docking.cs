@@ -135,6 +135,16 @@ public sealed record DockingPlan(
     /// <summary>Range at which the final stage begins, in hull lengths.</summary>
     public const double FinalLengths = 2.0;
 
+    /// <summary>Line-of-sight lookahead for centreline tracking, in hull lengths.</summary>
+    /// <remarks>
+    /// Three lengths is 19.5 m on the shipped vessel, comfortably outside its 12 m minimum
+    /// turning radius. Shorter converges faster and weaves; longer is placid and can run out of
+    /// approach before it has closed the line. Measured across the full heading sweep at four
+    /// initial ranges; see <c>SurfaceDockingApproachTests</c>, which fails if this is retuned
+    /// into a value that stops the sweep mooring.
+    /// </remarks>
+    public const double LookaheadLengths = 3.0;
+
     /// <summary>Corridor half-width, in hull beams.</summary>
     /// <remarks>
     /// Two beams either side. Wide enough that ordinary steering error inside a first-order
@@ -539,7 +549,8 @@ public static class Docking
         double range = Math.Sqrt((east * east) + (south * south));
 
         double headingError = SurfaceNavigator.ShortestTurnRad(plan.BerthHeadingRad, state.HeadingRad);
-        double lateral = LateralOffsetM(plan, state);
+        double crossTrack = CrossTrackM(plan, in state);
+        double lateral = Math.Abs(crossTrack);
         double approach = BerthApproachSpeedMps(plan, in progress, in state, range);
 
         if (!progress.IsActive)
@@ -585,13 +596,21 @@ public static class Docking
         double coast = Math.Max(0.0, range - plan.TerminalToleranceM) / profile.SurgeTimeConstantSec;
         double surge = Math.Min(ceiling, coast);
 
-        // Steer at the berth until the final stage, then onto the terminal heading. Switching
+        // Track the CENTRELINE until the final stage, then onto the terminal heading. Switching
         // at the final stage rather than at the berth is what puts the hull on the terminal
         // heading before it arrives, instead of arriving and then swinging alongside.
+        //
+        // This used to steer at the berth, which is why a berthing approach was decided by
+        // whether pure pursuit happened to converge before the range gate rather than by
+        // anything the vessel did. Measured on the shipped hull in calm water, from 150 m:
+        // 11 of 24 initial headings moored and 13 aborted, every one of them for
+        // OutsideCorridor and every one at 38.9x m -- the first step its range crossed the
+        // 39.0 m corridor gate, having never been inside the corridor at all. The excursion
+        // that put it there is just the turn onto the berth: a hull with a 12 m minimum radius
+        // swings up to 28 m off a line it started on, against a half-width of 4.6 m.
         double steerTo = phase == DockingPhase.Final
             ? plan.BerthHeadingRad
-            : CoordinateFrames.BearingFromEusVector(
-                new Vector3((float)east, 0f, (float)south), state.HeadingRad);
+            : LineOfSightBearingRad(plan, profile, crossTrack);
 
         double yaw = Math.Clamp(
             SurfaceNavigator.ShortestTurnRad(steerTo, state.HeadingRad) * HeadingGainPerSec,
@@ -667,6 +686,44 @@ public static class Docking
         return (east * towardsEast) + (south * towardsSouth);
     }
 
+    /// <summary>Course that converges on the centreline, in radians clockwise from north.</summary>
+    /// <remarks>
+    /// Lookahead-based line-of-sight guidance, the standard way a surface vessel is made to
+    /// follow a straight leg: steer the path's own bearing, plus a correction that points at a
+    /// spot on the line <see cref="LookaheadLengths"/> hull lengths ahead of the vessel's
+    /// projection onto it. <c>atan</c> bounds that correction below a right angle, so a hull a
+    /// long way off closes the line at ninety degrees and eases onto it as the error falls,
+    /// rather than aiming at a fixed intercept it would then overshoot.
+    /// <para>
+    /// The bearing comes from the centreline rather than from
+    /// <see cref="DockingPlan.BerthHeadingRad"/>, because those two are only the same when no
+    /// berth heading was commanded. <c>dock</c> carries an optional heading, and taking it here
+    /// would make an operator who supplied one steer down a line the corridor is not measured
+    /// against.
+    /// </para>
+    /// <para>
+    /// The lookahead is the one tuning constant. It has to stay comfortably above the hull's
+    /// minimum turning radius or the law asks for a turn tighter than the rudder can hold and
+    /// the track weaves; three hull lengths is 19.5 m against a 12 m radius on the shipped
+    /// vessel. Scaled in hull lengths rather than fixed, so a longer hull -- which turns wider
+    /// and is given a wider corridor -- also looks further ahead.
+    /// </para>
+    /// </remarks>
+    /// <param name="plan">Plan whose centreline is being tracked.</param>
+    /// <param name="profile">Hull the lookahead is scaled from.</param>
+    /// <param name="crossTrackM">Signed cross-track error, positive to starboard.</param>
+    /// <returns>The demanded course in radians.</returns>
+    private static double LineOfSightBearingRad(
+        DockingPlan plan, SurfaceProfile profile, double crossTrackM)
+    {
+        double pathRad = CoordinateFrames.BearingFromEusVector(
+            plan.CentrelineEus, plan.BerthHeadingRad);
+
+        double lookahead = DockingPlan.LookaheadLengths * profile.LengthM;
+
+        return pathRad + Math.Atan2(-crossTrackM, lookahead);
+    }
+
     /// <summary>Stage the vessel is in, from range alone.</summary>
     /// <param name="plan">Plan whose stage boundaries apply.</param>
     /// <param name="rangeM">Range to the berth, in metres.</param>
@@ -687,26 +744,30 @@ public static class Docking
         _ => plan.FinalSpeedMps,
     };
 
-    /// <summary>Perpendicular distance from the corridor centreline, in metres.</summary>
+    /// <summary>Cross-track error: signed distance from the corridor centreline, in metres.</summary>
     /// <remarks>
-    /// The magnitude of the component of the berth-relative offset perpendicular to the
-    /// centreline. Always non-negative: which side of the line the vessel is on is not what the
-    /// corridor constrains.
+    /// Positive to starboard of the centreline, looking along it towards the berth. The sign is
+    /// the whole reason this is not the magnitude the corridor test wants: a steering law that
+    /// only knows how far off the line it is cannot know which way to turn, and until one
+    /// existed this quantity was measured, reported, compared against the corridor, and never
+    /// steered on.
+    /// <para>
+    /// In EUS with <c>line</c> the unit vector from entry to berth, the unit vector 90 degrees
+    /// to starboard of it is <c>(-line.Z, 0, line.X)</c>: a bearing of <c>b</c> is
+    /// <c>(sin b, 0, -cos b)</c>, so a bearing of <c>b + pi/2</c> is <c>(cos b, 0, sin b)</c>,
+    /// which is that rotation of the components.
+    /// </para>
     /// </remarks>
     /// <param name="plan">Plan whose centreline applies.</param>
     /// <param name="state">Vessel pose.</param>
-    /// <returns>Distance in metres.</returns>
-    private static double LateralOffsetM(DockingPlan plan, in SurfaceMotionState state)
+    /// <returns>Signed distance in metres, positive to starboard.</returns>
+    private static double CrossTrackM(DockingPlan plan, in SurfaceMotionState state)
     {
         var line = plan.CentrelineEus;
         double east = state.EastM - plan.BerthEus.X;
         double south = state.SouthM - plan.BerthEus.Z;
-        double along = (east * line.X) + (south * line.Z);
 
-        double offEast = east - (along * line.X);
-        double offSouth = south - (along * line.Z);
-
-        return Math.Sqrt((offEast * offEast) + (offSouth * offSouth));
+        return (east * -line.Z) + (south * line.X);
     }
 
     /// <summary>The first abort condition that applies, or null when the approach is sound.</summary>
