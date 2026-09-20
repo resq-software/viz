@@ -98,17 +98,7 @@ public sealed partial class GroundAsset
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<AssetEvent> DrainEvents()
-    {
-        if (_events.Count == 0)
-        {
-            return NoEvents;
-        }
-
-        var drained = _events.ToArray();
-        _events.Clear();
-        return drained;
-    }
+    public IReadOnlyList<AssetEvent> DrainEvents() => _events.Drain();
 
     /// <summary>Coarse domain-neutral state a command validator gates on.</summary>
     /// <remarks>
