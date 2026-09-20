@@ -129,37 +129,54 @@ button { font-family: inherit; }
 .hud-zone-right  { justify-self: end; gap: 10px; }
 #hud-stats { min-width: 0; flex-wrap: nowrap; }
 
-/* Progressive shed, in ascending order of what an operator can least afford to
-   lose. Range syntax (`width < N`) rather than `max-width: N-1` + `min-width: N`
-   so there is no fractional dead zone between tiers — browser zoom routinely
-   produces widths like 1279.5px, which a max/min pair matches NEITHER side of.
-   Thresholds come from the width sweep, each tier landing just above where the
-   previous tier's content would start colliding. */
-@media (width < 1280px) {
-  /* Battery meter is the widest single stat (label + bar + percent) and the
-     percent alone survives in the sidebar. Connection keeps its dot; only the
-     word goes. */
-  .hud-stat-bat,
-  #conn-label { display: none; }
+/* ── Emergency stop ──────────────────────────────────────────────────────────
+   VEHICLE_DASHBOARDS.md §4.7 and §7: "E-stop and alerts never degrade. That is
+   the rule that decides ties." Every other HUD element below has a tier that
+   retires it; this one deliberately has none, and the rule immediately after
+   makes that structural rather than a matter of remembering. */
+.hud-estop {
+  position: relative;
+  overflow: hidden;
+  flex: 0 0 auto;
+  /* Meets the 24px target floor at every width, including the compact tiers
+     where the other actions shrink. */
+  min-height: 26px;
+  padding: 4px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+  background: var(--primary-soft);
+  color: var(--primary-text);
+  font-family: var(--mono);
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: background var(--t-fast), box-shadow var(--t-fast);
+}
+.hud-estop-label { position: relative; }
+.hud-estop:hover { background: var(--primary-glow); }
+.hud-estop[data-holding='true'] { box-shadow: inset 0 0 0 1px var(--danger); }
+/* Refuses in place rather than disappearing, so the control an operator reaches
+   for in an emergency is always where it was.
+   It signals that by DESATURATING, never by fading. `opacity: 0.45` measured
+   1.87:1 on the label — and this is the control's default state, since nothing is
+   selected at boot. "Always where it was" is worth nothing if it cannot be read
+   when you look there. The exemption WCAG 1.4.3 grants inactive controls does not
+   apply: this one is deliberately not `disabled`, it keeps its place in the tab
+   order, and being findable is the entire point of the design.
+   The border and label stay at full opacity; only the fill backs off. */
+.hud-estop.is-blocked {
+  cursor: not-allowed;
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--hint);
 }
 
-@media (width < 1080px) {
-  /* Sim clock and the selected-asset chip: both are mirrored elsewhere in the
-     UI (mission panel, inspector), so the HUD is not the only way to read them. */
-  .hud-stat:has(#sim-time),
-  #hud-selected-drone { display: none; }
-}
+/* The one surface no responsive tier may retire. Written as a guard so that a
+   future shed rule cannot hide it by accident — if someone adds
+   `.hud-estop { display: none }` to a tier, this beats it on specificity. */
+#hud-top .hud-estop { display: inline-flex; align-items: center; }
 
-@media (width < 1000px) {
-  /* Last tier before the ≤900px block takes over. Measured: without this the
-     centre lane is 427px at 925px wide against ~452px of stats, so #hud-comms
-     ("LINK UP") was overflowing #hud-stats by 25px and getting cut mid-word by
-     the zone's overflow clip. FPS goes rather than LINK: frame rate is a
-     developer diagnostic, whereas the backhaul uplink state is operational and
-     is not mirrored anywhere else in the chrome. (A `max-width: 560px` rule
-     further down also hides FPS; it is now redundant but harmless.) */
-  .hud-stat:has(#fps) { display: none; }
-}
 
 #hud-logo {
   font-family: var(--display);
@@ -214,7 +231,11 @@ button { font-family: inherit; }
   align-items: center;
   gap: 4px;
   padding: 4px;
-  background: rgba(255, 255, 255, 0.025);
+  /* No fill. The group already reads from the ring below plus the radius, and
+     the 2.5% white wash was pure decoration that cost the 9px label its AA:
+     --hint measures 4.79 on the bare bar and 4.46 through this tint. tokens.css
+     fought to get --hint to 4.80 on this surface; a decorative overlay should
+     not quietly spend that. */
   border-radius: 10px;
   box-shadow: var(--ring);
 }
@@ -223,7 +244,8 @@ button { font-family: inherit; }
   align-items: baseline;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 7px;
+  /* was 7px — off the canonical 3/4/6/10 scale. */
+  border-radius: var(--radius-panel);
   white-space: nowrap;
   transition: background var(--t-fast);
 }
@@ -252,6 +274,90 @@ button { font-family: inherit; }
   align-items: center;
   gap: 8px;
 }
+
+/* NOTE ON PLACEMENT: these blocks must stay BELOW the .hud-stat* definitions
+   above. They were first written next to the .hud-zone rules, ~110 lines
+   earlier, and `.hud-stat-bat { display: none }` lost to
+   `.hud-stat-bat { display: inline-flex }` on source order at equal
+   specificity (0,1,0) — measured, the battery meter stayed visible all the way
+   down to 900px, where a pre-existing rule happened to hide it, so the tier
+   looked like it worked. #conn-label was unaffected (ID, 1,0,0) and the T+/FPS
+   rules were unaffected (`:has(#sim-time)` inherits the ID's specificity),
+   which is exactly why the failure was invisible in the rendered HUD. */
+/* ── The HUD lane measures itself ────────────────────────────────────────────
+   These stats used to shed on VIEWPORT width — tiers at 1320/1120/1020 that were
+   derived by sweeping widths and watching for clipping. Viewport width is only a
+   proxy for the quantity that matters, which is how much room the centre lane
+   has: that is `viewport − left zone − right zone − gaps`, and the right zone
+   grows when an asset is selected and #hud-selected-drone appears.
+
+   The proxy is why the same stat kept needing its threshold moved. Measured with
+   an asset selected at exactly 1320px — a width the tier was moved to in order to
+   clear an earlier band — the lane was 476px against 537px of stats, and
+   #hud-comms ("LINK") rendered 16px of its 69. A viewport rule cannot express
+   "does this fit", so every number here was provisional.
+
+   `.hud-zone-center` is `justify-self: stretch; min-width: 0; overflow: hidden`
+   in a `grid-template-columns: auto minmax(0,1fr) auto` track, so its inline size
+   is set by the grid and never by its children — which is the precondition for
+   inline-size containment, and means adding it changes no layout. Selection now
+   shrinks the container directly, so a selection-dependent band cannot exist.
+
+   Thresholds are the measured content widths plus margin: the full stat row needs
+   ~540px, ~397px without the battery meter, ~313px without the clock too, ~247px
+   without FPS as well.
+
+   NOTE: `container-type` makes this a containing block for fixed/absolute
+   descendants. The only absolutely positioned one is #battery-fill, already
+   contained by #battery-track's `position: relative`. Check that before adding
+   another.
+   ────────────────────────────────────────────────────────────────────────── */
+.hud-zone-center { container: hudlane / inline-size; }
+
+/* Battery meter — widest single stat, and the percent survives in the sidebar. */
+@container hudlane (width < 560px) {
+  [data-shed='l1'] { display: none; }
+}
+/* Sim clock — mirrored in the mission panel. */
+@container hudlane (width < 415px) {
+  [data-shed='l2'] { display: none; }
+}
+/* Frame rate — a developer diagnostic, and the last to go because it is the
+   cheapest. LINK is never ranked: it is the comms state, it is not mirrored
+   anywhere else in the chrome, and it is what the lane exists to protect. */
+@container hudlane (width < 330px) {
+  [data-shed='l3'] { display: none; }
+}
+
+/* The `html ` prefix is load-bearing, not decoration. Both of these shed rules
+   sit ABOVE the base rule for the same element, and at equal specificity source
+   order wins — so written bare they lost, and the element stayed visible while
+   the rule looked correct. That is the identical failure that once left
+   `.hud-stat-bat { display: none }` beaten by `.hud-stat-bat { display: inline-flex }`
+   and the battery meter visible 400px past its own tier. Measured here the same
+   way: with an asset selected the lane was 184px against 243px of stats at 960,
+   because the chip this rule claims to retire was still mounted.
+   `html #x` is (1,0,1) and beats any bare id, from any sheet, in any order. */
+@media (width < 1320px) {
+  /* Left zone, so the lane query does not see it: the connection word goes and
+     the dot stays. */
+  html #conn-label { display: none; }
+}
+
+@media (width < 1120px) {
+  /* Right zone, likewise outside the lane — and shedding it is what gives the
+     lane its room back. */
+  html #hud-selected-drone { display: none; }
+}
+
+@media (width < 960px) {
+  /* Below the counts-plus-LINK minimum the centre lane cannot fit even after the
+     lane ranks above, because the right zone still holds the layer-toggle group.
+     Measured: #hud-comms clipped across 902–944, up to 45px. The 900px block
+     further down also retires this group; starting at 960 closes the band. */
+  .hud-zone-right .hud-toggle-group { display: none; }
+}
+
 #battery-track {
   position: relative;
   width: 64px;
@@ -265,8 +371,12 @@ button { font-family: inherit; }
   height: 100%;
   width: 100%;
   background: var(--success);
-  border-radius: 3px;
-  transition: width var(--t-slow), background var(--t-slow);
+  /* Scales rather than resizes. `width` is a layout property and the style guide
+     forbids animating one per-frame; the track above already clips and rounds,
+     so the fill needs no radius of its own (a scaled radius would distort). */
+  transform-origin: left center;
+  transform: scaleX(var(--battery-fill, 1));
+  transition: transform var(--t-slow), background var(--t-slow);
 }
 #battery-fill.warn { background: var(--warning); }
 #battery-fill.crit { background: var(--primary); }
@@ -288,7 +398,9 @@ button { font-family: inherit; }
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.04em;
-  color: var(--accent);
+  /* --info-text, not --accent: --accent IS the fill tone, and this chip puts it
+     on its own 0.16 tint. Measured on the HUD bar: 3.26. */
+  color: var(--info-text);
   background: var(--accent-soft);
   border-radius: var(--radius-token);
   padding: 4px 12px;
@@ -315,8 +427,12 @@ button { font-family: inherit; }
   align-items: center;
   gap: 2px;
   padding: 3px;
-  background: rgba(255, 255, 255, 0.025);
-  border-radius: 9px;
+  /* No fill, for the same reason as #hud-stats: the ring below already groups
+     these, and the 2.5% white wash lifted the backdrop under 14px glyphs that
+     were already marginal. Measured on the velocity toggle: 3.73 through the
+     wash. */
+  /* was 9px — off the canonical scale; 10px is --resq-radius-xl. */
+  border-radius: var(--radius-panel-lg);
   box-shadow: var(--ring);
 }
 
@@ -325,7 +441,12 @@ button { font-family: inherit; }
   appearance: none;
   background: transparent;
   border: 0;
-  color: var(--text-muted);
+  /* Colour set below — see the --hint note on the inactive glyph. */
+  /* --hint, not --text-muted: these glyphs are the only label these icon
+     buttons have, and tokens.css records --text-muted as unreachable for AA
+     at any alpha below ~0.92. Measured on the bar: --text-muted 4.09,
+     --hint 4.79. */
+  color: var(--hint);
   width: 30px;
   height: 28px;
   border-radius: 6px;
@@ -343,8 +464,10 @@ button { font-family: inherit; }
   color: var(--text);
 }
 .hud-toggle.active {
+  /* Same fill-tone-as-text pairing as the selected-asset chip: measured 3.08 on
+     the halo toggle's glyph. */
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--info-text);
   box-shadow: inset 0 0 0 1px var(--info-glow);
 }
 
@@ -352,7 +475,7 @@ button { font-family: inherit; }
 
 #sidebar {
   position: fixed;
-  top: var(--hud-h);
+  top: var(--effective-hud-h);
   left: 0;
   bottom: 0;
   width: var(--sidebar-w);
@@ -369,7 +492,9 @@ button { font-family: inherit; }
   flex-direction: column;
   gap: 16px;
   transform: translateX(0);
-  transition: transform var(--t-mid) var(--ease);
+  /* No transition here either: this element is toggled with the `hidden`
+     attribute, and an element entering or leaving `display: none` cannot
+     animate. The declaration read as an intent the code could never honour. */
   scrollbar-width: thin;
   scrollbar-color: rgba(120, 140, 170, 0.3) transparent;
 }
@@ -609,16 +734,12 @@ input[type='range'] {
   border-radius: 50%;
   background: currentColor;
 }
-.badge-flying    { background: var(--success-soft);      color: var(--success);        box-shadow: inset 0 0 0 1px var(--success-soft); }
-.badge-landed    { background: oklch(100% 0 0 / 0.05);   color: var(--text-muted);     box-shadow: inset 0 0 0 1px var(--border); }
-.badge-emergency { background: var(--primary-soft);      color: var(--primary-text);   box-shadow: inset 0 0 0 1px var(--primary-glow); }
-.badge-armed     { background: var(--info-soft);         color: var(--info);           box-shadow: inset 0 0 0 1px var(--info-glow); }
 
 /* ── Wind compass ───────────────────────────────────────────────────────── */
 
 #wind-compass {
   position: fixed;
-  bottom: calc(var(--dvr-h) + 14px);
+  bottom: calc(var(--effective-dvr-h) + 14px);
   right: 240px;
   z-index: var(--layer-context);
   text-align: center;
@@ -649,7 +770,14 @@ input[type='range'] {
   top: calc(var(--effective-hud-h) + 8px);
   inset-inline-end: max(16px, env(safe-area-inset-right));
   z-index: var(--layer-popover);
-  width: 380px;
+  /* 380px left the two 1fr columns at 169px each, 6px short of the longest
+     shortcut label ("Click ground / Send drone here", measured 175px), so it
+     was the one row in the panel rendering with an ellipsis. 408px puts the
+     columns at 183px — enough for that label plus room for a slightly longer
+     one later, without the panel growing enough to matter: below 900px the grid
+     collapses to a single column anyway, and max-width still yields to narrow
+     viewports. */
+  width: 408px;
   max-width: calc(100vw - 32px);
   background: var(--surface-3);
   border-radius: var(--r-2);
@@ -662,6 +790,17 @@ input[type='range'] {
   transition: opacity var(--t-mid) var(--ease),
               transform var(--t-mid) var(--ease);
   transform-origin: top right;
+  /* This was the only overlay in the system with neither a max-height nor an
+     overflow. Its grid collapses to one column below 900px, which makes the
+     22-item list roughly twice as tall — and `body { overflow: hidden }` means
+     anything past the viewport is not reachable by scrolling either. On a
+     landscape phone (844x390, and every other phone in landscape) the bottom of
+     the list, including the close control, was simply unreachable. Bounding it
+     against the two fixed bars and letting it scroll internally fixes that at
+     every height without changing how it looks when there is room. */
+  max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* Tiny pointer toward the `?` button */
 #key-hints::before {
@@ -674,7 +813,7 @@ input[type='range'] {
   background: var(--surface-3);
   box-shadow: -1px -1px 0 var(--line-strong);
   transform: rotate(45deg);
-  border-radius: 2px;
+  border-radius: var(--radius-token);
 }
 #key-hints.hidden {
   opacity: 0;
@@ -779,7 +918,8 @@ kbd {
 .terrain-card .tc-icon { font-size: 16px; line-height: 1.1; filter: saturate(0.9); }
 .terrain-card .tc-name {
   font-family: var(--mono);
-  font-size: 8.5px;
+  /* was 8.5px — below the console's legible floor. See --text-2xs. */
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   margin-top: 3px;
   letter-spacing: 0.06em;
@@ -816,7 +956,7 @@ kbd {
   box-shadow: inset 0 0 0 1px var(--info-glow);
 }
 .scn-chip .chip-n {
-  font-size: 8.5px; font-weight: 500; letter-spacing: 0;
+  font-size: var(--text-2xs); font-weight: 500; letter-spacing: 0;
   color: var(--text-faint); font-variant-numeric: tabular-nums;
 }
 .scn-chip[aria-pressed='true'] .chip-n { color: var(--accent); opacity: 0.7; }
@@ -832,7 +972,7 @@ kbd {
 
 .scenario-grid {
   display: flex; flex-direction: column; gap: 2px;
-  max-height: clamp(170px, 25vh, 340px);
+  max-height: clamp(170px, 25dvh, 340px);
   overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
 }
 /* Bottom fade only when there IS more below, so a short filtered list keeps its
@@ -846,7 +986,7 @@ kbd {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; gap: 7px;
   min-height: 18px; padding: 0 8px 0 10px;
-  font-family: var(--mono); font-size: 8.5px; font-weight: 500;
+  font-family: var(--mono); font-size: var(--text-2xs); font-weight: 500;
   letter-spacing: 0.2em; text-transform: uppercase;
   color: var(--text-faint);
   background: var(--surface-3); border-radius: var(--r-1);
@@ -902,7 +1042,8 @@ kbd {
 }
 
 .sc-count {
-  justify-self: end; font-family: var(--mono); font-size: 9.5px;
+  /* was 9.5px — a half-pixel step no rhythm produces. */
+  justify-self: end; font-family: var(--mono); font-size: var(--text-2xs);
   font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums;
 }
 
@@ -913,7 +1054,7 @@ kbd {
    here. */
 .sc-dom { display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; }
 .sc-d {
-  font-family: var(--mono); font-size: 7.5px; font-weight: 500;
+  font-family: var(--mono); font-size: var(--text-2xs); font-weight: 500;
   letter-spacing: 0.1em; color: var(--text-faint);
   padding: 1px 3px; border-radius: var(--radius-token);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -922,9 +1063,11 @@ kbd {
 
 .sc-key {
   justify-self: end; display: inline-flex; align-items: center; justify-content: center;
-  min-width: 13px; height: 13px;
-  font-family: var(--mono); font-size: 8px; font-weight: 500;
-  color: var(--text-faint); border-radius: 2px;
+  /* Box grows with the glyph: an 8px key in a 13px box became a 10px key,
+     which needs 16px to stay square and centred. */
+  min-width: 16px; height: 16px;
+  font-family: var(--mono); font-size: var(--text-2xs); font-weight: 500;
+  color: var(--text-faint); border-radius: var(--radius-token);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
@@ -994,9 +1137,15 @@ kbd {
   border-left: 1px solid var(--line);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
-  /* Context sheets sit below persistent HUD surfaces; overlapping HUD widgets
-     are hidden by the open-state rules below. */
-  z-index: var(--layer-context);
+  /* Above --layer-editor (180), not below it. At --layer-context (150) this panel
+     opened INTO the opaque fullscreen workspace and was never seen: measured at
+     900x800 with the editor in fullscreen, the panel was open and laid out at
+     [580,52,900,686], and elementsFromPoint at its own centre returned
+     `resq-editor`. Clicking Settings appeared to do nothing at all.
+     --layer-popover is the right tier: a transient overlay invoked from the HUD,
+     above the workspace, below modals. The HUD widgets it would otherwise overlap
+     are retired by the open-state rules below, so nothing is lost by the lift. */
+  z-index: var(--layer-popover);
   transform: translateX(100%);
   transition: transform var(--t-mid) var(--ease);
   padding-inline-end: env(safe-area-inset-right);
@@ -1140,7 +1289,7 @@ body:has(#settings-panel.open) .cockpit { display: none; }
   transition: color var(--t-fast), box-shadow var(--t-fast);
 }
 .settings-reset-btn:hover {
-  color: var(--danger);
+  color: var(--primary-text);
   box-shadow: 0 0 0 1px var(--primary-glow);
 }
 
@@ -1183,7 +1332,7 @@ body.investor-mode canvas { cursor: none; }
    silent — it must not read as a healthy link. */
 
 #hud-comms.comms-up      .hud-stat-value { color: var(--success); }
-#hud-comms.comms-cut     .hud-stat-value { color: var(--danger); }
+#hud-comms.comms-cut     .hud-stat-value { color: var(--primary-text); }
 #hud-comms.comms-unknown .hud-stat-value { color: var(--warning); }
 #hud-comms.comms-cut { box-shadow: inset 0 0 0 1px var(--danger); }
 
@@ -1191,7 +1340,7 @@ body.investor-mode canvas { cursor: none; }
 
 .partition-banner {
   position: fixed;
-  top: calc(var(--hud-h) + 12px);
+  top: calc(var(--effective-hud-h) + 12px);
   left: 50%;
   transform: translateX(-50%) translateY(-8px);
   z-index: var(--layer-hud);
@@ -1201,12 +1350,16 @@ body.investor-mode canvas { cursor: none; }
   font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--danger);
+  color: var(--primary-text);
   background: rgba(28, 8, 8, 0.85);
   backdrop-filter: var(--blur-strong);
   -webkit-backdrop-filter: var(--blur-strong);
   box-shadow: 0 0 0 1px var(--danger), 0 0 24px var(--danger-glow);
   border-radius: var(--r-1);
+  /* Enforces the lane the mission chrome offsets against — see
+     body.partitioned .mission-chrome below. */
+  min-height: var(--comms-banner-h);
+  box-sizing: border-box;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--t-mid), transform var(--t-mid);
@@ -1214,6 +1367,19 @@ body.investor-mode canvas { cursor: none; }
 body.partitioned .partition-banner {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* `.mission-chrome` and `.partition-banner` were pinned to a byte-identical
+   anchor — same `top: calc(var(--effective-hud-h) + 12px)`, same `left: 50%`,
+   same `z-index: var(--layer-hud)` — so when both were up the chrome sat wholly
+   inside the banner's box. Measured with representative text at 1440x900: 29px
+   of vertical overlap against a 29px-tall chrome, and 110px horizontal against
+   its 110px width, i.e. total occlusion decided only by paint order. That hit
+   precisely when an operator needs both readings: the mesh has partitioned AND
+   they still need the scenario, clock and phase. Dropping the chrome below the
+   banner's lane keeps both legible. */
+body.partitioned .mission-chrome {
+  top: calc(var(--effective-hud-h) + 12px + var(--comms-banner-h) + 8px);
 }
 .partition-banner::before {
   content: '⚠';
@@ -1350,7 +1516,7 @@ body.partitioned .partition-banner {
 .loading-overlay.disconnected .loading-retry {
   opacity: 1;
   pointer-events: auto;
-  color: var(--danger);
+  color: var(--primary-text);
   box-shadow: 0 0 0 1px var(--danger);
 }
 .loading-overlay.disconnected .loading-retry:hover {
@@ -1364,7 +1530,7 @@ body.partitioned .partition-banner {
 }
 .loading-overlay.disconnected .loading-phase,
 .loading-overlay.disconnected .loading-title {
-  color: var(--danger);
+  color: var(--primary-text);
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -1393,7 +1559,7 @@ body.partitioned .partition-banner {
 
 .mission-chrome {
   position: fixed;
-  top: calc(var(--hud-h) + 12px);
+  top: calc(var(--effective-hud-h) + 12px);
   left: 50%;
   transform: translateX(-50%);
   z-index: var(--layer-hud);
@@ -1421,7 +1587,7 @@ body.partitioned .partition-banner {
 .mc-time  { color: var(--text-muted); font-variant-numeric: tabular-nums; letter-spacing: 0.14em; }
 .mc-phase { color: var(--accent);   letter-spacing: 0.26em; }
 .mc-sep   { color: var(--text-faint); padding: 0 2px; }
-body.partitioned .mc-phase { color: var(--danger); }
+body.partitioned .mc-phase { color: var(--primary-text); }
 
 /* ── Event log (anchored next to the sidebar to avoid overlap) ──────────── */
 
@@ -1430,7 +1596,7 @@ body.partitioned .mc-phase { color: var(--danger); }
   /* Bottom-left console — the lowest tier of the left stack: it sits just above
      the timeline bar, with the sensor-stats overlay tier above it and the
      height-bounded editor dock above that. Capped so the three never collide. */
-  bottom: calc(var(--dvr-h) + 14px);
+  bottom: calc(var(--effective-dvr-h) + 14px);
   left: calc(var(--sidebar-w) + 16px);
   z-index: var(--layer-hud);
   display: flex;
@@ -1440,7 +1606,14 @@ body.partitioned .mc-phase { color: var(--danger); }
      on screen. Without this the overflow clipped the newest away. */
   justify-content: flex-end;
   gap: 3px;
-  max-width: 300px;
+  /* A flat 300px cap truncated ordinary messages on screens with room to spare:
+     measured at 1653px wide, "fr-supply-tail · ground online" needs 365px and
+     was cut mid-word. Widening is the real fix rather than a tooltip, because
+     `pointer-events: none` below (deliberate — clicks must reach the 3D scene)
+     means a `title` on these rows could never be hovered. The lane still yields
+     to the sidebar plus a gutter, so it cannot crowd the scene on narrower
+     screens, and below 960px a further override takes over. */
+  max-width: min(460px, calc(100vw - var(--sidebar-w) - 64px));
   /* Was a flat `max-height: 92px` while eventLog.ts keeps MAX_ROWS = 8. A row's
      natural height is ~24px (11px/1.45 line + 4px padding each side), so 8 rows
      need ~213px and only 92px was offered. The rows carried the default
@@ -1453,6 +1626,14 @@ body.partitioned .mc-phase { color: var(--danger); }
      ~3 at 390px, ~7 at 780px and above. */
   max-height: clamp(52px, 22dvh, 172px);
   overflow: hidden;
+  /* The cap is not a whole multiple of the ~27px row pitch, so the oldest
+     visible row is usually sliced — measured 14px of a 24px row left showing,
+     which reads as a rendering fault rather than as scrollback. Fading the top
+     edge turns that slice into an intentional "there is more above" instead.
+     Applied to the container, not the rows, so each row keeps its own
+     backdrop-filter. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
   pointer-events: none;
   font-family: var(--mono);
   font-size: 11px;
@@ -1465,9 +1646,41 @@ body.partitioned .mc-phase { color: var(--danger); }
    left to reclaim the freed column — not just the event log. */
 body:has(#sidebar.collapsed) .event-log,
 body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
+
+/* The docked editor claims the same bottom-left lane the event log sits in, and
+   nothing retired the log there: measured at 1653x1142 with the editor open and
+   an asset selected, the log painted 300x172 (51,600px²) directly over
+   .resq-inspector — its rows landing on top of the inspector's own fields. The
+   equivalent retirement for the asset panel existed but was scoped to
+   `width < 1100px`, so every desktop width was unprotected.
+   The log is ambient and the editor is a mode the operator deliberately entered,
+   so the log gives way; it returns when the editor closes. Shifting it right
+   instead would push it over the 3D scene, which is the thing the editor is
+   being used to inspect.
+
+   `:not([hidden])` is load-bearing, and its absence was its own bug: the editor
+   element stays in the DOM once created, so after opening the dock and closing it
+   again `body:has(.resq-editor[data-layout='dock'])` still matched and the log
+   never came back. Measured at 1440x900 — editor closed: log shown; opened: shed;
+   closed again: STILL shed, for the rest of the session. `hidden` is what
+   workspace.ts documents as the open signal, so match on it. */
+body:has(.resq-editor[data-layout='dock']:not([hidden])) .event-log { display: none; }
+
+/* Fullscreen is a different bargain from dock. The dock is a column and only
+   contests the bottom-left lane; fullscreen covers the entire viewport at
+   --layer-editor (180), while every floating readout sits at --layer-hud (200)
+   and therefore paints straight over the workspace. Measured at 900x800 with
+   data-layout='fullscreen': .event-log [16,568,383,740] overlapped the editor by
+   367x172, and .cam-mode-pill covered the top ~59% of .resq-editor-close (the
+   workspace's only close control — it still hit-tests, since the pill is
+   pointer-events:none, but it is obscured). */
+body:has(.resq-editor[data-layout='fullscreen']:not([hidden])) :is(
+  .event-log, .minimap, #wind-compass, .sensor-stats-overlay,
+  .telemetry-strip, .cockpit, .resq-pip, .cam-mode-pill
+) { display: none; }
 /* Cockpit lane only exists above the mobile breakpoint (≤1080 it centres over
    the scene), so scope its collapse-shift there to avoid fighting that rule. */
-@media (min-width: 1081px) {
+@media (width >= 1081px) {
   body:has(#sidebar.collapsed) .cockpit { left: 332px; }
 }
 
@@ -1478,7 +1691,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   color: var(--text);
   background: var(--surface-1);
   border-left: 2px solid var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius-token);
   backdrop-filter: var(--blur-soft);
   -webkit-backdrop-filter: var(--blur-soft);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
@@ -1491,14 +1704,31 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   transition: opacity 0.6s ease, transform 0.6s ease;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  /* NB: no `text-overflow` here. This row is a flex container, and
+     `text-overflow` only applies to a block that clips its OWN inline content —
+     on a flex parent it never renders, so the declaration that used to sit here
+     did nothing while looking like it handled truncation. Measured: a row with
+     scrollWidth 357 against clientWidth 298 cut "surface online" to "surface o"
+     with no ellipsis at all. The truncation now belongs to .el-msg below, which
+     is the child that actually holds the overflowing text. */
 }
 .el-row.el-enter,
 .el-row.el-exit { opacity: 0; transform: translateX(-6px); }
 
-.el-time { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.el-tag  { color: var(--text-muted); letter-spacing: 0.14em; text-transform: uppercase; }
-.el-msg  { color: var(--text-dim); }
+/* The timestamp and tag are fixed-width furniture: they must keep their size so
+   that the message is the part that gives when a row is too long. */
+.el-time { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.el-tag  { color: var(--text-muted); letter-spacing: 0.14em; text-transform: uppercase; flex: 0 0 auto; }
+/* `min-width: 0` is what lets a flex item shrink below its content width; without
+   it the message keeps its full intrinsic size and simply overhangs the row's
+   clip, which is what produced a hard mid-word cut. */
+.el-msg  {
+  color: var(--text-dim);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .el-info  { border-left-color: var(--line); }
 .el-mesh  { border-left-color: var(--accent); }
@@ -1506,8 +1736,8 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
 .el-sar   { border-left-color: var(--success); }
 .el-sar   .el-tag { color: var(--success); }
 .el-alert { border-left-color: var(--danger); }
-.el-alert .el-tag { color: var(--danger); }
-.el-alert .el-msg { color: var(--danger); }
+.el-alert .el-tag { color: var(--primary-text); }
+.el-alert .el-msg { color: var(--primary-text); }
 
 /* ── Telemetry strip (right edge per-drone HUD) ────────────────────────── */
 
@@ -1516,7 +1746,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   /* Below the camera-mode pill (which owns the top-right corner). Height is
      bounded to the upper-right band so a long roster can't spill onto the
      centred FPV PiP or the bottom-right minimap. */
-  top: calc(var(--hud-h) + 52px);
+  top: calc(var(--effective-hud-h) + 52px);
   right: 16px;
   z-index: var(--layer-hud);
   display: flex;
@@ -1524,7 +1754,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   gap: 4px;
   min-width: 280px;
   max-width: 320px;
-  max-height: calc(45vh - var(--hud-h));
+  max-height: calc(45dvh - var(--effective-hud-h));
   overflow-y: auto;
   pointer-events: none;
   font-family: var(--mono);
@@ -1545,7 +1775,7 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
   color: var(--text);
   background: var(--surface-1);
   border-left: 2px solid var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius-token);
   backdrop-filter: var(--blur-soft);
   -webkit-backdrop-filter: var(--blur-soft);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
@@ -1583,8 +1813,15 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
 }
 .ts-bat-fill {
   height: 100%;
+  /* Full width, scaled down — see #battery-fill. This one mattered most: its
+     width was rewritten unconditionally for every drone on every 10 Hz frame,
+     restarting a 250ms transition every 100ms, so the roster's bars were in
+     permanent layout animation. */
+  width: 100%;
   background: var(--success);
-  transition: width 0.25s ease, background 0.25s ease;
+  transform-origin: left center;
+  transform: scaleX(var(--battery-fill, 1));
+  transition: transform 0.25s ease, background 0.25s ease;
 }
 .ts-bat-fill.warn { background: var(--warning); }
 .ts-bat-fill.crit { background: var(--primary); }
@@ -1609,13 +1846,13 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
 .ts-row-warn  { border-left-color: var(--warning); }
 .ts-row-warn  .ts-status { color: var(--warning); }
 .ts-row-alert { border-left-color: var(--danger); }
-.ts-row-alert .ts-status { color: var(--danger); }
+.ts-row-alert .ts-status { color: var(--primary-text); }
 
 /* ── Mini-map ───────────────────────────────────────────────────────────── */
 
 .minimap {
   position: fixed;
-  bottom: calc(var(--dvr-h) + 14px);
+  bottom: calc(var(--effective-dvr-h) + 14px);
   right: 16px;
   z-index: var(--layer-hud);
   padding: 7px;
@@ -1636,8 +1873,15 @@ body:has(#sidebar.collapsed) .sensor-stats-overlay { left: 16px; }
 
 .sensor-stats-overlay {
   position: fixed;
-  /* Middle tier of the left stack — above the event log, below the dock. */
-  bottom: calc(var(--dvr-h) + 116px);
+  /* Middle tier of the left stack — above the event log, below the dock.
+     The clearance has to exceed the log's OWN cap, not just its resting height.
+     At +116 the gap above the log's anchor (--effective-dvr-h + 14) was 102px
+     while the log is allowed clamp(52px, 22dvh, 172px) — so as soon as it filled
+     it grew underneath this panel. Measured at 1366x768 with F2 open: this
+     overlay [336,498,556,606] covered the log [336,539,703,708] by 220x67,
+     hiding 4 of its 8 rows behind a developer diagnostic.
+     14 (the log's own offset) + 172 (its cap) + 14 (a gutter) = 200. */
+  bottom: calc(var(--effective-dvr-h) + 200px);
   left: calc(var(--sidebar-w) + 16px);
   z-index: var(--layer-hud);
   min-width: 220px;
@@ -1711,11 +1955,11 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
    roster no longer leave a usable centre lane. The editor dock is dropped in
    editor.css; here we drop the per-drone roster. (Cockpit responsive rules live
    after its base definition below.) */
-@media (max-width: 1080px) {
+@media (width < 1081px) {
   .telemetry-strip { display: none; }
 }
 
-@media (max-width: 1099px) {
+@media (width < 1100px) {
   #sidebar { transform: translateX(-100%); z-index: var(--layer-rail); }
   #sidebar:not(.collapsed) { transform: translateX(0); }
   #scene-container { left: 0 !important; width: 100% !important; }
@@ -1723,14 +1967,10 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   /* The context sheet owns the responsive lower viewport while an asset is
      selected. Retire intersecting HUD tiers until the sheet closes so its
      command footer remains visible and reachable. */
-  body:has(.asset-panel:not([hidden])) .event-log,
-  body:has(.asset-panel:not([hidden])) .minimap,
-  body:has(.asset-panel:not([hidden])) #wind-compass,
-  body:has(.asset-panel:not([hidden])) .sensor-stats-overlay,
-  body:has(.asset-panel:not([hidden])) .telemetry-strip,
-  body:has(.asset-panel:not([hidden])) .cockpit,
-  body:has(.asset-panel:not([hidden])) .resq-pip,
-  body:has(.asset-panel:not([hidden])) .cam-mode-pill { display: none; }
+  body:has(.asset-panel:not([hidden])) :is(
+    .event-log, .minimap, #wind-compass, .sensor-stats-overlay,
+    .telemetry-strip, .cockpit, .resq-pip, .cam-mode-pill
+  ) { display: none; }
 }
 
 @media (max-width: 960px) {
@@ -1754,15 +1994,14 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
   #key-hints.hidden { transform: scale(0.98) translateY(-6px); }
   .key-hints-grid { grid-template-columns: 1fr; }
 
-  /* HUD sheds low-priority items so its three zones never collide: no connection
-     label, selected-asset chip, sim clock, battery meter, or layer toggles. */
+  /* The HUD's shedding is NOT repeated here. #conn-label goes at <1320,
+     #hud-selected-drone at <1120, the toggle group at <960, and the battery and
+     clock by the lane container query — so every selector this block used to
+     list could only ever agree with a rule that had already fired. Repeating
+     them also hid a fact worth seeing: with the lane measured rather than
+     guessed, the sim clock survives at this width. */
   #hud-stats { gap: 0; }
   .hud-stat { padding: 4px 8px; }
-  #conn-label,
-  #hud-selected-drone,
-  .hud-stat-bat,
-  .hud-stat:has(#sim-time),
-  .hud-zone-right .hud-toggle-group { display: none; }
 }
 
 /* Below 760 there is no lane left for the bottom-left readouts.
@@ -1776,16 +2015,15 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
    minimap and the HUD's low-priority items: the scene and the core HUD are the
    experience, and a passive pointer-events:none readout is not worth the only
    column a phone has. Both remain available above 760. */
-@media (max-width: 759px) {
-  .event-log,
-  .sensor-stats-overlay { display: none; }
+@media (width < 760px) {
+  /* .sensor-stats-overlay already went at <=1280. */
+  .event-log { display: none; }
 }
 
 /* Small phone: the HUD keeps only the wordmark, fleet count, and action buttons
    — drop the connection pill and FPS, and tighten the wordmark + buttons. */
 @media (max-width: 560px) {
-  #hud-conn,
-  .hud-stat:has(#fps) { display: none; }
+  #hud-conn { display: none; }
   #hud-logo { font-size: 13px; letter-spacing: 0.08em; }
   .hud-action { width: 26px; }
   #hud-top {
@@ -1897,6 +2135,59 @@ body.investor-mode .sensor-stats-overlay { display: none !important; }
    bundle (keeps index-*.css within the CI budget). Cross-cutting rules that
    reference .cockpit from other components (reduced-motion above, the
    settings-panel hide rule) stay here and still apply by specificity. */
+
+/* ── Height ladder ───────────────────────────────────────────────────────────
+   Until now every breakpoint in this console was width-only — 11 of them, and
+   not one `@media (height: ...)`. The chrome is two fixed bars totalling 98px,
+   which is 25% of a 390px-tall landscape phone before any content is drawn, and
+   the floating overlays kept their full desktop footprint on top of that. These
+   tiers give height back: first by trimming the bars, then by retiring the
+   ambient overlays that cannot justify vertical space on a short viewport.
+   Ordered tallest-first so the narrower rule wins, matching the width ladder.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@media (height < 560px) {
+  :root {
+    --hud-h: 44px;
+    --dvr-h: 40px;
+    /* Follows the bars down — 36px still clears SC 2.5.8's 24px floor with room. */
+    --control-min: 36px;
+  }
+
+  /* The mini-map costs 260px of the right-hand column, which `.asset-panel`
+     reserves in its own max-height. Measured at 1440x500 that left the panel
+     104px — about two rows of a card set — while the mini-map kept its full
+     footprint. On a viewport this short the panel's data is worth more than an
+     ambient plot, and the mini-map is already dropped below 900px wide. */
+  .minimap,
+  .sensor-stats-overlay { display: none; }
+}
+
+@media (height < 430px) {
+  :root {
+    --hud-h: 40px;
+    --dvr-h: 36px;
+    /* Follows the bars down — 32px still clears SC 2.5.8's 24px floor with room. */
+    --control-min: 32px;
+  }
+
+  /* Ambient readouts, all of them duplicated in the sidebar or the inspector.
+     On a 390px-tall viewport they cover the scene the operator is here to see.
+     (.minimap and .sensor-stats-overlay already went at the 560px tier.) */
+  .event-log,
+  #wind-compass { display: none; }
+
+  /* The hints panel is a full-height list on a viewport with no height to give.
+     It still opens; it just scrolls rather than pretending to fit.
+     --effective-dvr-h stays in the budget. Dropping it here (while the base rule
+     at the top of this file keeps it) put the panel's bottom 28px INSIDE the
+     transport bar at 844x390, and because the panel is opaque and sits at z 240
+     against the bar's 200, every control underneath became unclickable —
+     hit-testing to-start, play, step, speed, reset and LIVE at their own centres
+     all returned a key-hints <span>. The panel scrolls, so the cost of keeping
+     the term is rows, not the transport. */
+  #key-hints { max-height: calc(100dvh - var(--effective-hud-h) - var(--effective-dvr-h) - 16px); }
+}
 
 /* ── Accessibility hardening ─────────────────────────────────────────────────
    Added by the 2026-08-01 WCAG 2.1 AA audit. */

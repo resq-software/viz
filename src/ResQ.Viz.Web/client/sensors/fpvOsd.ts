@@ -110,7 +110,10 @@ export class FpvOsd {
         const pct = Math.round(d.battery ?? 0); // battery is already 0–100
         this._el.bat.textContent = `${pct}%`;
         this._el.volt.textContent = `${estPackVoltage(pct).toFixed(1)}V`;
-        this._el.batFill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+        const fill = String(Math.min(100, Math.max(0, pct)) / 100);
+        if (this._el.batFill.style.getPropertyValue('--battery-fill') !== fill) {
+            this._el.batFill.style.setProperty('--battery-fill', fill);
+        }
         this._el.batFill.classList.toggle('is-low', pct <= 20);
 
         const vx = d.vel?.[0] ?? 0;

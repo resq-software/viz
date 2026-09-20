@@ -167,7 +167,7 @@ export class Cockpit {
 
         if (!drone) return;
 
-        // Attitude from the body axes — convention-independent.
+        // Attitude from the body axes — convention-independenct.
         this._q.set(drone.rot[0], drone.rot[1], drone.rot[2], drone.rot[3]);
         this._fwd.set(0, 0, -1).applyQuaternion(this._q);
         this._right.set(1, 0, 0).applyQuaternion(this._q);

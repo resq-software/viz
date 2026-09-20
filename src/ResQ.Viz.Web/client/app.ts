@@ -68,6 +68,8 @@ import { getLogger } from './log';
 // SelectionStore stays static: it is the selection source of truth that legacy
 // HUD surfaces publish to from the very first frame, and it is tiny (3 KB).
 import { SelectionStore, type SelectionKind } from './editor/selection';
+import { createSharedStatusRegion } from './a11y/sharedStatusRegion';
+import { mountGlobalEstop } from './operator/globalEstop';
 // Everything else in the editor suite is loaded on demand — see
 // `_initEditorSuite` below. These are TYPE-ONLY imports, erased at build time,
 // so they create no static edge into the editor chunk.
@@ -950,6 +952,25 @@ let _commsKey = '';
 let _commsBanner = '';
 
 const settings = new Settings();
+
+// ─── Emergency stop ────────────────────────────────────────────────────────
+//
+// Mounted at the shell, not inside the asset panel: §4.7 requires it to be
+// always mounted, never behind a tab and keyboard-addressable from anywhere.
+// It commands the selected asset and refuses in place when there is none.
+// Announcements route into the existing #a11y-telemetry live region rather than
+// opening another one. That region is also written periodically, so they go
+// through _announcePriority, which reserves it — see PRIORITY_HOLD_MS.
+const _estopButton = document.getElementById('hud-estop');
+if (_estopButton instanceof HTMLButtonElement) {
+    mountGlobalEstop({
+        button: _estopButton,
+        selection,
+        // Holds the floor for PRIORITY_HOLD_MS so the periodic telemetry summary
+        // cannot replace the confirmation before it has been spoken.
+        announce: (message) => _statusRegion.priority(message),
+    });
+}
 
 // ─── Settings panel wiring ─────────────────────────────────────────────────
 
@@ -2215,27 +2236,27 @@ function _cancelPick(): void {
 // screen-reader users get an audible picture of the 3D scene. Throttled to
 // avoid flooding the AT queue: only announces on entity-count change or once
 // every TELEMETRY_ANNOUNCE_MS, whichever comes first.
-const _a11yTelemetryEl = document.getElementById('a11y-telemetry');
+// The emergency stop writes here too, so precedence between the two writers is
+// owned by `createSharedStatusRegion` rather than by an `if` at each call site.
+// PRIORITY_HOLD_MS is shorter than the periodic floor so a quiet fleet still
+// gets its summary, and long enough for a screen reader to finish the sentence.
 const TELEMETRY_ANNOUNCE_MS = 8000;
-let _lastTelemetryAnnounceAt = 0;
-let _lastTelemetrySignature: string | number | null = null;
+const PRIORITY_HOLD_MS = 6000;
+const _statusRegion = createSharedStatusRegion({
+    element: document.getElementById('a11y-telemetry'),
+    holdMs: PRIORITY_HOLD_MS,
+    periodicMs: TELEMETRY_ANNOUNCE_MS,
+});
 
 /**
- * Shared throttle for the live region.
+ * Periodic summary.
  *
  * `signature` is the change signal: a fleet gaining, losing, or changing the
  * domain distribution of its members is worth interrupting for; a battery
- * ticking down a percent is not. The text callback stays lazy so an ordinary
- * 10 Hz frame does not compose a sentence the throttle will discard.
+ * ticking down a percent is not.
  */
 function _announceTelemetry(signature: string | number, text: () => string): void {
-    if (!_a11yTelemetryEl) return;
-    const now = performance.now();
-    const changed = signature !== _lastTelemetrySignature;
-    if (!changed && now - _lastTelemetryAnnounceAt < TELEMETRY_ANNOUNCE_MS) return;
-    _lastTelemetryAnnounceAt = now;
-    _lastTelemetrySignature = signature;
-    _a11yTelemetryEl.textContent = text();
+    _statusRegion.periodic(signature, text);
 }
 
 /** v1 wording, unchanged: a drone-only stream describes a drone-only fleet. */
@@ -3468,7 +3489,7 @@ function _leaveV2(): void {
     }
     // The live region throttles on a signature; the wording changes here even
     // when the number does not, so let the next frame speak.
-    _lastTelemetrySignature = null;
+    _statusRegion.invalidate();
 }
 
 /**

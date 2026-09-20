@@ -285,8 +285,11 @@ describe('_leaveV2 releases everything the v2 path owns', () => {
 
     it('lets the live region speak again after the wording changes', () => {
         // The announcement throttles on a signature; mode and domain distribution
-        // can change while total inventory stays equal.
-        expect(bodyOf('_leaveV2')).toMatch(/_lastTelemetrySignature = null/);
+        // can change while total inventory stays equal. The signature now lives
+        // inside the shared region (a11y/sharedStatusRegion.ts), which is also
+        // written by the emergency stop, so the reset is a named call rather
+        // than an assignment _leaveV2 could make to a variable it half-owns.
+        expect(bodyOf('_leaveV2')).toMatch(/_statusRegion\.invalidate\(\)/);
     });
 });
 

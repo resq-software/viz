@@ -42,9 +42,12 @@ import {
   pointTarget,
   postAssetCommand,
   parameterSpec,
+  snapToStep,
   surfaceElevationUnderAssetM,
+  tightenBound,
   targetForAsset,
 } from './panelCommands';
+import { HOLD_MS, holdToConfirm, type HoldHandle } from './holdToConfirm';
 import type {
   AssetCapabilitiesReport,
   AssetCommandCapability,
@@ -96,6 +99,9 @@ export interface AssetPanelOptions {
    *  target-taking commands are disabled *with that reason*, never hidden: the
    *  asset accepts them, this client just cannot aim them yet. */
   readonly pickTarget?: TargetPicker | null;
+  /** Hold duration for destructive commands, in milliseconds. Injectable so a
+   *  test need not wait out the real 800ms guard. */
+  readonly holdMs?: number;
   /** First delay before a failed capability fetch is retried, in milliseconds.
    *  Doubles per consecutive failure up to {@link CAPABILITY_RETRY_CEILING}.
    *  Injectable so a test can drive the recovery without a real wait. */
@@ -141,6 +147,8 @@ interface CommandParts {
   readonly capability: AssetCommandCapability;
   readonly inputs: Map<string, HTMLInputElement>;
   readonly datum: HTMLSelectElement | null;
+  /** Present only for destructive commands, which are press-and-hold. */
+  readonly hold: HoldHandle | null;
 }
 
 /** The selected asset's or track's detail panel. */
@@ -152,10 +160,12 @@ export class AssetPanel {
   private readonly _body: HTMLElement;
   private readonly _commandHost: HTMLElement;
   private readonly _commandNote: HTMLParagraphElement;
+  private readonly _commandLatency: HTMLParagraphElement;
   private readonly _status: HTMLParagraphElement;
   private readonly _close: HTMLButtonElement;
   private readonly _cards = new Map<string, CardParts>();
   private readonly _commands = new Map<string, CommandParts>();
+  private readonly _holdMs: number;
 
   private readonly _retry: HTMLButtonElement;
 
@@ -186,6 +196,7 @@ export class AssetPanel {
   constructor(options: AssetPanelOptions) {
     if (!options?.mount) throw new Error('AssetPanel requires an explicit mount');
     this._issue = options.issueCommand ?? postAssetCommand;
+    this._holdMs = options.holdMs ?? HOLD_MS;
     this._loadCapabilities = options.loadCapabilities ?? loadAssetCapabilities;
     this._pickTarget = options.pickTarget ?? null;
     this._retryBaseMs = options.capabilityRetryMs ?? CAPABILITY_RETRY_MS;
@@ -235,6 +246,14 @@ export class AssetPanel {
     this._commandNote.className = 'ap-cmd-note';
     this._commandNote.hidden = true;
 
+    // §4.7: "Show link latency next to the command, because a 900 ms RTT changes
+    // whether an operator should be commanding at all." The Link card already
+    // carries latency, but it only renders when detailed state is present and it
+    // sits above the cards — so it is not reliably beside the controls. This is.
+    this._commandLatency = document.createElement('p');
+    this._commandLatency.className = 'ap-cmd-latency';
+    this._commandLatency.hidden = true;
+
     // The operator's own way out of a failed fetch. The automatic retry backs
     // off, so without this a transient failure would leave the panel looking
     // inert for however long the backoff had grown to.
@@ -253,7 +272,7 @@ export class AssetPanel {
     this._status.setAttribute('role', 'status');
     this._status.setAttribute('aria-live', 'polite');
 
-    footer.append(this._commandNote, this._retry, this._commandHost, this._status);
+    footer.append(this._commandNote, this._retry, this._commandLatency, this._commandHost, this._status);
 
     this._root.append(header, this._body, footer);
     options.mount.appendChild(this._root);
@@ -378,7 +397,29 @@ export class AssetPanel {
     this._applyFreshnessCue(view.freshness, view.ageSeconds);
 
     this._renderCards(buildAssetCards(view, descriptor, state));
+    this._renderLinkLatency(state?.link?.latencyMs ?? null);
     this._renderCommands(view);
+  }
+
+  /**
+   * The round-trip time, beside the controls rather than buried in the Link card.
+   *
+   * Tone thresholds are deliberately conservative: the spec's own example is that
+   * "a 900 ms RTT changes whether an operator should be commanding at all", so
+   * anything approaching that reads as a warning rather than as a number.
+   */
+  private _renderLinkLatency(latencyMs: number | null): void {
+    if (latencyMs === null || !Number.isFinite(latencyMs)) {
+      // Unknown latency is not "good latency": say so rather than showing nothing.
+      this._commandLatency.textContent = 'Link RTT unknown';
+      this._commandLatency.dataset['tone'] = 'unknown';
+      this._commandLatency.hidden = false;
+      return;
+    }
+    const ms = Math.round(latencyMs);
+    this._commandLatency.textContent = `Link RTT ${ms} ms`;
+    this._commandLatency.dataset['tone'] = ms >= 900 ? 'crit' : ms >= 400 ? 'warn' : 'ok';
+    this._commandLatency.hidden = false;
   }
 
   private _applyFreshnessCue(freshness: number, ageSeconds: number | null): void {
@@ -666,12 +707,36 @@ export class AssetPanel {
       const spec = parameterSpec(key);
       if (!spec) continue;
       const { min, max } = spec.bounds(motion, ctx);
+      // Bounds go onto the step grid before they are published. HTML anchors the
+      // grid at `min`, so a fractional bound invalidates every round value in the
+      // field: altitude advertised min="-19987.68658705976" (the ±20km sentinel
+      // carrying a raw terrain elevation) against step="1", and 76 m reported
+      // stepMismatch. Rounding is inward, so this can only narrow what the
+      // control accepts.
+      const loN = min === null ? null : tightenBound(min, spec.step, 'min');
+      const hiN = max === null ? null : tightenBound(max, spec.step, 'max');
       // An unbounded side carries no attribute at all rather than a placeholder:
       // `min=""` and `min="-Infinity"` both read as a constraint that is not one.
-      const lo = min === null ? '' : String(min);
-      const hi = max === null ? '' : String(max);
+      const lo = loN === null ? '' : String(loN);
+      const hi = hiN === null ? '' : String(hiN);
       if (input.min !== lo) input.min = lo;
       if (input.max !== hi) input.max = hi;
+
+      // And the value onto the same grid, so the field is never born :invalid —
+      // Speed prefilled 14.32523727135825 against step="0.5".
+      //
+      // ONLY while the value is still the one the panel prefilled. Snapping
+      // whatever happens to be in the box also clamps it into range, which turns
+      // a refusal into a silent substitution: typing 19950 m against a 19900 m
+      // ceiling must be REFUSED, naming the limit, not quietly commanded as
+      // 19900. Being told no is not the same as being obeyed differently.
+      if (input.value === input.dataset.panelValue) {
+        const snapped = snapToStep(Number(input.value), spec.step, loN, hiN);
+        if (Number.isFinite(snapped) && String(snapped) !== input.value) {
+          input.value = String(snapped);
+        }
+        input.dataset.panelValue = input.value;
+      }
     }
   }
 
@@ -811,6 +876,14 @@ export class AssetPanel {
       // Bounds are published by `_syncBounds` once the datum control exists —
       // the altitude field's range depends on a select built later in this loop.
       input.value = String(spec.initial(view, motion));
+      // Remember exactly what the panel wrote. `_syncBounds` may tidy its own
+      // value onto the step grid (the bounds it needs are not published until
+      // then), and this is how it tells its value from the operator's.
+      //
+      // Recorded rather than tracked by an `input` listener: a listener only
+      // fires for real typing, so any programmatic write would still read as
+      // panel-owned. Comparing the value cannot be fooled that way.
+      input.dataset.panelValue = input.value;
       inputs.set(key, input);
 
       field.append(caption, input);
@@ -837,11 +910,11 @@ export class AssetPanel {
 
     const button = document.createElement('button');
     button.type = 'button';
-    const destructive = DESTRUCTIVE_COMMANDS.has(capability.kind) ? ' btn-danger' : '';
-    button.className = `btn ap-cmd-btn${destructive}`;
+    const isDestructive = DESTRUCTIVE_COMMANDS.has(capability.kind);
+    button.className = `btn ap-cmd-btn${isDestructive ? ' btn-danger' : ''}`;
     // The ellipsis is the standard promise that a further step follows; a
     // target-taking command does not fire on the press.
-    button.textContent = capability.requiresTarget
+    const label = capability.requiresTarget
       ? `${humanise(capability.kind)}…`
       : humanise(capability.kind);
 
@@ -851,10 +924,47 @@ export class AssetPanel {
     reason.hidden = true;
     button.setAttribute('aria-describedby', reason.id);
 
+    let hold: HoldHandle | null = null;
+    if (isDestructive) {
+      // §4.7: "Destructive commands (disarm in flight, E-stop) use
+      // hold-to-confirm rather than a dialog — a dialog trains people to click
+      // through." The click path is deliberately NOT attached: if it were, a
+      // single press would still fire the command and the guard would be
+      // decorative.
+      const text = document.createElement('span');
+      text.className = 'ap-cmd-label';
+      text.textContent = label;
+      const fill = document.createElement('span');
+      fill.className = 'ap-cmd-hold';
+      fill.setAttribute('aria-hidden', 'true');
+      button.append(fill, text);
+      // The requirement is in the accessible name, not only in a tooltip, so a
+      // screen-reader operator learns it the same way a sighted one does.
+      button.setAttribute('aria-label', `${label} — hold to confirm`);
+      button.classList.add('is-guarded');
+    } else {
+      button.textContent = label;
+    }
+
     wrap.append(button, reason);
 
-    const parts: CommandParts = { wrap, button, reason, capability, inputs, datum };
-    button.addEventListener('click', () => void this._activate(parts));
+    const parts: CommandParts = { wrap, button, reason, capability, inputs, datum, hold };
+    if (isDestructive) {
+      hold = holdToConfirm(button, {
+        holdMs: this._holdMs,
+        onStart: () => this._announce(`Hold to confirm ${humanise(capability.kind).toLowerCase()}.`),
+        onCancel: () => this._announce(`${humanise(capability.kind)} cancelled.`),
+        onProgress: (fraction) => {
+          button.style.setProperty('--hold-progress', String(fraction));
+        },
+        onConfirm: () => void this._activate(parts),
+      });
+      // `parts` is frozen by the time the handle exists, so the mutable slot is
+      // assigned through the map entry the caller stores.
+      (parts as { hold: HoldHandle | null }).hold = hold;
+    } else {
+      button.addEventListener('click', () => void this._activate(parts));
+    }
     return parts;
   }
 
@@ -960,6 +1070,10 @@ export class AssetPanel {
   }
 
   private _clearCommands(): void {
+    // Destroy before dropping the map: each guarded button owns pointer/key
+    // listeners and possibly a running rAF, and clearing the host alone would
+    // leave those attached to a detached node.
+    for (const parts of this._commands.values()) parts.hold?.destroy();
     this._commandHost.textContent = '';
     this._commands.clear();
     this._commandSignature = '';
@@ -975,6 +1089,13 @@ export class AssetPanel {
     this._view = null;
     this._forgetReport();
     this._clearCommands();
+    // The round-trip time belongs to the subject that measured it. Left standing
+    // across a change it describes the previous one — and a track has no command
+    // link at all, so an asset's RTT beside an observed contact reads as "the
+    // link is fine" about a thing that has none. Cleared here rather than on the
+    // track path so every transition drops it, not just asset-to-track.
+    this._commandLatency.textContent = '';
+    this._commandLatency.hidden = true;
     return true;
   }
 

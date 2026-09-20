@@ -186,6 +186,9 @@ const COORDINATE_FRAME_LOCAL_EUS = 2;
 /** `TrackSourceKind.OperatorEntered` — what the console's own report form sends. */
 const TRACK_SOURCE_OPERATOR_ENTERED = 6;
 
+/** `DEFAULT_RECORDER_CAPACITIES.v2` — the v2 DVR ring's count ceiling. */
+const RECORDER_V2_CAPACITY = 180;
+
 /** One moment `#legacy-console` was rendered, as the page recorded it. */
 export interface LegacySighting {
   readonly atMs: number;
@@ -504,17 +507,25 @@ export async function enterReplay(page: Page, framesBack = 1): Promise<void> {
  * snapshot is re-applied and the authority read re-issued. Waiting only for
  * `REC` would race the second half, so this also waits for the ring to grow —
  * the first thing that can only happen once recording has actually resumed.
+ *
+ * A ring that is already full cannot grow. `client/editor/dvr.ts` skips the
+ * count write once the recorder's length is stable, so at the cap the count is
+ * constant at `RECORDER_V2_CAPACITY` while frames keep arriving — demanding
+ * growth there would deadlock every slow console usage that reaches this
+ * helper, which is exactly the honest wait's own failure mode. A full ring
+ * before the click is a full ring after it, so at the cap the `REC` label is
+ * the witness, not growth.
  */
 export async function goLive(page: Page): Promise<void> {
   const before = await dvrFrameCount(page);
   await page.locator('.dvr-live').click();
   await page.waitForFunction(
-    (baseline: number) => {
+    ({ baseline, capacity }: { baseline: number; capacity: number }) => {
       if (document.querySelector('.dvr-reclabel')?.textContent !== 'REC') return false;
       const count = Number.parseInt(document.querySelector('.dvr-count')?.textContent ?? '', 10);
-      return Number.isFinite(count) && count > baseline;
+      return Number.isFinite(count) && (count > baseline || baseline >= capacity);
     },
-    before,
+    { baseline: before, capacity: RECORDER_V2_CAPACITY },
     { polling: 100 },
   );
 }

@@ -205,10 +205,14 @@ export class Hud {
         this._batteryAverage = average;
         this._batteryLegacyUnknown = legacyUnknown;
         const text = average === null ? '--%' : `${average.toFixed(0)}%`;
-        const width = average === null ? (legacyUnknown ? '100%' : '0%') : `${average}%`;
+        // A 0..1 scalar for `scaleX`, not a width: animating width is a layout
+        // property and is forbidden per-frame by the style guide.
+        const fill = average === null ? (legacyUnknown ? '1' : '0') : String(average / 100);
         const className = average === null ? '' : average < 20 ? 'crit' : average < 40 ? 'warn' : '';
         setText(this._pct, text);
-        if (this._fill.style.width !== width) this._fill.style.width = width;
+        if (this._fill.style.getPropertyValue('--battery-fill') !== fill) {
+            this._fill.style.setProperty('--battery-fill', fill);
+        }
         if (this._fill.className !== className) this._fill.className = className;
     }
 

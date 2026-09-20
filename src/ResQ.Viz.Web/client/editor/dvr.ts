@@ -116,7 +116,11 @@ export class Dvr {
         this._el.step.addEventListener('click', () => this._onStep());
         this._el.toStart.addEventListener('click', () => this._toStart());
         this._el.speed.addEventListener('click', () => this._onSpeed());
-        this._el.reset.addEventListener('click', () => this._opts.onServerReset());
+        this._el.reset.addEventListener('click', () => {
+            // aria-disabled, not `disabled`, so the refusal has to be enforced here.
+            if (this._el.reset.getAttribute('aria-disabled') === 'true') return;
+            this._opts.onServerReset();
+        });
         this._el.live.addEventListener('click', () => this._goLive());
         this._el.scrub.addEventListener('input', () => this._onScrub());
         this._bindKeyboard();
@@ -339,7 +343,15 @@ export class Dvr {
         // Reset restarts the SERVER, in any mode — so away from the live edge
         // the interaction gate refuses it. Advertised must equal accepted: a
         // button that still looks pressable is a control that lies.
-        this._el.reset.disabled = replaying;
+        //
+        // `aria-disabled` rather than `disabled`, matching AssetPanel and the
+        // global E-stop. `disabled` took the button out of the tab order, which
+        // made the aria-label below — the one thing that explains the refusal —
+        // unreachable by the keyboard operator it was written for. It also drew
+        // identically to the enabled button, since nothing styles :disabled here.
+        // The click handler enforces the refusal; `.dvr-btn[aria-disabled='true']`
+        // in operator-overlays.css carries the appearance.
+        this._el.reset.setAttribute('aria-disabled', String(replaying));
         this._el.reset.setAttribute(
             'aria-label',
             replaying ? 'Reset simulation — unavailable during replay' : 'Reset simulation',

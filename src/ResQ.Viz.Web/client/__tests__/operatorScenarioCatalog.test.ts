@@ -126,9 +126,9 @@ describe('ScenarioCatalog', () => {
     expect(css).toContain('safe-area-inset-top');
     expect(css).toContain('safe-area-inset-bottom');
     expect(css).toMatch(/\.operator-dialog :focus-visible/);
-    expect(css).toMatch(/@media \(max-width: 759px\)[\s\S]*?min-height:\s*44px/);
+    expect(css).toMatch(/@media \(width < 760px\)[\s\S]*?min-height:\s*44px/);
     expect(css).toMatch(
-      /@media \(max-width: 759px\)[\s\S]*?\.operator-dialog-close\s*\{[\s\S]*?min-width:\s*44px/,
+      /@media \(width < 760px\)[\s\S]*?\.operator-dialog-close\s*\{[\s\S]*?min-width:\s*44px/,
     );
     expect(css).toMatch(/@media \(forced-colors: active\)/);
     for (const shared of [
