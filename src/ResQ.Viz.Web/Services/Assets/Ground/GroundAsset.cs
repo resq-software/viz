@@ -187,9 +187,9 @@ public sealed partial class GroundAsset : IStepDrivenAsset
     /// </remarks>
     private Guid? _activeCommandId;
 
-    private bool _wasImmobilised;
-    private bool _wasRolloverRisk;
-    private bool _lowEnergyLatched;
+    private Latch _immobilised;
+    private Latch _rolloverRisk;
+    private Latch _lowEnergy;
 
     /// <summary>Places a rover on the terrain and prepares it to be stepped.</summary>
     /// <remarks>
@@ -263,13 +263,13 @@ public sealed partial class GroundAsset : IStepDrivenAsset
         // that autonomy cannot move sits silent in the asset list looking healthy. Being stuck at
         // tick zero is still entering the immobilised state, and it is still an edge, so it is
         // still raised exactly once.
-        _wasImmobilised = false;
+        _immobilised = Latch.Low;
 
         // The lean is seeded from the contact, because it is not the same finding. A rover spawned
         // on a bank is mobile, keeps every heading it had, and publishes its rollover fraction and
         // its ROLLOVER_RISK fault continuously — so the standing advisory reaches an operator
         // without an event claiming a transition that never happened.
-        _wasRolloverRisk = _contact.HasRolloverRisk;
+        _rolloverRisk = Latch.SeededAt(_contact.HasRolloverRisk);
     }
 
     /// <inheritdoc />
