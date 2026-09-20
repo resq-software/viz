@@ -31,14 +31,51 @@
 
   <!--
     NpmInstall: reinstalls only when package.json changes (keyed on lockfile).
-    ViteBuild:  runs only in Release; skipped in Debug (dotnet run uses Vite dev server).
+
+    ViteBuild:  Release-only production build of the client (skipped in Debug, where
+                `dotnet run` proxies the Vite dev server). Three things it must get right:
+
+      * Ordering — it runs BEFORE ResolveProjectStaticWebAssets (the target that enumerates
+        wwwroot into the static-web-assets manifest). At BeforeTargets="Build" it can order
+        AFTER that discovery, so the SDK's Brotli/Gzip step then looks for hashed filenames
+        Vite has already replaced and fails with
+        "asset '…/xxxxxxxx.js.br' can not be found at 'wwwroot/assets/xxxxxxxx.js'".
+
+      * Freshness — Vite owns wwwroot entirely (vite.config: outDir '../wwwroot', emptyOutDir).
+        RemoveDir it first so a leftover index.html or an orphaned hashed chunk from a prior
+        build can never survive alongside newly-hashed assets.
+
+      * Up-to-date check — the stamp lives under obj/, NOT at wwwroot/index.html. Keying the
+        check on index.html let a stale index.html (whose assets had been deleted) mark the
+        target "up to date", so Vite was skipped and index.html then referenced files that no
+        longer existed → every asset 404'd. An obj/ stamp means `dotnet clean` / removing obj
+        reliably forces a rebuild, and inputs cover the config that affects the output, not just
+        the client sources.
   -->
   <Target Name="NpmInstall" BeforeTargets="Build" Inputs="package.json" Outputs="node_modules\.package-lock.json">
     <Exec Command="npm install" />
   </Target>
 
-  <Target Name="ViteBuild" BeforeTargets="Build" DependsOnTargets="NpmInstall" Condition="'$(Configuration)' == 'Release'" Inputs="@(ClientSource)" Outputs="wwwroot\index.html">
+  <!--
+    Self-heal: the incremental stamp lives in obj/ and cannot observe an externally-emptied
+    wwwroot (it is gitignored build output). If the built output is missing or partial, drop
+    the stamp so ViteBuild's up-to-date check re-runs it instead of trusting a stale stamp.
+  -->
+  <Target Name="ViteBuildStale"
+          BeforeTargets="ViteBuild"
+          Condition="'$(Configuration)' == 'Release' And (!Exists('wwwroot\index.html') Or !Exists('wwwroot\assets'))">
+    <Delete Files="$(IntermediateOutputPath)vite.build.stamp" />
+  </Target>
+
+  <Target Name="ViteBuild"
+          BeforeTargets="ResolveProjectStaticWebAssets;AssignTargetPaths"
+          DependsOnTargets="NpmInstall"
+          Condition="'$(Configuration)' == 'Release'"
+          Inputs="@(ClientSource);package.json;package-lock.json;vite.config.ts;tsconfig.json"
+          Outputs="$(IntermediateOutputPath)vite.build.stamp">
+    <RemoveDir Directories="wwwroot" />
     <Exec Command="npm run build" />
+    <Touch Files="$(IntermediateOutputPath)vite.build.stamp" AlwaysCreate="true" />
   </Target>
 
 </Project>
