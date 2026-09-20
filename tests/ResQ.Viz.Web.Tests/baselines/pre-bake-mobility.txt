@@ -277,15 +277,15 @@ unrouted: none
   ground  ml-ugv-48 immobilised=False speedLimit=2.12
   ground  ml-ugv-49 immobilised=False speedLimit=4.18
   ground  ml-ugv-50 immobilised=False speedLimit=2.24
-  surface ml-usv-01 inWater=True depth=9.20 draft=0.55 clearance=8.65
-  surface ml-usv-02 inWater=True depth=13.86 draft=0.55 clearance=13.31
-  surface ml-usv-03 inWater=True depth=15.01 draft=0.55 clearance=14.46
+  surface ml-usv-01 inWater=True depth=9.23 draft=0.55 clearance=8.68
+  surface ml-usv-02 inWater=True depth=13.87 draft=0.55 clearance=13.32
+  surface ml-usv-03 inWater=True depth=15.03 draft=0.55 clearance=14.48
   surface ml-usv-04 inWater=True depth=14.13 draft=0.55 clearance=13.58
-  surface ml-usv-05 inWater=True depth=14.14 draft=0.55 clearance=13.59
-  surface ml-usv-06 inWater=True depth=14.86 draft=0.55 clearance=14.31
-  surface ml-usv-07 inWater=True depth=12.52 draft=0.55 clearance=11.97
-  surface ml-usv-08 inWater=True depth=9.40 draft=0.55 clearance=8.85
-  surface ml-usv-09 inWater=True depth=9.08 draft=0.55 clearance=8.53
+  surface ml-usv-05 inWater=True depth=14.18 draft=0.55 clearance=13.63
+  surface ml-usv-06 inWater=True depth=14.93 draft=0.55 clearance=14.38
+  surface ml-usv-07 inWater=True depth=12.60 draft=0.55 clearance=12.05
+  surface ml-usv-08 inWater=True depth=9.47 draft=0.55 clearance=8.92
+  surface ml-usv-09 inWater=True depth=9.11 draft=0.55 clearance=8.56
   surface ml-usv-10 inWater=True depth=8.41 draft=0.55 clearance=7.86
   surface ml-usv-11 inWater=True depth=12.88 draft=0.55 clearance=12.33
   surface ml-usv-12 inWater=True depth=15.88 draft=0.55 clearance=15.33
@@ -317,13 +317,13 @@ unrouted: none
   surface ml-usv-38 inWater=True depth=19.94 draft=0.55 clearance=19.39
   surface ml-usv-39 inWater=True depth=19.83 draft=0.55 clearance=19.28
   surface ml-usv-40 inWater=True depth=17.50 draft=0.55 clearance=16.95
-  surface ml-usv-41 inWater=True depth=11.67 draft=0.55 clearance=11.12
-  surface ml-usv-42 inWater=True depth=16.65 draft=0.55 clearance=16.10
-  surface ml-usv-43 inWater=True depth=19.37 draft=0.55 clearance=18.82
-  surface ml-usv-44 inWater=True depth=21.05 draft=0.55 clearance=20.50
-  surface ml-usv-45 inWater=True depth=22.01 draft=0.55 clearance=21.46
-  surface ml-usv-46 inWater=True depth=21.59 draft=0.55 clearance=21.04
-  surface ml-usv-47 inWater=True depth=20.72 draft=0.55 clearance=20.17
-  surface ml-usv-48 inWater=True depth=19.99 draft=0.55 clearance=19.44
-  surface ml-usv-49 inWater=True depth=19.15 draft=0.55 clearance=18.60
+  surface ml-usv-41 inWater=True depth=11.68 draft=0.55 clearance=11.13
+  surface ml-usv-42 inWater=True depth=16.66 draft=0.55 clearance=16.11
+  surface ml-usv-43 inWater=True depth=19.36 draft=0.55 clearance=18.81
+  surface ml-usv-44 inWater=True depth=21.06 draft=0.55 clearance=20.51
+  surface ml-usv-45 inWater=True depth=21.99 draft=0.55 clearance=21.44
+  surface ml-usv-46 inWater=True depth=21.56 draft=0.55 clearance=21.01
+  surface ml-usv-47 inWater=True depth=20.69 draft=0.55 clearance=20.14
+  surface ml-usv-48 inWater=True depth=19.98 draft=0.55 clearance=19.43
+  surface ml-usv-49 inWater=True depth=19.11 draft=0.55 clearance=18.56
   surface ml-usv-50 inWater=True depth=15.82 draft=0.55 clearance=15.27

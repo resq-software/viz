@@ -139,6 +139,18 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     /// </remarks>
     private const double LookaheadReactionSteps = 2.0;
 
+    /// <summary>Clear water held to the vessel ahead, in metres, measured between footprints.</summary>
+    /// <remarks>
+    /// Larger than the ground domain's metre, because the two are not comparable situations. A
+    /// rover can be brought to a stop and held there; a hull cannot, so the standoff has to
+    /// absorb the way it still carries when it has asked for none, plus whatever the set adds.
+    /// A hull length is the unit an operator would reach for.
+    /// </remarks>
+    private const double VesselStandoffM = 12.0;
+
+    /// <summary>Multiple of the standoff the corridor always reaches, however slowly the hull moves.</summary>
+    private const double VesselReachFloorStandoffs = 2.0;
+
     /// <summary>Shortest travel a deflected move must still make to count as a move, in metres.</summary>
     /// <remarks>
     /// A micrometre. It is not a physical threshold and is not tuned: it separates a move that
@@ -435,7 +447,8 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
         _velocities = _dynamics.Resolve(in _motion, in conditions);
         _passiveDriftEus = PassiveDrift(in _velocities, conditions.WindEus);
 
-        var guidance = _navigator.Sample(in _motion, BuildGuidanceInput(delta, in conditions));
+        var guidance = _navigator.Sample(
+            in _motion, BuildGuidanceInput(delta, in conditions, context.Peers));
 
         var previousMotion = _motion;
         var previousPosition = _positionEus;
@@ -826,7 +839,10 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
     /// <param name="deltaSeconds">Timestep in seconds, used for the reaction allowance and the docking clock.</param>
     /// <param name="conditions">Clamped conditions at the vessel, read for the wind.</param>
     /// <returns>Everything the navigator is allowed to see this step.</returns>
-    private SurfaceGuidanceInput BuildGuidanceInput(double deltaSeconds, in SurfaceConditions conditions)
+    private SurfaceGuidanceInput BuildGuidanceInput(
+        double deltaSeconds,
+        in SurfaceConditions conditions,
+        IReadOnlyList<PeerPose> peers)
     {
         // Only a berthing approach has a destination worth re-checking every step, and it is the
         // one operation with an abort that depends on the answer. A transit's destination is
@@ -837,7 +853,7 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
 
         var input = new SurfaceGuidanceInput(
             DeltaSeconds: deltaSeconds,
-            SpeedCeilingMps: _speedCeilingMps,
+            SpeedCeilingMps: Math.Min(_speedCeilingMps, VesselAheadCeiling(peers)),
             Velocities: _velocities,
             PassiveDriftEus: _passiveDriftEus,
             WindEus: conditions.WindEus,
@@ -869,6 +885,90 @@ public sealed partial class SurfaceAsset : IStepDrivenAsset
         var verdict = WaterConstraints.Evaluate(_waterProfile, ahead);
 
         return input with { AheadClass = verdict.Class, AheadReason = verdict.Reason };
+    }
+
+    /// <summary>Speed the vessel ahead permits, in metres per second through the water.</summary>
+    /// <remarks>
+    /// Folded into the ceiling the water already imposes rather than added as a separate channel,
+    /// because both answer the same question — how fast this hull may be asked to go — and the
+    /// laws downstream already take the lower of what they are given and what they want.
+    /// <para>
+    /// Ground quantities for the probe, exactly as the look-ahead uses: the corridor follows the
+    /// <em>track</em>, and its reach is the ground the hull makes good over its coast horizon.
+    /// Laying it off along the bow would ask about water the vessel is not going to be in, which
+    /// is the mistake this file already documents at length for the shoal probe.
+    /// </para>
+    /// <para>
+    /// The answer is then converted back. The room over the coast horizon is a closure rate over
+    /// the ground, and a ceiling is a bound on surge, so the set's component towards the vessel
+    /// ahead comes off it — the same conversion the transit law makes, and for the same reason:
+    /// a hull being carried onto another by the tide has to ask for less than one closing under
+    /// its own power. Getting this backwards is how a vessel stalls short of a waypoint forever,
+    /// which this domain has already shipped once.
+    /// </para>
+    /// <para>
+    /// Nothing is deflected and nothing is refused. A vessel has no brake and cannot be held on
+    /// a spot, so the protection available is to ask for less way in time, which is also what an
+    /// operator would do.
+    /// </para>
+    /// </remarks>
+    /// <param name="peers">Frozen poses of every asset in the world, including this one.</param>
+    /// <returns>The permitted speed, or infinity when nothing is in the corridor.</returns>
+    private double VesselAheadCeiling(IReadOnlyList<PeerPose> peers)
+    {
+        double speed = _velocities.SpeedOverGroundMps;
+        double coast = speed * _profile.SurgeTimeConstantSec;
+
+        // The standoff is part of the reach, not a subtraction from it, and getting that wrong
+        // costs exactly one standoff of overlap. The ceiling below permits (gap - standoff) /
+        // tau_u, so a hull first sees the one ahead at gap = reach and is asked to be doing
+        // (reach - standoff) / tau_u by then. For that to be a speed it is already at rather
+        // than one it must shed instantly, the reach has to be its own coast distance PLUS the
+        // standoff: measured, a reach of coast alone let a vessel arrive 12 m inside another.
+        //
+        // Floored as well, for the reason the ground domain measured the hard way: a reach
+        // derived from speed collapses as the vessel slows, so a hull easing up behind another
+        // loses sight of what it is easing up behind, opens the throttle, and closes again.
+        double reach = Math.Max(
+            coast + VesselStandoffM, VesselStandoffM * VesselReachFloorStandoffs);
+
+        var contact = PeerSeparation.NearestAhead(
+            peers,
+            AssetId,
+            AssetDomain.Surface,
+            _positionEus,
+            _profile.FootprintRadiusM,
+            _velocities.CourseOverGroundRad,
+            reach);
+
+        if (!contact.Exists)
+        {
+            return double.PositiveInfinity;
+        }
+
+        // The SPARE room, not the whole of it. A hull doing u already owes u * tau_u of water to
+        // stop in, so what it may still hold is what is left after that debt — and a command of
+        // room / tau_u is the speed it could hold if it were not already moving, which it is.
+        //
+        // The difference is not a refinement. Simulated against the real first-order surge, a
+        // proportional command of room / tau_u never commits: the surge lags the falling command
+        // the whole way in and the hull settles nineteen metres INSIDE the standoff, whatever the
+        // standoff or the reach is set to. Subtracting the debt makes the law exact — at first
+        // sight it commands zero and the hull coasts precisely to the standoff — and stable, at
+        // a steady state of room / (2 * tau_u).
+        double room = Math.Max(0.0, contact.GapM - VesselStandoffM);
+        double owed = _velocities.SpeedOverGroundMps * _profile.SurgeTimeConstantSec;
+        double closure = (room - owed) / _profile.SurgeTimeConstantSec;
+
+        var toContact = new Vector3(
+            contact.PositionEus.X - _positionEus.X, 0f, contact.PositionEus.Z - _positionEus.Z);
+
+        double length = Math.Sqrt((toContact.X * toContact.X) + (toContact.Z * toContact.Z));
+        double setTowards = length > 0.0
+            ? ((_passiveDriftEus.X * toContact.X) + (_passiveDriftEus.Z * toContact.Z)) / length
+            : 0.0;
+
+        return Math.Max(0.0, closure - setTowards);
     }
 
     /// <summary>Classifies the water at a point for this hull, sampled now.</summary>
