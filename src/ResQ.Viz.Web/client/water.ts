@@ -234,7 +234,13 @@ async function _loadNormals(): Promise<void> {
         _cachedNormals = tex;
         const target = _instance;
         if (target) {
-            const u = target.material.uniforms['normalSampler'];
+            // Same guard, and here it is the difference between a diagnosis and
+            // a misdiagnosis rather than a crash: this deref sits inside the try
+            // below, so a fallback applied while the texture was in flight was
+            // caught and logged as "water normals load failed". The load had
+            // succeeded — the swap is what made it inapplicable — and the
+            // warning sent the next reader after the wrong subsystem.
+            const u = target.material.uniforms?.['normalSampler'];
             if (u) u.value = tex;
         }
     } catch (err) {
@@ -420,7 +426,13 @@ export function updateWaterSunDirection(sunDir: THREE.Vector3): void {
     // still picks up the right glint direction at construction time.
     _sunDir.copy(sunDir).normalize();
     if (_instance) {
-        const u = _instance.material.uniforms['sunDirection'];
+        // `?.uniforms` for the same reason disposeWaterMesh has it: once
+        // _applyFallbackMaterial has swapped in a MeshStandardMaterial there is
+        // no `.uniforms` to index, and indexing `undefined` is a TypeError —
+        // thrown here, but out of whichever caller moved the sun. Scene's
+        // setSunPosition has no reason to know water can be in a fallback
+        // state, so the guard belongs on this side of the call.
+        const u = _instance.material.uniforms?.['sunDirection'];
         if (u) {
             (u.value as THREE.Vector3).copy(_sunDir);
         }
