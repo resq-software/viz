@@ -76,6 +76,10 @@ public sealed partial class SurfaceNavigator
 
         if (Mode is SurfaceGuidanceMode.Idle or SurfaceGuidanceMode.Blocked)
         {
+            // Idle is where a moored vessel sits, and Idle answers Drift — so this is the one
+            // branch in which a mooring claim can quietly stop being true.
+            ReleaseBerthIfAdrift(in state);
+
             RemainingDistanceM = _hasTarget ? PlanarDistanceTo(in state) : 0.0;
             StationKeepOutcome = StationKeepOutcome.Disengaged;
             return Outcome(SurfaceSetpoint.Drift);
@@ -175,6 +179,13 @@ public sealed partial class SurfaceNavigator
         if (outcome.HasMoored)
         {
             IsDocked = true;
+            HasLeftBerthUncommanded = false;
+
+            // Kept because the plan is dropped on the next line and the berth would otherwise be
+            // gone: a mooring claim has to stay measurable against something after the approach
+            // that made it has finished.
+            RememberBerth(plan);
+
             _dockingPlan = null;
             RemainingDistanceM = 0.0;
             Mode = SurfaceGuidanceMode.Idle;
