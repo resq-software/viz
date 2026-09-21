@@ -239,34 +239,24 @@ app.Use(async (context, next) =>
         // Analytics integration (PR #97) extends the baseline allow-list:
         //   - PostHog (script, config, ingest)         → script-src + connect-src
         //   - Google Analytics 4 (gtag.js + collect)   → script-src + connect-src + img-src
-        //   - Cloudflare Web Analytics (auto-injected) → script-src incl. the
-        //     bootstrap inline-script SHA-256 hash + connect-src for beacon ingest
-        // If a deployment disables Cloudflare Web Analytics or strips a provider
-        // from `@resq-systems/analytics`, prune the corresponding origins.
+        // If a deployment strips a provider from `@resq-systems/analytics`, prune
+        // the corresponding origins.
         //
-        // The Cloudflare beacon inline-script hashes live in
-        // <see cref="SecurityConstants.CloudflareBeaconScriptHashes"/> so the
-        // middleware and the integration test stay in sync when Cloudflare
-        // rotates the bootstrap script. The cleanest long-term fix is to
-        // disable "Auto-inject" in the Cloudflare Web Analytics dashboard —
-        // the GA4 + PostHog providers already cover RUM and product analytics.
-        var cloudflareBeaconScriptHashes =
-            string.Join(' ', ResQ.Viz.Web.SecurityConstants.CloudflareBeaconScriptHashes);
+        // Cloudflare Web Analytics was removed once its dashboard "Auto-inject"
+        // was disabled — GA4 + PostHog already cover RUM and product analytics.
+        // That retired the beacon origins along with the rotating bootstrap
+        // inline-script SHA-256 hashes (and the SecurityConstants helper that
+        // tracked them), which were pure CSP-maintenance churn.
         headers["Content-Security-Policy"] =
             "default-src 'self'; " +
             // 'wasm-unsafe-eval' permits WebAssembly compilation only (NOT JS
             // eval) — required by the Draco / meshopt glTF decoders that load a
             // compressed quadrotor.glb. Narrow, modern allowance; no 'unsafe-eval'.
             "script-src 'self' 'wasm-unsafe-eval' " +
-                cloudflareBeaconScriptHashes + " " +
-                "https://static.cloudflareinsights.com " +
                 "https://www.googletagmanager.com " +
                 "https://us-assets.i.posthog.com; " +
             "style-src 'self' 'unsafe-inline'; " +
             "connect-src 'self' ws: wss: " +
-                // CSP wildcards don't match the apex; Cloudflare beacon ingest
-                // posts to the base `cloudflareinsights.com`, so list both.
-                "https://cloudflareinsights.com https://*.cloudflareinsights.com " +
                 // GA4 routes regional traffic to e.g. `region1.google-analytics.com`,
                 // so a wildcard (which subsumes `www.`) is required.
                 "https://*.google-analytics.com " +
