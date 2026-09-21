@@ -79,6 +79,9 @@ public sealed partial class SurfaceAsset
     // latch that only one pass touches is one nothing else can quietly start depending on.
     private Latch _shorelineContact;
 
+    /// <summary>Edge detector for a mooring claim being withdrawn.</summary>
+    private Latch _leftBerth;
+
     /// <summary>Whether the vessel is currently being held against the edge of navigable water.</summary>
     /// <remarks>
     /// <b>The level behind <see cref="ShorelineContact.ShorelineCode"/>.</b> Meeting an edge is an
@@ -451,6 +454,35 @@ public sealed partial class SurfaceAsset
     /// </remarks>
     private double ToleranceRadiusM => _navigator.StationKeep?.ToleranceRadiusM ?? 0.0;
 
+    /// <summary>Says so when a vessel stops being at the berth it reported securing at.</summary>
+    /// <remarks>
+    /// Its own event rather than an abort, because nothing failed: the approach finished and
+    /// succeeded, and what changed afterwards is that the water moved the hull off it. Warning
+    /// rather than Info, because the operator has been told the asset is secured and is now
+    /// holding a belief the simulation no longer supports.
+    /// <para>
+    /// Edge-triggered on the navigator withdrawing the claim, so it is said once. The phase
+    /// cannot carry this: it stays <see cref="DockingPhase.Moored"/> throughout, which is
+    /// exactly why the drift was invisible to a dispatcher keyed on phase changes.
+    /// </para>
+    /// </remarks>
+    private void RaiseBerthReleaseEvent()
+    {
+        _leftBerth = _leftBerth.Observe(_navigator.HasLeftBerthUncommanded, out var edge);
+
+        if (edge != LatchEdge.Rose)
+        {
+            return;
+        }
+
+        Raise(
+            Docking.AdriftCode,
+            AssetEventSeverity.Warning,
+            "No longer at the berth: the vessel has been carried outside the terminal tolerance "
+            + "and is no longer reported as moored. A hull made fast to nothing goes with the "
+            + "water.");
+    }
+
     /// <summary>Raises the three berthing outcomes that need an operator.</summary>
     /// <remarks>
     /// An abort names its reason in <see cref="Docking.ReasonCode"/>'s vocabulary and says
@@ -460,6 +492,8 @@ public sealed partial class SurfaceAsset
     /// </remarks>
     private void RaiseDockingEvents()
     {
+        RaiseBerthReleaseEvent();
+
         var phase = _navigator.DockingProgress.Phase;
 
         if (phase == _wasDockingPhase)

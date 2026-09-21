@@ -110,6 +110,12 @@ public sealed partial class SurfaceNavigator
     private StationKeepGoal? _stationKeep;
     private DockingPlan? _dockingPlan;
 
+    /// <summary>Berth the vessel last moored at, kept after the plan is dropped.</summary>
+    private Vector3 _berthEus;
+
+    /// <summary>Range from <see cref="_berthEus"/> the mooring claim survives, in metres.</summary>
+    private double _berthToleranceM;
+
     /// <summary>Cruise speed to put back when the current manoeuvre ends, or null when none is scoped.</summary>
     /// <remarks>
     /// <b>A manoeuvre's speed limit is not a change of cruise speed.</b> A berth is left slowly
@@ -235,6 +241,15 @@ public sealed partial class SurfaceNavigator
     /// </remarks>
     public bool IsDocked { get; private set; }
 
+    /// <summary>The vessel has left a berth it moored at, without being told to.</summary>
+    /// <remarks>
+    /// Set when the water carries a moored hull off its berth, and cleared the moment anything
+    /// else happens — a fresh mooring, a new task, a stop. Read once, on its rising edge, so the
+    /// operator is told the claim has been withdrawn rather than left to notice the range
+    /// growing under a label that still says moored.
+    /// </remarks>
+    public bool HasLeftBerthUncommanded { get; private set; }
+
     /// <summary>True while a control law is asking for thrust.</summary>
     /// <remarks>
     /// Read by the owning asset to tell a vessel that is <em>drifting</em> from one that is
@@ -300,6 +315,7 @@ public sealed partial class SurfaceNavigator
         }
 
         IsDocked = false;
+        HasLeftBerthUncommanded = false;
         _targetEus = targetEus;
         _hasTarget = true;
         Mode = SurfaceGuidanceMode.Transiting;
@@ -334,6 +350,7 @@ public sealed partial class SurfaceNavigator
         }
 
         IsDocked = false;
+        HasLeftBerthUncommanded = false;
         _commandedCourseRad = CoordinateFrames.NormalizeAngle(courseRad);
         Mode = SurfaceGuidanceMode.Steering;
     }
@@ -425,6 +442,7 @@ public sealed partial class SurfaceNavigator
         DockingProgress = Assets.Surface.DockingProgress.Begin;
         DockingAbortReason = Assets.Surface.DockingAbortReason.None;
         IsDocked = false;
+        HasLeftBerthUncommanded = false;
         Mode = SurfaceGuidanceMode.Docking;
     }
 
@@ -453,6 +471,7 @@ public sealed partial class SurfaceNavigator
 
         ApplyManoeuvreSpeed(speedMps);
         IsDocked = false;
+        HasLeftBerthUncommanded = false;
         Mode = SurfaceGuidanceMode.Undocking;
     }
 
@@ -555,6 +574,57 @@ public sealed partial class SurfaceNavigator
     /// <summary>Horizontal distance from the vessel to the assigned target, in metres.</summary>
     /// <param name="state">Pose to measure from.</param>
     /// <returns>Distance in metres; only meaningful while a target is assigned.</returns>
+    /// <summary>Keeps the berth a mooring claim will be measured against.</summary>
+    /// <param name="plan">Plan that was flown to the berth.</param>
+    private void RememberBerth(DockingPlan plan)
+    {
+        _berthEus = plan.BerthEus;
+        _berthToleranceM = plan.TerminalToleranceM;
+    }
+
+    /// <summary>Withdraws the mooring claim once the vessel is no longer at the berth.</summary>
+    /// <remarks>
+    /// <see cref="IsDocked"/> is a claim about the present, and nothing was keeping it true. On
+    /// mooring the plan is dropped and the mode goes to <see cref="SurfaceGuidanceMode.Idle"/>,
+    /// whose setpoint is <see cref="SurfaceSetpoint.Drift"/> — which
+    /// <see cref="ISurfaceDynamics"/> documents as explicitly <em>not</em> a stop. So a hull that
+    /// moored in any set went with the water while three surfaces went on reporting it secured:
+    /// this property, the <c>moored</c> mission label, and an <see cref="OperationalState"/> of
+    /// Standby. Measured at a quarter of a knot of set, which is nothing: moored at 1.33 m, and
+    /// 2.82 m further off sixty seconds later.
+    /// <para>
+    /// This withdraws the claim rather than enforcing it. Holding the vessel on the spot would
+    /// mean a moored asset stops obeying the integrator, which is a larger change and invents a
+    /// mooring line the model does not have; a hull made fast to a pontoon really is held, so
+    /// that is the better end state and should follow. What must not continue is the claim
+    /// outliving the fact.
+    /// </para>
+    /// <para>
+    /// The berth and its tolerance are kept from the plan that was flown, because the plan
+    /// itself is dropped on mooring and there would otherwise be nothing left to measure
+    /// against.
+    /// </para>
+    /// </remarks>
+    /// <param name="state">Pose at the start of the step.</param>
+    private void ReleaseBerthIfAdrift(in SurfaceMotionState state)
+    {
+        if (!IsDocked)
+        {
+            return;
+        }
+
+        double east = _berthEus.X - state.EastM;
+        double south = _berthEus.Z - state.SouthM;
+
+        if (Math.Sqrt((east * east) + (south * south)) <= _berthToleranceM)
+        {
+            return;
+        }
+
+        IsDocked = false;
+        HasLeftBerthUncommanded = true;
+    }
+
     private double PlanarDistanceTo(in SurfaceMotionState state)
     {
         double east = _targetEus.X - state.EastM;
