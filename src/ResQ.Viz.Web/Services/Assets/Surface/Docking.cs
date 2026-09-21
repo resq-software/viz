@@ -438,6 +438,15 @@ public static class Docking
     /// <summary>Event code raised on the step that abandons the operation.</summary>
     public const string AbortedCode = "surface.docking.aborted";
 
+    /// <summary>Event code for a vessel that has left the berth it reported being secured at.</summary>
+    /// <remarks>
+    /// Not an abort: the approach finished and succeeded. This is the claim being withdrawn
+    /// afterwards, because a displacement hull tied to nothing does not stay where it stopped —
+    /// it goes with the water. Measured at 0.10 m/s of set, which is a quarter of a knot: moored
+    /// at 1.33 m, and 2.82 m further off a minute later, while the roster still read Standby.
+    /// </remarks>
+    public const string AdriftCode = "surface.docking.adrift";
+
     /// <summary>Refusal token for a hull that is not fitted to dock.</summary>
     /// <remarks>
     /// Structural, and unreachable while <see cref="SurfaceProfile.CanDock"/> and
