@@ -6,7 +6,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { DeferredPostFx } from './postfxDeferred';
 import { UnityCamera } from './cameraControl';
-import { updateWaterSunDirection } from './water';
+import { updateWaterSunDirection, installWaterShaderGuard } from './water';
 import { getLogger } from './log';
 import { sceneRenderingSuspended } from './sceneRendering';
 import {
@@ -224,6 +224,11 @@ export class Scene {
         this.renderer.toneMappingExposure = 1.12;
         this.renderer.setClearColor(0x8ab8d4);
         container.appendChild(this.renderer.domElement);
+        // Installed before the render loop starts so it is in place when the
+        // Water addon's reflection program compiles lazily on the first frame:
+        // a failure there degrades the lake to a plain surface instead of
+        // blanking it. See installWaterShaderGuard.
+        installWaterShaderGuard(this.renderer);
 
         this.scene = new THREE.Scene();
         // Fog colour matches sky horizon so distant terrain dissolves into atmosphere

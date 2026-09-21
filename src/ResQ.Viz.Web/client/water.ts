@@ -29,6 +29,26 @@ let _instance: Water | null = null;
 let _cachedNormals: THREE.Texture | null = null;
 let _normalsLoadStarted = false;
 
+// ── Shader compile-failure fallback ─────────────────────────────────────────
+//
+// The Water addon compiles a bespoke reflection program ("MirrorShader") lazily
+// on first render, and this module rewrites its GLSL further (_patchShoreShading).
+// A third-party shader we mutate can fail to compile on a driver we never tested
+// — WebGL shader support is not uniform across GPUs — and when a material's
+// program fails, three renders that object as nothing. The lake would then
+// vanish on that GPU while every other surface is fine, with only a console
+// error to show for it.
+//
+// The guard below turns that silent disappearance into a visible, degraded
+// surface: a renderer error hook detects a Water-program failure and flips
+// `_shaderFailed`; the next tickWater swaps the reflective material for a plain,
+// always-compilable one. `_shaderFailed` is sticky so a preset rebuild goes
+// straight to the fallback instead of re-failing on every switch.
+let _shaderGuardInstalled = false;
+let _shaderFailed = false;
+let _fallbackApplied = false;
+let _fallbackColor = 0x0e2a3d;
+
 /**
  * Grid resolution of the water plane when a depth sampler is supplied.
  *
@@ -294,8 +314,83 @@ export function buildWaterMesh(opts: {
 
     water.position.y = opts.waterLevel;
     _instance = water;
+    // Feed the compile-failure fallback: the colour that tints the plain
+    // surface, and a per-instance reset so a rebuild re-attempts the reflective
+    // shader — or, if it has already failed on this GPU, drops to the fallback
+    // on this instance's first tick rather than re-rendering the broken program.
+    _fallbackColor = opts.waterColor ?? 0x0e2a3d;
+    _fallbackApplied = false;
     if (!_cachedNormals) void _loadNormals();
     return water;
+}
+
+/**
+ * Install a one-time renderer hook that detects a compile failure of the Water
+ * addon's reflection program and drives {@link tickWater} to substitute a plain,
+ * non-reflective surface for it.
+ *
+ * Call once, after the renderer exists and before the first frame: the Water
+ * program compiles lazily on first render, so the hook must be in place by then.
+ * Idempotent, and it chains any `onShaderError` already installed rather than
+ * clobbering it.
+ */
+export function installWaterShaderGuard(renderer: THREE.WebGLRenderer): void {
+    if (_shaderGuardInstalled) return;
+    _shaderGuardInstalled = true;
+
+    const prior = renderer.debug.onShaderError;
+    renderer.debug.onShaderError = (gl, program, glVertex, glFragment) => {
+        // Setting this hook suppresses three's own annotated error dump, so
+        // surface the driver logs ourselves — they carry the decisive
+        // `ERROR: 0:NN:` line, and losing it would leave the next occurrence of
+        // this failure undiagnosable.
+        const fragSrc = gl.getShaderSource(glFragment) ?? '';
+        // `mirrorCoord` / `reflectionSample` are unique to the Water addon's
+        // fragment shader, present whether or not _patchShoreShading ran.
+        const isWater =
+            fragSrc.includes('mirrorCoord') || fragSrc.includes('reflectionSample');
+        log.error('shader program failed to compile', {
+            material: isWater ? 'MirrorShader (Water)' : 'unknown',
+            programLog: gl.getProgramInfoLog(program),
+            vertexLog: gl.getShaderInfoLog(glVertex),
+            fragmentLog: gl.getShaderInfoLog(glFragment),
+        });
+        if (isWater) _shaderFailed = true;
+        prior?.(gl, program, glVertex, glFragment);
+    };
+}
+
+/**
+ * Replace the failed reflective material on the active Water instance with a
+ * plain lit surface. The result still reads as water — semi-transparent, tinted
+ * to the preset colour, picking up the sky through the scene's IBL probe —
+ * without the mirror pass the broken program was for.
+ */
+function _applyFallbackMaterial(): void {
+    _fallbackApplied = true;
+    const water = _instance as unknown as THREE.Mesh | null;
+    if (!water) return;
+
+    const failed = water.material as THREE.ShaderMaterial;
+    // Free the addon's private mirror render-target texture now: after the swap
+    // disposeWaterMesh can no longer reach it through `material.uniforms`.
+    const mirror = failed.uniforms?.['mirrorSampler']?.value as
+        THREE.Texture | undefined;
+    mirror?.dispose();
+
+    water.material = new THREE.MeshStandardMaterial({
+        color: _fallbackColor,
+        transparent: true,
+        opacity: 0.82,
+        roughness: 0.15,
+        metalness: 0.1,
+    });
+    // The Water object still drives a mirror render-target pass from its
+    // onBeforeRender every frame; with the reflective material gone that pass is
+    // pure waste, so silence it.
+    (water as unknown as { onBeforeRender: () => void }).onBeforeRender = () => {};
+    failed.dispose();
+    log.warn('water reflection shader unavailable on this GPU; using non-reflective fallback surface');
 }
 
 /**
@@ -303,10 +398,18 @@ export function buildWaterMesh(opts: {
  * Without this the reflective ripple is static.
  */
 export function tickWater(dt: number): void {
-    if (_instance) {
-        const u = _instance.material.uniforms['time'];
-        if (u) u.value = (u.value as number) + dt;
+    if (!_instance) return;
+    // A detected Water-program failure is applied here, on the frame after the
+    // renderer hook flags it, so the material swap runs on the render thread's
+    // own cadence rather than inside three's error callback.
+    if (_shaderFailed && !_fallbackApplied) {
+        _applyFallbackMaterial();
+        return;
     }
+    // The fallback surface is a MeshStandardMaterial with no `time` uniform.
+    if (_fallbackApplied) return;
+    const u = _instance.material.uniforms['time'];
+    if (u) u.value = (u.value as number) + dt;
 }
 
 /**
@@ -340,8 +443,11 @@ export function disposeWaterMesh(): void {
     // The framebuffer object itself stays until the renderer is torn down: it is
     // keyed off the render target, and the addon keeps that in a closure with no
     // reference out. Freeing the texture is the part that is worth megabytes.
-    const mirror = _instance?.material.uniforms['mirrorSampler']?.value as
-        THREE.Texture | undefined;
+    // `?.uniforms` guards the fallback case: once _applyFallbackMaterial has
+    // swapped in a MeshStandardMaterial (which has no `.uniforms`) it already
+    // disposed the mirror texture, so this resolves to undefined and no-ops.
+    const mirror = (_instance?.material as THREE.ShaderMaterial | undefined)
+        ?.uniforms?.['mirrorSampler']?.value as THREE.Texture | undefined;
     mirror?.dispose();
     _instance = null;
 }
