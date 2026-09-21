@@ -16,7 +16,6 @@
 
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
-using ResQ.Viz.Web;
 using Xunit;
 
 namespace ResQ.Viz.Web.Tests;
@@ -77,10 +76,14 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
     /// <summary>
     /// Regression guard for the analytics integration (PR #97). The CSP must
     /// allow the script + connect endpoints used by `@resq-systems/analytics`
-    /// (PostHog, Google Analytics 4) and the Cloudflare Web Analytics beacon
-    /// auto-injected by the edge proxy. Prior to this guard, the SPA crashed
-    /// at runtime with `script-src 'self'` blocks for posthog-js, gtag, and
-    /// the Cloudflare bootstrap inline script.
+    /// (PostHog, Google Analytics 4). Prior to this guard, the SPA crashed at
+    /// runtime with `script-src 'self'` blocks for posthog-js and gtag.
+    ///
+    /// Cloudflare Web Analytics was removed once its dashboard auto-inject was
+    /// disabled — GA4 + PostHog already cover RUM and product analytics. Its
+    /// beacon origins and the rotating bootstrap inline-script hashes were pure
+    /// CSP-maintenance churn and must not reappear, so this also asserts their
+    /// absence.
     /// </summary>
     [Fact]
     public async Task CspAllowsAnalyticsOrigins()
@@ -89,18 +92,6 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         var response = await client.GetAsync("/");
         response.Headers.Should().ContainKey("Content-Security-Policy");
         var csp = string.Join(";", response.Headers.GetValues("Content-Security-Policy"));
-
-        // Cloudflare Web Analytics: script + bootstrap inline-script hashes +
-        // beacon. Both the apex and the wildcard are required — CSP wildcards
-        // don't match the base domain that beacon ingest posts to. The hash
-        // list is sourced from `SecurityConstants` so this test and the
-        // middleware can never drift out of sync when Cloudflare rotates the
-        // bootstrap script.
-        foreach (var hash in SecurityConstants.CloudflareBeaconScriptHashes)
-            csp.Should().Contain(hash);
-        csp.Should().Contain("https://static.cloudflareinsights.com");
-        csp.Should().Contain("https://cloudflareinsights.com");
-        csp.Should().Contain("https://*.cloudflareinsights.com");
 
         // PostHog (US cloud): config script + event ingest.
         csp.Should().Contain("https://us-assets.i.posthog.com");
@@ -112,6 +103,11 @@ public sealed class SecurityHeadersTests : IClassFixture<WebApplicationFactory<P
         csp.Should().Contain("https://www.googletagmanager.com");
         csp.Should().Contain("https://*.google-analytics.com");
         csp.Should().Contain("https://*.analytics.google.com");
+
+        // Cloudflare Web Analytics is gone: no beacon CDN / ingest origin and
+        // no inline-script hash should remain anywhere in the policy.
+        csp.Should().NotContain("cloudflareinsights.com");
+        csp.Should().NotContain("sha256-");
     }
 
     [Fact]
