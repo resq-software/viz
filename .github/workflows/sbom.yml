@@ -6,12 +6,18 @@
 # Triggers:
 #   push to main      — refresh the canonical SBOM artifact
 #   pull_request      — verify the SBOM still generates cleanly under change
-#   release published — attach the SBOM to the GitHub release
+#   release published — attach the SBOM to the GitHub release, and sign a
+#                       build-provenance attestation for it
 #   workflow_dispatch — on-demand
 #
 # Output: CycloneDX 1.5 JSON describing both the .NET (NuGet) and frontend
 # (npm) dependency trees via Anchore syft, which auto-detects ecosystem
 # manifests across the workspace.
+#
+# Releases are cut outside CI, so the SBOM is the one asset this repository's
+# workflows publish to a release. On `release` the `attest` job signs build
+# provenance for exactly that file. Verify a downloaded copy with:
+#   gh attestation verify viz-sbom.cdx.json --repo resq-software/viz
 #
 # References:
 #   NTIA SBOM minimum elements    https://www.ntia.gov/page/software-bill-materials
@@ -62,3 +68,33 @@ jobs:
           output-file: ./viz-sbom.cdx.json
           upload-artifact: true
           upload-release-assets: ${{ github.event_name == 'release' }}
+
+  attest:
+    name: Attest SBOM provenance
+    if: github.event_name == 'release'
+    needs: generate
+    runs-on: ubuntu-latest
+    # Only this job signs, and only on a release; `generate` keeps the one write
+    # scope it needs to upload the asset.
+    permissions:
+      contents: read
+      id-token: write       # Sigstore signing for the attestation
+      attestations: write   # store the attestation
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Download the SBOM the release received
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: viz-sbom.cdx.json
+          path: sbom
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          # A glob, not a file name: the artifact holds exactly the one SBOM file.
+          subject-path: sbom/*.json

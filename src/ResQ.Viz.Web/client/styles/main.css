@@ -1,5 +1,6 @@
 /**
  * Copyright 2026 ResQ Systems, Inc.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1272,6 +1273,16 @@ body:has(#settings-panel.open) .cockpit { display: none; }
   opacity: 0.65;
 }
 .settings-legal a { color: inherit; }
+/* Opens the privacy dialog; a button because it runs script, styled like its link neighbour. */
+.settings-legal-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .settings-legal span { margin: 0 6px; }
 .settings-reset-btn {
   width: 100%;
