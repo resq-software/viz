@@ -24,7 +24,7 @@ updates:
       # The trailing `*` matters: Dependabot names an action by its full path,
       # so the dependency is `github/gh-aw-actions/setup`. A bare
       # `github/gh-aw-actions` matches nothing — that silent no-op is exactly
-      # what broke resq-software/crates and resq-software/resQ.
+      # what broke Dependabot in two other org repositories.
       - dependency-name: "github/gh-aw-actions*"
     labels: [chore, deps]
     open-pull-requests-limit: 5

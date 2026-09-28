@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # The bake itself. NOT IMPLEMENTED — and it exits non-zero rather than pretending.
 #
 # tools/bake/bake.sh settles the reproducibility question: which toolchain ran, pinned by digest

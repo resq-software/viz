@@ -11,9 +11,10 @@ import './styles/operator.css';
 import { bootstrapAnalytics } from './analytics';
 import * as THREE from 'three';
 
-// Boot analytics first — it lazy-loads `posthog-js` via dynamic import,
-// so this returns immediately without blocking the Three.js / SignalR
-// init below. No-ops cleanly when env vars are unset.
+// Boot analytics first. It is opt-in: nothing loads until the visitor accepts
+// in the consent banner (or accepted on an earlier visit), and even then
+// `posthog-js` arrives by dynamic import, so this returns immediately without
+// blocking the Three.js / SignalR init below. No-ops when env vars are unset.
 bootstrapAnalytics();
 // SignalR runtime is loaded lazily inside `start()` (see below) — keeps
 // ~54 KB of `@microsoft/signalr` out of the main bundle so the first

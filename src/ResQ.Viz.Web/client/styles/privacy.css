@@ -1,0 +1,167 @@
+/**
+ * Copyright 2026 ResQ Systems, Inc.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* ── Analytics consent banner + privacy dialog ─────────────────────────────
+   Loaded lazily with client/privacy/privacyControls.ts, so none of this sits
+   in the entry CSS budget. Accept and Decline share `.consent-choice`: the
+   same size, weight and colour, so neither is the nudged option. */
+
+.consent-banner {
+  position: fixed;
+  /* Above the blocking loading overlay: the choice does not depend on the
+     simulation link, so a slow or failed connection must not hide it. */
+  z-index: calc(var(--layer-blocking) + 1);
+  left: 50%;
+  bottom: calc(var(--effective-dvr-h) + var(--space-4));
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 2 * var(--gutter)));
+  padding: var(--space-4);
+  border-radius: var(--r-3);
+  background: var(--surface-3);
+  box-shadow: var(--ring-strong), var(--shadow-2);
+  backdrop-filter: var(--blur-strong);
+  color: var(--text);
+  font-family: var(--sans);
+}
+.consent-banner[hidden] { display: none; }
+
+.consent-title,
+.privacy-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.consent-text {
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.consent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.consent-choice {
+  min-width: 112px;
+  min-height: var(--control-min);
+}
+
+.consent-link {
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--info-text);
+  font: inherit;
+  font-size: var(--text-md);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  min-height: var(--control-min);
+}
+.consent-link:hover { color: var(--text); }
+
+.consent-choice:focus-visible,
+.consent-link:focus-visible,
+.privacy-close:focus-visible,
+.privacy-body:focus-visible {
+  outline: 2px solid var(--info-text);
+  outline-offset: 2px;
+}
+
+/* ── Dialog ────────────────────────────────────────────────────────────── */
+
+.privacy-dialog {
+  /* The global reset zeroes margins; a modal dialog centres on auto margins. */
+  margin: auto;
+  width: min(640px, calc(100vw - 2 * var(--gutter)));
+  max-height: min(80vh, 720px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-4);
+  background: var(--card);
+  box-shadow: var(--ring-strong), var(--shadow-2);
+  color: var(--text);
+  font-family: var(--sans);
+}
+.privacy-dialog[open] { display: flex; flex-direction: column; }
+.privacy-dialog::backdrop { background: oklch(0% 0 0 / 0.6); }
+
+.privacy-header,
+.privacy-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.privacy-header { justify-content: space-between; box-shadow: 0 1px 0 var(--line); }
+.privacy-footer { flex-wrap: wrap; justify-content: space-between; box-shadow: 0 -1px 0 var(--line); }
+
+.privacy-close {
+  min-width: var(--control-min);
+  min-height: var(--control-min);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-lg);
+  cursor: pointer;
+}
+.privacy-close:hover { background: var(--inset); color: var(--text); }
+
+.privacy-body {
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.privacy-body h3 {
+  margin: var(--space-4) 0 var(--space-1);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.privacy-body p,
+.privacy-body ul { margin: 0 0 var(--space-2); }
+.privacy-body ul { padding-left: var(--space-4); }
+.privacy-body li + li { margin-top: var(--space-1); }
+.privacy-body strong { color: var(--text); font-weight: 600; }
+.privacy-body a { color: var(--info-text); }
+.privacy-body code { font-family: var(--mono); font-size: 0.92em; color: var(--text); }
+
+.privacy-status {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-1);
+  background: var(--info-soft);
+  color: var(--text);
+}
+.privacy-status[hidden] { display: none; }
+
+.privacy-choice {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .consent-banner { animation: consent-rise var(--t-slow) var(--ease); }
+}
+@keyframes consent-rise {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
