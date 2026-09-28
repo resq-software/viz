@@ -26,7 +26,12 @@ const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag2
 /** Rule ids documented as known issues in ACCESSIBILITY.md. The goal is empty. */
 const KNOWN_ISSUES: readonly string[] = [];
 
-const TRACKER_HOSTS = /googletagmanager\.com|google-analytics\.com|analytics\.google\.com|posthog\.com/;
+/** Registrable domains of the analytics providers; a host matches itself or any subdomain. */
+const TRACKER_DOMAINS = ['googletagmanager.com', 'google-analytics.com', 'analytics.google.com', 'posthog.com'];
+
+function isTrackerHost(host: string): boolean {
+  return TRACKER_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
 
 interface Finding {
   readonly id: string;
@@ -55,7 +60,7 @@ test.describe('accessibility — desktop', () => {
   test('the connected console has no axe-detectable WCAG A/AA violations', async ({ page }) => {
     const trackerRequests: string[] = [];
     page.on('request', (request) => {
-      if (TRACKER_HOSTS.test(new URL(request.url()).host)) trackerRequests.push(request.url());
+      if (isTrackerHost(new URL(request.url()).hostname)) trackerRequests.push(request.url());
     });
 
     await page.goto(NORMAL_ORIGIN);

@@ -38,6 +38,8 @@ vi.mock('@resq-systems/analytics', async (importOriginal) => {
 const KEYS = { VITE_POSTHOG_KEY: 'phc_test', VITE_GA4_ID: 'G-TEST1234' } as const;
 const NO_KEYS = {} as const;
 const STORAGE_KEY = 'resq-analytics-consent';
+/** Substrings that identify an analytics provider's script URL. */
+const TRACKER_MARKERS = ['googletagmanager', 'google-analytics', 'posthog'];
 
 const html = readFileSync(resolve(__dirname, '../index.html'), 'utf8');
 const body = html.slice(html.indexOf('<body>') + '<body>'.length, html.indexOf('<script type="module"'));
@@ -65,7 +67,7 @@ function trackerActivity() {
     posthogImported: providers.posthogImported,
     trackerScripts: [...document.querySelectorAll('script[src]')]
       .map((s) => s.getAttribute('src') ?? '')
-      .filter((src) => /googletagmanager|google-analytics|posthog/.test(src)),
+      .filter((src) => TRACKER_MARKERS.some((marker) => src.includes(marker))),
     dataLayer: (window as unknown as { dataLayer?: unknown[] }).dataLayer?.length ?? 0,
   };
 }
@@ -77,7 +79,7 @@ beforeEach(() => {
   localStorage.clear();
   document.cookie.split(';').forEach((c) => {
     const name = c.split('=')[0]?.trim();
-    if (name) document.cookie = `${name}=; Max-Age=0; path=/`;
+    if (name) document.cookie = `${name}=; Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
   });
   providers.posthogImported = 0;
   vi.clearAllMocks();

@@ -133,10 +133,13 @@ function clearGa4Cookies(config: AnalyticsConfig): void {
         .split(";")
         .map((part) => part.split("=")[0]?.trim() ?? "")
         .filter((name) => name === "_ga" || name.startsWith("_ga_"));
+    // Both attributes: Max-Age=0 per RFC 6265, and an epoch Expires for any
+    // cookie jar that compares expiry against "now" at millisecond resolution.
+    const expired = "Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
     for (const name of names) {
-        document.cookie = `${name}=; Max-Age=0; path=/`;
+        document.cookie = `${name}=; ${expired}`;
         if (config.cookieDomain) {
-            document.cookie = `${name}=; Max-Age=0; path=/; domain=${config.cookieDomain}`;
+            document.cookie = `${name}=; ${expired}; domain=${config.cookieDomain}`;
         }
     }
 }
