@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Runs a bake inside the pinned toolchain, and records which toolchain that was.
 #
 # Usage:  tools/bake/bake.sh <area-id> [...]

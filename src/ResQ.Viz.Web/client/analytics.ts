@@ -1,5 +1,6 @@
 /**
  * Copyright 2026 ResQ Systems, Inc.
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,18 +16,22 @@
  */
 
 /**
- * Analytics bootstrap for the viz SPA.
+ * Analytics bootstrap for the viz SPA — opt-in only.
  *
- * Vanilla TS (not React) so we use `@resq-systems/analytics`'s framework-
- * agnostic `initAnalytics()` directly instead of the `<AnalyticsProvider>`
- * we wired into landing + research. The package's lazy `posthog-js`
- * import + GA4 script injection still happen exactly the same way.
+ * Nothing analytics-related loads before the visitor accepts: no gtag.js
+ * script, no `posthog-js` import, no request. On a first visit (no stored
+ * decision) the consent banner asks; "Decline" keeps everything unloaded and
+ * "Accept" calls `initAnalytics()`. A stored acceptance boots straight away on
+ * later visits, and Settings → Privacy settings changes the choice at any time.
  *
- * Cross-subdomain identity:
- *   - PostHog: same project as resq.software / research. Cookie domain is
- *     pinned to `.resq.software` only when the current host actually
- *     belongs to that registrable root, so a single `distinct_id` follows
- *     users across the three subdomains.
+ * Vanilla TS (not React), so it drives `@resq-systems/analytics`'s
+ * framework-agnostic `initAnalytics()` directly. The package lazily imports
+ * `posthog-js` and injects the GA4 script only when that call runs.
+ *
+ * Cross-subdomain identity (after consent):
+ *   - PostHog: the cookie domain is pinned to `.resq.software` only when the
+ *     current host belongs to that registrable root, so one `distinct_id`
+ *     follows a visitor across the org's subdomains.
  *   - GA4: separate property per subdomain (operator decision). Linker
  *     domains are still listed for forward-compat — gtag treats them as a
  *     no-op when the visited subdomain reports to a different property.
@@ -39,46 +44,48 @@
  *                        if/when one is provisioned.
  *   - VITE_GA4_ID        GA4 Measurement ID (`G-XXXXXXX`). Optional.
  *
- * If neither key is set, the singleton boots in `disabled` mode so local
- * dev doesn't dirty production.
+ * If neither key is set there is nothing to consent to: no banner is shown and
+ * nothing loads, so local dev and preview deploys stay clean.
  */
 
 import {
+    analytics,
+    type AnalyticsConfig,
     initAnalytics,
     RESQ_SUBDOMAIN_ALLOWLIST,
     resolveResqCookieDomain,
     sanitizeGa4Id,
 } from "@resq-systems/analytics";
 import { getLogger } from "./log";
+import { type ConsentDecision, readConsent, writeConsent } from "./privacy/consent";
 
 const log = getLogger("analytics");
 
-/**
- * Boot the analytics singleton once on app start. Safe to call before the
- * rest of the app initialises — `posthog-js` is dynamically imported
- * inside the package so this never blocks the main bundle.
- *
- * Call exactly once from `client/app.ts`'s entry path.
- */
-export function bootstrapAnalytics(): void {
-    const posthogKey = import.meta.env.VITE_POSTHOG_KEY as string | undefined;
-    const ga4IdRaw = import.meta.env.VITE_GA4_ID as string | undefined;
-    const ga4Id = sanitizeGa4Id(ga4IdRaw);
-    const posthogHost = (import.meta.env.VITE_POSTHOG_HOST as string | undefined) ?? undefined;
+/** Build-time analytics settings, injectable for tests. */
+export interface AnalyticsEnv {
+    readonly VITE_POSTHOG_KEY?: string;
+    readonly VITE_POSTHOG_HOST?: string;
+    readonly VITE_GA4_ID?: string;
+}
 
-    if (!posthogKey && !ga4Id) {
-        // No keys configured — early-return so local dev / preview deploys
-        // don't dirty production analytics. The singleton's `track` /
-        // `identify` exports stay safe no-ops even without init.
-        return;
-    }
+/**
+ * The provider config this build would use, or `null` when no provider key is
+ * configured.
+ */
+export function resolveAnalyticsConfig(
+    env: AnalyticsEnv = import.meta.env as AnalyticsEnv,
+): AnalyticsConfig | null {
+    const posthogKey = env.VITE_POSTHOG_KEY || undefined;
+    const ga4Id = sanitizeGa4Id(env.VITE_GA4_ID);
+    const posthogHost = env.VITE_POSTHOG_HOST || undefined;
+    if (!posthogKey && !ga4Id) return null;
 
     const cookieDomain =
         typeof window === "undefined"
             ? undefined
             : resolveResqCookieDomain(window.location.hostname);
 
-    initAnalytics({
+    return {
         ...(cookieDomain ? { cookieDomain } : {}),
         ...(posthogKey
             ? {
@@ -97,14 +104,107 @@ export function bootstrapAnalytics(): void {
                   },
               }
             : {}),
-    }).catch((err) => {
-        // `initAnalytics` returns a Promise (it dynamically imports
-        // `posthog-js`). The package fails soft internally — the
-        // singleton's track/identify exports stay safe no-ops on init
-        // failure — but surfacing the error here makes prod debugging
-        // tractable when, say, a CSP rule blocks the dynamic import.
-        // Gated by the early-return above so it only fires when at least
-        // one analytics key was actually configured.
+    };
+}
+
+let started = false;
+
+/** Load the providers. Only ever called after the visitor accepted. */
+function start(config: AnalyticsConfig): void {
+    if (started) return;
+    started = true;
+    initAnalytics(config).catch((err: unknown) => {
+        // `initAnalytics` dynamically imports `posthog-js`. The package fails
+        // soft (track/identify stay no-ops), but surfacing the error makes a
+        // CSP rule blocking the import debuggable in production.
         log.warn("[analytics] initAnalytics failed", { error: err });
     });
+}
+
+/** GA4's documented per-stream opt-out flag. */
+function setGa4Disabled(config: AnalyticsConfig, disabled: boolean): void {
+    if (!config.ga4) return;
+    (window as unknown as Record<string, unknown>)[`ga-disable-${config.ga4.measurementId}`] = disabled;
+}
+
+/** Delete GA4's `_ga` / `_ga_<stream>` cookies on this host and the shared domain. */
+function clearGa4Cookies(config: AnalyticsConfig): void {
+    const names = document.cookie
+        .split(";")
+        .map((part) => part.split("=")[0]?.trim() ?? "")
+        .filter((name) => name === "_ga" || name.startsWith("_ga_"));
+    // Both attributes: Max-Age=0 per RFC 6265, and an epoch Expires for any
+    // cookie jar that compares expiry against "now" at millisecond resolution.
+    const expired = "Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    for (const name of names) {
+        document.cookie = `${name}=; ${expired}`;
+        if (config.cookieDomain) {
+            document.cookie = `${name}=; ${expired}; domain=${config.cookieDomain}`;
+        }
+    }
+}
+
+/**
+ * Record the visitor's decision and apply it on this page: accepting loads the
+ * providers (or re-enables them after a withdrawal); declining after they
+ * loaded opts PostHog out, disables GA4 and deletes its cookies.
+ */
+export function applyConsentDecision(decision: ConsentDecision, config: AnalyticsConfig | null): void {
+    writeConsent(decision);
+    if (!config) return;
+    if (decision === "granted") {
+        if (!started) {
+            start(config);
+            return;
+        }
+        analytics.posthog?.opt_in_capturing();
+        setGa4Disabled(config, false);
+        return;
+    }
+    if (!started) return;
+    analytics.posthog?.opt_out_capturing();
+    setGa4Disabled(config, true);
+    clearGa4Cookies(config);
+}
+
+/** Lazily load the banner/dialog module; its CSS travels with it. */
+function loadPrivacyControls() {
+    return import("./privacy/privacyControls");
+}
+
+/**
+ * Boot analytics once on app start, honouring the visitor's consent. Safe to
+ * call before the rest of the app initialises — it never blocks the main
+ * bundle. Call exactly once from `client/app.ts`'s entry path.
+ */
+export function bootstrapAnalytics(
+    doc: Document = document,
+    env: AnalyticsEnv = import.meta.env as AnalyticsEnv,
+): void {
+    const config = resolveAnalyticsConfig(env);
+    const controls = {
+        configured: config !== null,
+        decide: (decision: ConsentDecision) => applyConsentDecision(decision, config),
+    };
+
+    // Settings → Privacy settings: always available, so the choice (and the
+    // notice) can be revisited whether or not this build has analytics keys.
+    doc.getElementById("privacy-settings-open")?.addEventListener("click", (event) => {
+        const opener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+        void loadPrivacyControls()
+            .then((m) => m.openPrivacyDialog(doc, controls, opener))
+            .catch((err: unknown) => log.warn("[analytics] privacy settings failed to load", { error: err }));
+    });
+
+    if (!config) return;
+    const consent = readConsent();
+    if (consent === "granted") {
+        start(config);
+        return;
+    }
+    if (consent === "unset") {
+        void loadPrivacyControls()
+            .then((m) => m.showConsentBanner(doc, controls))
+            .catch((err: unknown) => log.warn("[analytics] consent banner failed to load", { error: err }));
+    }
 }

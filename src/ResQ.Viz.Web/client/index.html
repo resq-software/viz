@@ -121,6 +121,21 @@
     <a href="#scene-container" class="skip-link">Skip to 3D viewer</a>
     <a href="#sidebar" class="skip-link">Skip to controls</a>
 
+    <!-- Analytics consent. Stays hidden unless this build has analytics keys and
+         the visitor has not chosen yet; client/analytics.ts reveals it. It sits
+         first in the tab order after the skip links, so a keyboard user meets it
+         before the console. Accept and Decline share one class so neither is the
+         nudged option. -->
+    <section id="consent-banner" class="consent-banner" aria-labelledby="consent-title" hidden>
+        <h2 id="consent-title" class="consent-title">Analytics</h2>
+        <p class="consent-text">May we use Google Analytics 4 and PostHog to see how the console is used? Nothing loads unless you accept, and you can change your choice any time under Settings → Privacy settings.</p>
+        <div class="consent-actions">
+            <button type="button" id="consent-notice-open" class="consent-link">Privacy notice</button>
+            <button type="button" id="consent-decline" class="btn consent-choice">Decline</button>
+            <button type="button" id="consent-accept" class="btn consent-choice">Accept</button>
+        </div>
+    </section>
+
     <!-- 3D canvas -->
     <main id="scene-container">
         <h1 class="sr-only">ResQ Viz drone simulation viewer</h1>
@@ -582,9 +597,56 @@
                distribution", and the not-for-navigation warning is a safety statement. Both are
                in notices.md, which the build copies from the repo-root NOTICE.md. -->
           <a href="/legal/notices.md" target="_blank" rel="noopener">Third-party notices</a>
+          <span aria-hidden="true">·</span>
+          <button type="button" id="privacy-settings-open" class="settings-legal-link">Privacy settings</button>
         </p>
       </div>
     </div>
+
+    <!-- ── Privacy notice + analytics choice ──────────────────────────────────
+         Opened from the consent banner and from Settings → Privacy settings.
+         Keep the text in step with PRIVACY.md at the repository root. -->
+    <dialog id="privacy-dialog" class="privacy-dialog" aria-labelledby="privacy-title">
+      <header class="privacy-header">
+        <h2 id="privacy-title" class="privacy-title">Privacy</h2>
+        <button type="button" id="privacy-close" class="privacy-close" aria-label="Close privacy settings"><span aria-hidden="true">✕</span></button>
+      </header>
+      <div class="privacy-body" tabindex="0" role="region" aria-label="Privacy notice">
+        <p id="privacy-unconfigured" class="privacy-status" hidden>This build has no analytics configured, so nothing is collected whatever you choose.</p>
+
+        <h3>Analytics is opt-in</h3>
+        <p>ResQ Viz loads no analytics until you accept. If you decline, or do not choose, no analytics script is loaded and nothing is sent to an analytics provider.</p>
+
+        <h3>If you accept</h3>
+        <p>ResQ Systems, Inc. uses two services:</p>
+        <ul>
+          <li><strong>Google Analytics 4</strong> (Google): the pages you view and, if Google's enhanced measurement is switched on, interactions such as scrolls and outbound clicks; browser, device and screen details; the referring page; and an approximate location derived from your IP address. Google Analytics 4 does not log or store IP addresses. Identifiers are kept in <code>_ga</code> cookies.</li>
+          <li><strong>PostHog</strong> (PostHog, Inc., US region): the pages you view; clicks and other interactions PostHog records automatically, but not what you type; browser, device and screen details; the referring page; and an approximate location derived from your IP address. A random identifier is kept in local storage and in a cookie shared across resq.software sites. Optional PostHog features, such as session recording, run only if they are switched on for the project.</li>
+        </ul>
+
+        <h3>Purpose and legal basis</h3>
+        <p>To understand how the console is used and improve it. The legal basis is your consent.</p>
+
+        <h3>Retention and location</h3>
+        <p>Data is kept as configured with each provider. Google and PostHog may process it in the United States.</p>
+
+        <h3>Changing your mind</h3>
+        <p>Choose Decline below, or later under Settings → Privacy settings. The console then stops PostHog capture, turns Google Analytics off for the page and deletes the <code>_ga</code> cookies. Clearing this site's data in your browser also removes your choice, and the console asks again.</p>
+
+        <h3>Storage the console needs</h3>
+        <p>A <code>viz_session</code> cookie ties your browser to its simulation room, and local storage keeps your console settings and this choice. They are not used for analytics.</p>
+
+        <h3>Contact</h3>
+        <p>Email <a href="mailto:contact@resq.software">contact@resq.software</a> or <a href="https://github.com/resq-software/viz/issues" target="_blank" rel="noopener">open an issue</a>.</p>
+      </div>
+      <footer class="privacy-footer">
+        <p id="privacy-choice" class="privacy-choice" aria-live="polite"></p>
+        <div class="consent-actions">
+          <button type="button" id="privacy-decline" class="btn consent-choice">Decline</button>
+          <button type="button" id="privacy-accept" class="btn consent-choice">Accept</button>
+        </div>
+      </footer>
+    </dialog>
 
     <script type="module" src="./app.ts"></script>
 <noscript>
