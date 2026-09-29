@@ -44,7 +44,7 @@ concurrency:
 jobs:
   generate:
     name: Generate CycloneDX SBOM
-    runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && fromJSON('["self-hosted","linux","x64","zima"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write   # required only for release-asset upload
     timeout-minutes: 10
@@ -73,7 +73,7 @@ jobs:
     name: Attest SBOM provenance
     if: github.event_name == 'release'
     needs: generate
-    runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && fromJSON('["self-hosted","linux","x64","zima"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     # Only this job signs, and only on a release; `generate` keeps the one write
     # scope it needs to upload the asset.
     permissions:
