@@ -98,7 +98,7 @@ jobs:
   # 52 KB). Bumping either is a policy decision.
   client-budget:
     needs: client
-    runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && fromJSON('["self-hosted","linux","x64","zima"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -220,7 +220,7 @@ jobs:
   # change either way.
   browser:
     needs: [gates, client-budget]
-    runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && fromJSON('["self-hosted","linux","x64","zima"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -361,7 +361,7 @@ jobs:
   # gate that throws at runtime instead of reporting drift.
   docs:
     name: doc versions
-    runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && fromJSON('["self-hosted","linux","x64","zima"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 5
@@ -388,7 +388,7 @@ jobs:
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
     name: required
-    runs-on: ${{ vars.USE_SELF_HOSTED == 'true' && fromJSON('["self-hosted","linux","x64","zima"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: [gates, client, client-budget, browser, licences, docs]
     permissions: {}    # pure aggregator: only reads needs.*.result env vars
     if: always()
