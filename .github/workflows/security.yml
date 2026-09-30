@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  # `actions: read` is required by the reusable workflow's CodeQL + SARIF-upload
+  # `actions: read` is required by the reusable workflow's SARIF-upload
   # jobs (they declare it for github/codeql-action telemetry). An explicit
   # permissions block sets every unlisted scope to `none`, so without this the
   # nested jobs request more than the caller grants and the run is rejected at
@@ -30,11 +30,27 @@ jobs:
     # Skip on Dependabot PRs: Dependabot's restricted context resolves Actions
     # secrets to empty, so semgrep would fail to authenticate on every one of
     # its PRs. Dependabot already vetted the bump; push/schedule still scan the
-    # default branch, and `gates` in ci.yml still runs CodeQL on the PR itself.
+    # default branch, and code-scanning default setup analyses every PR here
+    # independently of this workflow.
     if: ${{ github.actor != 'dependabot[bot]' }}
     uses: resq-software/.github/.github/workflows/security-scan.yml@44987ffd6eb5b1aa9d0a0d39e8dde9d669fe1d84 # main
     with:
-      languages: '["csharp","actions"]'
+      # `languages` is deliberately omitted. It defaults to "[]", which makes
+      # the reusable's CodeQL job a no-op (it is gated on
+      # `inputs.languages != '' && inputs.languages != '[]'`).
+      #
+      # Code-scanning *default setup* is enabled on this repository, so every
+      # advanced-setup upload was rejected: the analyze step logs "Analysis
+      # upload status is failed. CodeQL analyses from advanced configurations
+      # cannot be processed when the default setup is enabled", and the job
+      # ends "CodeQL job status was configuration error". The reusable carries
+      # `continue-on-error: true` on that step and the rejection arrives in the
+      # post-job phase, so the job still reported success. Nothing was ever
+      # stored: every CodeQL analysis on this repository carries default
+      # setup's analysis key, none carries this workflow's.
+      #
+      # Coverage is unchanged. Default setup runs the broader `extended` query
+      # suite; this job ran the default suite.
       submodules: recursive
       # This repo has no SAST otherwise: unlike landing and crates it is not a
       # project in the Semgrep managed app, so no `semgrep-cloud-platform/scan`
