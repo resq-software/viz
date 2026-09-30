@@ -58,7 +58,11 @@ jobs:
       # Coverage is unchanged: every stored CodeQL analysis here already
       # comes from default setup, which runs the broader `extended` query
       # suite rather than the default suite this job used.
-      submodules: recursive
+      #
+      # `submodules` is dropped with it. The reusable consumes that input in
+      # exactly one place -- the checkout inside the CodeQL job -- and that job
+      # is gated on `inputs.languages != '' && inputs.languages != '[]'`, so
+      # with `languages` omitted it never runs and the input was dead config.
       # This repo has no SAST otherwise: unlike some sibling repos it is not a
       # project in the Semgrep managed app, so no `semgrep-cloud-platform/scan`
       # check runs on its PRs. The reusable's semgrep runs in a container on
