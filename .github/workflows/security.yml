@@ -48,9 +48,12 @@ jobs:
       #   when the default setup is enabled
       #   CodeQL job status was configuration error.
       # and still reported success — the reusable carries
-      # `continue-on-error: true` on its analyze step and the rejection is
-      # emitted in the post-job phase, so a configuration error had become a
-      # permanent green check.
+      # `continue-on-error: true` on its Analyze step, and the `##[error]` is
+      # emitted by that step itself, in its main phase, which is exactly what
+      # that flag swallows. (Only the trailing "CodeQL job status was ..." line
+      # is printed after the step, by init-post; a passing run prints it too,
+      # reading "was success".) A configuration error had become a permanent
+      # green check.
       #
       # Coverage is unchanged: every stored CodeQL analysis here already
       # comes from default setup, which runs the broader `extended` query
