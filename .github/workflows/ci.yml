@@ -42,20 +42,31 @@ jobs:
   gates:
     permissions:
       contents: read
-      security-events: write   # required.yml dispatches CodeQL + uploads SARIF
+      security-events: write   # required.yml uploads the zizmor SARIF
       pull-requests: read      # security-scan reads PR metadata for diff scans
     uses: resq-software/.github/.github/workflows/required.yml@23ce94eabddf963835624451e89baca7ac9db541
     with:
       lang: dotnet
       dotnet-solution: ResQ.Viz.sln
-      codeql-languages: '["csharp"]'
+      # `codeql-languages` is deliberately omitted. It defaults to "[]",
+      # which skips security-scan's CodeQL job.
+      #
+      # C# is already declared in security.yml, so passing it here ran the
+      # same analysis a second time per event — and neither copy was ever
+      # stored. Code-scanning *default setup* is enabled on this repository,
+      # so every advanced-setup upload is rejected with "CodeQL analyses from
+      # advanced configurations cannot be processed when the default setup is
+      # enabled". The reusable's `continue-on-error: true` swallowed that
+      # error, so the job still reported success. Every CodeQL alert this
+      # repository has comes from default setup, which additionally runs the
+      # broader `extended` query suite.
       submodules: recursive
     # No `secrets:` block on purpose (zizmor secrets-inherit). required.yml
     # declares no `workflow_call` secrets, so they cannot be forwarded by name;
     # it only relays them to security-scan.yml, where each is gated behind an
     # `enable-*` input. This call leaves enable-semgrep / enable-gitleaks /
     # enable-snyk / enable-vet at their `false` defaults — those jobs report
-    # "skipping" on every run — so nothing downstream reads a secret. CodeQL,
+    # "skipping" on every run — so nothing downstream reads a secret.
     # osv-scanner, dependency-review, zizmor and actionlint need none; they use
     # the automatic GITHUB_TOKEN, which `permissions:` above grants directly.
     # Semgrep runs on this repo via security.yml, which forwards its token by
