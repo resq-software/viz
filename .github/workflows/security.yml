@@ -15,11 +15,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  # `actions: read` is required by the reusable workflow's CodeQL + SARIF-upload
-  # jobs (they declare it for github/codeql-action telemetry). An explicit
-  # permissions block sets every unlisted scope to `none`, so without this the
-  # nested jobs request more than the caller grants and the run is rejected at
-  # creation (startup_failure). Read-only; grants no write capability.
+  # `actions: read` is required by the reusable workflow's SARIF-uploading jobs
+  # (they declare it for github/codeql-action telemetry, which zizmor's
+  # upload-sarif step calls). An explicit permissions block sets every unlisted
+  # scope to `none`, so without this the nested jobs request more than the
+  # caller grants and the run is rejected at creation (startup_failure).
+  # Read-only; grants no write capability.
   actions: read
   contents: read
   security-events: write
@@ -30,17 +31,44 @@ jobs:
     # Skip on Dependabot PRs: Dependabot's restricted context resolves Actions
     # secrets to empty, so semgrep would fail to authenticate on every one of
     # its PRs. Dependabot already vetted the bump; push/schedule still scan the
-    # default branch, and `gates` in ci.yml still runs CodeQL on the PR itself.
+    # default branch.
     if: ${{ github.actor != 'dependabot[bot]' }}
     uses: resq-software/.github/.github/workflows/security-scan.yml@44987ffd6eb5b1aa9d0a0d39e8dde9d669fe1d84 # main
     with:
-      languages: '["csharp","actions"]'
-      submodules: recursive
-      # This repo has no SAST otherwise: unlike landing and crates it is not a
+      # `languages` is deliberately omitted. It defaults to "[]", and
+      # security-scan gates its CodeQL job on
+      #   if: ${{ inputs.languages != '' && inputs.languages != '[]' }}
+      # so the job is skipped rather than run-and-discarded.
+      #
+      # Code-scanning *default setup* is enabled on this repository, and
+      # GitHub refuses advanced-setup CodeQL uploads while it is. This job
+      # logged, on every run:
+      #   Analysis upload status is failed.
+      #   CodeQL analyses from advanced configurations cannot be processed
+      #   when the default setup is enabled
+      #   CodeQL job status was configuration error.
+      # and still reported success — the reusable carries
+      # `continue-on-error: true` on its Analyze step, and the `##[error]` is
+      # emitted by that step itself, in its main phase, which is exactly what
+      # that flag swallows. (Only the trailing "CodeQL job status was ..." line
+      # is printed after the step, by init-post; a passing run prints it too,
+      # reading "was success".) A configuration error had become a permanent
+      # green check.
+      #
+      # Coverage is unchanged: every stored CodeQL analysis here already
+      # comes from default setup, which runs the broader `extended` query
+      # suite rather than the default suite this job used.
+      #
+      # `submodules` is dropped with it. The reusable consumes that input in
+      # exactly one place -- the checkout inside the CodeQL job -- and that job
+      # is gated on `inputs.languages != '' && inputs.languages != '[]'`, so
+      # with `languages` omitted it never runs and the input was dead config.
+      # This repo has no SAST otherwise: unlike some sibling repos it is not a
       # project in the Semgrep managed app, so no `semgrep-cloud-platform/scan`
       # check runs on its PRs. The reusable's semgrep runs in a container on
       # ubuntu-latest, which is fine here — this caller does not route to the
-      # self-hosted runners, which is the constraint that makes landing opt out.
+      # self-hosted runners, which is the constraint that makes the repos that
+      # do route there opt out.
       enable-semgrep: true
     # Forward by name instead of `secrets: inherit` (zizmor secrets-inherit):
     # the reusable declares every secret it can consume, and semgrep is the only
