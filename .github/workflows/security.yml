@@ -56,11 +56,12 @@ jobs:
       # comes from default setup, which runs the broader `extended` query
       # suite rather than the default suite this job used.
       submodules: recursive
-      # This repo has no SAST otherwise: unlike landing and crates it is not a
+      # This repo has no SAST otherwise: unlike some sibling repos it is not a
       # project in the Semgrep managed app, so no `semgrep-cloud-platform/scan`
       # check runs on its PRs. The reusable's semgrep runs in a container on
       # ubuntu-latest, which is fine here — this caller does not route to the
-      # self-hosted runners, which is the constraint that makes landing opt out.
+      # self-hosted runners, which is the constraint that makes the repos that
+      # do route there opt out.
       enable-semgrep: true
     # Forward by name instead of `secrets: inherit` (zizmor secrets-inherit):
     # the reusable declares every secret it can consume, and semgrep is the only
