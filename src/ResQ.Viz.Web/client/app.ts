@@ -46,6 +46,7 @@ import type { DroneState, MeshState, VizFrame } from './types';
 import { isDroneReady }   from './types';
 import { Settings }       from './settings';
 import { PRESETS, PresetKey } from './terrainPresets';
+import { SCENARIO_CARDS } from './scenarioCatalog';
 import * as geoCache from './geoCache';
 import { InvestorMode } from './investorMode';
 import { ScenarioIntro } from './scenarioIntro';
@@ -243,7 +244,17 @@ function _invalidateOperatorModals(): void {
     environmentDialog?.invalidate();
 }
 
+const geoLink = new URLSearchParams(window.location.search);
+const requestedScenario = geoLink.get('geoScenario');
+const requestedWorld = geoLink.get('geoWorld');
+const initialGeoScenario = requestedScenario && SCENARIO_CARDS.has(requestedScenario)
+    ? requestedScenario : undefined;
+const initialGeoWorld = requestedWorld && Object.prototype.hasOwnProperty.call(PRESETS, requestedWorld)
+    ? requestedWorld as PresetKey : undefined;
+let initialGeoWorldAttempted = false;
+
 const startupCoordinator = new StartupCoordinator({
+    initialV2Scenario: initialGeoScenario,
     setMode: mode => {
         if (mode !== 'v2') _invalidateOperatorModals();
         if (mode === 'legacy' && _v2Active) _leaveV2();
@@ -1391,10 +1402,11 @@ document.querySelectorAll<HTMLElement>('.terrain-card').forEach(el => {
 // This makes repeat-switches to already-visited presets near-instant.
 void geoCache.init();
 
-// Sync backend terrain preset to alpine on first load. Defer until the
-// session cookie is set so the call doesn't 401.
+// Sync backend terrain preset to alpine on an ordinary first load. A desktop
+// deep link owns its terrain through the scenario-start path below; a late
+// alpine POST here could overwrite its accepted geoWorld preset.
 void _ensureSessionReady().then(ok => {
-    if (ok) apiPostOrWarn('/api/sim/preset/alpine', undefined, 'initial preset');
+    if (ok && !initialGeoScenario) apiPostOrWarn('/api/sim/preset/alpine', undefined, 'initial preset');
 });
 
 viz.addTickCallback((dt) => droneManager.tick(dt));
@@ -2560,13 +2572,22 @@ document.addEventListener('resq:scenario-start', (e) => {
     // hitch is masked for free. Do NOT move this earlier.
     const name = (e as CustomEvent<{ name?: string }>).detail?.name;
     if (!name) return;
+    const geoWorld = !initialGeoWorldAttempted && name === initialGeoScenario && !_operatorOverride
+        ? initialGeoWorld : undefined;
+    if (geoWorld) initialGeoWorldAttempted = true;
+    let scenarioPreset: PresetKey | undefined;
     applyScenarioEnvironment({
         applyScene: (env) => {
             viz.applyEnvironment(env);
             viz.setSkyProfile(skyProfileFor(env));
             _applyPrecipitation(env.precipitation ?? null);
         },
-        switchPreset: (key) => _switchPreset(key),
+        switchPreset: (key) => {
+            // The deep link is an explicit terrain choice. Do not race its
+            // server write against the scenario's optimistic preset POST.
+            if (geoWorld) scenarioPreset = key;
+            else _switchPreset(key);
+        },
         setCamera: (preset: CameraPresetKey, env) => {
             const jump = {
                 survey:   () => cameraPresets.terrainSurvey(env.sunAzimuthDeg),
@@ -2579,6 +2600,11 @@ document.addEventListener('resq:scenario-start', (e) => {
         },
         isTerrainOverridden: () => _operatorOverride,
     }, name);
+    if (geoWorld) {
+        void _switchPresetFromOperator(geoWorld).then(result => {
+            if (!result.success && scenarioPreset) _switchPreset(scenarioPreset);
+        });
+    }
 });
 
 /**

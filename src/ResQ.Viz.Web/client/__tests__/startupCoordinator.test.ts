@@ -81,6 +81,31 @@ describe('v2 startup default', () => {
     expect(h.v1Starts).toEqual([]);
   });
 
+  it('starts an explicitly selected desktop scenario once, including in a populated room', async () => {
+    const empty = harness({ initialV2Scenario: 'alpine-sar' });
+    await empty.coordinator.onV2Snapshot({ assetCount: 0, scenario: null });
+    expect(empty.v2Starts).toEqual(['alpine-sar']);
+
+    const occupied = harness({ initialV2Scenario: 'alpine-sar' });
+    await occupied.coordinator.onV2Snapshot({ assetCount: 4, scenario: { name: 'flood-response', startedAtSimulationSeconds: 1, revision: 2 } });
+    await occupied.coordinator.onV2Snapshot({ assetCount: 4, scenario: { name: 'flood-response', startedAtSimulationSeconds: 1, revision: 2 } });
+    expect(occupied.v2Starts).toEqual(['alpine-sar']);
+
+    const matching = harness({ initialV2Scenario: 'alpine-sar' });
+    await matching.coordinator.onV2Snapshot({ assetCount: 4, scenario: { name: 'alpine-sar', startedAtSimulationSeconds: 1, revision: 2 } });
+    expect(matching.v2Starts).toEqual([]);
+  });
+
+  it('honors the selected scenario after a viable legacy fallback promotes to v2', async () => {
+    vi.useFakeTimers();
+    const h = harness({ initialV2Scenario: 'alpine-sar' });
+    h.coordinator.startNegotiation();
+    h.coordinator.onV1Frame(0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await h.coordinator.onV2Snapshot({ assetCount: 1, scenario: { name: 'single', startedAtSimulationSeconds: 0, revision: 1 } });
+    expect(h.v2Starts).toEqual(['alpine-sar']);
+  });
+
   it.each([
     { label: 'unknown scenario state', assetCount: 0, scenario: undefined },
     { label: 'ground-only inventory', assetCount: 1, scenario: null },

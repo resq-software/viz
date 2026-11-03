@@ -26,6 +26,8 @@ export interface StartupCoordinatorDependencies {
   readonly setBootStatus: (status: OperatorBootStatus) => void;
   readonly startLegacyScenario: (name: string) => Promise<boolean>;
   readonly startV2Scenario: (name: string) => Promise<StartupMutationResult>;
+  /** Optional validated scenario explicitly selected in a desktop deep link. */
+  readonly initialV2Scenario?: string;
   readonly schedule: (callback: () => void, delayMs: number) => number;
   readonly cancel: (id: number) => void;
 }
@@ -46,6 +48,7 @@ export class StartupCoordinator {
   private _fallbackElapsed = false;
   private _fallbackTimer: number | null = null;
   private _defaultDecided = false;
+  private _initialScenarioDecided = false;
   private _disposed = false;
 
   constructor(private readonly _deps: StartupCoordinatorDependencies) {}
@@ -100,6 +103,18 @@ export class StartupCoordinator {
     this._cancelFallback();
     this._setMode('v2');
 
+    if (this._deps.initialV2Scenario && !this._initialScenarioDecided) {
+      if (snapshot.scenario === undefined) return;
+      this._initialScenarioDecided = true;
+      this._defaultDecided = true;
+      if (snapshot.scenario?.name === this._deps.initialV2Scenario) return;
+      try {
+        await this._deps.startV2Scenario(this._deps.initialV2Scenario);
+      } catch {
+        // An explicit launch fails visibly through the ordinary scenario request surface.
+      }
+      return;
+    }
     if (this._defaultDecided) return;
     if (snapshot.assetCount > 0) {
       this._defaultDecided = true;

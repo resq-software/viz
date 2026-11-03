@@ -108,6 +108,19 @@ public class SimControllerTests
         return (ctrl, room);
     }
 
+    [Fact]
+    public void Terrain_Preset_Readback_Tracks_The_Active_Room_After_A_Scenario_Replacement()
+    {
+        var (ctrl, room) = CreateController();
+
+        ctrl.SetTerrainPreset("dunes").Should().BeOfType<OkObjectResult>();
+        ctrl.RunScenario("sar").Should().BeOfType<OkObjectResult>();
+
+        room.TerrainPreset.Should().Be("dunes");
+        var response = ctrl.GetTerrainPreset().Should().BeOfType<OkObjectResult>().Subject;
+        System.Text.Json.JsonSerializer.Serialize(response.Value).Should().Contain("\"preset\":\"dunes\"");
+    }
+
     // ─── Start / Stop ───────────────────────────────────────────────────────
 
     [Fact]

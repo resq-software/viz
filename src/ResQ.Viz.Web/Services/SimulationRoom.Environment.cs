@@ -34,6 +34,15 @@ namespace ResQ.Viz.Web.Services;
 /// </remarks>
 public sealed partial class SimulationRoom
 {
+    /// <summary>Gets the terrain preset currently used by the simulation.</summary>
+    public string TerrainPreset
+    {
+        get
+        {
+            lock (_lock) return _terrainPreset;
+        }
+    }
+
     /// <summary>Reconfigures the weather system.</summary>
     public void SetWeather(string mode, double windSpeed, double direction)
     {

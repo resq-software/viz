@@ -296,6 +296,10 @@ public sealed class SimController : ControllerBase
         return Ok(new { scenario = canonicalName, status = "started" });
     }
 
+    /// <summary>Returns the terrain preset currently used by this session.</summary>
+    [HttpGet("preset")]
+    public IActionResult GetTerrainPreset() => Ok(new { preset = Room.TerrainPreset });
+
     /// <summary>Switches the terrain preset.</summary>
     [HttpPost("preset/{key}")]
     public IActionResult SetTerrainPreset(string key)
