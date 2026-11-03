@@ -91,6 +91,7 @@ public sealed partial class SimV2Controller : ControllerBase
     private readonly IReadOnlyList<IAssetFactory> _factories;
     private readonly ControlAuthorityRegistry _authority;
     private readonly ScenarioService? _scenarios;
+    private readonly BridgeRelayService? _bridgeRelay;
     private readonly ILogger<SimV2Controller> _logger;
 
     /// <summary>Initialises the controller with the frame builder and any registered asset factories.</summary>
@@ -124,17 +125,23 @@ public sealed partial class SimV2Controller : ControllerBase
     /// not use scenario actions remain compatible; those actions return a typed unsupported
     /// response when it is absent.
     /// </param>
+    /// <param name="bridgeRelay">
+    /// Bridge relay service. When the room is bridge-driven, write operations are forwarded to
+    /// the bridge instead of dispatched locally. Optional so non-bridge controllers remain clean.
+    /// </param>
     public SimV2Controller(
         VizFrameBuilder frames,
         IEnumerable<IAssetFactory> factories,
         ILogger<SimV2Controller> logger,
         ControlAuthorityRegistry? authority = null,
-        ScenarioService? scenarios = null)
+        ScenarioService? scenarios = null,
+        BridgeRelayService? bridgeRelay = null)
     {
         _frames = frames;
         _factories = factories.ToArray();
         _authority = authority ?? ControlAuthorityRegistry.Shared;
         _scenarios = scenarios;
+        _bridgeRelay = bridgeRelay;
         _logger = logger;
     }
 
@@ -177,8 +184,16 @@ public sealed partial class SimV2Controller : ControllerBase
     /// <param name="request">Command kind, idempotency key and any target or parameters.</param>
     /// <returns>202 with a <see cref="CommandResult"/>, or a problem carrying the gate that refused it.</returns>
     [HttpPost("assets/{id}/commands")]
-    public IActionResult SendCommand(string id, [FromBody] AssetCommandRequest? request)
+    public async Task<IActionResult> SendCommand(string id, [FromBody] AssetCommandRequest? request)
     {
+        if (Room.IsBridgeMode && _bridgeRelay is not null)
+        {
+            var body = request is not null ? System.Text.Json.JsonSerializer.Serialize(request) : null;
+            var status = await _bridgeRelay!.ForwardCommandAsync(
+                Room.Id, $"assets/{id}/commands", "POST", body);
+            return StatusCode(status);
+        }
+
         var room = Room;
         var now = DateTimeOffset.UtcNow;
 

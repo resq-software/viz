@@ -157,6 +157,31 @@ public sealed class BridgeRelayService : BackgroundService
     public BridgeSession? GetSession(string roomId) => _sessions.GetValueOrDefault(roomId);
 
     /// <summary>
+    /// Forwards an arbitrary HTTP command to the bridge for the given room.
+    /// Reads the body from the current request and forwards it verbatim.
+    /// </summary>
+    /// <param name="roomId">The room whose bridge session to use.</param>
+    /// <param name="relativePath">Path relative to /api/sim (e.g. "assets/drone-1/commands").</param>
+    /// <param name="method">HTTP method (POST, DELETE, etc.).</param>
+    /// <param name="body">Optional JSON body to forward (null for no body).</param>
+    /// <returns>The HTTP response status code from the bridge, or 502 when unreachable.</returns>
+    public async Task<int> ForwardCommandAsync(string roomId, string relativePath, string method, string? body)
+    {
+        if (!_sessions.TryGetValue(roomId, out var session))
+        {
+            return StatusCodes.Status502BadGateway;
+        }
+
+        var resp = await session.HttpClient.SendCommandWithBodyAsync(method, relativePath, body);
+        if (resp is null)
+        {
+            return StatusCodes.Status502BadGateway;
+        }
+
+        return (int)resp.StatusCode;
+    }
+
+    /// <summary>
     /// Handle an incoming frame from the SSE stream, routing to the correct room.
     /// </summary>
     public void OnFrameReceived(VizBridgeFrame frame, BridgeSession session)

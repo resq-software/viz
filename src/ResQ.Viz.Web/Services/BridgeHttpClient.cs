@@ -199,21 +199,35 @@ public sealed class BridgeHttpClient : IDisposable
     }
 
     /// <summary>Send a HTTP command to the bridge.</summary>
+    /// <param name="method">HTTP method (POST, DELETE, etc.).</param>
+    /// <param name="relativePath">Path relative to /api/sim (e.g. "assets/drone-1/commands").</param>
     public async Task SendCommandAsync(string method, string relativePath)
     {
-        if (!_bridgeReachable || SessionId is null) return;
+        await SendCommandWithBodyAsync(method, relativePath, null);
+    }
+
+    /// <summary>Send a HTTP command with a JSON body to the bridge.</summary>
+    /// <param name="method">HTTP method (POST, DELETE, etc.).</param>
+    /// <param name="relativePath">Path relative to /api/sim (e.g. "assets/drone-1/commands").</param>
+    /// <param name="body">JSON body to forward, or null for an empty body.</param>
+    /// <returns>The HTTP response, or null when the bridge is unreachable or the session is invalid.</returns>
+    public async Task<HttpResponseMessage?> SendCommandWithBodyAsync(string method, string relativePath, string? body)
+    {
+        if (!_bridgeReachable || SessionId is null) return null;
         try
         {
             var url = $"{_options.BaseUrl}/api/sim/{relativePath.TrimStart('/')}";
-            var req = new HttpRequestMessage(new HttpMethod(method), url)
+            var req = new HttpRequestMessage(new HttpMethod(method), url);
+            if (body is not null)
             {
-                Content = new StringContent("{}")
-            };
-            await _http.SendAsync(req);
+                req.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            }
+            return await _http.SendAsync(req);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Bridge command failed: {Method} {Path}.", method, relativePath);
+            return null;
         }
     }
 

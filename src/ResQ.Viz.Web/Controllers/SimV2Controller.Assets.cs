@@ -81,8 +81,15 @@ public sealed partial class SimV2Controller
     /// <returns>201 with the minted identifier and descriptor, or a problem describing the refusal.</returns>
     [HttpPost("assets")]
     [EnableRateLimiting("destructive")]
-    public IActionResult SpawnAsset([FromBody] AssetSpawnRequest? request)
+    public async Task<IActionResult> SpawnAsset([FromBody] AssetSpawnRequest? request)
     {
+        if (Room.IsBridgeMode && _bridgeRelay is not null)
+        {
+            var body = request is not null ? System.Text.Json.JsonSerializer.Serialize(request) : null;
+            var status = await _bridgeRelay!.ForwardCommandAsync(Room.Id, "assets", "POST", body);
+            return StatusCode(status);
+        }
+
         if (request is null)
         {
             return Failure(
@@ -158,8 +165,14 @@ public sealed partial class SimV2Controller
     /// <returns>204 on removal, 404 when unknown, 409 when the asset cannot be removed.</returns>
     [HttpDelete("assets/{id}")]
     [EnableRateLimiting("destructive")]
-    public IActionResult RemoveAsset(string id)
+    public async Task<IActionResult> RemoveAsset(string id)
     {
+        if (Room.IsBridgeMode && _bridgeRelay is not null)
+        {
+            var status = await _bridgeRelay!.ForwardCommandAsync(Room.Id, $"assets/{id}", "DELETE", null);
+            return StatusCode(status);
+        }
+
         if (Room.TryRemoveAsset(id, out var reasonCode))
         {
             _logger.LogInformation(
