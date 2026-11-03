@@ -72,3 +72,7 @@ outputs/
 # copy free to drift from the first — and a stale notices file is worse than none,
 # because it looks like compliance.
 src/ResQ.Viz.Web/client/public/legal/notices.md
+
+# Beads runtime files at the repository root. .beads/.gitignore owns its internals.
+/.beads.gate.lock*
+/.dolt/

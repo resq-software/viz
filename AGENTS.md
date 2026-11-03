@@ -5,9 +5,10 @@
 
 ## Workspace Layout
 - `src/ResQ.Viz.Web/` — ASP.NET Core host (SignalR hub, REST API, static files)
-- `src/ResQ.Viz.Web/wwwroot/` — Three.js frontend (vanilla JS, no build tools)
+- `src/ResQ.Viz.Web/client/` — TypeScript/Three.js frontend built with Vite
+- `src/ResQ.Viz.Web/wwwroot/` — generated static assets served in production
 - `src/ResQ.Viz.Web/Hubs/` — SignalR hub for real-time frame streaming
-- `src/ResQ.Viz.Web/Services/` — SimulationService, VizFrameBuilder, ScenarioService
+- `src/ResQ.Viz.Web/Services/` — SimulationManager, VizFrameBuilder, ScenarioService
 - `src/ResQ.Viz.Web/Controllers/` — REST API for simulation control
 - `tests/ResQ.Viz.Web.Tests/` — xUnit tests
 - `lib/dotnet-sdk/` — Git submodule: resq-software/dotnet-sdk
@@ -15,10 +16,12 @@
 
 ## Commands
 ```bash
-dotnet run --project src/ResQ.Viz.Web/          # Run the viz server (http://localhost:5000)
+dotnet run --project src/ResQ.Viz.Web/          # Run Viz (HTTP 5000 redirects to HTTPS 5001 by default)
 dotnet build src/ResQ.Viz.Web/                  # Build
 dotnet test tests/ResQ.Viz.Web.Tests/           # Run tests
 git submodule update --init --recursive         # Init SDK submodule
+cd src/ResQ.Viz.Web && npm install && npm test  # Frontend dependencies and tests
+cd src/ResQ.Viz.Web && npm run build             # Production client into wwwroot/
 ```
 
 ## Architecture
@@ -29,8 +32,8 @@ git submodule update --init --recursive         # Init SDK submodule
 - REST API (`/api/sim/*`) for spawning drones, sending commands, changing weather
 
 ## Standards
-- .NET 9, ASP.NET Core
-- Frontend: vanilla JS (no npm/webpack), Three.js via CDN, SignalR JS client via CDN
+- .NET 10, ASP.NET Core (the SDK submodule libraries target .NET 9)
+- Frontend: TypeScript, Vite, Three.js and SignalR via npm
 - Tests: xUnit + FluentAssertions
 - All C# files: Apache-2.0 license header, XML doc comments on public APIs
 
