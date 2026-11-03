@@ -35,13 +35,13 @@ public partial class SimV2ControllerTests
     // ─── Commands: acceptance and lifecycle ─────────────────────────────────
 
     [Fact]
-    public void SendCommand_Stop_Returns_Accepted_With_A_Pollable_CommandResult()
+    public async Task SendCommand_Stop_Returns_Accepted_With_A_Pollable_CommandResult()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         var commandId = CommandId(1);
 
-        var (response, body) = AcceptedCommand(ctrl.SendCommand(
+        var (response, body) = AcceptedCommand(await ctrl.SendCommand(
             "uav-1", new AssetCommandRequest(CommandKinds.Stop, "key-stop", CommandId: commandId)));
 
         response.Location.Should().Be($"/api/v2/sim/commands/{commandId}");
@@ -53,12 +53,12 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void GetCommand_Reports_The_Latest_State_Of_A_Tracked_Command()
+    public async Task GetCommand_Reports_The_Latest_State_Of_A_Tracked_Command()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         var commandId = CommandId(2);
-        ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.ReturnToBase, "key-rtb", CommandId: commandId));
 
         Body<CommandResult>(ctrl.GetCommand(commandId)).State.Should().Be(CommandState.Accepted);
@@ -83,13 +83,13 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_DriveTo_Normalises_A_Framed_Target_Into_The_Scene_Frame()
+    public async Task SendCommand_DriveTo_Normalises_A_Framed_Target_Into_The_Scene_Frame()
     {
         var factory = new StubGroundFactory();
         var (ctrl, _) = CreateController(factory);
         SpawnDroneAndRover(ctrl);
 
-        AcceptedCommand(ctrl.SendCommand("ugv-1", new AssetCommandRequest(
+        AcceptedCommand(await ctrl.SendCommand("ugv-1", new AssetCommandRequest(
             CommandKinds.DriveTo,
             "key-driveto",
             CommandId: CommandId(4),
@@ -105,7 +105,7 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_Retry_With_The_Same_Key_Replays_Instead_Of_Executing_Twice()
+    public async Task SendCommand_Retry_With_The_Same_Key_Replays_Instead_Of_Executing_Twice()
     {
         var factory = new StubGroundFactory();
         var (ctrl, _) = CreateController(factory);
@@ -113,9 +113,9 @@ public partial class SimV2ControllerTests
         var first = CommandId(5);
         var retry = CommandId(6);
 
-        AcceptedCommand(ctrl.SendCommand("ugv-1", new AssetCommandRequest(
+        AcceptedCommand(await ctrl.SendCommand("ugv-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-retry", CommandId: first)));
-        var (response, body) = AcceptedCommand(ctrl.SendCommand("ugv-1", new AssetCommandRequest(
+        var (response, body) = AcceptedCommand(await ctrl.SendCommand("ugv-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-retry", CommandId: retry)));
 
         body.CommandId.Should().Be(first);
@@ -126,15 +126,15 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_Reusing_A_Key_For_A_Different_Payload_Returns_Conflict()
+    public async Task SendCommand_Reusing_A_Key_For_A_Different_Payload_Returns_Conflict()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
-        ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-shared", CommandId: CommandId(7)));
 
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.ReturnToBase, "key-shared", CommandId: CommandId(8))),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandRejectionReasons.IdempotencyKeyReuse);
@@ -143,25 +143,25 @@ public partial class SimV2ControllerTests
     // ─── Commands: the validation gates ─────────────────────────────────────
 
     [Fact]
-    public void SendCommand_UnknownAsset_Returns_NotFound()
+    public async Task SendCommand_UnknownAsset_Returns_NotFound()
     {
         var (ctrl, _) = CreateController();
 
         Problem(
-            ctrl.SendCommand("ghost", new AssetCommandRequest(
+            await ctrl.SendCommand("ghost", new AssetCommandRequest(
                 CommandKinds.Stop, "key-ghost", CommandId: CommandId(9))),
             StatusCodes.Status404NotFound)
             .Code.Should().Be(CommandRejectionReasons.AssetNotFound);
     }
 
     [Fact]
-    public void SendCommand_Without_An_IdempotencyKey_Returns_BadRequest()
+    public async Task SendCommand_Without_An_IdempotencyKey_Returns_BadRequest()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         var problem = Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(CommandKinds.Stop, "")),
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(CommandKinds.Stop, "")),
             StatusCodes.Status400BadRequest);
 
         problem.Code.Should().Be(CommandRejectionReasons.IdempotencyKeyMissing);
@@ -169,25 +169,25 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_UnknownKind_Returns_BadRequest()
+    public async Task SendCommand_UnknownKind_Returns_BadRequest()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest("explode", "key-explode")),
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest("explode", "key-explode")),
             StatusCodes.Status400BadRequest)
             .Code.Should().Be(CommandRejectionReasons.KindUnknown);
     }
 
     [Fact]
-    public void SendCommand_GoTo_Without_A_Target_Returns_BadRequest()
+    public async Task SendCommand_GoTo_Without_A_Target_Returns_BadRequest()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         var problem = Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.GoTo, "key-goto", CommandId: CommandId(10))),
             StatusCodes.Status400BadRequest);
 
@@ -196,13 +196,13 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_Target_Without_A_Frame_Is_Rejected()
+    public async Task SendCommand_Target_Without_A_Frame_Is_Rejected()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         var problem = Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.GoTo,
                 "key-bare-target",
                 CommandId: CommandId(11),
@@ -214,7 +214,7 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_Dock_On_A_Multirotor_Names_The_Missing_Capability()
+    public async Task SendCommand_Dock_On_A_Multirotor_Names_The_Missing_Capability()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -223,7 +223,7 @@ public partial class SimV2ControllerTests
         // asset-referenced one is now refused a gate earlier, at the target shape, and this case
         // is about the capability gate rather than about that.
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Dock,
                 "key-dock",
                 CommandId: CommandId(12),
@@ -233,13 +233,13 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_DriveTo_On_A_Multirotor_Does_Not_Apply_To_Its_Domain()
+    public async Task SendCommand_DriveTo_On_A_Multirotor_Does_Not_Apply_To_Its_Domain()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.DriveTo,
                 "key-driveto-air",
                 CommandId: CommandId(13),
@@ -249,14 +249,14 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SendCommand_Takeoff_On_A_Rover_Is_Rejected_With_No_Side_Effects()
+    public async Task SendCommand_Takeoff_On_A_Rover_Is_Rejected_With_No_Side_Effects()
     {
         var factory = new StubGroundFactory();
         var (ctrl, _) = CreateController(factory);
         SpawnDroneAndRover(ctrl);
 
         Problem(
-            ctrl.SendCommand("ugv-1", new AssetCommandRequest(
+            await ctrl.SendCommand("ugv-1", new AssetCommandRequest(
                 CommandKinds.Takeoff, "key-no-side-effect", CommandId: CommandId(14))),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandRejectionReasons.CapabilityNotDeclared);
@@ -264,7 +264,7 @@ public partial class SimV2ControllerTests
 
         // The refusal claimed nothing, so an honest reuse of the key is a new command rather
         // than a replay of a failure.
-        AcceptedCommand(ctrl.SendCommand("ugv-1", new AssetCommandRequest(
+        AcceptedCommand(await ctrl.SendCommand("ugv-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-no-side-effect", CommandId: CommandId(15))))
             .Body.CommandId.Should().Be(CommandId(15));
     }

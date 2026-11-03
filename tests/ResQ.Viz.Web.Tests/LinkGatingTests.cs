@@ -217,7 +217,7 @@ public sealed class LinkGatingTests
     [InlineData(CommandKinds.Stop)]
     [InlineData(CommandKinds.EmergencyStop)]
     [InlineData(CommandKinds.ReturnToBase)]
-    public void CommandToAnUnreachableAsset_IsRefusedAndAudited(string kind)
+    public async Task CommandToAnUnreachableAsset_IsRefusedAndAudited(string kind)
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, new Vector3(0f, 50f, 0f));
@@ -225,7 +225,7 @@ public sealed class LinkGatingTests
 
         var commandId = Guid.NewGuid();
         var problem = Problem(
-            ctrl.SendCommand(AssetId, new AssetCommandRequest(
+            await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 kind, $"key-{kind}", IssuerId: Operator, CommandId: commandId)),
             StatusCodes.Status409Conflict);
 
@@ -245,7 +245,7 @@ public sealed class LinkGatingTests
 
     /// <summary>The refusal touches nothing: no tracked command, and no key taken out of circulation.</summary>
     [Fact]
-    public void TheRefusal_TracksNoCommandAndClaimsNoIdempotencyKey()
+    public async Task TheRefusal_TracksNoCommandAndClaimsNoIdempotencyKey()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, new Vector3(0f, 50f, 0f));
@@ -255,14 +255,14 @@ public sealed class LinkGatingTests
         var request = new AssetCommandRequest(
             CommandKinds.Stop, "key-reused", IssuerId: Operator, CommandId: commandId);
 
-        Problem(ctrl.SendCommand(AssetId, request), StatusCodes.Status409Conflict);
+        Problem(await ctrl.SendCommand(AssetId, request), StatusCodes.Status409Conflict);
         room.Commands.TryGet(commandId, out _).Should().BeFalse();
 
         ctrl.SetAssetLink(AssetId, Restore(Operator));
 
         // The identical request, key included. A claimed key would answer this as a replay of the
         // refusal instead of executing it, which would make one refused command permanent.
-        var accepted = Accepted(ctrl.SendCommand(AssetId, request));
+        var accepted = Accepted(await ctrl.SendCommand(AssetId, request));
         accepted.CommandId.Should().Be(commandId);
         accepted.State.Should().Be(CommandState.Accepted);
         room.Commands.TryGet(commandId, out var stored).Should().BeTrue();
@@ -277,7 +277,7 @@ public sealed class LinkGatingTests
     /// latch — which is exactly the shape that strands an asset.
     /// </remarks>
     [Fact]
-    public void RestoringALink_LeavesNoResidue()
+    public async Task RestoringALink_LeavesNoResidue()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, new Vector3(0f, 50f, 0f));
@@ -285,13 +285,13 @@ public sealed class LinkGatingTests
 
         ctrl.SetAssetLink(AssetId, Cut(Operator, "drill"));
         Problem(
-            ctrl.SendCommand(AssetId, new AssetCommandRequest(
+            await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.Stop, "key-down", IssuerId: Operator, ControlLeaseId: lease.LeaseId)),
             StatusCodes.Status409Conflict);
 
         Link(ctrl.SetAssetLink(AssetId, Restore(Operator))).IsAvailable.Should().BeTrue();
 
-        Accepted(ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             CommandKinds.Stop, "key-up", IssuerId: Operator, ControlLeaseId: lease.LeaseId)))
             .State.Should().Be(CommandState.Accepted);
 
@@ -301,18 +301,18 @@ public sealed class LinkGatingTests
 
     /// <summary>An asset whose link was never cut is not gated, so nothing here changes the default.</summary>
     [Fact]
-    public void AnAssetInContact_IsNotGated()
+    public async Task AnAssetInContact_IsNotGated()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, new Vector3(0f, 50f, 0f));
 
-        Accepted(ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             CommandKinds.Stop, "key-open", IssuerId: Operator))).State.Should().Be(CommandState.Accepted);
     }
 
     /// <summary>Cutting one asset's link says nothing about any other asset in the session.</summary>
     [Fact]
-    public void TheGateIsPerAsset_NotPerSession()
+    public async Task TheGateIsPerAsset_NotPerSession()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, new Vector3(0f, 50f, 0f));
@@ -321,12 +321,12 @@ public sealed class LinkGatingTests
         ctrl.SetAssetLink(AssetId, Cut(Operator, "drill"));
 
         Problem(
-            ctrl.SendCommand(AssetId, new AssetCommandRequest(
+            await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.Stop, "key-cut", IssuerId: Operator)),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(AssetLinkReasons.Unreachable);
 
-        Accepted(ctrl.SendCommand("uav-other", new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand("uav-other", new AssetCommandRequest(
             CommandKinds.Stop, "key-other", IssuerId: Operator))).State.Should().Be(CommandState.Accepted);
     }
 

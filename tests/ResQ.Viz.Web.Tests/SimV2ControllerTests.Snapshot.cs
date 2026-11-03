@@ -33,7 +33,7 @@ public partial class SimV2ControllerTests
     // ─── Problem contract ───────────────────────────────────────────────────
 
     [Fact]
-    public void Rejected_Command_Uses_The_ProblemDetails_Shaped_Contract()
+    public async Task Rejected_Command_Uses_The_ProblemDetails_Shaped_Contract()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -43,7 +43,7 @@ public partial class SimV2ControllerTests
         // an asset-referenced berth, and a request carrying one would be answered by the target
         // gate before this test's subject — the shape of a rejection — was ever reached.
         var problem = Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Dock,
                 "key-problem",
                 CommandId: commandId,

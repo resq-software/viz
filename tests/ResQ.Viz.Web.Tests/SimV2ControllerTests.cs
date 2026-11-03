@@ -138,13 +138,13 @@ public partial class SimV2ControllerTests
     }
 
     /// <summary>Spawns <c>uav-1</c> and <c>ugv-1</c> through the v2 endpoint, asserting both landed.</summary>
-    private static void SpawnDroneAndRover(SimV2Controller ctrl)
+    private static async Task SpawnDroneAndRover(SimV2Controller ctrl)
     {
-        Spawned(ctrl.SpawnAsset(SpawnOf(
+        Spawned(await ctrl.SpawnAsset(SpawnOf(
             VehicleClass.Multirotor,
             Pose(CoordinateFrame.LocalEus, 0f, 50f, 0f, Quaternion.Identity),
             "uav-1")));
-        Spawned(ctrl.SpawnAsset(SpawnOf(
+        Spawned(await ctrl.SpawnAsset(SpawnOf(
             VehicleClass.AckermannRover, Pose(CoordinateFrame.LocalEus, 5f, 0f, 5f), "ugv-1")));
     }
 

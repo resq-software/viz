@@ -72,7 +72,7 @@ public partial class GroundWiringHardeningTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void A_Heightmap_Upload_Cannot_Land_While_The_Spawn_Endpoint_Builds_A_Rover()
+    public async Task A_Heightmap_Upload_Cannot_Land_While_The_Spawn_Endpoint_Builds_A_Rover()
     {
         var room = CreateRoom();
         using var uploadFinished = new ManualResetEventSlim(false);
@@ -90,7 +90,7 @@ public partial class GroundWiringHardeningTests
 
         var controller = CreateController(room, factory);
 
-        Spawned(controller.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await controller.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.AckermannRover, ScenePose(RoverSpawn), AssetId: ProbeId)));
 
         AssertUploadCompletes(uploader, uploadFinished);
@@ -258,12 +258,12 @@ public partial class GroundWiringHardeningTests
     [InlineData(VehicleClass.AckermannRover)]
     [InlineData(VehicleClass.DifferentialRover)]
     [InlineData(VehicleClass.TrackedRover)]
-    public void A_Rover_Is_Never_Offered_A_Steering_Control_It_Would_Refuse(VehicleClass vehicleClass)
+    public async Task A_Rover_Is_Never_Offered_A_Steering_Control_It_Would_Refuse(VehicleClass vehicleClass)
     {
         var room = CreateRoom();
         var controller = CreateController(room, ShippedFactories());
 
-        Spawned(controller.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await controller.SpawnAsset(new AssetSpawnRequest(
             vehicleClass, ScenePose(RoverSpawn), AssetId: ProbeId)));
 
         var report = Body<AssetCapabilitiesResponse>(controller.GetAssetCapabilities(ProbeId));

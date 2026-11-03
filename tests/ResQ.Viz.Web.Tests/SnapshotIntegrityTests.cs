@@ -367,12 +367,12 @@ public sealed partial class SnapshotIntegrityTests : IClassFixture<WebApplicatio
     [InlineData(VehicleClass.DifferentialRover)]
     [InlineData(VehicleClass.TrackedRover)]
     [InlineData(VehicleClass.SurfaceVessel)]
-    public void Spawning_A_Class_With_No_Registered_Model_Is_Refused_With_A_Reason_Code(
+    public async Task Spawning_A_Class_With_No_Registered_Model_Is_Refused_With_A_Reason_Code(
         VehicleClass vehicleClass)
     {
         var (ctrl, room) = CreateController();
 
-        var result = ctrl.SpawnAsset(new AssetSpawnRequest(
+        var result = await ctrl.SpawnAsset(new AssetSpawnRequest(
             vehicleClass,
             new FramedPose(CoordinateFrame.LocalEus, null, new Vector3(5f, 0f, 5f), Quaternion.Identity),
             AssetId: "asset-1"));

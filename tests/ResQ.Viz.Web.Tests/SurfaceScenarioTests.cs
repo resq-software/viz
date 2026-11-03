@@ -103,11 +103,11 @@ public sealed partial class SurfaceScenarioTests
     /// <c>201</c>, and the asset is present in the frame rather than merely acknowledged.
     /// </remarks>
     [Fact]
-    public void Spawning_A_Vessel_Through_The_V2_Api_Puts_It_In_The_Asset_Snapshot()
+    public async Task Spawning_A_Vessel_Through_The_V2_Api_Puts_It_In_The_Asset_Snapshot()
     {
         var (ctrl, room) = CreateController();
 
-        var spawned = Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        var spawned = Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.SurfaceVessel, ScenePose(VesselSpawn), AssetId: "usv-1")));
 
         spawned.AssetId.Should().Be("usv-1");
@@ -131,11 +131,11 @@ public sealed partial class SurfaceScenarioTests
     /// factory which stopped floating, because a submerged vessel still serialises perfectly.
     /// </remarks>
     [Fact]
-    public void A_Spawned_Vessel_Floats_On_The_Water_Surface_Not_The_Requested_Height()
+    public async Task A_Spawned_Vessel_Floats_On_The_Water_Surface_Not_The_Requested_Height()
     {
         var (ctrl, room) = CreateController();
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.SurfaceVessel, ScenePose(VesselSpawn), AssetId: "usv-1")));
 
         var state = room.CaptureAssetFrame().Assets.Should().ContainSingle().Which;
@@ -160,11 +160,11 @@ public sealed partial class SurfaceScenarioTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_Capability_Report_For_A_Vessel_Offers_The_Surface_Command_Set()
+    public async Task The_Capability_Report_For_A_Vessel_Offers_The_Surface_Command_Set()
     {
         var (ctrl, _) = CreateController();
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.SurfaceVessel, ScenePose(VesselSpawn), AssetId: "usv-1")));
 
         var report = Body<AssetCapabilitiesResponse>(ctrl.GetAssetCapabilities("usv-1"));
@@ -211,12 +211,12 @@ public sealed partial class SurfaceScenarioTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void A_Preset_Spawns_Vessels_Through_The_Same_Registry_The_Api_Uses()
+    public async Task A_Preset_Spawns_Vessels_Through_The_Same_Registry_The_Api_Uses()
     {
         var apiRoom = CreateRoom();
         var apiController = ControllerFor(apiRoom);
 
-        Spawned(apiController.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await apiController.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.SurfaceVessel, ScenePose(VesselSpawn), AssetId: "usv-1")));
 
         var presetRoom = CreateRoom();
@@ -249,12 +249,12 @@ public sealed partial class SurfaceScenarioTests
     /// client, so a vessel appearing there is an entity no v1 renderer can draw.
     /// </remarks>
     [Fact]
-    public void A_Vessel_Spawned_Through_The_V2_Api_Is_Invisible_To_The_V1_Frame()
+    public async Task A_Vessel_Spawned_Through_The_V2_Api_Is_Invisible_To_The_V1_Frame()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(-760f, 140f, -240f));
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.SurfaceVessel, ScenePose(VesselSpawn), AssetId: "usv-1")));
 
         room.CaptureAssetFrame().Descriptors.Should().HaveCount(
@@ -310,7 +310,7 @@ public sealed partial class SurfaceScenarioTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void No_Route_Commands_A_Track_And_No_Command_Resolves_One()
+    public async Task No_Route_Commands_A_Track_And_No_Command_Resolves_One()
     {
         // Read through IRouteTemplateProvider rather than any one attribute type, so a command
         // route added with [HttpPost], [HttpPut] or a bare [Route] is caught the same way.
@@ -330,7 +330,7 @@ public sealed partial class SurfaceScenarioTests
         Created(ctrl.ReportTrack(Contact("mv-astrid", new Vector3(-900f, 3f, -260f))));
 
         var problem = Problem(
-            ctrl.SendCommand("mv-astrid", new AssetCommandRequest(
+            await ctrl.SendCommand("mv-astrid", new AssetCommandRequest(
                 CommandKinds.TransitTo,
                 "key-track-command",
                 CommandId: Guid.NewGuid(),
@@ -351,11 +351,11 @@ public sealed partial class SurfaceScenarioTests
     /// not.
     /// </remarks>
     [Fact]
-    public void A_Contact_Closing_On_A_Vessel_Produces_An_Advisory()
+    public async Task A_Contact_Closing_On_A_Vessel_Produces_An_Advisory()
     {
         var (ctrl, room) = CreateController();
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.SurfaceVessel, ScenePose(VesselSpawn), AssetId: "usv-1")));
 
         // South-west of the vessel and making towards it at a few knots.

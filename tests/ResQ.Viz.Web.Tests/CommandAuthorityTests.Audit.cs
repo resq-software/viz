@@ -34,14 +34,14 @@ public partial class CommandAuthorityTests
 
     /// <summary>An accepted command's record carries every field an incident review needs.</summary>
     [Fact]
-    public void AcceptedCommand_IsRecordedWithEveryField()
+    public async Task AcceptedCommand_IsRecordedWithEveryField()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         var lease = Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-a"))).Lease;
         var commandId = Guid.Parse("22222222-2222-4222-8222-222222222222");
 
-        Accepted(ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.ReturnToBase, "key-audit", IssuerId: "operator-a",
             CommandId: commandId, ControlLeaseId: lease.LeaseId)));
 
@@ -60,14 +60,14 @@ public partial class CommandAuthorityTests
 
     /// <summary>A refusal is recorded with the code that caused it, and the sequence keeps counting.</summary>
     [Fact]
-    public void RefusedCommand_IsRecordedWithItsReason()
+    public async Task RefusedCommand_IsRecordedWithItsReason()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-a")));
         var commandId = Guid.Parse("33333333-3333-4333-8333-333333333333");
 
-        ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-refused", IssuerId: "operator-b", CommandId: commandId));
 
         var record = Decisions(room).Last();
@@ -83,7 +83,7 @@ public partial class CommandAuthorityTests
 
     /// <summary>The trail is a window, not a ledger: it stays bounded however long a session runs.</summary>
     [Fact]
-    public void DecisionTrail_StaysBounded()
+    public async Task DecisionTrail_StaysBounded()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -91,7 +91,7 @@ public partial class CommandAuthorityTests
 
         for (var i = 0; i < 400; i++)
         {
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Stop, $"key-{i}", IssuerId: "operator-b"));
         }
 

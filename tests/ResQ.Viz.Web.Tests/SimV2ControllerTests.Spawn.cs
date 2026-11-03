@@ -35,11 +35,11 @@ public partial class SimV2ControllerTests
     // ─── SpawnAsset: coordinate frames ──────────────────────────────────────
 
     [Fact]
-    public void SpawnAsset_FramedPose_Creates_Air_Asset()
+    public async Task SpawnAsset_FramedPose_Creates_Air_Asset()
     {
         var (ctrl, room) = CreateController();
 
-        var response = Spawned(ctrl.SpawnAsset(SpawnOf(
+        var response = Spawned(await ctrl.SpawnAsset(SpawnOf(
             VehicleClass.Multirotor,
             Pose(CoordinateFrame.LocalEus, 10f, 50f, 20f, Quaternion.Identity),
             "uav-1")));
@@ -53,12 +53,12 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_UnspecifiedFrame_Is_Rejected_With_No_Asset_Created()
+    public async Task SpawnAsset_UnspecifiedFrame_Is_Rejected_With_No_Asset_Created()
     {
         var (ctrl, room) = CreateController();
 
         var problem = Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.Unspecified, 0f, 50f, 0f, Quaternion.Identity))),
             StatusCodes.Status400BadRequest);
@@ -69,12 +69,12 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_GeodeticFrame_Is_Rejected_Rather_Than_Assumed()
+    public async Task SpawnAsset_GeodeticFrame_Is_Rejected_Rather_Than_Assumed()
     {
         var (ctrl, _) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.GlobalWgs84, 0f, 50f, 0f, Quaternion.Identity))),
             StatusCodes.Status400BadRequest)
@@ -82,13 +82,13 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_NedPose_Is_Converted_To_The_Scene_Frame()
+    public async Task SpawnAsset_NedPose_Is_Converted_To_The_Scene_Frame()
     {
         var factory = new StubGroundFactory();
         var (ctrl, _) = CreateController(factory);
 
         // NED -> EUS: x_eus = y_ned, y_eus = -z_ned, z_eus = -x_ned.
-        Spawned(ctrl.SpawnAsset(SpawnOf(
+        Spawned(await ctrl.SpawnAsset(SpawnOf(
             VehicleClass.AckermannRover,
             Pose(CoordinateFrame.LocalNed, 10f, 20f, -30f),
             "ugv-1")));
@@ -103,12 +103,12 @@ public partial class SimV2ControllerTests
     // ─── SpawnAsset: non-finite and out-of-range coordinates ────────────────
 
     [Fact]
-    public void SpawnAsset_NaNPosition_Returns_BadRequest()
+    public async Task SpawnAsset_NaNPosition_Returns_BadRequest()
     {
         var (ctrl, room) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.LocalEus, float.NaN, 50f, 0f, Quaternion.Identity))),
             StatusCodes.Status400BadRequest)
@@ -117,12 +117,12 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_InfinityPosition_Returns_BadRequest()
+    public async Task SpawnAsset_InfinityPosition_Returns_BadRequest()
     {
         var (ctrl, room) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.LocalEus, 0f, float.PositiveInfinity, 0f, Quaternion.Identity))),
             StatusCodes.Status400BadRequest)
@@ -131,12 +131,12 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_Position_Beyond_World_Extent_Returns_BadRequest()
+    public async Task SpawnAsset_Position_Beyond_World_Extent_Returns_BadRequest()
     {
         var (ctrl, _) = CreateController();
 
         var problem = Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.LocalEus, 1_000_000f, 50f, 0f, Quaternion.Identity))),
             StatusCodes.Status400BadRequest);
@@ -148,21 +148,21 @@ public partial class SimV2ControllerTests
     // ─── SpawnAsset: identity, class and capacity ───────────────────────────
 
     [Fact]
-    public void SpawnAsset_NullBody_Returns_BadRequest()
+    public async Task SpawnAsset_NullBody_Returns_BadRequest()
     {
         var (ctrl, _) = CreateController();
 
-        Problem(ctrl.SpawnAsset(null), StatusCodes.Status400BadRequest)
+        Problem(await ctrl.SpawnAsset(null), StatusCodes.Status400BadRequest)
             .Code.Should().Be(AssetProblems.RequestInvalid);
     }
 
     [Fact]
-    public void SpawnAsset_UnsupportedVehicleClass_Returns_BadRequest()
+    public async Task SpawnAsset_UnsupportedVehicleClass_Returns_BadRequest()
     {
         var (ctrl, _) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.FixedWing,
                 Pose(CoordinateFrame.LocalEus, 0f, 50f, 0f, Quaternion.Identity))),
             StatusCodes.Status400BadRequest)
@@ -170,12 +170,12 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_MalformedAssetId_Returns_BadRequest()
+    public async Task SpawnAsset_MalformedAssetId_Returns_BadRequest()
     {
         var (ctrl, _) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.LocalEus, 0f, 50f, 0f, Quaternion.Identity),
                 "uav/../etc")),
@@ -184,25 +184,25 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_DuplicateAssetId_Returns_Conflict()
+    public async Task SpawnAsset_DuplicateAssetId_Returns_Conflict()
     {
         var (ctrl, _) = CreateController();
         var pose = Pose(CoordinateFrame.LocalEus, 0f, 50f, 0f, Quaternion.Identity);
-        Spawned(ctrl.SpawnAsset(SpawnOf(VehicleClass.Multirotor, pose, "uav-1")));
+        Spawned(await ctrl.SpawnAsset(SpawnOf(VehicleClass.Multirotor, pose, "uav-1")));
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(VehicleClass.Multirotor, pose, "uav-1")),
+            await ctrl.SpawnAsset(SpawnOf(VehicleClass.Multirotor, pose, "uav-1")),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(AssetProblems.AssetIdTaken);
     }
 
     [Fact]
-    public void SpawnAsset_Air_With_Unsupported_Metadata_Is_Refused_Not_Dropped()
+    public async Task SpawnAsset_Air_With_Unsupported_Metadata_Is_Refused_Not_Dropped()
     {
         var (ctrl, room) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(new AssetSpawnRequest(
+            await ctrl.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.LocalEus, 0f, 50f, 0f, Quaternion.Identity),
                 AssetId: "uav-1",
@@ -213,19 +213,19 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void SpawnAsset_Ground_Without_A_Registered_Model_Returns_NotImplemented()
+    public async Task SpawnAsset_Ground_Without_A_Registered_Model_Returns_NotImplemented()
     {
         var (ctrl, _) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.AckermannRover, Pose(CoordinateFrame.LocalEus, 0f, 0f, 0f))),
             StatusCodes.Status501NotImplemented)
             .Code.Should().Be(AssetProblems.MobilityModelUnavailable);
     }
 
     [Fact]
-    public void SpawnAsset_AtDroneCapacity_Returns_TooManyRequests()
+    public async Task SpawnAsset_AtDroneCapacity_Returns_TooManyRequests()
     {
         var (ctrl, room) = CreateController();
         for (var i = 0; i < 50; i++)
@@ -234,7 +234,7 @@ public partial class SimV2ControllerTests
         }
 
         Problem(
-            ctrl.SpawnAsset(SpawnOf(
+            await ctrl.SpawnAsset(SpawnOf(
                 VehicleClass.Multirotor,
                 Pose(CoordinateFrame.LocalEus, 0f, 50f, 0f, Quaternion.Identity))),
             StatusCodes.Status429TooManyRequests)

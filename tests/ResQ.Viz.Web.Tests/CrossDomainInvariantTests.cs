@@ -152,7 +152,7 @@ public sealed class CrossDomainInvariantTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void Every_Advertised_Command_And_Target_Shape_Is_One_The_Asset_Accepts()
+    public async Task Every_Advertised_Command_And_Target_Shape_Is_One_The_Asset_Accepts()
     {
         var divergences = new SortedSet<string>(StringComparer.Ordinal);
         var domainsProbed = new SortedSet<AssetDomain>();
@@ -164,7 +164,7 @@ public sealed class CrossDomainInvariantTests
             var domain = AssetProfiles.DomainFor(vehicleClass);
             var descriptor = AssetProfiles.Create(ProbeId, vehicleClass);
 
-            foreach (var command in AdvertisedCommands(vehicleClass))
+            foreach (var command in await AdvertisedCommands(vehicleClass))
             {
                 foreach (var shape in ShapesToProbe(command))
                 {
@@ -173,12 +173,12 @@ public sealed class CrossDomainInvariantTests
                     // refused for a reason that says nothing about whether it was executable.
                     var (controller, room) = AnchoredController();
                     PrepareWorld(room, domain);
-                    Spawned(controller.SpawnAsset(SpawnRequest(vehicleClass, domain)));
+                    Spawned(await controller.SpawnAsset(SpawnRequest(vehicleClass, domain)));
 
                     domainsProbed.Add(domain);
                     probed++;
 
-                    var problem = Issue(controller, command, shape, domain, descriptor.Motion);
+                    var problem = await Issue(controller, command, shape, domain, descriptor.Motion);
 
                     if (problem is null)
                     {
@@ -666,13 +666,13 @@ public sealed class CrossDomainInvariantTests
     /// </remarks>
     /// <param name="vehicleClass">Class to interrogate.</param>
     /// <returns>The advertised commands, in catalog order.</returns>
-    private static IReadOnlyList<AssetCommandCapability> AdvertisedCommands(VehicleClass vehicleClass)
+    private static async Task<IReadOnlyList<AssetCommandCapability>> AdvertisedCommands(VehicleClass vehicleClass)
     {
         var domain = AssetProfiles.DomainFor(vehicleClass);
         var (controller, room) = AnchoredController();
 
         PrepareWorld(room, domain);
-        Spawned(controller.SpawnAsset(SpawnRequest(vehicleClass, domain)));
+        Spawned(await controller.SpawnAsset(SpawnRequest(vehicleClass, domain)));
 
         return Body<AssetCapabilitiesResponse>(controller.GetAssetCapabilities(ProbeId)).Commands;
     }
@@ -794,7 +794,7 @@ public sealed class CrossDomainInvariantTests
     /// <param name="domain">Domain of the asset.</param>
     /// <param name="motion">The asset's declared motion envelope.</param>
     /// <returns>The problem the endpoint answered with, or null when the command was accepted.</returns>
-    private static CommandProblemDetails? Issue(
+    private static async Task<CommandProblemDetails?> Issue(
         SimV2Controller controller,
         AssetCommandCapability command,
         string shape,
@@ -811,7 +811,7 @@ public sealed class CrossDomainInvariantTests
             Target: TargetFor(shape, aim),
             Parameters: ParametersFor(command, motion, here.Y + 20.0));
 
-        var result = controller.SendCommand(ProbeId, request);
+        var result = await controller.SendCommand(ProbeId, request);
 
         return result is ObjectResult { Value: CommandProblemDetails problem } ? problem : null;
     }

@@ -71,6 +71,18 @@ public sealed class BridgeHttpClient : IDisposable
     }
 
     /// <summary>
+    /// Sets the bridge reachability state and session id for test scenarios.
+    /// </summary>
+    internal void SetConnected(bool connected, string? sessionId = null)
+    {
+        _bridgeReachable = connected;
+        if (sessionId is not null)
+        {
+            SessionId = sessionId;
+        }
+    }
+
+    /// <summary>
     /// Binds frame/snapshot callbacks to a relay service handler, capturing the session
     /// so inbound frames route to the correct room.
     /// </summary>

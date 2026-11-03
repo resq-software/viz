@@ -171,13 +171,13 @@ public sealed partial class AssetCommandHardeningTests
     // ── A4: geodetic targets are resolved, or honestly refused ────────────────
 
     [Fact]
-    public void A_Geodetic_Target_Is_Refused_As_Configuration_When_The_Scene_Is_Unanchored()
+    public async Task A_Geodetic_Target_Is_Refused_As_Configuration_When_The_Scene_Is_Unanchored()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
 
         var problem = Problem(
-            ctrl.SendCommand(AssetId, new AssetCommandRequest(
+            await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.GoTo,
                 "key-geo-unanchored",
                 CommandId: Guid.NewGuid(),
@@ -191,19 +191,19 @@ public sealed partial class AssetCommandHardeningTests
     }
 
     [Fact]
-    public void A_Geodetic_Target_Resolves_To_The_Scene_Point_It_Names()
+    public async Task A_Geodetic_Target_Resolves_To_The_Scene_Point_It_Names()
     {
         var (ctrl, room) = CreateController(AnchoredConfiguration());
         room.AddDrone(AssetId, SpawnEus);
 
         var expected = new Vector3(120f, 50f, -80f);
 
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        (await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.GoTo,
                 "key-geo-anchored",
                 CommandId: Guid.NewGuid(),
                 Target: new GeoCommandTarget(CoordinateFrames.LocalEusToGeo(expected, Origin))))
-            .Should().BeOfType<AcceptedResult>(
+            ).Should().BeOfType<AcceptedResult>(
                 "a geodetic target is resolvable once the scene is anchored");
 
         Settle(room);
@@ -253,13 +253,13 @@ public sealed partial class AssetCommandHardeningTests
     // ── A5: an altitude names the datum it is measured against ───────────────
 
     [Fact]
-    public void An_Altitude_Without_A_Vertical_Reference_Is_Refused()
+    public async Task An_Altitude_Without_A_Vertical_Reference_Is_Refused()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
 
         Problem(
-            ctrl.SendCommand(AssetId, new AssetCommandRequest(
+            await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.SetAltitude,
                 "key-bare-altitude",
                 CommandId: Guid.NewGuid(),
@@ -273,13 +273,13 @@ public sealed partial class AssetCommandHardeningTests
     [InlineData("waterSurface")]
     [InlineData("3")]
     [InlineData("banana")]
-    public void An_Unusable_Vertical_Reference_Is_Refused(string reference)
+    public async Task An_Unusable_Vertical_Reference_Is_Refused(string reference)
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
 
         Problem(
-            ctrl.SendCommand(AssetId, new AssetCommandRequest(
+            await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.SetAltitude,
                 $"key-datum-{reference}",
                 CommandId: Guid.NewGuid(),
@@ -289,7 +289,7 @@ public sealed partial class AssetCommandHardeningTests
     }
 
     [Fact]
-    public void An_Above_Ground_Altitude_Is_Flown_Against_The_Terrain_Under_The_Asset()
+    public async Task An_Above_Ground_Altitude_Is_Flown_Against_The_Terrain_Under_The_Asset()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
@@ -302,12 +302,12 @@ public sealed partial class AssetCommandHardeningTests
         Math.Abs(terrain).Should().BeGreaterThan(
             5.0, "this fixture only means anything where the ground is not at the scene datum");
 
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        (await ctrl.SendCommand(AssetId, new AssetCommandRequest(
                 CommandKinds.SetAltitude,
                 "key-agl",
                 CommandId: Guid.NewGuid(),
                 Parameters: Altitude("60", nameof(VerticalReference.AboveGround))))
-            .Should().BeOfType<AcceptedResult>();
+            ).Should().BeOfType<AcceptedResult>();
 
         Settle(room);
 

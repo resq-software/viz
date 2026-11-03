@@ -90,12 +90,12 @@ public sealed class SpawnValidationHardeningTests
     /// transient payload. It is refused outright, and nothing survives the refusal.
     /// </summary>
     [Fact]
-    public void SpawnAsset_Rejects_An_Unbounded_Vendor_Without_Retaining_It()
+    public async Task SpawnAsset_Rejects_An_Unbounded_Vendor_Without_Retaining_It()
     {
         var (ctrl, room) = CreateController();
 
         var problem = Problem(
-            ctrl.SpawnAsset(new AssetSpawnRequest(
+            await ctrl.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.Multirotor,
                 Pose(10f, 50f, 20f, Quaternion.Identity),
                 AssetId: "uav-1",
@@ -116,12 +116,12 @@ public sealed class SpawnValidationHardeningTests
     [InlineData("Acme\r\n2024-01-01 INFO forged log line")]
     [InlineData("Acme\tInc")]
     [InlineData("<script>alert(1)</script>")]
-    public void SpawnAsset_Rejects_A_Vendor_Outside_The_Allow_List(string vendor)
+    public async Task SpawnAsset_Rejects_A_Vendor_Outside_The_Allow_List(string vendor)
     {
         var (ctrl, room) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(new AssetSpawnRequest(
+            await ctrl.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.Multirotor,
                 Pose(10f, 50f, 20f, Quaternion.Identity),
                 AssetId: "uav-1",
@@ -137,11 +137,11 @@ public sealed class SpawnValidationHardeningTests
     /// gets deleted, so the accepted case is pinned as tightly as the rejected ones.
     /// </remarks>
     [Fact]
-    public void SpawnAsset_Accepts_And_Retains_A_Realistic_Vendor_Name()
+    public async Task SpawnAsset_Accepts_And_Retains_A_Realistic_Vendor_Name()
     {
         var (ctrl, _) = CreateController();
 
-        var response = Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        var response = Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.Multirotor,
             Pose(10f, 50f, 20f, Quaternion.Identity),
             AssetId: "uav-1",
@@ -152,11 +152,11 @@ public sealed class SpawnValidationHardeningTests
 
     /// <summary>The length limit is a boundary, not a suggestion: 64 in, 65 out.</summary>
     [Fact]
-    public void SpawnAsset_Bounds_A_Vendor_At_SixtyFour_Characters()
+    public async Task SpawnAsset_Bounds_A_Vendor_At_SixtyFour_Characters()
     {
         var (ctrl, _) = CreateController();
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.Multirotor,
             Pose(0f, 50f, 0f, Quaternion.Identity),
             AssetId: "uav-1",
@@ -164,7 +164,7 @@ public sealed class SpawnValidationHardeningTests
             .Descriptor.Vendor.Should().HaveLength(64);
 
         Problem(
-            ctrl.SpawnAsset(new AssetSpawnRequest(
+            await ctrl.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.Multirotor,
                 Pose(0f, 50f, 0f, Quaternion.Identity),
                 AssetId: "uav-2",
@@ -184,7 +184,7 @@ public sealed class SpawnValidationHardeningTests
     [InlineData("model")]
     [InlineData("agencyId")]
     [InlineData("fleetId")]
-    public void SpawnAsset_Bounds_Every_Free_Text_Field_Before_Reporting_A_Missing_Model(string field)
+    public async Task SpawnAsset_Bounds_Every_Free_Text_Field_Before_Reporting_A_Missing_Model(string field)
     {
         var (ctrl, room) = CreateController();
         var overlong = new string('x', 512);
@@ -198,7 +198,7 @@ public sealed class SpawnValidationHardeningTests
             AgencyId: field == "agencyId" ? overlong : null,
             FleetId: field == "fleetId" ? overlong : null);
 
-        var problem = Problem(ctrl.SpawnAsset(request), StatusCodes.Status400BadRequest);
+        var problem = Problem(await ctrl.SpawnAsset(request), StatusCodes.Status400BadRequest);
 
         problem.Code.Should().Be(AssetProblems.RequestInvalid);
         problem.Errors.Should().ContainSingle().Which.Field.Should().Be(field);
@@ -210,12 +210,12 @@ public sealed class SpawnValidationHardeningTests
     /// model, the spawn still reports the gap it always did.
     /// </summary>
     [Fact]
-    public void SpawnAsset_With_Acceptable_Metadata_Still_Reports_A_Missing_Motion_Model()
+    public async Task SpawnAsset_With_Acceptable_Metadata_Still_Reports_A_Missing_Motion_Model()
     {
         var (ctrl, _) = CreateController();
 
         Problem(
-            ctrl.SpawnAsset(new AssetSpawnRequest(
+            await ctrl.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.AckermannRover,
                 Pose(5f, 0f, 5f),
                 AssetId: "ugv-1",
@@ -398,12 +398,12 @@ public sealed class SpawnValidationHardeningTests
     /// to zero. It is now refused, and nothing is created.
     /// </summary>
     [Fact]
-    public void SpawnAsset_Refuses_An_Over_Large_Orientation_Instead_Of_Facing_North()
+    public async Task SpawnAsset_Refuses_An_Over_Large_Orientation_Instead_Of_Facing_North()
     {
         var (ctrl, room) = CreateController();
 
         var problem = Problem(
-            ctrl.SpawnAsset(new AssetSpawnRequest(
+            await ctrl.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.Multirotor,
                 Pose(10f, 50f, 20f, new Quaternion(1e20f, 0f, 0f, 0f)),
                 AssetId: "uav-1")),

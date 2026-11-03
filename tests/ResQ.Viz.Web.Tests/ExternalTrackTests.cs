@@ -154,7 +154,7 @@ public sealed partial class ExternalTrackTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void Every_Command_Kind_Addressed_To_A_Track_Resolves_No_Asset_And_Changes_Nothing()
+    public async Task Every_Command_Kind_Addressed_To_A_Track_Resolves_No_Asset_And_Changes_Nothing()
     {
         var (controller, room) = Api();
         var reported = ReportContact(controller, ContactId);
@@ -163,7 +163,7 @@ public sealed partial class ExternalTrackTests
         foreach (var definition in CommandCatalog.All)
         {
             var commandId = CommandId(++ordinal);
-            var result = controller.SendCommand(ContactId, ProbeFor(definition, commandId, ordinal));
+            var result = await controller.SendCommand(ContactId, ProbeFor(definition, commandId, ordinal));
 
             result.Should().NotBeOfType<AcceptedResult>(
                 "'{0}' must never be accepted for a contact", definition.Kind);

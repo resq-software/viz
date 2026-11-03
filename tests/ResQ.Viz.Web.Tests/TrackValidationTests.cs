@@ -257,12 +257,12 @@ public sealed class TrackValidationTests
     /// <summary>A spawn naming an undeclared vehicle class is refused.</summary>
     [Theory]
     [MemberData(nameof(UndeclaredValues))]
-    public void An_Undeclared_VehicleClass_Is_Refused(int value)
+    public async Task An_Undeclared_VehicleClass_Is_Refused(int value)
     {
         var (api, room) = Api();
 
         var problem = Problem(
-            api.SpawnAsset(new AssetSpawnRequest((VehicleClass)value, SpawnPose())),
+            await api.SpawnAsset(new AssetSpawnRequest((VehicleClass)value, SpawnPose())),
             StatusCodes.Status400BadRequest);
 
         problem.Code.Should().Be(AssetProblems.VehicleClassUnsupported);
@@ -273,12 +273,12 @@ public sealed class TrackValidationTests
     /// <summary>A spawn pose naming an undeclared coordinate frame is refused.</summary>
     [Theory]
     [MemberData(nameof(UndeclaredValues))]
-    public void An_Undeclared_Spawn_Frame_Is_Refused(int value)
+    public async Task An_Undeclared_Spawn_Frame_Is_Refused(int value)
     {
         var (api, room) = Api();
 
         var problem = Problem(
-            api.SpawnAsset(new AssetSpawnRequest(
+            await api.SpawnAsset(new AssetSpawnRequest(
                 VehicleClass.Multirotor,
                 new FramedPose((CoordinateFrame)value, null, new Vector3(10f, 20f, 30f), Quaternion.Identity))),
             StatusCodes.Status400BadRequest);
@@ -308,13 +308,13 @@ public sealed class TrackValidationTests
     /// <summary>A command declaring an undeclared coordinate frame is refused.</summary>
     [Theory]
     [MemberData(nameof(UndeclaredValues))]
-    public void An_Undeclared_Command_Frame_Is_Refused(int value)
+    public async Task An_Undeclared_Command_Frame_Is_Refused(int value)
     {
         var (api, room) = Api();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         var problem = Problem(
-            api.SendCommand("uav-1", new AssetCommandRequest(
+            await api.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Hold, $"key-frame-{value}", CommandId: Guid.NewGuid(),
                 Frame: (CoordinateFrame)value)),
             StatusCodes.Status400BadRequest);
@@ -326,13 +326,13 @@ public sealed class TrackValidationTests
     /// <summary>A command target whose pose names an undeclared frame is refused.</summary>
     [Theory]
     [MemberData(nameof(UndeclaredValues))]
-    public void An_Undeclared_Target_Frame_Is_Refused(int value)
+    public async Task An_Undeclared_Target_Frame_Is_Refused(int value)
     {
         var (api, room) = Api();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         var problem = Problem(
-            api.SendCommand("uav-1", new AssetCommandRequest(
+            await api.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.GoTo, $"key-target-{value}", CommandId: Guid.NewGuid(),
                 Target: new PointCommandTarget(new FramedPose(
                     (CoordinateFrame)value, null, new Vector3(10f, 20f, 30f), Quaternion.Identity)))),
@@ -354,15 +354,15 @@ public sealed class TrackValidationTests
     /// <c>Enum.IsDefined</c> check has to land in the catalog's geodetic gate in the same commit.
     /// </remarks>
     [Fact]
-    public void An_Undeclared_Datum_On_A_Geodetic_Target_Is_Never_Executed()
+    public async Task An_Undeclared_Datum_On_A_Geodetic_Target_Is_Never_Executed()
     {
         var (api, room) = Api();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
         var target = new GeoCommandTarget(new GeoPosition(40.7128, -74.0060, 12.0, (VerticalReference)77));
 
-        api.SendCommand("uav-1", new AssetCommandRequest(
-                CommandKinds.GoTo, "key-geo-datum", CommandId: Guid.NewGuid(), Target: target))
+        (await api.SendCommand("uav-1", new AssetCommandRequest(
+                CommandKinds.GoTo, "key-geo-datum", CommandId: Guid.NewGuid(), Target: target)))
             .Should().BeAssignableTo<ObjectResult>()
             .Which.StatusCode.Should().NotBe(StatusCodes.Status202Accepted);
 

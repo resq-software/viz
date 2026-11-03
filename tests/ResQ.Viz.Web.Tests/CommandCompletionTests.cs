@@ -57,12 +57,12 @@ public sealed class CommandCompletionTests
 
     /// <summary>Drives a rover to a point it can reach and reads the outcome off the log.</summary>
     [Fact]
-    public void Reaching_The_Commanded_Position_Reports_The_Command_Succeeded()
+    public async Task Reaching_The_Commanded_Position_Reports_The_Command_Succeeded()
     {
         var (ctrl, room) = RoomWithRover();
 
         var commandId = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(commandId, east: 6f, south: 0f)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(commandId, east: 6f, south: 0f)));
 
         room.Commands.TryGet(commandId, out var accepted).Should().BeTrue();
         accepted!.State.Should().Be(CommandState.Accepted);
@@ -84,12 +84,12 @@ public sealed class CommandCompletionTests
     /// it while reporting every command complete the instant it was issued.
     /// </remarks>
     [Fact]
-    public void A_Command_Still_Under_Way_Stays_Accepted()
+    public async Task A_Command_Still_Under_Way_Stays_Accepted()
     {
         var (ctrl, room) = RoomWithRover();
 
         var commandId = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(commandId, east: 4000f, south: 0f)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(commandId, east: 4000f, south: 0f)));
 
         for (var i = 0; i < 20; i++)
         {
@@ -108,12 +108,12 @@ public sealed class CommandCompletionTests
     /// was already over.
     /// </remarks>
     [Fact]
-    public void An_Arrival_Settles_Only_The_Command_That_Asked_For_It()
+    public async Task An_Arrival_Settles_Only_The_Command_That_Asked_For_It()
     {
         var (ctrl, room) = RoomWithRover();
 
         var first = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(first, east: 6f, south: 0f)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(first, east: 6f, south: 0f)));
         StepUntilTerminal(room, first);
 
         room.Commands.TryGet(first, out var done).Should().BeTrue();
@@ -123,7 +123,7 @@ public sealed class CommandCompletionTests
         // command that finished a hundred steps ago — which Settle refuses, leaving the second
         // stuck at Accepted forever.
         var second = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(second, east: 6f, south: 6f)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(second, east: 6f, south: 6f)));
         StepUntilTerminal(room, second);
 
         room.Commands.TryGet(second, out var alsoDone).Should().BeTrue();
@@ -138,12 +138,12 @@ public sealed class CommandCompletionTests
     /// either is edited alone.
     /// </remarks>
     [Fact]
-    public void The_Arrival_Event_Carries_The_Completion()
+    public async Task The_Arrival_Event_Carries_The_Completion()
     {
         var (ctrl, room) = RoomWithRover();
 
         var commandId = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(commandId, east: 6f, south: 0f)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(commandId, east: 6f, south: 0f)));
         StepUntilTerminal(room, commandId);
 
         var arrival = room.DrainAssetEvents()
@@ -163,12 +163,12 @@ public sealed class CommandCompletionTests
     /// a live instruction beside it and no way to tell which was true.
     /// </remarks>
     [Fact]
-    public void A_Route_The_Rover_Cannot_Take_Reports_The_Command_Failed()
+    public async Task A_Route_The_Rover_Cannot_Take_Reports_The_Command_Failed()
     {
         var (ctrl, room) = RoomWithRover();
 
         var commandId = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(commandId, east: 400f, south: 0f)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(commandId, east: 400f, south: 0f)));
 
         StepUntilTerminal(room, commandId);
 
@@ -191,12 +191,12 @@ public sealed class CommandCompletionTests
     [Theory]
     [InlineData(6f, 0f)]
     [InlineData(400f, 0f)]
-    public void One_Command_Produces_Exactly_One_Completion(float east, float south)
+    public async Task One_Command_Produces_Exactly_One_Completion(float east, float south)
     {
         var (ctrl, room) = RoomWithRover();
 
         var commandId = Guid.NewGuid();
-        Accepted(ctrl.SendCommand(RoverId, DriveTo(commandId, east, south)));
+        Accepted(await ctrl.SendCommand(RoverId, DriveTo(commandId, east, south)));
         StepUntilTerminal(room, commandId);
 
         var completions = room.DrainAssetEvents()

@@ -35,11 +35,11 @@ public partial class SimV2ControllerTests
     // ─── Asset lookup ───────────────────────────────────────────────────────
 
     [Fact]
-    public void GetAssets_Filters_By_Domain()
+    public async Task GetAssets_Filters_By_Domain()
     {
         var factory = new StubGroundFactory();
         var (ctrl, _) = CreateController(factory);
-        SpawnDroneAndRover(ctrl);
+        await SpawnDroneAndRover(ctrl);
 
         var ground = Body<AssetInventoryResponse>(ctrl.GetAssets(AssetDomain.Ground));
 
@@ -76,21 +76,21 @@ public partial class SimV2ControllerTests
     }
 
     [Fact]
-    public void RemoveAsset_Unknown_Returns_NotFound()
+    public async Task RemoveAsset_Unknown_Returns_NotFound()
     {
         var (ctrl, _) = CreateController();
 
-        Problem(ctrl.RemoveAsset("ghost"), StatusCodes.Status404NotFound)
+        Problem(await ctrl.RemoveAsset("ghost"), StatusCodes.Status404NotFound)
             .Code.Should().Be(AssetProblems.AssetNotFound);
     }
 
     [Fact]
-    public void RemoveAsset_Air_Returns_Conflict_Rather_Than_Pretending_It_Is_Gone()
+    public async Task RemoveAsset_Air_Returns_Conflict_Rather_Than_Pretending_It_Is_Gone()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
-        Problem(ctrl.RemoveAsset("uav-1"), StatusCodes.Status409Conflict)
+        Problem(await ctrl.RemoveAsset("uav-1"), StatusCodes.Status409Conflict)
             .Code.Should().Be(AssetProblems.AssetNotRemovable);
         room.GetSnapshot().Should().HaveCount(1);
     }

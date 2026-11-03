@@ -40,20 +40,20 @@ public sealed partial class AssetCommandHardeningTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void A_Second_Command_Supersedes_The_First_For_The_Same_Asset()
+    public async Task A_Second_Command_Supersedes_The_First_For_The_Same_Asset()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
 
         var first = Guid.NewGuid();
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             CommandKinds.Hold, "key-supersede-1", CommandId: first));
 
         room.Commands.TryGet(first, out var accepted).Should().BeTrue();
         accepted!.State.Should().Be(CommandState.Accepted);
 
         var second = Guid.NewGuid();
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             CommandKinds.Hold, "key-supersede-2", CommandId: second));
 
         room.Commands.TryGet(first, out var superseded).Should().BeTrue();
@@ -72,16 +72,16 @@ public sealed partial class AssetCommandHardeningTests
     /// would pass the test above, and a fleet would cancel each other's instructions in turn.
     /// </remarks>
     [Fact]
-    public void A_Command_For_Another_Asset_Leaves_The_First_Alone()
+    public async Task A_Command_For_Another_Asset_Leaves_The_First_Alone()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
         room.AddDrone("uav-2", SpawnEus);
 
         var first = Guid.NewGuid();
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             CommandKinds.Hold, "key-other-1", CommandId: first));
-        ctrl.SendCommand("uav-2", new AssetCommandRequest(
+        await ctrl.SendCommand("uav-2", new AssetCommandRequest(
             CommandKinds.Hold, "key-other-2", CommandId: Guid.NewGuid()));
 
         room.Commands.TryGet(first, out var untouched).Should().BeTrue();
@@ -91,17 +91,17 @@ public sealed partial class AssetCommandHardeningTests
 
     /// <summary>A rejected command supersedes nothing, because it was never in flight.</summary>
     [Fact]
-    public void A_Rejected_Command_Does_Not_Supersede_The_Live_One()
+    public async Task A_Rejected_Command_Does_Not_Supersede_The_Live_One()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone(AssetId, SpawnEus);
 
         var live = Guid.NewGuid();
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             CommandKinds.Hold, "key-live", CommandId: live));
 
         // Refused at validation: the kind is not a command this build knows.
-        ctrl.SendCommand(AssetId, new AssetCommandRequest(
+        await ctrl.SendCommand(AssetId, new AssetCommandRequest(
             "notACommand", "key-refused", CommandId: Guid.NewGuid()));
 
         room.Commands.TryGet(live, out var stillLive).Should().BeTrue();

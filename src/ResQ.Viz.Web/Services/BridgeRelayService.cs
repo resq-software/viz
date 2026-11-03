@@ -157,6 +157,13 @@ public sealed class BridgeRelayService : BackgroundService
     public BridgeSession? GetSession(string roomId) => _sessions.GetValueOrDefault(roomId);
 
     /// <summary>
+    /// Register a session in the relay's internal dictionary.
+    /// Intended for tests that create sessions manually.
+    /// </summary>
+    public void RegisterSession(BridgeSession session) =>
+        _sessions[session.RoomId] = session;
+
+    /// <summary>
     /// Forwards an arbitrary HTTP command to the bridge for the given room.
     /// Reads the body from the current request and forwards it verbatim.
     /// </summary>

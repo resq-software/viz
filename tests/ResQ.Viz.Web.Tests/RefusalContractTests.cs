@@ -63,7 +63,7 @@ public sealed class RefusalContractTests
 
     /// <summary>A downstream stale-position refusal keeps its exact token outside human prose.</summary>
     [Fact]
-    public void Stale_Position_Refusal_Exposes_The_Asset_Reason_Code()
+    public async Task Stale_Position_Refusal_Exposes_The_Asset_Reason_Code()
     {
         var room = new SimulationRoom(
             id: "refusal-contract", ipBucket: "127.0.0.0/24", logger: NullLogger.Instance);
@@ -92,7 +92,7 @@ public sealed class RefusalContractTests
         int appliedBeforeCommand = asset.Applied.Count;
         var commandId = new Guid("9c19ca2c-a407-4ad0-9d74-0ed3a64e26c5");
 
-        var result = controller.SendCommand(
+        var result = await controller.SendCommand(
             AssetId,
             new AssetCommandRequest(
                 Kind: CommandKinds.DriveTo,

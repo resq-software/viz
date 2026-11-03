@@ -65,7 +65,7 @@ public partial class CommandAuthorityTests
 
     /// <summary>A command from somebody who is not the holder is refused, and changes nothing.</summary>
     [Fact]
-    public void NonHolder_IsRefused_AndLeavesNoTrace()
+    public async Task NonHolder_IsRefused_AndLeavesNoTrace()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -75,7 +75,7 @@ public partial class CommandAuthorityTests
         var request = new AssetCommandRequest(
             CommandKinds.Stop, "key-1", IssuerId: "operator-b", CommandId: commandId);
 
-        var problem = Problem(ctrl.SendCommand("uav-1", request), StatusCodes.Status409Conflict);
+        var problem = Problem(await ctrl.SendCommand("uav-1", request), StatusCodes.Status409Conflict);
 
         problem.Code.Should().Be(CommandAuthorityReasons.NotHolder);
         problem.Detail.Should().Contain("operator-a");
@@ -86,7 +86,7 @@ public partial class CommandAuthorityTests
 
         Holder(ctrl.ReleaseControl("uav-1", new ControlLeaseReleaseRequest("operator-a", lease.LeaseId)));
         Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-b")));
-        var retry = ctrl.SendCommand("uav-1", request);
+        var retry = await ctrl.SendCommand("uav-1", request);
 
         Accepted(retry).CommandId.Should().Be(commandId);
         room.Commands.TryGet(commandId, out var stored).Should().BeTrue();
@@ -95,13 +95,13 @@ public partial class CommandAuthorityTests
 
     /// <summary>The holder's own command passes the gate.</summary>
     [Fact]
-    public void Holder_MayCommandTheAssetItHolds()
+    public async Task Holder_MayCommandTheAssetItHolds()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         var lease = Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-a"))).Lease;
 
-        var accepted = Accepted(ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        var accepted = Accepted(await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-hold", IssuerId: "operator-a", ControlLeaseId: lease.LeaseId)));
 
         accepted.State.Should().Be(CommandState.Accepted);
@@ -110,39 +110,39 @@ public partial class CommandAuthorityTests
 
     /// <summary>An asset nobody holds is commandable by anybody, exactly as before leases existed.</summary>
     [Fact]
-    public void UncontrolledAsset_IsNotGated()
+    public async Task UncontrolledAsset_IsNotGated()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
 
-        Accepted(ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-free", IssuerId: "anyone"))).State.Should().Be(CommandState.Accepted);
     }
 
     /// <summary>Once a lease lapses it stops blocking anybody, so no asset can be stranded.</summary>
     [Fact]
-    public void ExpiredLease_StopsBlocking()
+    public async Task ExpiredLease_StopsBlocking()
     {
         var (ctrl, room, clock) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-a", DurationSeconds: 30)));
 
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Stop, "key-early", IssuerId: "operator-b")),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandAuthorityReasons.NotHolder);
 
         clock.Advance(TimeSpan.FromSeconds(31));
 
-        Accepted(ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-late", IssuerId: "operator-b"))).State.Should().Be(CommandState.Accepted);
         Holder(ctrl.GetControlHolder("uav-1")).IsControlled.Should().BeFalse();
     }
 
     /// <summary>Releasing hands the asset back at once, without waiting for the expiry.</summary>
     [Fact]
-    public void ReleasedLease_StopsBlockingImmediately()
+    public async Task ReleasedLease_StopsBlockingImmediately()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -158,13 +158,13 @@ public partial class CommandAuthorityTests
         // The scheduled ending is preserved beside the actual one: they are different facts.
         released.Lease.ExpiresAt.Should().Be(T0 + MaxLease);
 
-        Accepted(ctrl.SendCommand("uav-1", new AssetCommandRequest(
+        Accepted(await ctrl.SendCommand("uav-1", new AssetCommandRequest(
             CommandKinds.Stop, "key-after", IssuerId: "operator-b"))).State.Should().Be(CommandState.Accepted);
     }
 
     /// <summary>A preempted holder is told its control was taken, not merely that it lapsed.</summary>
     [Fact]
-    public void Preemption_IsRecorded_AndTheFormerHolderIsToldWhy()
+    public async Task Preemption_IsRecorded_AndTheFormerHolderIsToldWhy()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -185,7 +185,7 @@ public partial class CommandAuthorityTests
 
         // And the command path answers the former holder with the preemption, not a generic refusal.
         var problem = Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Stop, "key-p", IssuerId: "operator-a", ControlLeaseId: lease.LeaseId)),
             StatusCodes.Status409Conflict);
 
@@ -195,14 +195,14 @@ public partial class CommandAuthorityTests
 
     /// <summary>A stale lease id from the current holder is still stale.</summary>
     [Fact]
-    public void StaleLeaseId_FromTheHolder_IsRefused()
+    public async Task StaleLeaseId_FromTheHolder_IsRefused()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-a")));
 
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Stop, "key-stale", IssuerId: "operator-a", ControlLeaseId: "lease-999")),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandAuthorityReasons.LeaseNotLive);
@@ -219,13 +219,13 @@ public partial class CommandAuthorityTests
     [Theory]
     [InlineData("notACommand", "uav-1", CommandRejectionReasons.KindUnknown)]
     [InlineData(CommandKinds.Stop, "ghost-9", CommandRejectionReasons.AssetNotFound)]
-    public void PayloadAndAssetGates_RunBeforeAuthority(string kind, string assetId, string expected)
+    public async Task PayloadAndAssetGates_RunBeforeAuthority(string kind, string assetId, string expected)
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
         Lease(ctrl.AcquireControl("uav-1", new ControlLeaseRequest("operator-a")));
 
-        var result = ctrl.SendCommand(assetId, new AssetCommandRequest(
+        var result = await ctrl.SendCommand(assetId, new AssetCommandRequest(
             kind, "key-order", IssuerId: "operator-b"));
 
         var problem = result.Should().BeOfType<ObjectResult>().Which
@@ -235,7 +235,7 @@ public partial class CommandAuthorityTests
 
     /// <summary>Authority is consulted before capability, so a non-holder learns nothing about the asset.</summary>
     [Fact]
-    public void AuthorityGate_RunsBeforeCapability()
+    public async Task AuthorityGate_RunsBeforeCapability()
     {
         var (ctrl, room, _) = CreateController();
         room.AddDrone("uav-1", new Vector3(0f, 50f, 0f));
@@ -245,14 +245,14 @@ public partial class CommandAuthorityTests
         // first: a multirotor declares no Dock capability, and that is the gate immediately after
         // authority. The holder therefore sees the capability refusal...
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Undock, "key-cap-holder", IssuerId: "operator-a")),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandRejectionReasons.CapabilityNotDeclared);
 
         // ...and a non-holder is stopped one gate earlier, by authority.
         Problem(
-            ctrl.SendCommand("uav-1", new AssetCommandRequest(
+            await ctrl.SendCommand("uav-1", new AssetCommandRequest(
                 CommandKinds.Undock, "key-cap-other", IssuerId: "operator-b")),
             StatusCodes.Status409Conflict)
             .Code.Should().Be(CommandAuthorityReasons.NotHolder);

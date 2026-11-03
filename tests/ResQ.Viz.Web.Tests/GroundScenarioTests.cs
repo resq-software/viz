@@ -68,11 +68,11 @@ public sealed class GroundScenarioTests
     /// <c>201</c>, and the asset is present in the frame rather than merely acknowledged.
     /// </remarks>
     [Fact]
-    public void Spawning_A_Rover_Through_The_V2_Api_Puts_It_In_The_Asset_Snapshot()
+    public async Task Spawning_A_Rover_Through_The_V2_Api_Puts_It_In_The_Asset_Snapshot()
     {
         var (ctrl, room) = CreateController();
 
-        var spawned = Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        var spawned = Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.AckermannRover, ScenePose(RoverSpawn), AssetId: "ugv-1")));
 
         spawned.AssetId.Should().Be("ugv-1");
@@ -96,11 +96,11 @@ public sealed class GroundScenarioTests
     /// in a slope still serialises perfectly.
     /// </remarks>
     [Fact]
-    public void A_Spawned_Rover_Is_Settled_Onto_The_Terrain_Not_The_Requested_Height()
+    public async Task A_Spawned_Rover_Is_Settled_Onto_The_Terrain_Not_The_Requested_Height()
     {
         var (ctrl, room) = CreateController();
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.AckermannRover, ScenePose(RoverSpawn), AssetId: "ugv-1")));
 
         var state = room.CaptureAssetFrame().Assets.Should().ContainSingle().Which;
@@ -123,11 +123,11 @@ public sealed class GroundScenarioTests
     /// </para>
     /// </remarks>
     [Fact]
-    public void The_Capability_Report_For_A_Rover_Offers_The_Ground_Command_Set()
+    public async Task The_Capability_Report_For_A_Rover_Offers_The_Ground_Command_Set()
     {
         var (ctrl, _) = CreateController();
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.AckermannRover, ScenePose(RoverSpawn), AssetId: "ugv-1")));
 
         var report = Body<AssetCapabilitiesResponse>(ctrl.GetAssetCapabilities("ugv-1"));
@@ -167,12 +167,12 @@ public sealed class GroundScenarioTests
     /// client, so a rover appearing there is an entity no v1 renderer can draw.
     /// </remarks>
     [Fact]
-    public void A_Rover_Spawned_Through_The_V2_Api_Is_Invisible_To_The_V1_Frame()
+    public async Task A_Rover_Spawned_Through_The_V2_Api_Is_Invisible_To_The_V1_Frame()
     {
         var (ctrl, room) = CreateController();
         room.AddDrone("uav-1", new Vector3(640f, 130f, 300f));
 
-        Spawned(ctrl.SpawnAsset(new AssetSpawnRequest(
+        Spawned(await ctrl.SpawnAsset(new AssetSpawnRequest(
             VehicleClass.AckermannRover, ScenePose(RoverSpawn), AssetId: "ugv-1")));
 
         room.CaptureAssetFrame().Descriptors.Should().HaveCount(
