@@ -90,6 +90,22 @@ builder.Services.AddSingleton(
 builder.Services.AddSingleton(
     ResQ.Viz.Web.Services.ControlAuthorityRegistry.FromConfiguration(builder.Configuration));
 
+// Bridge relay: when BridgeRelay:BaseUrl is set, register the background service that
+// connects to the Furia Viz Bridge and relays frames to Viz rooms. Conditional registration
+// mirrors the pattern used for ControlAuthorityRegistry — the server starts normally without
+// a bridge host, and the relay only activates when configuration demands it.
+var bridgeBaseUrl = builder.Configuration["BridgeRelay:BaseUrl"];
+if (!string.IsNullOrEmpty(bridgeBaseUrl))
+{
+    var bridgeOptions = new ResQ.Viz.Web.Services.BridgeRelayOptions
+    {
+        BaseUrl = bridgeBaseUrl
+    };
+    builder.Services.AddSingleton(bridgeOptions);
+    builder.Services.AddHostedService(sp =>
+        sp.GetRequiredService<ResQ.Viz.Web.Services.BridgeRelayService>());
+}
+
 // Ground and surface motion models. Registering a factory is the whole of a domain's wiring:
 // with one present, POST /api/v2/sim/assets builds that class and a preset naming it spawns
 // rather than skips; with none, the class is refused with
