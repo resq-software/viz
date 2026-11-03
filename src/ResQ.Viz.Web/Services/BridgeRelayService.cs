@@ -98,7 +98,13 @@ public sealed class BridgeRelayService : BackgroundService
     /// <summary>
     /// Create a bridge session for the given room. Connects to the bridge and starts the SSE stream.
     /// </summary>
-    public async Task<BridgeSessionHandle> CreateSessionAsync(string roomId)
+    /// <param name="roomId">Viz room this session belongs to.</param>
+    /// <param name="room">
+    /// The <see cref="SimulationRoom"/> owning this session. When supplied the relay sets
+    /// <c>room.BridgeSession</c> after a successful connection so <see cref="SimulationManager"/>
+    /// can detect <see cref="SimulationRoom.IsBridgeMode"/> and skip the local tick loop.
+    /// </param>
+    public async Task<BridgeSessionHandle> CreateSessionAsync(string roomId, SimulationRoom? room = null)
     {
         if (_sessions.TryGetValue(roomId, out var existing))
         {
@@ -127,6 +133,9 @@ public sealed class BridgeRelayService : BackgroundService
             _logger.LogWarning("Failed to connect bridge for room {RoomId}.", roomId);
             throw new InvalidOperationException($"Cannot connect to Viz Bridge at {_options.BaseUrl}");
         }
+
+        // Tell the room it is now bridge-driven so SimulationManager skips the local tick loop.
+        room?.SetBridgeSession(session);
 
         _sessions.TryAdd(roomId, session);
         _logger.LogInformation("Bridge session created for room {RoomId}.", roomId);

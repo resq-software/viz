@@ -134,6 +134,37 @@ public sealed partial class SimulationRoom
     // flowing at 10 Hz while paused (steps == 0) or sped up (steps > 1).
     private long _broadcastTick;
 
+    // ── Furia Viz Bridge (session-lifecycle, no concurrency) ───────────────
+    /// <summary>Bridge relay session for this room, or null for local simulation.</summary>
+    /// <remarks>
+    /// Set by <see cref="BridgeRelayService"/> (via <see cref="SetBridgeSession"/>) when
+    /// <c>BridgeRelay:BaseUrl</c> is configured and the bridge is reachable.
+    /// When present the 60 Hz tick loop in <see cref="SimulationManager"/> skips local
+    /// world advancement and lets <see cref="BridgeRelayService"/> supply frames through
+    /// the shared <see cref="IFrameBroadcaster"/>.
+    /// </remarks>
+    internal BridgeRelayService.BridgeSession? BridgeSession { get; private set; }
+
+    /// <summary>
+    /// True when this room is driven by a Furia Viz Bridge session.
+    /// When true the <see cref="SimulationManager"/> tick loop skips
+    /// local world advancement and broadcasting — frames arrive through
+    /// the relay service via <see cref="IFrameBroadcaster"/>.
+    /// </summary>
+    internal bool IsBridgeMode => BridgeSession is not null;
+
+    /// <summary>
+    /// Sets (or replaces) the bridge session for this room.
+    /// Called by <see cref="BridgeRelayService"/> after a successful connection so
+    /// <see cref="SimulationManager"/> can detect <see cref="IsBridgeMode"/> and skip
+    /// the local tick loop.
+    /// </summary>
+    /// <param name="session">The bridge relay session to associate with this room.</param>
+    internal void SetBridgeSession(BridgeRelayService.BridgeSession session)
+    {
+        BridgeSession = session;
+    }
+
     /// <summary>Opaque, server-issued room id (256-bit hex).</summary>
     public string Id { get; }
 

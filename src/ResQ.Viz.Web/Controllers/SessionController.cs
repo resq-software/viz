@@ -34,12 +34,14 @@ namespace ResQ.Viz.Web.Controllers;
 public sealed class SessionController : ControllerBase
 {
     private readonly RoomSessionService _sessions;
+    private readonly IServiceProvider _services;
     private readonly ILogger<SessionController> _logger;
 
     /// <summary>Initialises the controller.</summary>
-    public SessionController(RoomSessionService sessions, ILogger<SessionController> logger)
+    public SessionController(RoomSessionService sessions, IServiceProvider services, ILogger<SessionController> logger)
     {
         _sessions = sessions;
+        _services = services;
         _logger = logger;
     }
 
@@ -53,7 +55,7 @@ public sealed class SessionController : ControllerBase
     /// </summary>
     [HttpPost]
     [EnableRateLimiting("destructive")]
-    public IActionResult Create()
+    public async Task<IActionResult> Create()
     {
         var result = _sessions.IssueOrRefresh(HttpContext);
         if (result.CookieValue is null || result.Room is null)
@@ -63,6 +65,29 @@ public sealed class SessionController : ControllerBase
         }
 
         Response.Cookies.Append(RoomSessionService.CookieName, result.CookieValue, BuildCookieOptions());
+
+        // Wire the Furia Viz Bridge relay when configured. The relay connects to the bridge and
+        // relays frames into the room through the shared IFrameBroadcaster; SimulationManager
+        // detects IsBridgeMode and skips the local tick loop.  Resolve the relay lazily so a
+        // deployment without BridgeRelay:BaseUrl still starts without the bridge on its service
+        // graph.  Pass the room so the relay can mark the room as bridge-driven after connect.
+        var bridgeRelay = _services.GetService<BridgeRelayService>();
+        if (bridgeRelay is not null)
+        {
+            try
+            {
+                _ = await bridgeRelay.CreateSessionAsync(result.Room.Id, result.Room);
+                _logger.LogInformation("Bridge relay session created for room {RoomId}.", result.Room.Id);
+            }
+            catch (Exception ex)
+            {
+                // Bridge unreachable — fall back to local simulation.  The room is fully usable;
+                // an operator simply won't see the Furia Viz Bridge picture until the relay
+                // can reconnect (or the host is restarted with a working bridge URL).
+                _logger.LogWarning(ex, "Bridge relay failed for room {RoomId}; falling back to local simulation.", result.Room.Id);
+            }
+        }
+
         return Ok(new { roomId = result.Room.Id, expiresIn = (int)RoomSessionService.SessionTtl.TotalSeconds });
     }
 
@@ -96,6 +121,17 @@ public sealed class SessionController : ControllerBase
     [EnableRateLimiting("destructive")]
     public IActionResult Delete()
     {
+        var room = HttpContext.Room();
+
+        // Tear down the bridge relay for this room so the SSE stream closes and the relay
+        // removes the session from its dictionary.  If the room was using local simulation
+        // (no bridge relay or relay not configured) this is a harmless no-op.
+        var bridgeRelay = _services.GetService<BridgeRelayService>();
+        if (bridgeRelay is not null)
+        {
+            _ = bridgeRelay.RemoveSessionAsync(room.Id);
+        }
+
         Response.Cookies.Delete(RoomSessionService.CookieName);
         return Ok(new { cleared = true });
     }

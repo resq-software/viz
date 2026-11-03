@@ -189,6 +189,15 @@ public sealed partial class SimulationManager : BackgroundService
                 List<SimulationRoom>? toBroadcast = null;
                 foreach (var kv in _rooms)
                 {
+                    // Skip the tick loop for rooms driven by a Furia Viz Bridge relay: the relay
+                    // supplies frames through IFrameBroadcaster and the local simulation is not
+                    // authoritative.  IsBridgeMode is a plain property set by SessionController at
+                    // session bootstrap and cleared when the session is deleted — no locking needed.
+                    if (kv.Value.IsBridgeMode)
+                    {
+                        continue;
+                    }
+
                     // The sim time this returns is deliberately discarded: BroadcastRoomAsync
                     // takes its own capture, and that capture's SimulationTimeSeconds is the one
                     // that agrees with the poses it publishes beside it.
