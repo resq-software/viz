@@ -33,8 +33,9 @@ jobs:
     # its PRs. Dependabot already vetted the bump; push/schedule still scan the
     # default branch.
     if: ${{ github.actor != 'dependabot[bot]' }}
-    uses: resq-software/.github/.github/workflows/security-scan.yml@44987ffd6eb5b1aa9d0a0d39e8dde9d669fe1d84 # main
+    uses: resq-software/.github/.github/workflows/security-scan.yml@9b8f49927aa789aef1a99e5afc4c1e2278b2dfc0 # main
     with:
+      enable-private-name-guard: true
       # `languages` is deliberately omitted. It defaults to "[]", and
       # security-scan gates its CodeQL job on
       #   if: ${{ inputs.languages != '' && inputs.languages != '[]' }}
@@ -75,4 +76,5 @@ jobs:
     # optional scanner enabled here, so SEMGREP_APP_TOKEN is the only one it
     # needs. gitleaks / snyk / vet stay off, so their secrets stay unshared.
     secrets:
+      PRIVATE_NAME_GUARD_TOKEN: ${{ secrets.PRIVATE_NAME_GUARD_TOKEN }}
       SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
