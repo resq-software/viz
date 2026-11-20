@@ -396,11 +396,27 @@ jobs:
       - name: Check documented versions against package.json
         run: node --experimental-strip-types tools/docs/check-doc-versions.ts
 
+  # ── Private-name guard ──────────────────────────────────────────────
+  # Called from here and not from security.yml: `needs:` cannot reach across
+  # workflow files, and the org ruleset watches only the `required` context.
+  # A guard that reports into nothing cannot stop a merge, however loudly it
+  # fails. Inherits the workflow-level `contents: read`, which is exactly what
+  # the reusable declares.
+  private-name-guard:
+    name: private-name-guard
+    # Dependabot's restricted context resolves Actions secrets to empty, so the
+    # guard cannot authenticate on its pull requests. The aggregate below
+    # tolerates the resulting skip for that actor alone.
+    if: ${{ github.actor != 'dependabot[bot]' }}
+    uses: resq-software/.github/.github/workflows/private-name-guard.yml@03bd2fc8788be394d96edebcaceb3b3735bb2cbc # main
+    secrets:
+      PRIVATE_NAME_GUARD_TOKEN: ${{ secrets.PRIVATE_NAME_GUARD_TOKEN }}
+
   # ── Aggregate gate watched by the org ruleset ───────────────────────
   required:
     name: required
     runs-on: ubuntu-latest
-    needs: [gates, client, client-budget, browser, licences, docs]
+    needs: [gates, client, client-budget, browser, licences, docs, private-name-guard]
     permissions: {}    # pure aggregator: only reads needs.*.result env vars
     if: always()
     steps:
@@ -412,6 +428,8 @@ jobs:
           BROWSER: ${{ needs.browser.result }}
           LICENCES: ${{ needs.licences.result }}
           DOCS:    ${{ needs.docs.result }}
+          GUARD:   ${{ needs.private-name-guard.result }}
+          ACTOR:   ${{ github.actor }}
         run: |
           set -eu
           # `skipped` passes for the four `ok` jobs because each skips only as a CONSEQUENCE of
@@ -430,5 +448,15 @@ jobs:
           ok "$BROWSER"      || { echo "::error::browser=$BROWSER";      fail=1; }
           strict "$LICENCES" || { echo "::error::licences=$LICENCES";    fail=1; }
           strict "$DOCS"     || { echo "::error::docs=$DOCS";            fail=1; }
+          # strict, not ok: a SKIPPED guard means no check ran. That is also
+          # the fork case -- a pull request from a fork cannot reach
+          # PRIVATE_NAME_GUARD_TOKEN, so it fails closed here and needs a
+          # maintainer to re-run it from a branch in this repository.
+          # Dependabot is the single tolerated skip, for the reason on the job.
+          if [ "$ACTOR" = "dependabot[bot]" ]; then
+            ok "$GUARD"     || { echo "::error::private-name-guard=$GUARD"; fail=1; }
+          else
+            strict "$GUARD" || { echo "::error::private-name-guard=$GUARD"; fail=1; }
+          fi
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER licences=$LICENCES docs=$DOCS"
+          echo "ok: gates=$GATES client=$CLIENT budget=$BUDGET browser=$BROWSER licences=$LICENCES docs=$DOCS guard=$GUARD"
