@@ -33,7 +33,7 @@ jobs:
     # its PRs. Dependabot already vetted the bump; push/schedule still scan the
     # default branch.
     if: ${{ github.actor != 'dependabot[bot]' }}
-    uses: resq-software/.github/.github/workflows/security-scan.yml@9b8f49927aa789aef1a99e5afc4c1e2278b2dfc0 # main
+    uses: resq-software/.github/.github/workflows/security-scan.yml@03bd2fc8788be394d96edebcaceb3b3735bb2cbc # main
     with:
       # `languages` is deliberately omitted. It defaults to "[]", and
       # security-scan gates its CodeQL job on
